@@ -72,6 +72,7 @@ import { loadSettingsUI, bindSettingsEvents, teardownSettingsUI } from './src/ui
 import { registerSlashCommands } from './src/ui/commands.js';
 import { dedupError, dedupWarning } from './src/toast-dedup.js';
 import { createDrawerPanel, resetDrawerState, destroyDrawerPanel } from './src/drawer/drawer.js';
+import { createMobileShell, destroyMobileShell } from './src/mobile/mobile-shell.js';
 import { pushActivity } from './src/drawer/drawer-state.js';
 import { extractAiNotes, normalizeLoreGap } from './src/helpers.js';
 import { clearSessionActivityLog, persistGaps } from './src/librarian/librarian-tools.js';
@@ -139,6 +140,7 @@ function _teardownDleExtension() {
         _debugNamespaceUnsub = null;
     }
     try { destroyDrawerPanel(); } catch (err) { console.warn('[DLE] destroyDrawerPanel failed:', err?.message); }
+    try { destroyMobileShell(); } catch (err) { console.warn('[DLE] destroyMobileShell failed:', err?.message); }
     // BUG-062: namespaced delegated handler on #chat needs explicit detach.
     try { $('#chat').off('.dle-carto'); } catch { /* ignore */ }
     if (_dleBeforeUnloadHandler) {
@@ -1216,6 +1218,7 @@ jQuery(async function () {
         $('#extensions_settings2').append(settingsHtml);
 
         await createDrawerPanel();
+        createMobileShell({ buildIndex });
 
         loadSettingsUI();
         bindSettingsEvents(buildIndex);

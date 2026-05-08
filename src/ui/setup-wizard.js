@@ -165,6 +165,11 @@ function goToPage(page) {
 
     $wizard.find('.dle-wizard-step').removeClass('active');
     $wizard.find(`.dle-wizard-step[data-step="${page}"]`).addClass('active');
+    $wizard.find('.dle-wizard-body').scrollTop(0);
+    $wizard.find(`.dle-wizard-step[data-step="${page}"]`).get(0)?.scrollIntoView({
+        block: 'nearest',
+        inline: 'center',
+    });
 
     updateNavButtons();
 
