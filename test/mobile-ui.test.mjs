@@ -756,6 +756,17 @@ test('renderMobileShell: Browse view renders search, filters, quick filters, and
     assertMatch(html, /Imported from SillyTavern World Info/, 'expanded preview should render');
 });
 
+test('mobile Browse actions: shell keeps ST metadata imports dynamic', () => {
+    const source = readFileSync(new URL('../src/mobile/mobile-shell.js', import.meta.url), 'utf8');
+
+    assertMatch(source, /async function toggleMobileBrowsePin/, 'pin action helper should exist');
+    assertMatch(source, /async function toggleMobileBrowseBlock/, 'block action helper should exist');
+    assertMatch(source, /await import\('\.\.\/\.\.\/\.\.\/\.\.\/\.\.\/\.\.\/script\.js'\)/, 'ST script import should stay dynamic so Node mobile tests can import the shell');
+    assertMatch(source, /notifyPinBlockChanged\(\)/, 'pin and block actions should notify DeepLore state observers');
+    assertMatch(source, /navigator\.clipboard\.writeText/, 'copy action should use the clipboard when available');
+    assertMatch(source, /openExternalProtocol/, 'Obsidian action should use the shared external protocol helper');
+});
+
 test('renderMobileShell: drill-in views tolerate missing array fields', () => {
     for (const view of ['why', 'browse', 'librarian']) {
         try {

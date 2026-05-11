@@ -21,7 +21,9 @@ import {
     onLoreGapsChanged,
     onPipelinePhaseChanged,
     onPipelineTraceUpdated,
+    notifyPinBlockChanged,
 } from '../state.js';
+import { buildObsidianURI, normalizePinBlock, openExternalProtocol } from '../helpers.js';
 import { getCircuitState } from '../vault/obsidian-api.js';
 import {
     buildMobileBrowseOptions,
@@ -552,6 +554,71 @@ function executeCommand(command) {
     }
 }
 
+async function readMetadataApi() {
+    const script = await import('../../../../../../script.js');
+    const extensions = await import('../../../../../extensions.js');
+    return {
+        chatMetadata: script.chat_metadata,
+        saveMetadataDebounced: extensions.saveMetadataDebounced,
+    };
+}
+
+function samePinBlock(item, title, vaultSource) {
+    const normalized = normalizePinBlock(item || '');
+    return normalized.title.toLowerCase() === String(title || '').toLowerCase()
+        && (normalized.vaultSource || null) === (vaultSource || null);
+}
+
+async function toggleMobileBrowsePin(title, vaultSource) {
+    const { chatMetadata, saveMetadataDebounced } = await readMetadataApi();
+    if (!chatMetadata || !title) return;
+    if (!chatMetadata.deeplore_pins) chatMetadata.deeplore_pins = [];
+    const idx = chatMetadata.deeplore_pins.findIndex(item => samePinBlock(item, title, vaultSource));
+    if (idx >= 0) chatMetadata.deeplore_pins.splice(idx, 1);
+    else {
+        chatMetadata.deeplore_pins.push({ title, vaultSource: vaultSource || null });
+        if (chatMetadata.deeplore_blocks) {
+            chatMetadata.deeplore_blocks = chatMetadata.deeplore_blocks.filter(item => !samePinBlock(item, title, vaultSource));
+        }
+    }
+    saveMetadataDebounced();
+    notifyPinBlockChanged();
+}
+
+async function toggleMobileBrowseBlock(title, vaultSource) {
+    const { chatMetadata, saveMetadataDebounced } = await readMetadataApi();
+    if (!chatMetadata || !title) return;
+    if (!chatMetadata.deeplore_blocks) chatMetadata.deeplore_blocks = [];
+    const idx = chatMetadata.deeplore_blocks.findIndex(item => samePinBlock(item, title, vaultSource));
+    if (idx >= 0) chatMetadata.deeplore_blocks.splice(idx, 1);
+    else {
+        chatMetadata.deeplore_blocks.push({ title, vaultSource: vaultSource || null });
+        if (chatMetadata.deeplore_pins) {
+            chatMetadata.deeplore_pins = chatMetadata.deeplore_pins.filter(item => !samePinBlock(item, title, vaultSource));
+        }
+    }
+    saveMetadataDebounced();
+    notifyPinBlockChanged();
+}
+
+async function copyMobileBrowseTitle(title) {
+    if (!title) return;
+    try {
+        await navigator.clipboard.writeText(title);
+        mobileState.errorMessage = '';
+    } catch {
+        setMobileError('Clipboard access denied.');
+    }
+}
+
+function openMobileBrowseObsidian(filename, vaultSource) {
+    const settings = mobileShellOptions.getSettings?.() ?? {};
+    const vault = vaultSource && settings.vaults ? settings.vaults.find(v => v.name === vaultSource) : null;
+    const vaultName = vault?.name || settings.vaults?.[0]?.name || '';
+    const uri = filename ? buildObsidianURI(vaultName, filename) : null;
+    if (!openExternalProtocol(uri)) setMobileError('Could not open Obsidian link from this browser context.');
+}
+
 function ensureRoot() {
     if (mobileRoot && document.body.contains(mobileRoot)) return mobileRoot;
     mobileRoot = document.getElementById(ROOT_ID);
@@ -631,6 +698,28 @@ function handleMobileClick(event) {
         mobileState.browseExpandedKey = mobileState.browseExpandedKey === key ? '' : key;
         mobileState.open = true;
         renderCurrentState();
+        return;
+    }
+
+    const browseActionEl = target.closest('[data-dle-mobile-browse-action]');
+    if (browseActionEl) {
+        const action = browseActionEl.getAttribute('data-dle-mobile-browse-action');
+        const title = browseActionEl.getAttribute('data-title') || '';
+        const vaultSource = browseActionEl.getAttribute('data-vault') || '';
+        const filename = browseActionEl.getAttribute('data-filename') || '';
+        Promise.resolve()
+            .then(() => {
+                if (action === 'pin') return toggleMobileBrowsePin(title, vaultSource || null);
+                if (action === 'block') return toggleMobileBrowseBlock(title, vaultSource || null);
+                if (action === 'copy') return copyMobileBrowseTitle(title);
+                if (action === 'obsidian') return openMobileBrowseObsidian(filename, vaultSource || null);
+                return null;
+            })
+            .catch(err => {
+                console.error('[DLE] Mobile Browse action failed:', action, err);
+                setMobileError(`Browse action failed: ${action}`);
+            })
+            .finally(renderCurrentState);
         return;
     }
 
