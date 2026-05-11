@@ -1,5 +1,6 @@
 import {
     aiSearchStats,
+    chatInjectionCounts,
     computeOverallStatus,
     vaultIndex,
     indexing,
@@ -22,6 +23,12 @@ import {
     onPipelineTraceUpdated,
 } from '../state.js';
 import { getCircuitState } from '../vault/obsidian-api.js';
+import {
+    buildMobileBrowseOptions,
+    buildMobileBrowseRows,
+    filterMobileBrowseEntries,
+    normalizeMobileBrowseState,
+} from './mobile-browse.js';
 import { buildMobileStatusStats } from './mobile-stats.js';
 
 export const MOBILE_VIEWPORT_WIDTH = 768;
@@ -41,6 +48,9 @@ let mobileState = {
     mode: 'auto',
     errorMessage: '',
     statsExpanded: false,
+    browse: normalizeMobileBrowseState(),
+    browseSearchHelpOpen: false,
+    browseExpandedKey: '',
 };
 let mobileUnsubscribers = [];
 let mobileResizeHandler = null;
@@ -191,6 +201,11 @@ export function buildMobileShellSnapshot(source = {}) {
     const drawerState = source.drawerState ?? mobileShellOptions.getDrawerState?.() ?? {};
     const circuitState = source.circuitState ?? mobileShellOptions.getCircuitState?.() ?? getCircuitState();
     const overallStatus = source.overallStatus ?? computeOverallStatus(circuitState);
+    const browseContext = source.browseContext || {
+        pins: globalThis.chat_metadata?.deeplore_pins || [],
+        blocks: globalThis.chat_metadata?.deeplore_blocks || [],
+        chatInjectionCounts: source.chatInjectionCounts ?? chatInjectionCounts,
+    };
     const stats = buildMobileStatusStats({
         statusLabel: statusForState(state),
         entryCount,
@@ -219,6 +234,7 @@ export function buildMobileShellSnapshot(source = {}) {
         entries: Array.isArray(state.vaultIndex) ? state.vaultIndex : [],
         loreGaps: Array.isArray(state.loreGaps) ? state.loreGaps : [],
         stats,
+        browseContext,
     };
 }
 
@@ -308,23 +324,112 @@ function renderWhy(snapshot) {
     `;
 }
 
-function renderBrowse(snapshot) {
+function renderBrowse(snapshot, state = mobileState) {
     const entries = Array.isArray(snapshot.entries) ? snapshot.entries : [];
-    const rows = entries.slice(0, 8).map(entry => `
-        <li>
-            <strong>${escapeHtml(entry.title || entry.filename || 'Untitled')}</strong>
-            <span>${escapeHtml(entry.folderPath || entry.vaultSource || 'Vault entry')}</span>
-        </li>
-    `).join('');
+    const browseState = normalizeMobileBrowseState(state.browse);
+    const options = buildMobileBrowseOptions(entries);
+    const browseContext = {
+        ...snapshot.browseContext,
+        injectedSources: snapshot.injectedSources,
+    };
+    const filtered = filterMobileBrowseEntries(entries, browseState, browseContext);
+    const rows = buildMobileBrowseRows(filtered.entries, browseContext);
+    const tagOptions = options.tags
+        .map(option => `<option value="${escapeHtml(option.value)}"${browseState.tag === option.value ? ' selected' : ''}>${escapeHtml(option.label)}</option>`)
+        .join('');
+    const folderOptions = options.folders
+        .map(option => `<option value="${escapeHtml(option.value)}"${browseState.folder === option.value ? ' selected' : ''}>${escapeHtml(option.label)}</option>`)
+        .join('');
 
     return `
         <div class="dle-mobile-drill-header">
             <button type="button" data-dle-mobile-view="home"><i class="fa-solid fa-chevron-left" aria-hidden="true"></i></button>
             <strong>Browse</strong>
         </div>
-        <ul class="dle-mobile-list">${rows || '<li><strong>No entries loaded</strong><span>Refresh the vault index first.</span></li>'}</ul>
+        <div class="dle-mobile-browse-controls">
+            <label class="dle-mobile-search">
+                <span class="sr-only">Search entries</span>
+                <input type="search" value="${escapeHtml(browseState.query)}" placeholder="Search entries..." data-dle-mobile-browse-field="query">
+                <button type="button" data-dle-mobile-action="toggle-browse-help" aria-expanded="${state.browseSearchHelpOpen ? 'true' : 'false'}" aria-label="Search syntax help">
+                    <i class="fa-solid fa-circle-question" aria-hidden="true"></i>
+                </button>
+            </label>
+            ${state.browseSearchHelpOpen ? '<div class="dle-mobile-browse-help"><strong>Search syntax</strong><span>tag:character folder:Places key:name summary:rumor field:era=Modern</span></div>' : ''}
+            <div class="dle-mobile-browse-filter-grid">
+                <select data-dle-mobile-browse-field="status" aria-label="Status filter">
+                    <option value="all"${browseState.status === 'all' ? ' selected' : ''}>Status</option>
+                    <option value="injected"${browseState.status === 'injected' ? ' selected' : ''}>Injected</option>
+                    <option value="pinned"${browseState.status === 'pinned' ? ' selected' : ''}>Pinned</option>
+                    <option value="blocked"${browseState.status === 'blocked' ? ' selected' : ''}>Blocked</option>
+                    <option value="constant"${browseState.status === 'constant' ? ' selected' : ''}>Constant</option>
+                    <option value="regular"${browseState.status === 'regular' ? ' selected' : ''}>Regular</option>
+                </select>
+                <select data-dle-mobile-browse-field="tag" aria-label="Tag filter"><option value="">Tags</option>${tagOptions}</select>
+                <select data-dle-mobile-browse-field="folder" aria-label="Folder filter"><option value="">Folder</option>${folderOptions}</select>
+                <select data-dle-mobile-browse-field="sort" aria-label="Sort entries">
+                    <option value="priority_asc"${browseState.sort === 'priority_asc' ? ' selected' : ''}>Priority</option>
+                    <option value="priority_desc"${browseState.sort === 'priority_desc' ? ' selected' : ''}>Priority desc</option>
+                    <option value="alpha_asc"${browseState.sort === 'alpha_asc' ? ' selected' : ''}>A-Z</option>
+                    <option value="alpha_desc"${browseState.sort === 'alpha_desc' ? ' selected' : ''}>Z-A</option>
+                    <option value="tokens_desc"${browseState.sort === 'tokens_desc' ? ' selected' : ''}>Tokens high</option>
+                    <option value="tokens_asc"${browseState.sort === 'tokens_asc' ? ' selected' : ''}>Tokens low</option>
+                </select>
+            </div>
+            <div class="dle-mobile-browse-quick" role="group" aria-label="Quick filters">
+                <button type="button" data-dle-mobile-browse-quick="since-gen" aria-pressed="${browseState.quick === 'since-gen' ? 'true' : 'false'}">Since last gen</button>
+                <button type="button" data-dle-mobile-browse-quick="never-injected" aria-pressed="${browseState.quick === 'never-injected' ? 'true' : 'false'}">Never injected</button>
+            </div>
+            ${filtered.summary ? `<div class="dle-mobile-browse-summary">${escapeHtml(filtered.summary)} <button type="button" data-dle-mobile-browse-clear>Clear</button></div>` : ''}
+        </div>
+        <div class="dle-mobile-browse-list dle-mobile-list">
+            ${rows.length ? rows.slice(0, 40).map(row => renderBrowseCard(row, state)).join('') : renderBrowseEmpty(entries, filtered)}
+        </div>
         <button class="dle-mobile-wide-action" type="button" data-dle-mobile-command="${commandForView('browse')}">Open full Browse view</button>
     `;
+}
+
+function renderBrowseCard(row, state) {
+    const expanded = state.browseExpandedKey === row.key;
+    const classNames = [
+        'dle-mobile-browse-card',
+        row.isPinned ? 'dle-mobile-browse-pinned' : '',
+        row.isBlocked ? 'dle-mobile-browse-blocked' : '',
+        expanded ? 'dle-mobile-browse-expanded' : '',
+        row.isInjected ? 'dle-mobile-browse-injected' : '',
+    ].filter(Boolean).join(' ');
+    const entry = row.entry || {};
+    const title = entry.title || row.title || '';
+    const vault = entry.vaultSource || '';
+    const filename = entry.filename || '';
+    return `
+        <article class="${classNames}" data-dle-mobile-browse-key="${escapeHtml(row.key)}">
+            <div class="dle-mobile-browse-title-row">
+                <button type="button" data-dle-mobile-browse-expand="${escapeHtml(row.key)}" aria-expanded="${expanded ? 'true' : 'false'}">
+                    <strong>${escapeHtml(row.title)}</strong>
+                </button>
+                <span>${escapeHtml(row.priorityLabel)}</span>
+            </div>
+            <div class="dle-mobile-browse-meta">
+                <span>${escapeHtml(row.folderLabel)}</span>
+                ${row.keysLabel ? `<span>${escapeHtml(row.keysLabel)}</span>` : ''}
+                ${row.tokenLabel ? `<span>${escapeHtml(row.tokenLabel)}</span>` : ''}
+                ${row.injectedCount ? `<span>${escapeHtml(row.injectedCount)}x</span>` : ''}
+            </div>
+            <div class="dle-mobile-browse-actions">
+                <button type="button" data-dle-mobile-browse-action="pin" data-title="${escapeHtml(title)}" data-vault="${escapeHtml(vault)}" data-filename="${escapeHtml(filename)}" aria-pressed="${row.isPinned ? 'true' : 'false'}">Pin</button>
+                <button type="button" data-dle-mobile-browse-action="block" data-title="${escapeHtml(title)}" data-vault="${escapeHtml(vault)}" data-filename="${escapeHtml(filename)}" aria-pressed="${row.isBlocked ? 'true' : 'false'}">Block</button>
+                <button type="button" data-dle-mobile-browse-action="copy" data-title="${escapeHtml(title)}" data-vault="${escapeHtml(vault)}" data-filename="${escapeHtml(filename)}">Copy</button>
+                ${filename ? `<button type="button" data-dle-mobile-browse-action="obsidian" data-title="${escapeHtml(title)}" data-vault="${escapeHtml(vault)}" data-filename="${escapeHtml(filename)}">Open</button>` : ''}
+            </div>
+            ${expanded ? `<div class="dle-mobile-browse-preview">${escapeHtml(row.preview)}</div>` : ''}
+        </article>
+    `;
+}
+
+function renderBrowseEmpty(entries, filtered) {
+    const title = entries.length ? 'No entries match' : 'No entries loaded';
+    const detail = entries.length && filtered.isFiltered ? 'Clear filters or open the full Browse view.' : 'Refresh the vault index first.';
+    return `<div class="dle-mobile-browse-empty"><strong>${escapeHtml(title)}</strong><span>${escapeHtml(detail)}</span></div>`;
 }
 
 function renderLibrarian(snapshot) {
@@ -381,7 +486,7 @@ function renderTools(mode = 'auto') {
 function renderBody(snapshot, view, mode = 'auto', state = mobileState) {
     switch (view) {
         case 'why': return renderWhy(snapshot);
-        case 'browse': return renderBrowse(snapshot);
+        case 'browse': return renderBrowse(snapshot, state);
         case 'librarian': return renderLibrarian(snapshot);
         case 'tools': return renderTools(mode);
         default: return renderHome(snapshot, state);
@@ -483,12 +588,48 @@ function handleMobileClick(event) {
     if (actionEl) {
         const action = actionEl.getAttribute('data-dle-mobile-action');
         mobileState.errorMessage = '';
+        if (action === 'toggle-browse-help') {
+            mobileState.browseSearchHelpOpen = !mobileState.browseSearchHelpOpen;
+            mobileState.open = true;
+            renderCurrentState();
+            return;
+        }
         if (action === 'toggle') mobileState.open = !mobileState.open;
         if (action === 'close') mobileState.open = false;
         if (action === 'toggle-stats') {
             mobileState.statsExpanded = !mobileState.statsExpanded;
             mobileState.open = true;
         }
+        renderCurrentState();
+        return;
+    }
+
+    const quickEl = target.closest('[data-dle-mobile-browse-quick]');
+    if (quickEl) {
+        const quick = quickEl.getAttribute('data-dle-mobile-browse-quick') || '';
+        const current = normalizeMobileBrowseState(mobileState.browse);
+        mobileState.browse = normalizeMobileBrowseState({ ...current, quick: current.quick === quick ? '' : quick });
+        mobileState.browseExpandedKey = '';
+        mobileState.open = true;
+        renderCurrentState();
+        return;
+    }
+
+    const clearEl = target.closest('[data-dle-mobile-browse-clear]');
+    if (clearEl) {
+        mobileState.browse = normalizeMobileBrowseState();
+        mobileState.browseExpandedKey = '';
+        mobileState.browseSearchHelpOpen = false;
+        mobileState.open = true;
+        renderCurrentState();
+        return;
+    }
+
+    const expandEl = target.closest('[data-dle-mobile-browse-expand]');
+    if (expandEl) {
+        const key = expandEl.getAttribute('data-dle-mobile-browse-expand') || '';
+        mobileState.browseExpandedKey = mobileState.browseExpandedKey === key ? '' : key;
+        mobileState.open = true;
         renderCurrentState();
         return;
     }
@@ -542,6 +683,25 @@ function handleMobileClick(event) {
     }
 }
 
+function handleMobileInput(event) {
+    const root = ensureRoot();
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target || !root.contains(target)) return;
+
+    const fieldEl = target.closest('[data-dle-mobile-browse-field]');
+    if (!fieldEl) return;
+    const field = fieldEl.getAttribute('data-dle-mobile-browse-field');
+    if (!Object.prototype.hasOwnProperty.call(normalizeMobileBrowseState(), field)) return;
+
+    mobileState.browse = normalizeMobileBrowseState({
+        ...mobileState.browse,
+        [field]: fieldEl.value ?? fieldEl.getAttribute('value') ?? '',
+    });
+    mobileState.browseExpandedKey = '';
+    mobileState.open = true;
+    renderCurrentState();
+}
+
 let mobileShellOptions = {};
 
 export function createMobileShell(options = {}) {
@@ -550,7 +710,11 @@ export function createMobileShell(options = {}) {
     mobileShellOptions = options;
     const root = ensureRoot();
     root.removeEventListener('click', handleMobileClick);
+    root.removeEventListener('input', handleMobileInput);
+    root.removeEventListener('change', handleMobileInput);
     root.addEventListener('click', handleMobileClick);
+    root.addEventListener('input', handleMobileInput);
+    root.addEventListener('change', handleMobileInput);
 
     for (const unsubscribe of mobileUnsubscribers) {
         try { unsubscribe(); } catch { /* noop */ }
@@ -589,6 +753,8 @@ export function destroyMobileShell() {
     mobileUnsubscribers = [];
     if (mobileRoot) {
         mobileRoot.removeEventListener('click', handleMobileClick);
+        mobileRoot.removeEventListener('input', handleMobileInput);
+        mobileRoot.removeEventListener('change', handleMobileInput);
         mobileRoot.remove();
         mobileRoot = null;
     }
@@ -603,5 +769,15 @@ export function destroyMobileShell() {
     if (typeof document !== 'undefined') {
         document.body.classList.remove('dle-mobile-ui-active');
     }
-    mobileState = { open: false, view: 'home', active: false, mode: 'auto', errorMessage: '', statsExpanded: false };
+    mobileState = {
+        open: false,
+        view: 'home',
+        active: false,
+        mode: 'auto',
+        errorMessage: '',
+        statsExpanded: false,
+        browse: normalizeMobileBrowseState(),
+        browseSearchHelpOpen: false,
+        browseExpandedKey: '',
+    };
 }

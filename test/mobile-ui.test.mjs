@@ -718,6 +718,44 @@ test('mobile Browse helpers: derive tag and folder options with counts', () => {
     assertEqual(MOBILE_BROWSE_DEFAULT_STATE.sort, 'priority_asc', 'default mobile Browse sort should match desktop');
 });
 
+test('renderMobileShell: Browse view renders search, filters, quick filters, and cards', () => {
+    const html = renderMobileShell({
+        statusLabel: 'Ready',
+        entriesLabel: '3 entries',
+        injectedCount: 1,
+        gapCount: 0,
+        phaseLabel: 'idle',
+        injectedSources: [{ title: 'Cosplay Mode' }],
+        entries: browseFixtureEntries,
+        loreGaps: [],
+        browseContext: {
+            pins: [{ title: 'Mimic Mode', vaultSource: 'First Vault' }],
+            blocks: [{ title: 'Keisha', vaultSource: 'First Vault' }],
+            chatInjectionCounts: new Map([['First Vault:Cosplay Mode', 2]]),
+        },
+    }, {
+        open: true,
+        view: 'browse',
+        mode: 'auto',
+        errorMessage: '',
+        statsExpanded: false,
+        browse: normalizeMobileBrowseState({ query: 'mode', tag: 'mode' }),
+        browseSearchHelpOpen: true,
+        browseExpandedKey: 'First Vault:Cosplay Mode',
+    });
+
+    assertMatch(html, /class="dle-mobile-browse-controls"/, 'Browse controls should render');
+    assertMatch(html, /data-dle-mobile-browse-field="query"/, 'search input should update mobile Browse query');
+    assertMatch(html, /data-dle-mobile-browse-field="tag"/, 'tag filter should render');
+    assertMatch(html, /data-dle-mobile-browse-quick="never-injected"/, 'quick filter should render');
+    assertMatch(html, /Search syntax/, 'help popover should render when open');
+    assertMatch(html, /class="dle-mobile-browse-card[^"]*dle-mobile-browse-injected"/, 'injected card state should render');
+    assertMatch(html, /data-dle-mobile-browse-action="pin"/, 'pin action should render');
+    assertMatch(html, /data-dle-mobile-browse-action="block"/, 'block action should render');
+    assertMatch(html, /data-dle-mobile-browse-action="copy"/, 'copy action should render');
+    assertMatch(html, /Imported from SillyTavern World Info/, 'expanded preview should render');
+});
+
 test('renderMobileShell: drill-in views tolerate missing array fields', () => {
     for (const view of ['why', 'browse', 'librarian']) {
         try {
