@@ -30,6 +30,14 @@ import {
     formatMobileStatNumber,
 } from '../src/mobile/mobile-stats.js';
 
+import {
+    MOBILE_BROWSE_DEFAULT_STATE,
+    buildMobileBrowseOptions,
+    buildMobileBrowseRows,
+    filterMobileBrowseEntries,
+    normalizeMobileBrowseState,
+} from '../src/mobile/mobile-browse.js';
+
 import { readFileSync } from 'node:fs';
 
 class MockClassList {
@@ -632,6 +640,82 @@ await testAsync('mobile shell commands: render runtime errors for missing comman
         destroyMobileShell();
         dom.restore();
     }
+});
+
+const browseFixtureEntries = [
+    {
+        title: 'Cosplay Mode',
+        keys: ['costume', 'disguise'],
+        tags: ['mode'],
+        folderPath: 'Modes',
+        vaultSource: 'First Vault',
+        priority: 50,
+        tokenEstimate: 186,
+        constant: true,
+        summary: 'Imported from SillyTavern World Info',
+        filename: 'Modes/Cosplay Mode.md',
+    },
+    {
+        title: 'Keisha',
+        keys: ['keisha', 'demetri'],
+        tags: ['character'],
+        folderPath: 'Characters',
+        vaultSource: 'First Vault',
+        priority: 100,
+        tokenEstimate: 520,
+        summary: "Keisha, Demetri's girlfriend.",
+        filename: 'Characters/Keisha.md',
+    },
+    {
+        title: 'Mimic Mode',
+        keys: ['mimic', 'illusion'],
+        tags: ['mode'],
+        folderPath: 'Modes',
+        vaultSource: 'First Vault',
+        priority: 50,
+        tokenEstimate: 240,
+        summary: 'Copies current social role.',
+        filename: 'Modes/Mimic Mode.md',
+    },
+];
+
+test('mobile Browse helpers: search supports bare tokens and field prefixes', () => {
+    const bare = filterMobileBrowseEntries(browseFixtureEntries, normalizeMobileBrowseState({ query: 'mimic illusion' }), {});
+    assertEqual(bare.entries.map(e => e.title).join(','), 'Mimic Mode', 'bare query tokens should AND-match title/keys');
+
+    const prefixed = filterMobileBrowseEntries(browseFixtureEntries, normalizeMobileBrowseState({ query: 'tag:character folder:Characters key:demetri' }), {});
+    assertEqual(prefixed.entries.map(e => e.title).join(','), 'Keisha', 'prefixed query filters should match desktop Browse syntax');
+});
+
+test('mobile Browse helpers: filters, quick filters, and sort produce card rows', () => {
+    const state = normalizeMobileBrowseState({
+        tag: 'mode',
+        folder: 'Modes',
+        sort: 'alpha_desc',
+        quick: 'never-injected',
+    });
+    const context = {
+        chatInjectionCounts: new Map([['First Vault:Cosplay Mode', 2]]),
+        injectedSources: [{ title: 'Cosplay Mode' }],
+        pins: [{ title: 'Mimic Mode', vaultSource: 'First Vault' }],
+        blocks: [],
+    };
+    const result = filterMobileBrowseEntries(browseFixtureEntries, state, context);
+    const rows = buildMobileBrowseRows(result.entries, context);
+
+    assertEqual(result.entries.map(e => e.title).join(','), 'Mimic Mode', 'never-injected quick filter should remove injected entries');
+    assertEqual(result.summary, 'Showing 1 of 3 entries', 'filtered summary should include result count');
+    assertEqual(rows[0].priorityLabel, 'P50', 'normal entries should show priority');
+    assertEqual(rows[0].isPinned, true, 'pin state should be resolved using vault-aware keys');
+    assertEqual(rows[0].keysLabel, 'mimic, illusion', 'keys should be rendered as a compact label');
+});
+
+test('mobile Browse helpers: derive tag and folder options with counts', () => {
+    const options = buildMobileBrowseOptions(browseFixtureEntries);
+
+    assertEqual(options.tags.find(t => t.value === 'mode').label, 'mode (2)', 'tag options should include counts');
+    assertEqual(options.folders.find(f => f.value === 'Modes').label, 'Modes (2)', 'folder options should include counts');
+    assertEqual(MOBILE_BROWSE_DEFAULT_STATE.sort, 'priority_asc', 'default mobile Browse sort should match desktop');
 });
 
 test('renderMobileShell: drill-in views tolerate missing array fields', () => {
