@@ -25,6 +25,11 @@ import {
     MOBILE_DISABLE_STORAGE_KEY,
 } from '../src/mobile/mobile-shell.js';
 
+import {
+    buildMobileStatusStats,
+    formatMobileStatNumber,
+} from '../src/mobile/mobile-stats.js';
+
 import { readFileSync } from 'node:fs';
 
 class MockClassList {
@@ -296,6 +301,53 @@ test('mobile detector constants: match CharacterLibrary-width shell contract', (
     assertEqual(TOUCH_TABLET_WIDTH, 1024, 'coarse pointer tablet support should stop at 1024px');
     assertEqual(MOBILE_FORCE_STORAGE_KEY, 'dleMobileUiForce', 'force key should stay stable for browser overrides');
     assertEqual(MOBILE_DISABLE_STORAGE_KEY, 'dleMobileUiDisabled', 'disable key should stay stable for browser overrides');
+});
+
+test('formatMobileStatNumber: compacts thousands for tray labels', () => {
+    assertEqual(formatMobileStatNumber(0), '0', 'zero should stay readable');
+    assertEqual(formatMobileStatNumber(999), '999', 'sub-thousand values should stay exact');
+    assertEqual(formatMobileStatNumber(13500), '13.5k', 'thousands should compact with one decimal');
+    assertEqual(formatMobileStatNumber(null), '0', 'missing numeric data should render as zero');
+});
+
+test('buildMobileStatusStats: derives collapsed warning and expanded metrics', () => {
+    const stats = buildMobileStatusStats({
+        statusLabel: 'Ready',
+        entryCount: 42,
+        injectedCount: 8,
+        indexEverLoaded: true,
+        indexing: false,
+        generationLock: false,
+        pipelinePhase: 'idle',
+        settings: {
+            maxTokensBudget: 3072,
+            unlimitedBudget: false,
+            maxEntries: 10,
+            unlimitedEntries: false,
+        },
+        lastPipelineTrace: {
+            totalTokens: 2900,
+            injected: Array.from({ length: 8 }, (_, idx) => ({ title: `Entry ${idx}` })),
+        },
+        contextTokens: 13500,
+        contextLimit: 200000,
+        librarianExtraTokens: 0,
+        aiSearchStats: {
+            calls: 2,
+            cachedHits: 1,
+            totalInputTokens: 1200,
+            totalOutputTokens: 300,
+        },
+        overallStatus: 'degraded',
+    });
+
+    assertEqual(stats.collapsed.label, 'Budget high', 'high budget use should be the strongest collapsed warning');
+    assertEqual(stats.budget.value, '2.9k / 3.1k', 'budget stat should use compact values');
+    assertEqual(stats.budget.tone, 'warn', 'budget above 80% should warn');
+    assertEqual(stats.entries.value, '8 / 10', 'entry stat should include injected count and max');
+    assertEqual(stats.context.value, '13.5k / 200.0k', 'context stat should include max context when available');
+    assertEqual(stats.ai.detail, '1 cached \u00b7 1.5k tokens', 'AI detail should include cache and token total');
+    assertEqual(stats.health.value, 'Degraded', 'overall status should format as a label');
 });
 
 test('buildMobileShellSnapshot: summarizes DeepLore state for compact UI', () => {
