@@ -804,6 +804,11 @@ test('mobile shell CSS: positions dock and sheet safely over chat', () => {
     assertMatch(css, /\.dle-mobile-sheet[\s\S]*max-height:\s*min\(78dvh,\s*620px\)/m, 'sheet should be bounded to mobile viewport height');
     assertMatch(css, /\.dle-mobile-mode-btn[\s\S]*min-height:\s*40px/m, 'mode buttons should be touch friendly');
     assertMatch(css, /\.dle-mobile-error[\s\S]*border/m, 'error banner styling should exist');
+    assertMatch(css, /\.dle-mobile-status-tray[\s\S]*border/m, 'status tray should have a bounded visual container');
+    assertMatch(css, /\.dle-mobile-status-grid[\s\S]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/m, 'expanded status tray should use compact two-column metrics');
+    assertMatch(css, /\.dle-mobile-browse-controls[\s\S]*display:\s*grid/m, 'mobile Browse controls should stack without overflow');
+    assertMatch(css, /\.dle-mobile-browse-card[\s\S]*overflow:\s*hidden/m, 'Browse cards should prevent horizontal text overflow');
+    assertMatch(css, /\.dle-mobile-browse-actions[\s\S]*min-height:\s*40px/m, 'Browse action buttons should stay touch-friendly');
 });
 
 test('setup wizard mobile CSS: compacts wizard chrome at phone widths', () => {

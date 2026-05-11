@@ -6133,6 +6133,142 @@ body.dle-mobile-ui-active .dle-mobile-shell {
     background: color-mix(in srgb, var(--SmartThemeQuoteColor, #d4a847) 22%, transparent);
 }
 
+.dle-mobile-status-tray {
+    border: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor, #444) 60%, transparent);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--SmartThemeBlurTintColor, #111) 86%, transparent);
+    padding: 8px;
+    display: grid;
+    gap: 8px;
+}
+
+.dle-mobile-status-toggle {
+    min-height: 44px;
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 8px;
+    align-items: center;
+    border: 0;
+    background: transparent;
+    color: var(--SmartThemeBodyColor, #eee);
+    text-align: left;
+}
+
+.dle-mobile-status-toggle strong {
+    font-size: 0.85em;
+    opacity: 0.78;
+}
+
+.dle-mobile-status-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.dle-mobile-status-metric {
+    min-width: 0;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--SmartThemeBotMesBlurTintColor, #222) 78%, transparent);
+    padding: 8px;
+    display: grid;
+    gap: 3px;
+}
+
+.dle-mobile-status-metric strong,
+.dle-mobile-status-metric small {
+    overflow-wrap: anywhere;
+}
+
+.dle-mobile-status-bar {
+    height: 5px;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.45);
+    overflow: hidden;
+}
+
+.dle-mobile-status-bar span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--SmartThemeQuoteColor, #d69a00);
+}
+
+.dle-mobile-browse-controls {
+    display: grid;
+    gap: 8px;
+}
+
+.dle-mobile-search {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 44px;
+    gap: 8px;
+}
+
+.dle-mobile-search input,
+.dle-mobile-browse-filter-grid select {
+    min-width: 0;
+    min-height: 40px;
+}
+
+.dle-mobile-browse-filter-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.dle-mobile-browse-quick {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.dle-mobile-browse-quick button,
+.dle-mobile-browse-summary button {
+    min-height: 36px;
+}
+
+.dle-mobile-browse-list {
+    display: grid;
+    gap: 10px;
+}
+
+.dle-mobile-browse-card {
+    overflow: hidden;
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--SmartThemeBotMesBlurTintColor, #222) 82%, transparent);
+    border: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor, #444) 55%, transparent);
+    padding: 10px;
+    display: grid;
+    gap: 8px;
+}
+
+.dle-mobile-browse-title-row,
+.dle-mobile-browse-meta,
+.dle-mobile-browse-actions {
+    min-width: 0;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.dle-mobile-browse-title-row strong {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.dle-mobile-browse-actions button {
+    min-height: 40px;
+    min-width: 40px;
+}
+
+.dle-mobile-browse-preview {
+    border-top: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor, #444) 50%, transparent);
+    padding-top: 8px;
+    overflow-wrap: anywhere;
+}
+
 @media (prefers-reduced-motion: reduce) {
     .dle-mobile-sheet {
         transition: none;
