@@ -1,11 +1,17 @@
 import {
+    aiSearchStats,
+    computeOverallStatus,
     vaultIndex,
     indexing,
     indexEverLoaded,
     generationLock,
     lastInjectionSources,
+    lastPipelineTrace,
+    librarianChatStats,
     loreGaps,
     pipelinePhase,
+    onAiStatsUpdated,
+    onCircuitStateChanged,
     onIndexUpdated,
     onIndexingChanged,
     onInjectionSourcesReady,
@@ -13,7 +19,10 @@ import {
     onGenerationLockChanged,
     onLoreGapsChanged,
     onPipelinePhaseChanged,
+    onPipelineTraceUpdated,
 } from '../state.js';
+import { getCircuitState } from '../vault/obsidian-api.js';
+import { buildMobileStatusStats } from './mobile-stats.js';
 
 export const MOBILE_VIEWPORT_WIDTH = 768;
 export const TOUCH_TABLET_WIDTH = 1024;
@@ -31,6 +40,7 @@ let mobileState = {
     active: false,
     mode: 'auto',
     errorMessage: '',
+    statsExpanded: false,
 };
 let mobileUnsubscribers = [];
 let mobileResizeHandler = null;
@@ -175,17 +185,40 @@ export function buildMobileShellSnapshot(source = {}) {
 
     const entryCount = Array.isArray(state.vaultIndex) ? state.vaultIndex.length : 0;
     const gapCount = Array.isArray(state.loreGaps) ? state.loreGaps.length : 0;
+    const injectedCount = countInjected(state.lastInjectionSources);
+    const context = getContext();
+    const settings = source.settings ?? mobileShellOptions.getSettings?.() ?? {};
+    const drawerState = source.drawerState ?? mobileShellOptions.getDrawerState?.() ?? {};
+    const circuitState = source.circuitState ?? mobileShellOptions.getCircuitState?.() ?? getCircuitState();
+    const overallStatus = source.overallStatus ?? computeOverallStatus(circuitState);
+    const stats = buildMobileStatusStats({
+        statusLabel: statusForState(state),
+        entryCount,
+        injectedCount,
+        indexEverLoaded: state.indexEverLoaded,
+        indexing: state.indexing,
+        generationLock: state.generationLock,
+        pipelinePhase: state.pipelinePhase,
+        settings,
+        lastPipelineTrace: source.lastPipelineTrace ?? lastPipelineTrace,
+        contextTokens: source.contextTokens ?? drawerState.contextTokens ?? 0,
+        contextLimit: source.contextLimit ?? context?.chatCompletionSettings?.openai_max_context ?? context?.maxContext ?? 0,
+        librarianExtraTokens: source.librarianExtraTokens ?? librarianChatStats?.estimatedExtraTokens ?? 0,
+        aiSearchStats: source.aiSearchStats ?? aiSearchStats,
+        overallStatus,
+    });
 
     return {
         statusLabel: statusForState(state),
         entriesLabel: pluralize(entryCount, 'entry', 'entries'),
         entryCount,
-        injectedCount: countInjected(state.lastInjectionSources),
+        injectedCount,
         gapCount,
         phaseLabel: state.pipelinePhase || 'idle',
         injectedSources: Array.isArray(state.lastInjectionSources) ? state.lastInjectionSources : [],
         entries: Array.isArray(state.vaultIndex) ? state.vaultIndex : [],
         loreGaps: Array.isArray(state.loreGaps) ? state.loreGaps : [],
+        stats,
     };
 }
 
@@ -204,8 +237,43 @@ function renderActionButton(label, view, icon, command = '') {
     `;
 }
 
-function renderHome(snapshot) {
+function renderStatusMetric(metric) {
+    const ratio = Math.max(0, Math.min(100, Number(metric?.ratio || 0)));
     return `
+        <div class="dle-mobile-status-metric dle-mobile-status-${escapeHtml(metric?.tone || 'ok')}">
+            <span>${escapeHtml(metric?.label || '')}</span>
+            <strong>${escapeHtml(metric?.value || '')}</strong>
+            ${metric?.detail ? `<small>${escapeHtml(metric.detail)}</small>` : ''}
+            <div class="dle-mobile-status-bar" aria-hidden="true"><span style="width:${ratio}%"></span></div>
+        </div>
+    `;
+}
+
+function renderStatusTray(snapshot, state) {
+    const stats = snapshot.stats;
+    if (!stats) return '';
+    const expandedClass = state.statsExpanded ? ' dle-mobile-status-expanded' : '';
+    return `
+        <section class="dle-mobile-status-tray${expandedClass}" aria-label="DeepLore status">
+            <button type="button" class="dle-mobile-status-toggle" data-dle-mobile-action="toggle-stats" aria-expanded="${state.statsExpanded ? 'true' : 'false'}">
+                <span>${escapeHtml(stats.collapsed.label)}</span>
+                <strong>${escapeHtml(snapshot.injectedCount)} injected</strong>
+                <i class="fa-solid fa-chevron-${state.statsExpanded ? 'down' : 'up'}" aria-hidden="true"></i>
+            </button>
+            ${state.statsExpanded ? `<div class="dle-mobile-status-grid">
+                ${renderStatusMetric(stats.budget)}
+                ${renderStatusMetric(stats.entries)}
+                ${renderStatusMetric(stats.context)}
+                ${renderStatusMetric(stats.ai)}
+                ${renderStatusMetric(stats.health)}
+            </div>` : ''}
+        </section>
+    `;
+}
+
+function renderHome(snapshot, state = mobileState) {
+    return `
+        ${renderStatusTray(snapshot, state)}
         <div class="dle-mobile-summary">
             ${renderPill('Status', snapshot.statusLabel, snapshot.statusLabel === 'Ready' ? 'ok' : 'warn')}
             ${renderPill('Vault', snapshot.entriesLabel)}
@@ -310,13 +378,13 @@ function renderTools(mode = 'auto') {
     `;
 }
 
-function renderBody(snapshot, view, mode = 'auto') {
+function renderBody(snapshot, view, mode = 'auto', state = mobileState) {
     switch (view) {
         case 'why': return renderWhy(snapshot);
         case 'browse': return renderBrowse(snapshot);
         case 'librarian': return renderLibrarian(snapshot);
         case 'tools': return renderTools(mode);
-        default: return renderHome(snapshot);
+        default: return renderHome(snapshot, state);
     }
 }
 
@@ -344,7 +412,7 @@ function renderMobileShellContents(snapshot, state = mobileState) {
             </header>
             <div class="dle-mobile-body">
                 ${errorMessage ? `<div class="dle-mobile-error" role="alert">${escapeHtml(errorMessage)}</div>` : ''}
-                ${renderBody(snapshot, state.view, mode)}
+                ${renderBody(snapshot, state.view, mode, state)}
             </div>
         </section>
     `;
@@ -417,6 +485,10 @@ function handleMobileClick(event) {
         mobileState.errorMessage = '';
         if (action === 'toggle') mobileState.open = !mobileState.open;
         if (action === 'close') mobileState.open = false;
+        if (action === 'toggle-stats') {
+            mobileState.statsExpanded = !mobileState.statsExpanded;
+            mobileState.open = true;
+        }
         renderCurrentState();
         return;
     }
@@ -491,6 +563,9 @@ export function createMobileShell(options = {}) {
         onGenerationLockChanged(renderCurrentState),
         onLoreGapsChanged(renderCurrentState),
         onPipelinePhaseChanged(renderCurrentState),
+        onAiStatsUpdated(renderCurrentState),
+        onCircuitStateChanged(renderCurrentState),
+        onPipelineTraceUpdated(renderCurrentState),
     ];
 
     if (mobileResizeHandler) window.removeEventListener('resize', mobileResizeHandler);
@@ -528,5 +603,5 @@ export function destroyMobileShell() {
     if (typeof document !== 'undefined') {
         document.body.classList.remove('dle-mobile-ui-active');
     }
-    mobileState = { open: false, view: 'home', active: false, mode: 'auto', errorMessage: '' };
+    mobileState = { open: false, view: 'home', active: false, mode: 'auto', errorMessage: '', statsExpanded: false };
 }

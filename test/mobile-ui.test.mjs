@@ -391,6 +391,39 @@ test('renderMobileShell: renders hybrid dock, home sheet, and quick actions', ()
     assert(!/data-dle-mobile-view="why"[^>]*data-dle-mobile-command/.test(html), 'home Why action should drill in before opening the full popup');
 });
 
+test('renderMobileShell: renders collapsed and expanded status tray', () => {
+    const snapshot = {
+        statusLabel: 'Ready',
+        entriesLabel: '12 entries',
+        injectedCount: 2,
+        gapCount: 0,
+        phaseLabel: 'idle',
+        entries: [],
+        injectedSources: [],
+        loreGaps: [],
+        stats: {
+            collapsed: { label: 'Budget high', tone: 'warn' },
+            budget: { label: 'Budget', value: '2.9k / 3.1k', ratio: 94, tone: 'warn' },
+            entries: { label: 'Entries', value: '8 / 10', ratio: 80, tone: 'ok' },
+            context: { label: 'Context', value: '13.5k / 200.0k', ratio: 7, tone: 'ok' },
+            ai: { label: 'AI', value: '2 calls', detail: '1 cached \u00b7 1.5k tokens', tone: 'ok' },
+            health: { label: 'Health', value: 'Degraded', detail: 'Ready', tone: 'warn' },
+        },
+    };
+
+    const collapsed = renderMobileShell(snapshot, { open: true, view: 'home', mode: 'auto', errorMessage: '', statsExpanded: false });
+    assertMatch(collapsed, /class="dle-mobile-status-tray[^"]*"/, 'status tray should render on home');
+    assertMatch(collapsed, /data-dle-mobile-action="toggle-stats"/, 'tray toggle should be present');
+    assertMatch(collapsed, /Budget high/, 'collapsed warning should be visible');
+    assert(!/2\.9k \/ 3\.1k/.test(collapsed), 'expanded budget value should be hidden while collapsed');
+
+    const expanded = renderMobileShell(snapshot, { open: true, view: 'home', mode: 'auto', errorMessage: '', statsExpanded: true });
+    assertMatch(expanded, /class="dle-mobile-status-tray[^"]*dle-mobile-status-expanded"/, 'expanded class should render');
+    assertMatch(expanded, /2\.9k \/ 3\.1k/, 'expanded budget value should render');
+    assertMatch(expanded, /13\.5k \/ 200\.0k/, 'expanded context value should render');
+    assertMatch(expanded, /1 cached \u00b7 1\.5k tokens/, 'expanded AI detail should render');
+});
+
 test('renderMobileShell: closed shell keeps sheet mounted and collapsed', () => {
     const html = renderMobileShell({
         statusLabel: 'Ready',
@@ -483,6 +516,13 @@ test('mobile shell commands: set visible errors when command execution is unavai
     assertMatch(source, /Promise\.resolve\(\)[\s\S]*mobileShellOptions\.buildIndex\?\.\(\)[\s\S]*catch/m, 'refresh should catch sync and async buildIndex failures');
 });
 
+test('mobile status tray integration: init passes settings and drawer stats providers', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+
+    assertMatch(source, /import \{ ds, pushActivity \} from '\.\/src\/drawer\/drawer-state\.js';/, 'index should import drawer state for mobile stats');
+    assertMatch(source, /createMobileShell\(\{\s*buildIndex,\s*getSettings,\s*getDrawerState:\s*\(\)\s*=>\s*ds,\s*\}\)/m, 'mobile shell should receive live settings and drawer stats providers');
+});
+
 test('mobile mode handling: mode clicks update storage and shell state', () => {
     const dom = installMobileDom({ viewportWidth: 390 });
     try {
@@ -513,6 +553,26 @@ test('mobile mode handling: mode clicks update storage and shell state', () => {
         assertEqual(dom.storage.getItem(MOBILE_DISABLE_STORAGE_KEY), '1', 'disabled click should persist the disable flag');
         assertEqual(root.hidden, true, 'disabled mode should hide the mobile shell');
         assert(!document.body.classList.contains('dle-mobile-ui-active'), 'disabled mode should clear the body active class');
+    } finally {
+        destroyMobileShell();
+        dom.restore();
+    }
+});
+
+test('mobile status tray: toggle click flips expanded state', () => {
+    const dom = installMobileDom({ viewportWidth: 390 });
+    try {
+        const root = createMobileShell();
+        const target = new MockElement('button');
+        target.ownerDocument = root.ownerDocument;
+        target.parentElement = root;
+        target.setAttribute('data-dle-mobile-action', 'toggle-stats');
+
+        clickMobileRoot(root, target);
+        assertMatch(root.innerHTML, /dle-mobile-status-expanded/, 'first toggle should expand the status tray');
+
+        clickMobileRoot(root, target);
+        assert(!/dle-mobile-status-expanded/.test(root.innerHTML), 'second toggle should collapse the status tray');
     } finally {
         destroyMobileShell();
         dom.restore();
