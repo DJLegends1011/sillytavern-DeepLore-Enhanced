@@ -1262,4 +1262,24 @@ test('renderInjection: renders Entry Timers section', () => {
     assertMatch(html, /Entry Timers/, 'should contain Entry Timers collapsible');
 });
 
+test('mobile shell: injection filter clicks update state', () => {
+    const dom = installMobileDom();
+    try {
+        const root = createMobileShell({ getSettings: () => ({}), getDrawerState: () => ({}) });
+        assert(root, 'mobile shell should be created');
+
+        const filterTarget = new MockElement('button');
+        filterTarget.ownerDocument = root.ownerDocument;
+        filterTarget.parentElement = root;
+        filterTarget.setAttribute('data-dle-mobile-injection-filter', 'filtered');
+        clickMobileRoot(root, filterTarget);
+
+        assertMatch(root.innerHTML, /dle-mobile-injection-filter-btn/, 'should re-render with injection filter buttons');
+
+        destroyMobileShell();
+    } finally {
+        dom.restore();
+    }
+});
+
 summary('Mobile UI foundation tests');

@@ -807,6 +807,40 @@ function handleMobileClick(event) {
         return;
     }
 
+    const injectionFilterEl = target.closest('[data-dle-mobile-injection-filter]');
+    if (injectionFilterEl) {
+        mobileState.injectionFilter = injectionFilterEl.getAttribute('data-dle-mobile-injection-filter') || 'injected';
+        mobileState.injectionExpandedKey = '';
+        mobileState.view = 'injection';
+        mobileState.open = true;
+        renderCurrentState();
+        return;
+    }
+
+    const injectionExpandEl = target.closest('[data-dle-mobile-injection-expand]');
+    if (injectionExpandEl) {
+        const key = injectionExpandEl.getAttribute('data-dle-mobile-injection-expand') || '';
+        mobileState.injectionExpandedKey = mobileState.injectionExpandedKey === key ? '' : key;
+        mobileState.open = true;
+        renderCurrentState();
+        return;
+    }
+
+    const injectionActionEl = target.closest('[data-dle-mobile-injection-action]');
+    if (injectionActionEl) {
+        const action = injectionActionEl.getAttribute('data-dle-mobile-injection-action');
+        if (action === 'obsidian') {
+            const filename = injectionActionEl.getAttribute('data-filename') || '';
+            const vaultSource = injectionActionEl.getAttribute('data-vault') || '';
+            openMobileBrowseObsidian(filename, vaultSource || null);
+        } else if (action === 'browse') {
+            mobileState.view = 'browse';
+            mobileState.errorMessage = '';
+        }
+        renderCurrentState();
+        return;
+    }
+
     const modeEl = target.closest('[data-dle-mobile-mode]');
     if (modeEl) {
         const mode = modeEl.getAttribute('data-dle-mobile-mode') || 'auto';
