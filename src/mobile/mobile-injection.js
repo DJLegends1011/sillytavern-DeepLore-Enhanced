@@ -116,7 +116,7 @@ export function extractTimerData(cooldownTracker, decayTracker, settings = {}) {
 export function buildMobileInjectionRows(entries) {
     if (!Array.isArray(entries)) return [];
     return entries.map(entry => {
-        const { type, keyword } = parseMatchReason(entry.matchedBy);
+        const { type } = parseMatchReason(entry.matchedBy);
         const tokenCount = Number(entry.tokens) || 0;
         return {
             key: `${entry.vaultSource || ''}:${entry.title || 'untitled'}`,

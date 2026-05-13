@@ -35,7 +35,6 @@ import {
 } from './mobile-browse.js';
 import { buildMobileStatusStats } from './mobile-stats.js';
 import {
-    normalizeMobileInjectionState,
     splitInjectionEntries,
     buildMobileInjectionRows,
     extractTimerData,
