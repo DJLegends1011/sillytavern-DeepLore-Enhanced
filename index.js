@@ -1222,6 +1222,7 @@ jQuery(async function () {
             buildIndex,
             getSettings,
             getDrawerState: () => ds,
+            getChatMetadata: () => chat_metadata,
         });
 
         loadSettingsUI();

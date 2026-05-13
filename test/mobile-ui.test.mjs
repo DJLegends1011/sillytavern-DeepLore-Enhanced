@@ -375,6 +375,43 @@ test('buildMobileShellSnapshot: summarizes DeepLore state for compact UI', () =>
     assertEqual(snapshot.gapCount, 1, 'lore gap count should be included');
 });
 
+test('buildMobileShellSnapshot: falls back to pipeline trace after transient sources clear', () => {
+    const snapshot = buildMobileShellSnapshot({
+        vaultIndex: [{ title: 'Study Progression' }],
+        indexing: false,
+        generationLock: false,
+        pipelinePhase: 'idle',
+        lastInjectionSources: null,
+        lastPipelineTrace: {
+            injected: [{ title: 'Study Progression', tokens: 146, matchedBy: 'keyword: shifting' }],
+        },
+        loreGaps: [],
+        indexEverLoaded: true,
+    });
+
+    assertEqual(snapshot.injectedCount, 1, 'mobile status should keep showing the last injected count after sources are consumed');
+    assertEqual(snapshot.injectedSources[0]?.title, 'Study Progression', 'mobile Why should render the trace fallback source');
+});
+
+test('buildMobileShellSnapshot: reads chat metadata provider for Browse pin/block state', () => {
+    const snapshot = buildMobileShellSnapshot({
+        vaultIndex: [{ title: 'Cosplay Mode', vaultSource: 'First Vault' }],
+        indexing: false,
+        generationLock: false,
+        pipelinePhase: 'idle',
+        lastInjectionSources: [],
+        loreGaps: [],
+        indexEverLoaded: true,
+        chatMetadata: {
+            deeplore_pins: [{ title: 'Cosplay Mode', vaultSource: 'First Vault' }],
+            deeplore_blocks: [{ title: 'Keisha', vaultSource: 'First Vault' }],
+        },
+    });
+
+    assertEqual(snapshot.browseContext.pins[0]?.title, 'Cosplay Mode', 'mobile Browse should use live ST metadata pins');
+    assertEqual(snapshot.browseContext.blocks[0]?.title, 'Keisha', 'mobile Browse should use live ST metadata blocks');
+});
+
 test('renderMobileShell: renders hybrid dock, home sheet, and quick actions', () => {
     const html = renderMobileShell({
         statusLabel: 'Ready',
@@ -528,7 +565,7 @@ test('mobile status tray integration: init passes settings and drawer stats prov
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
 
     assertMatch(source, /import \{ ds, pushActivity \} from '\.\/src\/drawer\/drawer-state\.js';/, 'index should import drawer state for mobile stats');
-    assertMatch(source, /createMobileShell\(\{\s*buildIndex,\s*getSettings,\s*getDrawerState:\s*\(\)\s*=>\s*ds,\s*\}\)/m, 'mobile shell should receive live settings and drawer stats providers');
+    assertMatch(source, /createMobileShell\(\{\s*buildIndex,\s*getSettings,\s*getDrawerState:\s*\(\)\s*=>\s*ds,\s*getChatMetadata:\s*\(\)\s*=>\s*chat_metadata,\s*\}\)/m, 'mobile shell should receive live settings, drawer stats, and chat metadata providers');
 });
 
 test('mobile mode handling: mode clicks update storage and shell state', () => {
@@ -754,6 +791,38 @@ test('renderMobileShell: Browse view renders search, filters, quick filters, and
     assertMatch(html, /data-dle-mobile-browse-action="block"/, 'block action should render');
     assertMatch(html, /data-dle-mobile-browse-action="copy"/, 'copy action should render');
     assertMatch(html, /Imported from SillyTavern World Info/, 'expanded preview should render');
+});
+
+test('renderMobileShell: Browse cards expose visible pin and block states', () => {
+    const html = renderMobileShell({
+        statusLabel: 'Ready',
+        entriesLabel: '3 entries',
+        injectedCount: 1,
+        gapCount: 0,
+        phaseLabel: 'idle',
+        injectedSources: [{ title: 'Cosplay Mode' }],
+        entries: browseFixtureEntries,
+        loreGaps: [],
+        browseContext: {
+            pins: [{ title: 'Cosplay Mode', vaultSource: 'First Vault' }],
+            blocks: [{ title: 'Keisha', vaultSource: 'First Vault' }],
+            chatInjectionCounts: new Map(),
+        },
+    }, {
+        open: true,
+        view: 'browse',
+        mode: 'auto',
+        errorMessage: '',
+        statsExpanded: false,
+        browse: normalizeMobileBrowseState(),
+        browseSearchHelpOpen: false,
+        browseExpandedKey: '',
+    });
+
+    assertMatch(html, /class="dle-mobile-browse-state-pill dle-mobile-browse-state-pin"[^>]*>Pinned</, 'pinned entries should show a visible state pill');
+    assertMatch(html, /class="dle-mobile-browse-state-pill dle-mobile-browse-state-block"[^>]*>Blocked</, 'blocked entries should show a visible state pill');
+    assertMatch(html, /aria-pressed="true"[^>]*>Pinned</, 'active pin button should use a visible active label');
+    assertMatch(html, /aria-pressed="true"[^>]*>Blocked</, 'active block button should use a visible active label');
 });
 
 test('mobile Browse actions: shell keeps ST metadata imports dynamic', () => {

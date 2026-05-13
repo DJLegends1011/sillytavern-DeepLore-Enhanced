@@ -177,6 +177,12 @@ function countInjected(sources) {
     return Array.isArray(sources) ? sources.length : 0;
 }
 
+function normalizeInjectedSources(sources, trace) {
+    if (Array.isArray(sources) && sources.length > 0) return sources;
+    if (Array.isArray(trace?.injected) && trace.injected.length > 0) return trace.injected;
+    return [];
+}
+
 function statusForState(source) {
     if (source.indexing) return 'Indexing';
     if (source.generationLock || source.pipelinePhase !== 'idle') return 'Working';
@@ -191,21 +197,24 @@ export function buildMobileShellSnapshot(source = {}) {
         generationLock: source.generationLock ?? generationLock,
         pipelinePhase: source.pipelinePhase ?? pipelinePhase,
         lastInjectionSources: source.lastInjectionSources ?? lastInjectionSources,
+        lastPipelineTrace: source.lastPipelineTrace ?? lastPipelineTrace,
         loreGaps: source.loreGaps ?? loreGaps,
         indexEverLoaded: source.indexEverLoaded ?? indexEverLoaded,
     };
 
     const entryCount = Array.isArray(state.vaultIndex) ? state.vaultIndex.length : 0;
     const gapCount = Array.isArray(state.loreGaps) ? state.loreGaps.length : 0;
-    const injectedCount = countInjected(state.lastInjectionSources);
+    const injectedSources = normalizeInjectedSources(state.lastInjectionSources, state.lastPipelineTrace);
+    const injectedCount = countInjected(injectedSources);
     const context = getContext();
     const settings = source.settings ?? mobileShellOptions.getSettings?.() ?? {};
     const drawerState = source.drawerState ?? mobileShellOptions.getDrawerState?.() ?? {};
     const circuitState = source.circuitState ?? mobileShellOptions.getCircuitState?.() ?? getCircuitState();
     const overallStatus = source.overallStatus ?? computeOverallStatus(circuitState);
+    const chatMetadata = source.chatMetadata ?? mobileShellOptions.getChatMetadata?.() ?? globalThis.chat_metadata ?? {};
     const browseContext = source.browseContext || {
-        pins: globalThis.chat_metadata?.deeplore_pins || [],
-        blocks: globalThis.chat_metadata?.deeplore_blocks || [],
+        pins: chatMetadata?.deeplore_pins || [],
+        blocks: chatMetadata?.deeplore_blocks || [],
         chatInjectionCounts: source.chatInjectionCounts ?? chatInjectionCounts,
     };
     const stats = buildMobileStatusStats({
@@ -232,7 +241,7 @@ export function buildMobileShellSnapshot(source = {}) {
         injectedCount,
         gapCount,
         phaseLabel: state.pipelinePhase || 'idle',
-        injectedSources: Array.isArray(state.lastInjectionSources) ? state.lastInjectionSources : [],
+        injectedSources,
         entries: Array.isArray(state.vaultIndex) ? state.vaultIndex : [],
         loreGaps: Array.isArray(state.loreGaps) ? state.loreGaps : [],
         stats,
@@ -403,6 +412,11 @@ function renderBrowseCard(row, state) {
     const title = entry.title || row.title || '';
     const vault = entry.vaultSource || '';
     const filename = entry.filename || '';
+    const statePills = [
+        row.isInjected ? '<span class="dle-mobile-browse-state-pill dle-mobile-browse-state-injected">Injected</span>' : '',
+        row.isPinned ? '<span class="dle-mobile-browse-state-pill dle-mobile-browse-state-pin">Pinned</span>' : '',
+        row.isBlocked ? '<span class="dle-mobile-browse-state-pill dle-mobile-browse-state-block">Blocked</span>' : '',
+    ].filter(Boolean).join('');
     return `
         <article class="${classNames}" data-dle-mobile-browse-key="${escapeHtml(row.key)}">
             <div class="dle-mobile-browse-title-row">
@@ -417,9 +431,10 @@ function renderBrowseCard(row, state) {
                 ${row.tokenLabel ? `<span>${escapeHtml(row.tokenLabel)}</span>` : ''}
                 ${row.injectedCount ? `<span>${escapeHtml(row.injectedCount)}x</span>` : ''}
             </div>
+            ${statePills ? `<div class="dle-mobile-browse-states">${statePills}</div>` : ''}
             <div class="dle-mobile-browse-actions">
-                <button type="button" data-dle-mobile-browse-action="pin" data-title="${escapeHtml(title)}" data-vault="${escapeHtml(vault)}" data-filename="${escapeHtml(filename)}" aria-pressed="${row.isPinned ? 'true' : 'false'}">Pin</button>
-                <button type="button" data-dle-mobile-browse-action="block" data-title="${escapeHtml(title)}" data-vault="${escapeHtml(vault)}" data-filename="${escapeHtml(filename)}" aria-pressed="${row.isBlocked ? 'true' : 'false'}">Block</button>
+                <button type="button" data-dle-mobile-browse-action="pin" data-title="${escapeHtml(title)}" data-vault="${escapeHtml(vault)}" data-filename="${escapeHtml(filename)}" aria-pressed="${row.isPinned ? 'true' : 'false'}">${row.isPinned ? 'Pinned' : 'Pin'}</button>
+                <button type="button" data-dle-mobile-browse-action="block" data-title="${escapeHtml(title)}" data-vault="${escapeHtml(vault)}" data-filename="${escapeHtml(filename)}" aria-pressed="${row.isBlocked ? 'true' : 'false'}">${row.isBlocked ? 'Blocked' : 'Block'}</button>
                 <button type="button" data-dle-mobile-browse-action="copy" data-title="${escapeHtml(title)}" data-vault="${escapeHtml(vault)}" data-filename="${escapeHtml(filename)}">Copy</button>
                 ${filename ? `<button type="button" data-dle-mobile-browse-action="obsidian" data-title="${escapeHtml(title)}" data-vault="${escapeHtml(vault)}" data-filename="${escapeHtml(filename)}">Open</button>` : ''}
             </div>

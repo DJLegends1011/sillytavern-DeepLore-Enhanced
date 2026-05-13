@@ -6235,7 +6235,7 @@ body.dle-mobile-ui-active .dle-mobile-shell {
 
 .dle-mobile-browse-card {
     overflow: hidden;
-    border-radius: 12px;
+    border-radius: 8px;
     background: color-mix(in srgb, var(--SmartThemeBotMesBlurTintColor, #222) 82%, transparent);
     border: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor, #444) 55%, transparent);
     padding: 10px;
@@ -6243,8 +6243,23 @@ body.dle-mobile-ui-active .dle-mobile-shell {
     gap: 8px;
 }
 
+.dle-mobile-browse-injected {
+    border-color: color-mix(in srgb, var(--dle-success, #7ecb27) 70%, var(--SmartThemeBorderColor, #444));
+    box-shadow: inset 3px 0 0 var(--dle-success, #7ecb27);
+}
+
+.dle-mobile-browse-pinned {
+    border-color: color-mix(in srgb, var(--SmartThemeQuoteColor, #d69a00) 70%, var(--SmartThemeBorderColor, #444));
+}
+
+.dle-mobile-browse-blocked {
+    border-color: color-mix(in srgb, var(--dle-danger, #ff4d6d) 70%, var(--SmartThemeBorderColor, #444));
+    opacity: 0.82;
+}
+
 .dle-mobile-browse-title-row,
 .dle-mobile-browse-meta,
+.dle-mobile-browse-states,
 .dle-mobile-browse-actions {
     min-width: 0;
     display: flex;
@@ -6258,9 +6273,62 @@ body.dle-mobile-ui-active .dle-mobile-shell {
     overflow-wrap: anywhere;
 }
 
+.dle-mobile-browse-title-row button {
+    min-width: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    padding: 0;
+    text-align: left;
+}
+
+.dle-mobile-browse-meta {
+    color: var(--SmartThemeEmColor, #aaa);
+    font-size: 0.9em;
+}
+
+.dle-mobile-browse-state-pill {
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: 0.78em;
+    font-weight: 700;
+    line-height: 1.5;
+}
+
+.dle-mobile-browse-state-injected {
+    color: var(--dle-success, #7ecb27);
+    background: color-mix(in srgb, var(--dle-success, #7ecb27) 16%, transparent);
+}
+
+.dle-mobile-browse-state-pin {
+    color: var(--SmartThemeQuoteColor, #d69a00);
+    background: color-mix(in srgb, var(--SmartThemeQuoteColor, #d69a00) 18%, transparent);
+}
+
+.dle-mobile-browse-state-block {
+    color: var(--dle-danger, #ff4d6d);
+    background: color-mix(in srgb, var(--dle-danger, #ff4d6d) 16%, transparent);
+}
+
 .dle-mobile-browse-actions button {
     min-height: 40px;
     min-width: 40px;
+    border-radius: 8px;
+}
+
+.dle-mobile-browse-actions button[aria-pressed="true"] {
+    border-color: currentColor;
+    font-weight: 700;
+}
+
+.dle-mobile-browse-actions button[data-dle-mobile-browse-action="pin"][aria-pressed="true"] {
+    color: var(--SmartThemeQuoteColor, #d69a00);
+    background: color-mix(in srgb, var(--SmartThemeQuoteColor, #d69a00) 20%, transparent);
+}
+
+.dle-mobile-browse-actions button[data-dle-mobile-browse-action="block"][aria-pressed="true"] {
+    color: var(--dle-danger, #ff4d6d);
+    background: color-mix(in srgb, var(--dle-danger, #ff4d6d) 18%, transparent);
 }
 
 .dle-mobile-browse-preview {
