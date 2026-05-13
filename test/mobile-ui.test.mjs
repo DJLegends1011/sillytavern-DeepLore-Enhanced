@@ -1282,4 +1282,15 @@ test('mobile shell: injection filter clicks update state', () => {
     }
 });
 
+test('style.css: contains mobile injection card and filter styles', () => {
+    const css = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+
+    assertMatch(css, /\.dle-mobile-injection-filters/, 'should define injection filter toggle styles');
+    assertMatch(css, /\.dle-mobile-injection-card/, 'should define injection card styles');
+    assertMatch(css, /\.dle-mobile-injection-filtered/, 'should define filtered entry muted styles');
+    assertMatch(css, /\.dle-mobile-injection-badge/, 'should define injection badge styles');
+    assertMatch(css, /\.dle-mobile-injection-timers/, 'should define injection timers styles');
+    assertMatch(css, /\.dle-mobile-injection-expanded/, 'should define expanded card styles');
+});
+
 summary('Mobile UI foundation tests');
