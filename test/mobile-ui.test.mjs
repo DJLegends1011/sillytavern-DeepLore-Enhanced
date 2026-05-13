@@ -41,6 +41,7 @@ import {
 import {
     normalizeMobileInjectionState,
     splitInjectionEntries,
+    buildMobileInjectionRows,
     MOBILE_INJECTION_DEFAULT_STATE,
 } from '../src/mobile/mobile-injection.js';
 
@@ -1060,6 +1061,74 @@ test('splitInjectionEntries: does not duplicate injected entries in filtered lis
     const result = splitInjectionEntries(sources, trace, 'filtered');
     const keishaEntries = result.entries.filter(e => e.title === 'Keisha');
     assertEqual(keishaEntries.length, 0, 'injected entries should be excluded from filtered list');
+});
+
+test('buildMobileInjectionRows: maps injected source to display row', () => {
+    const entries = [
+        { title: 'Keisha', tokens: 217, matchedBy: 'keyword: Keisha', vaultSource: 'TestVault', filename: 'Keisha.md', isFiltered: false },
+    ];
+    const rows = buildMobileInjectionRows(entries);
+
+    assertEqual(rows.length, 1, 'should produce one row');
+    assertEqual(rows[0].title, 'Keisha', 'title should match');
+    assertEqual(rows[0].tokenCount, 217, 'tokenCount should be numeric');
+    assertEqual(rows[0].tokenLabel, '217 tok', 'tokenLabel should be formatted');
+    assertEqual(rows[0].isKeyword, true, 'keyword match should set isKeyword');
+    assertEqual(rows[0].matchLabel, 'KEY', 'keyword match should produce KEY label');
+    assertEqual(rows[0].filename, 'Keisha.md', 'filename should pass through');
+    assertEqual(rows[0].vaultSource, 'TestVault', 'vaultSource should pass through');
+    assertEqual(rows[0].isFiltered, false, 'injected entry should not be filtered');
+    assert(rows[0].key, 'should produce a key for expand/collapse');
+});
+
+test('buildMobileInjectionRows: detects AI match type', () => {
+    const entries = [
+        { title: 'Room', tokens: 100, matchedBy: 'AI selection', isFiltered: false },
+    ];
+    const rows = buildMobileInjectionRows(entries);
+
+    assertEqual(rows[0].isKeyword, false, 'AI match should not set isKeyword');
+    assertEqual(rows[0].matchLabel, 'AI', 'AI match should produce AI label');
+});
+
+test('buildMobileInjectionRows: detects keyword+AI match type', () => {
+    const entries = [
+        { title: 'Blade', tokens: 150, matchedBy: 'blade → AI: relevant', isFiltered: false },
+    ];
+    const rows = buildMobileInjectionRows(entries);
+
+    assertEqual(rows[0].isKeyword, true, 'keyword+AI should set isKeyword');
+    assertEqual(rows[0].matchLabel, 'KEY+AI', 'keyword+AI should produce KEY+AI label');
+});
+
+test('buildMobileInjectionRows: handles constant and pinned entries', () => {
+    const constant = buildMobileInjectionRows([{ title: 'Rules', matchedBy: 'constant', isFiltered: false }]);
+    assertEqual(constant[0].matchLabel, 'CONST', 'constant should produce CONST label');
+
+    const pinned = buildMobileInjectionRows([{ title: 'Fav', matchedBy: 'pinned', isFiltered: false }]);
+    assertEqual(pinned[0].matchLabel, 'PIN', 'pinned should produce PIN label');
+});
+
+test('buildMobileInjectionRows: passes through isFiltered flag', () => {
+    const entries = [
+        { title: 'Blocked', tokens: 50, matchedBy: 'keyword', reason: 'over budget', isFiltered: true },
+    ];
+    const rows = buildMobileInjectionRows(entries);
+
+    assertEqual(rows[0].isFiltered, true, 'filtered flag should pass through');
+    assertEqual(rows[0].reason, 'over budget', 'reason should pass through for filtered entries');
+});
+
+test('buildMobileInjectionRows: handles missing tokens gracefully', () => {
+    const rows = buildMobileInjectionRows([{ title: 'NoTokens', matchedBy: 'keyword', isFiltered: false }]);
+    assertEqual(rows[0].tokenCount, 0, 'missing tokens should default to 0');
+    assertEqual(rows[0].tokenLabel, '', 'missing tokens should produce empty label');
+});
+
+test('buildMobileInjectionRows: handles empty input', () => {
+    assertEqual(buildMobileInjectionRows([]).length, 0, 'empty array produces no rows');
+    assertEqual(buildMobileInjectionRows(null).length, 0, 'null input produces no rows');
+    assertEqual(buildMobileInjectionRows(undefined).length, 0, 'undefined input produces no rows');
 });
 
 summary('Mobile UI foundation tests');

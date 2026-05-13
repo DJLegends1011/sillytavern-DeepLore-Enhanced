@@ -1,3 +1,5 @@
+import { parseMatchReason } from '../helpers.js';
+
 const VALID_FILTERS = new Set(['injected', 'filtered', 'both']);
 
 export const MOBILE_INJECTION_DEFAULT_STATE = Object.freeze({
@@ -68,4 +70,31 @@ export function splitInjectionEntries(sources, trace, filterMode) {
         summary: parts.join(', '),
         isFiltered: false,
     };
+}
+
+const MATCH_LABELS = {
+    constant: 'CONST', pinned: 'PIN', bootstrap: 'INIT',
+    seed: 'SEED', keyword: 'KEY', keyword_ai: 'KEY+AI', ai: 'AI',
+};
+
+export function buildMobileInjectionRows(entries) {
+    if (!Array.isArray(entries)) return [];
+    return entries.map(entry => {
+        const { type, keyword } = parseMatchReason(entry.matchedBy);
+        const tokenCount = Number(entry.tokens) || 0;
+        return {
+            key: `${entry.vaultSource || ''}:${entry.title || 'untitled'}`,
+            title: entry.title || 'Untitled',
+            tokenCount,
+            tokenLabel: tokenCount ? `${tokenCount} tok` : '',
+            injectionCount: Number(entry.injectionCount) || 0,
+            matchedBy: entry.matchedBy || '',
+            matchLabel: MATCH_LABELS[type] || (entry.matchedBy?.length > 8 ? 'AI' : entry.matchedBy || '?'),
+            isKeyword: type === 'keyword' || type === 'keyword_ai',
+            filename: entry.filename || '',
+            vaultSource: entry.vaultSource || '',
+            isFiltered: !!entry.isFiltered,
+            reason: entry.reason || '',
+        };
+    });
 }
