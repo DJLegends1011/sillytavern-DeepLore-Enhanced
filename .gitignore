@@ -7,6 +7,8 @@
 
 # User-facing documentation
 !README.md
+!AGENT.md
+!CLAUDE.md
 !CHANGELOG.md
 !CONTRIBUTING.md
 !KNOWN_ISSUES.md
