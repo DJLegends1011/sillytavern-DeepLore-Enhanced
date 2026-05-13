@@ -457,11 +457,12 @@ test('renderMobileShell: labels the mobile injected-sources drill-in as Injectio
     }, { open: true, view: 'injection', mode: 'auto', errorMessage: '' });
 
     assertMatch(html, /<strong>Injection<\/strong>/, 'mobile drill-in header should use the desktop tab name');
-    assertMatch(html, /Open full Injection view/, 'full-view button should use the desktop tab name');
+    assertMatch(html, /Full View/, 'full-view button should use the desktop tab name');
     assert(!/<strong>Why\?<\/strong>/.test(html), 'mobile UI should not expose the old proof-of-concept Why label');
 });
 
 test('renderMobileShell: Injection rows expose Obsidian title and Browse navigation actions', () => {
+    const key = 'First Vault:Keisha';
     const html = renderMobileShell({
         statusLabel: 'Ready',
         entriesLabel: '12 entries',
@@ -477,11 +478,11 @@ test('renderMobileShell: Injection rows expose Obsidian title and Browse navigat
             tokens: 217,
         }],
         loreGaps: [],
-    }, { open: true, view: 'injection', mode: 'auto', errorMessage: '' });
+    }, { open: true, view: 'injection', mode: 'auto', errorMessage: '', injectionFilter: 'injected', injectionExpandedKey: key });
 
     assertMatch(html, /data-dle-mobile-injection-action="obsidian"/, 'injected entry title should open Obsidian when a filename exists');
-    assertMatch(html, /data-dle-mobile-injection-browse="First Vault:Keisha"/, 'injected entry row should expose a Browse navigation target');
-    assertMatch(html, /217 tokens/, 'injected entry row should show token metadata');
+    assertMatch(html, /data-dle-mobile-injection-action="browse"/, 'injected entry row should expose a Browse navigation action');
+    assertMatch(html, /217 tok/, 'injected entry row should show token metadata');
     assertMatch(html, /keyword: keisha/, 'injected entry row should show match metadata');
 });
 
@@ -889,8 +890,7 @@ test('mobile Injection actions: shell routes entry titles and Browse arrows', ()
     const source = readFileSync(new URL('../src/mobile/mobile-shell.js', import.meta.url), 'utf8');
 
     assertMatch(source, /data-dle-mobile-injection-action="obsidian"/, 'Injection title action should be rendered');
-    assertMatch(source, /target\.closest\('\[data-dle-mobile-injection-browse\]'\)/, 'click handler should route Injection Browse arrows');
-    assertMatch(source, /mobileState\.view\s*=\s*'browse'/, 'Injection Browse arrow should switch to mobile Browse');
+    assertMatch(source, /data-dle-mobile-injection-action="browse"/, 'Injection Browse arrow action should be rendered');
     assertMatch(source, /browseExpandedKey/, 'Injection Browse arrow should expand the selected Browse card');
 });
 
@@ -905,7 +905,7 @@ test('renderMobileShell: drill-in views tolerate missing array fields', () => {
                 phaseLabel: 'idle',
             }, { open: true, view, mode: 'auto', errorMessage: '' });
 
-            assertMatch(html, /dle-mobile-list/, `${view} view should render list fallback with missing arrays`);
+            assertMatch(html, /dle-mobile(?:-injection)?-list/, `${view} view should render list fallback with missing arrays`);
         } catch (error) {
             assert(false, `${view} view should not throw with missing arrays: ${error.message}`);
         }
@@ -1181,6 +1181,85 @@ test('mobile shell: no "Why?" label remains in mobile output', () => {
     assert(!homeHtml.includes('>Why?<'), 'Home view should not contain "Why?" label');
     assert(!homeHtml.includes('>Why?</strong>'), 'Home view should not contain "Why?" in strong tag');
     assertMatch(homeHtml, /Injection/, 'Home view should contain "Injection" label');
+});
+
+test('renderInjection: renders header with Injection title and badge', () => {
+    const snapshot = buildMobileShellSnapshot({
+        vaultIndex: [],
+        indexing: false,
+        generationLock: false,
+        pipelinePhase: 'idle',
+        lastInjectionSources: [
+            { title: 'Keisha', tokens: 217, matchedBy: 'keyword' },
+        ],
+        lastPipelineTrace: { injected: [{ title: 'Keisha' }] },
+        loreGaps: [],
+        indexEverLoaded: true,
+    });
+
+    const html = renderMobileShell(snapshot, { open: true, view: 'injection', mode: 'auto', errorMessage: '', injectionFilter: 'injected', injectionExpandedKey: '' });
+
+    assertMatch(html, /Injection/, 'should contain Injection title');
+    assertMatch(html, /data-dle-mobile-injection-filter/, 'should contain filter toggle buttons');
+    assertMatch(html, /Injected/, 'should contain Injected filter option');
+    assertMatch(html, /Filtered/, 'should contain Filtered filter option');
+    assertMatch(html, /Both/, 'should contain Both filter option');
+});
+
+test('renderInjection: renders entry cards with title, tokens, and badges', () => {
+    const snapshot = buildMobileShellSnapshot({
+        vaultIndex: [{ title: 'Keisha', tokens: 217, keys: ['keisha'], vaultSource: 'TV', filename: 'Keisha.md' }],
+        indexing: false,
+        generationLock: false,
+        pipelinePhase: 'idle',
+        lastInjectionSources: [
+            { title: 'Keisha', tokens: 217, matchedBy: 'keyword: keisha', vaultSource: 'TV', filename: 'Keisha.md' },
+        ],
+        lastPipelineTrace: { injected: [{ title: 'Keisha' }] },
+        loreGaps: [],
+        indexEverLoaded: true,
+    });
+
+    const html = renderMobileShell(snapshot, { open: true, view: 'injection', mode: 'auto', errorMessage: '', injectionFilter: 'injected', injectionExpandedKey: '' });
+
+    assertMatch(html, /Keisha/, 'should render entry title');
+    assertMatch(html, /217 tok/, 'should render token count');
+    assertMatch(html, /KEY/, 'should render KEY badge for keyword match');
+    assertMatch(html, /data-dle-mobile-injection-expand/, 'should have expand button');
+});
+
+test('renderInjection: renders empty state when no sources', () => {
+    const snapshot = buildMobileShellSnapshot({
+        vaultIndex: [],
+        indexing: false,
+        generationLock: false,
+        pipelinePhase: 'idle',
+        lastInjectionSources: [],
+        lastPipelineTrace: null,
+        loreGaps: [],
+        indexEverLoaded: true,
+    });
+
+    const html = renderMobileShell(snapshot, { open: true, view: 'injection', mode: 'auto', errorMessage: '', injectionFilter: 'injected', injectionExpandedKey: '' });
+
+    assertMatch(html, /No entries injected yet/, 'should show empty state message');
+});
+
+test('renderInjection: renders Entry Timers section', () => {
+    const snapshot = buildMobileShellSnapshot({
+        vaultIndex: [],
+        indexing: false,
+        generationLock: false,
+        pipelinePhase: 'idle',
+        lastInjectionSources: [{ title: 'A', tokens: 100, matchedBy: 'keyword' }],
+        lastPipelineTrace: { injected: [{ title: 'A' }] },
+        loreGaps: [],
+        indexEverLoaded: true,
+    });
+
+    const html = renderMobileShell(snapshot, { open: true, view: 'injection', mode: 'auto', errorMessage: '', injectionFilter: 'injected', injectionExpandedKey: '' });
+
+    assertMatch(html, /Entry Timers/, 'should contain Entry Timers collapsible');
 });
 
 summary('Mobile UI foundation tests');

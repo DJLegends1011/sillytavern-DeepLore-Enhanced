@@ -22,6 +22,8 @@ import {
     onPipelinePhaseChanged,
     onPipelineTraceUpdated,
     notifyPinBlockChanged,
+    cooldownTracker,
+    decayTracker,
 } from '../state.js';
 import { buildObsidianURI, normalizePinBlock, openExternalProtocol } from '../helpers.js';
 import { getCircuitState } from '../vault/obsidian-api.js';
@@ -32,6 +34,12 @@ import {
     normalizeMobileBrowseState,
 } from './mobile-browse.js';
 import { buildMobileStatusStats } from './mobile-stats.js';
+import {
+    normalizeMobileInjectionState,
+    splitInjectionEntries,
+    buildMobileInjectionRows,
+    extractTimerData,
+} from './mobile-injection.js';
 
 export const MOBILE_VIEWPORT_WIDTH = 768;
 export const TOUCH_TABLET_WIDTH = 1024;
@@ -53,6 +61,8 @@ let mobileState = {
     browse: normalizeMobileBrowseState(),
     browseSearchHelpOpen: false,
     browseExpandedKey: '',
+    injectionFilter: 'injected',
+    injectionExpandedKey: '',
 };
 let mobileUnsubscribers = [];
 let mobileResizeHandler = null;
@@ -316,22 +326,81 @@ function renderHome(snapshot, state = mobileState) {
     `;
 }
 
-function renderWhy(snapshot) {
+function renderInjectionCard(row, state) {
+    const expanded = state.injectionExpandedKey === row.key;
+    const filteredClass = row.isFiltered ? ' dle-mobile-injection-filtered' : '';
+    const expandedClass = expanded ? ' dle-mobile-injection-expanded' : '';
+    const badges = [];
+    if (row.injectionCount > 0) badges.push(`<span class="dle-mobile-injection-badge">${row.injectionCount}×</span>`);
+    if (row.isKeyword) badges.push(`<span class="dle-mobile-injection-badge dle-mobile-injection-badge-key">KEY</span>`);
+    if (row.matchLabel && !row.isKeyword && row.matchLabel !== 'KEY') badges.push(`<span class="dle-mobile-injection-badge">${escapeHtml(row.matchLabel)}</span>`);
+
+    return `
+        <article class="dle-mobile-injection-card${filteredClass}${expandedClass}" data-dle-mobile-injection-key="${escapeHtml(row.key)}">
+            <div class="dle-mobile-injection-title-row">
+                <button type="button" data-dle-mobile-injection-expand="${escapeHtml(row.key)}" aria-expanded="${expanded ? 'true' : 'false'}">
+                    <i class="fa-solid fa-chevron-${expanded ? 'down' : 'right'}" aria-hidden="true"></i>
+                    <strong>${escapeHtml(row.title)}</strong>
+                </button>
+                <div class="dle-mobile-injection-meta">
+                    ${badges.join('')}
+                    ${row.tokenLabel ? `<span class="dle-mobile-injection-tokens">${escapeHtml(row.tokenLabel)}</span>` : ''}
+                </div>
+            </div>
+            ${expanded ? `<div class="dle-mobile-injection-detail">
+                <div>Matched by: <strong>${escapeHtml(row.matchedBy || row.matchLabel)}</strong></div>
+                ${row.reason ? `<div>Reason: ${escapeHtml(row.reason)}</div>` : ''}
+                <div class="dle-mobile-injection-links">
+                    ${row.filename ? `<button type="button" data-dle-mobile-injection-action="obsidian" data-filename="${escapeHtml(row.filename)}" data-vault="${escapeHtml(row.vaultSource)}">Open in Obsidian</button>` : ''}
+                    <button type="button" data-dle-mobile-injection-action="browse" data-title="${escapeHtml(row.title)}">Go to Browse →</button>
+                </div>
+            </div>` : ''}
+        </article>
+    `;
+}
+
+function renderInjection(snapshot, state = mobileState) {
     const injectedSources = Array.isArray(snapshot.injectedSources) ? snapshot.injectedSources : [];
-    const rows = injectedSources.slice(0, 6).map(source => `
-        <li>
-            <strong>${escapeHtml(source.title || 'Untitled')}</strong>
-            <span>${escapeHtml(source.matchedBy || 'selected')}</span>
-        </li>
-    `).join('');
+    const filter = state.injectionFilter || 'injected';
+    const trace = lastPipelineTrace;
+    const split = splitInjectionEntries(injectedSources, trace, filter);
+    const rows = buildMobileInjectionRows(split.entries);
+    const settings = mobileShellOptions.getSettings?.() ?? {};
+    const timers = extractTimerData(cooldownTracker, decayTracker, settings);
+
+    const filterButtons = ['injected', 'filtered', 'both'].map(f =>
+        `<button type="button" class="dle-mobile-injection-filter-btn${filter === f ? ' active' : ''}" data-dle-mobile-injection-filter="${f}" aria-pressed="${filter === f ? 'true' : 'false'}">${f.charAt(0).toUpperCase() + f.slice(1)}</button>`
+    ).join('');
+
+    const entryCards = rows.length
+        ? rows.map(row => renderInjectionCard(row, state)).join('')
+        : `<div class="dle-mobile-injection-empty">
+            <strong>No entries injected yet</strong>
+            <span>Send a message mentioning entry keywords, or check Obsidian connection.</span>
+           </div>`;
+
+    const timerRows = timers.length
+        ? timers.map(t => `<div class="dle-mobile-injection-timer"><span>${escapeHtml(t.title)}</span><span class="dle-mobile-injection-timer-badge dle-mobile-injection-timer-${t.timerType}">${escapeHtml(t.detail)}</span></div>`).join('')
+        : '<div class="dle-mobile-injection-timer-empty">No active timers</div>';
 
     return `
         <div class="dle-mobile-drill-header">
             <button type="button" data-dle-mobile-view="home"><i class="fa-solid fa-chevron-left" aria-hidden="true"></i></button>
             <strong>Injection</strong>
+            <span class="dle-mobile-injection-count">${snapshot.injectedCount}</span>
+            <button class="dle-mobile-wide-action-sm" type="button" data-dle-mobile-command="${commandForView('injection')}">Full View <i class="fa-solid fa-up-right-from-square" aria-hidden="true"></i></button>
         </div>
-        <ul class="dle-mobile-list">${rows || '<li><strong>No lore injected yet</strong><span>Run a generation to populate this.</span></li>'}</ul>
-        <button class="dle-mobile-wide-action" type="button" data-dle-mobile-command="${commandForView('injection')}">Open full Injection view</button>
+        <div class="dle-mobile-injection-filters" role="radiogroup" aria-label="Filter entries">
+            ${filterButtons}
+        </div>
+        ${split.summary ? `<div class="dle-mobile-injection-summary">${escapeHtml(split.summary)}</div>` : ''}
+        <div class="dle-mobile-injection-list">
+            ${entryCards}
+        </div>
+        <details class="dle-mobile-injection-timers">
+            <summary><i class="fa-solid fa-clock" aria-hidden="true"></i> Entry Timers</summary>
+            <div class="dle-mobile-injection-timer-list">${timerRows}</div>
+        </details>
     `;
 }
 
@@ -502,7 +571,7 @@ function renderTools(mode = 'auto') {
 
 function renderBody(snapshot, view, mode = 'auto', state = mobileState) {
     switch (view) {
-        case 'injection': return renderWhy(snapshot);
+        case 'injection': return renderInjection(snapshot, state);
         case 'browse': return renderBrowse(snapshot, state);
         case 'librarian': return renderLibrarian(snapshot);
         case 'tools': return renderTools(mode);
@@ -883,5 +952,7 @@ export function destroyMobileShell() {
         browse: normalizeMobileBrowseState(),
         browseSearchHelpOpen: false,
         browseExpandedKey: '',
+        injectionFilter: 'injected',
+        injectionExpandedKey: '',
     };
 }
