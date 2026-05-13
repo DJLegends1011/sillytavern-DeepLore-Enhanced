@@ -40,6 +40,7 @@ import {
 
 import {
     normalizeMobileInjectionState,
+    splitInjectionEntries,
     MOBILE_INJECTION_DEFAULT_STATE,
 } from '../src/mobile/mobile-injection.js';
 
@@ -989,6 +990,76 @@ test('normalizeMobileInjectionState: coerces expandedKey to string', () => {
 
 test('MOBILE_INJECTION_DEFAULT_STATE: is frozen', () => {
     assert(Object.isFrozen(MOBILE_INJECTION_DEFAULT_STATE), 'default state should be frozen');
+});
+
+test('splitInjectionEntries: injected mode returns only injected sources', () => {
+    const sources = [
+        { title: 'Keisha', tokens: 217, matchedBy: 'keyword' },
+        { title: 'Study Room', tokens: 185, matchedBy: 'AI selection' },
+    ];
+    const trace = {
+        gatedOut: [{ title: 'Blocked Entry', requires: ['era:modern'] }],
+        contextualGatingRemoved: [{ title: 'Gated Entry', reason: 'wrong era' }],
+    };
+    const result = splitInjectionEntries(sources, trace, 'injected');
+
+    assertEqual(result.entries.length, 2, 'should return 2 injected entries');
+    assertEqual(result.entries[0].title, 'Keisha', 'first entry title');
+    assertEqual(result.entries[0].isFiltered, false, 'injected entries should not be marked filtered');
+    assertMatch(result.summary, /2 injected/, 'summary should mention injected count');
+});
+
+test('splitInjectionEntries: filtered mode returns only rejected entries', () => {
+    const sources = [{ title: 'Keisha', tokens: 217, matchedBy: 'keyword' }];
+    const trace = {
+        gatedOut: [{ title: 'Blocked', requires: ['era'] }],
+        contextualGatingRemoved: [{ title: 'Gated', reason: 'wrong era' }],
+        cooldownRemoved: [{ title: 'OnCooldown' }],
+        budgetCut: [{ title: 'OverBudget', tokens: 500 }],
+    };
+    const result = splitInjectionEntries(sources, trace, 'filtered');
+
+    assertEqual(result.entries.length, 4, 'should return all rejected entries');
+    assert(result.entries.every(e => e.isFiltered === true), 'all should be marked filtered');
+    assertMatch(result.summary, /4 filtered/, 'summary should mention filtered count');
+});
+
+test('splitInjectionEntries: both mode merges injected and filtered', () => {
+    const sources = [{ title: 'Keisha', tokens: 217, matchedBy: 'keyword' }];
+    const trace = {
+        budgetCut: [{ title: 'OverBudget', tokens: 500 }],
+    };
+    const result = splitInjectionEntries(sources, trace, 'both');
+
+    assertEqual(result.entries.length, 2, 'should return both injected and filtered');
+    const injected = result.entries.filter(e => !e.isFiltered);
+    const filtered = result.entries.filter(e => e.isFiltered);
+    assertEqual(injected.length, 1, 'one injected');
+    assertEqual(filtered.length, 1, 'one filtered');
+    assertMatch(result.summary, /1 injected/, 'summary mentions injected');
+    assertMatch(result.summary, /1 filtered/, 'summary mentions filtered');
+});
+
+test('splitInjectionEntries: handles empty sources and missing trace gracefully', () => {
+    const result1 = splitInjectionEntries([], null, 'injected');
+    assertEqual(result1.entries.length, 0, 'empty sources gives empty list');
+    assertEqual(result1.summary, '', 'empty sources gives empty summary');
+
+    const result2 = splitInjectionEntries(null, null, 'filtered');
+    assertEqual(result2.entries.length, 0, 'null sources gives empty list');
+
+    const result3 = splitInjectionEntries([], {}, 'both');
+    assertEqual(result3.entries.length, 0, 'empty trace gives empty list');
+});
+
+test('splitInjectionEntries: does not duplicate injected entries in filtered list', () => {
+    const sources = [{ title: 'Keisha', tokens: 217, matchedBy: 'keyword' }];
+    const trace = {
+        budgetCut: [{ title: 'Keisha', tokens: 217 }, { title: 'Other', tokens: 100 }],
+    };
+    const result = splitInjectionEntries(sources, trace, 'filtered');
+    const keishaEntries = result.entries.filter(e => e.title === 'Keisha');
+    assertEqual(keishaEntries.length, 0, 'injected entries should be excluded from filtered list');
 });
 
 summary('Mobile UI foundation tests');

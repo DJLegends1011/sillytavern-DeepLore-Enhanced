@@ -10,3 +10,62 @@ export function normalizeMobileInjectionState(input = {}) {
     const expandedKey = input?.expandedKey == null ? '' : String(input.expandedKey);
     return { filter, expandedKey };
 }
+
+function collectFilteredEntries(trace, injectedTitles) {
+    if (!trace) return [];
+    const seen = new Set();
+    const entries = [];
+
+    function add(items, reason) {
+        for (const item of items || []) {
+            const title = item.title || item.id || 'Untitled';
+            if (injectedTitles.has(title) || seen.has(title)) continue;
+            seen.add(title);
+            const entryReason = item.reason || reason;
+            entries.push({ ...item, title, reason: entryReason, isFiltered: true });
+        }
+    }
+
+    add(trace.gatedOut, 'blocked by dependencies');
+    add(trace.contextualGatingRemoved, 'filtered by context');
+    add(trace.cooldownRemoved, 'on cooldown');
+    add(trace.budgetCut, 'over budget');
+
+    return entries;
+}
+
+export function splitInjectionEntries(sources, trace, filterMode) {
+    const safeSourcesList = Array.isArray(sources) ? sources : [];
+    const injectedTitles = new Set(safeSourcesList.map(s => s.title));
+
+    if (filterMode === 'injected') {
+        const entries = safeSourcesList.map(s => ({ ...s, isFiltered: false }));
+        return {
+            entries,
+            summary: entries.length ? `${entries.length} injected` : '',
+            isFiltered: false,
+        };
+    }
+
+    const filteredEntries = collectFilteredEntries(trace, injectedTitles);
+
+    if (filterMode === 'filtered') {
+        return {
+            entries: filteredEntries,
+            summary: filteredEntries.length ? `${filteredEntries.length} filtered out` : '',
+            isFiltered: true,
+        };
+    }
+
+    const injected = safeSourcesList.map(s => ({ ...s, isFiltered: false }));
+    const all = [...injected, ...filteredEntries];
+    const parts = [];
+    if (injected.length) parts.push(`${injected.length} injected`);
+    if (filteredEntries.length) parts.push(`${filteredEntries.length} filtered`);
+
+    return {
+        entries: all,
+        summary: parts.join(', '),
+        isFiltered: false,
+    };
+}
