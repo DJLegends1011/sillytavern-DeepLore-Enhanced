@@ -38,6 +38,11 @@ import {
     normalizeMobileBrowseState,
 } from '../src/mobile/mobile-browse.js';
 
+import {
+    normalizeMobileInjectionState,
+    MOBILE_INJECTION_DEFAULT_STATE,
+} from '../src/mobile/mobile-injection.js';
+
 import { readFileSync } from 'node:fs';
 
 class MockClassList {
@@ -434,6 +439,47 @@ test('renderMobileShell: renders hybrid dock, home sheet, and quick actions', ()
     assertMatch(html, /data-dle-mobile-view="librarian"/, 'librarian drill-in action should be rendered');
     assertMatch(html, /data-dle-mobile-view="tools"/, 'tools drill-in action should be rendered');
     assert(!/data-dle-mobile-view="why"[^>]*data-dle-mobile-command/.test(html), 'home Why action should drill in before opening the full popup');
+});
+
+test('renderMobileShell: labels the mobile injected-sources drill-in as Injection', () => {
+    const html = renderMobileShell({
+        statusLabel: 'Ready',
+        entriesLabel: '12 entries',
+        injectedCount: 1,
+        gapCount: 0,
+        phaseLabel: 'idle',
+        entries: [],
+        injectedSources: [{ title: 'Keisha', filename: 'Characters/Keisha.md', vaultSource: 'First Vault', matchedBy: 'keyword: keisha', tokens: 217 }],
+        loreGaps: [],
+    }, { open: true, view: 'why', mode: 'auto', errorMessage: '' });
+
+    assertMatch(html, /<strong>Injection<\/strong>/, 'mobile drill-in header should use the desktop tab name');
+    assertMatch(html, /Open full Injection view/, 'full-view button should use the desktop tab name');
+    assert(!/<strong>Why\?<\/strong>/.test(html), 'mobile UI should not expose the old proof-of-concept Why label');
+});
+
+test('renderMobileShell: Injection rows expose Obsidian title and Browse navigation actions', () => {
+    const html = renderMobileShell({
+        statusLabel: 'Ready',
+        entriesLabel: '12 entries',
+        injectedCount: 1,
+        gapCount: 0,
+        phaseLabel: 'idle',
+        entries: [],
+        injectedSources: [{
+            title: 'Keisha',
+            filename: 'Characters/Keisha.md',
+            vaultSource: 'First Vault',
+            matchedBy: 'keyword: keisha',
+            tokens: 217,
+        }],
+        loreGaps: [],
+    }, { open: true, view: 'why', mode: 'auto', errorMessage: '' });
+
+    assertMatch(html, /data-dle-mobile-injection-action="obsidian"/, 'injected entry title should open Obsidian when a filename exists');
+    assertMatch(html, /data-dle-mobile-injection-browse="First Vault:Keisha"/, 'injected entry row should expose a Browse navigation target');
+    assertMatch(html, /217 tokens/, 'injected entry row should show token metadata');
+    assertMatch(html, /keyword: keisha/, 'injected entry row should show match metadata');
 });
 
 test('renderMobileShell: renders collapsed and expanded status tray', () => {
@@ -836,6 +882,15 @@ test('mobile Browse actions: shell keeps ST metadata imports dynamic', () => {
     assertMatch(source, /openExternalProtocol/, 'Obsidian action should use the shared external protocol helper');
 });
 
+test('mobile Injection actions: shell routes entry titles and Browse arrows', () => {
+    const source = readFileSync(new URL('../src/mobile/mobile-shell.js', import.meta.url), 'utf8');
+
+    assertMatch(source, /data-dle-mobile-injection-action="obsidian"/, 'Injection title action should be rendered');
+    assertMatch(source, /target\.closest\('\[data-dle-mobile-injection-browse\]'\)/, 'click handler should route Injection Browse arrows');
+    assertMatch(source, /mobileState\.view\s*=\s*'browse'/, 'Injection Browse arrow should switch to mobile Browse');
+    assertMatch(source, /browseExpandedKey/, 'Injection Browse arrow should expand the selected Browse card');
+});
+
 test('renderMobileShell: drill-in views tolerate missing array fields', () => {
     for (const view of ['why', 'browse', 'librarian']) {
         try {
@@ -907,6 +962,33 @@ test('setup wizard navigation: resets scroll and centers active step on page cha
 
     assertMatch(goToPageSource, /\.dle-wizard-body['"]\)\.scrollTop\(0\)/m, 'page changes should reset the wizard body scroll position');
     assertMatch(goToPageSource, /\.dle-wizard-step\[data-step="\$\{page\}"\][\s\S]*scrollIntoView/m, 'page changes should keep the active progress step visible');
+});
+
+test('normalizeMobileInjectionState: returns defaults for empty input', () => {
+    const state = normalizeMobileInjectionState();
+    assertEqual(state.filter, 'injected', 'default filter should be injected');
+    assertEqual(state.expandedKey, '', 'default expandedKey should be empty string');
+});
+
+test('normalizeMobileInjectionState: preserves valid filter values', () => {
+    assertEqual(normalizeMobileInjectionState({ filter: 'filtered' }).filter, 'filtered', 'should accept filtered');
+    assertEqual(normalizeMobileInjectionState({ filter: 'both' }).filter, 'both', 'should accept both');
+    assertEqual(normalizeMobileInjectionState({ filter: 'injected' }).filter, 'injected', 'should accept injected');
+});
+
+test('normalizeMobileInjectionState: rejects invalid filter values', () => {
+    assertEqual(normalizeMobileInjectionState({ filter: 'garbage' }).filter, 'injected', 'invalid filter should fall back to injected');
+    assertEqual(normalizeMobileInjectionState({ filter: null }).filter, 'injected', 'null filter should fall back to injected');
+    assertEqual(normalizeMobileInjectionState({ filter: 123 }).filter, 'injected', 'numeric filter should fall back to injected');
+});
+
+test('normalizeMobileInjectionState: coerces expandedKey to string', () => {
+    assertEqual(normalizeMobileInjectionState({ expandedKey: 42 }).expandedKey, '42', 'numeric key should be stringified');
+    assertEqual(normalizeMobileInjectionState({ expandedKey: null }).expandedKey, '', 'null key should become empty string');
+});
+
+test('MOBILE_INJECTION_DEFAULT_STATE: is frozen', () => {
+    assert(Object.isFrozen(MOBILE_INJECTION_DEFAULT_STATE), 'default state should be frozen');
 });
 
 summary('Mobile UI foundation tests');
