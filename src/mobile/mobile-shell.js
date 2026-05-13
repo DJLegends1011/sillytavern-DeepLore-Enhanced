@@ -163,7 +163,7 @@ function setMobileMode(mode) {
 
 function commandForView(view) {
     const commands = {
-        why: '/dle-why',
+        injection: '/dle-why',
         browse: '/dle-browse',
         filters: '/dle-context-state',
         health: '/dle-health',
@@ -308,7 +308,7 @@ function renderHome(snapshot, state = mobileState) {
             ${renderPill('Gaps', snapshot.gapCount, snapshot.gapCount ? 'warn' : 'ok')}
         </div>
         <div class="dle-mobile-actions">
-            ${renderActionButton('Why?', 'why', 'fa-circle-question')}
+            ${renderActionButton('Injection', 'injection', 'fa-circle-question')}
             ${renderActionButton('Browse', 'browse', 'fa-magnifying-glass')}
             ${renderActionButton('Librarian', 'librarian', 'fa-list-check')}
             ${renderActionButton('Tools', 'tools', 'fa-screwdriver-wrench')}
@@ -328,10 +328,10 @@ function renderWhy(snapshot) {
     return `
         <div class="dle-mobile-drill-header">
             <button type="button" data-dle-mobile-view="home"><i class="fa-solid fa-chevron-left" aria-hidden="true"></i></button>
-            <strong>Why?</strong>
+            <strong>Injection</strong>
         </div>
         <ul class="dle-mobile-list">${rows || '<li><strong>No lore injected yet</strong><span>Run a generation to populate this.</span></li>'}</ul>
-        <button class="dle-mobile-wide-action" type="button" data-dle-mobile-command="${commandForView('why')}">Open full Why view</button>
+        <button class="dle-mobile-wide-action" type="button" data-dle-mobile-command="${commandForView('injection')}">Open full Injection view</button>
     `;
 }
 
@@ -502,7 +502,7 @@ function renderTools(mode = 'auto') {
 
 function renderBody(snapshot, view, mode = 'auto', state = mobileState) {
     switch (view) {
-        case 'why': return renderWhy(snapshot);
+        case 'injection': return renderWhy(snapshot);
         case 'browse': return renderBrowse(snapshot, state);
         case 'librarian': return renderLibrarian(snapshot);
         case 'tools': return renderTools(mode);
@@ -768,7 +768,7 @@ function handleMobileClick(event) {
     const viewEl = target.closest('[data-dle-mobile-view]');
     if (viewEl) {
         const view = viewEl.getAttribute('data-dle-mobile-view') || 'home';
-        const localViews = new Set(['home', 'why', 'browse', 'librarian', 'tools']);
+        const localViews = new Set(['home', 'injection', 'browse', 'librarian', 'tools']);
         mobileState.open = true;
         const command = viewEl.getAttribute('data-dle-mobile-command');
         if (command && !localViews.has(view)) {

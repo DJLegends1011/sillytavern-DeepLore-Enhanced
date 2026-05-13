@@ -437,11 +437,11 @@ test('renderMobileShell: renders hybrid dock, home sheet, and quick actions', ()
     assertMatch(html, /id="dle-mobile-sheet"/, 'bottom sheet should be rendered');
     assertMatch(html, /id="dle-mobile-sheet"[^>]*aria-hidden="false"/, 'open sheet should be exposed to assistive tech');
     assert(!/id="dle-mobile-sheet"[^>]*inert/.test(html), 'open sheet should not be inert');
-    assertMatch(html, /data-dle-mobile-view="why"/, 'why drill-in action should be rendered');
+    assertMatch(html, /data-dle-mobile-view="injection"/, 'injection drill-in action should be rendered');
     assertMatch(html, /data-dle-mobile-view="browse"/, 'browse drill-in action should be rendered');
     assertMatch(html, /data-dle-mobile-view="librarian"/, 'librarian drill-in action should be rendered');
     assertMatch(html, /data-dle-mobile-view="tools"/, 'tools drill-in action should be rendered');
-    assert(!/data-dle-mobile-view="why"[^>]*data-dle-mobile-command/.test(html), 'home Why action should drill in before opening the full popup');
+    assert(!/data-dle-mobile-view="injection"[^>]*data-dle-mobile-command/.test(html), 'home Injection action should drill in before opening the full popup');
 });
 
 test('renderMobileShell: labels the mobile injected-sources drill-in as Injection', () => {
@@ -454,7 +454,7 @@ test('renderMobileShell: labels the mobile injected-sources drill-in as Injectio
         entries: [],
         injectedSources: [{ title: 'Keisha', filename: 'Characters/Keisha.md', vaultSource: 'First Vault', matchedBy: 'keyword: keisha', tokens: 217 }],
         loreGaps: [],
-    }, { open: true, view: 'why', mode: 'auto', errorMessage: '' });
+    }, { open: true, view: 'injection', mode: 'auto', errorMessage: '' });
 
     assertMatch(html, /<strong>Injection<\/strong>/, 'mobile drill-in header should use the desktop tab name');
     assertMatch(html, /Open full Injection view/, 'full-view button should use the desktop tab name');
@@ -477,7 +477,7 @@ test('renderMobileShell: Injection rows expose Obsidian title and Browse navigat
             tokens: 217,
         }],
         loreGaps: [],
-    }, { open: true, view: 'why', mode: 'auto', errorMessage: '' });
+    }, { open: true, view: 'injection', mode: 'auto', errorMessage: '' });
 
     assertMatch(html, /data-dle-mobile-injection-action="obsidian"/, 'injected entry title should open Obsidian when a filename exists');
     assertMatch(html, /data-dle-mobile-injection-browse="First Vault:Keisha"/, 'injected entry row should expose a Browse navigation target');
@@ -895,7 +895,7 @@ test('mobile Injection actions: shell routes entry titles and Browse arrows', ()
 });
 
 test('renderMobileShell: drill-in views tolerate missing array fields', () => {
-    for (const view of ['why', 'browse', 'librarian']) {
+    for (const view of ['injection', 'browse', 'librarian']) {
         try {
             const html = renderMobileShell({
                 statusLabel: 'Ready',
@@ -1163,6 +1163,24 @@ test('extractTimerData: skips decay when decayEnabled is false', () => {
     const decays = new Map([['vault:Stale', 10]]);
     const timers = extractTimerData(new Map(), decays, { decayEnabled: false });
     assertEqual(timers.length, 0, 'should skip decay entries when disabled');
+});
+
+test('mobile shell: no "Why?" label remains in mobile output', () => {
+    const snapshot = buildMobileShellSnapshot({
+        vaultIndex: [],
+        indexing: false,
+        generationLock: false,
+        pipelinePhase: 'idle',
+        lastInjectionSources: [],
+        lastPipelineTrace: null,
+        loreGaps: [],
+        indexEverLoaded: true,
+    });
+
+    const homeHtml = renderMobileShell(snapshot, { open: true, view: 'home', mode: 'auto', errorMessage: '' });
+    assert(!homeHtml.includes('>Why?<'), 'Home view should not contain "Why?" label');
+    assert(!homeHtml.includes('>Why?</strong>'), 'Home view should not contain "Why?" in strong tag');
+    assertMatch(homeHtml, /Injection/, 'Home view should contain "Injection" label');
 });
 
 summary('Mobile UI foundation tests');
