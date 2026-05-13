@@ -42,6 +42,7 @@ import {
     normalizeMobileInjectionState,
     splitInjectionEntries,
     buildMobileInjectionRows,
+    extractTimerData,
     MOBILE_INJECTION_DEFAULT_STATE,
 } from '../src/mobile/mobile-injection.js';
 
@@ -1129,6 +1130,39 @@ test('buildMobileInjectionRows: handles empty input', () => {
     assertEqual(buildMobileInjectionRows([]).length, 0, 'empty array produces no rows');
     assertEqual(buildMobileInjectionRows(null).length, 0, 'null input produces no rows');
     assertEqual(buildMobileInjectionRows(undefined).length, 0, 'undefined input produces no rows');
+});
+
+test('extractTimerData: extracts cooldown entries', () => {
+    const cooldowns = new Map([['vault:Keisha', 3], ['vault:Room', 1]]);
+    const timers = extractTimerData(cooldowns, new Map());
+
+    assertEqual(timers.length, 2, 'should return 2 timer entries');
+    assertEqual(timers[0].title, 'Keisha', 'should extract title from tracker key');
+    assertEqual(timers[0].timerType, 'cooldown', 'should label as cooldown');
+    assertEqual(timers[0].remaining, 3, 'should pass remaining count');
+    assertMatch(timers[0].detail, /3 messages? cooldown/, 'detail should describe cooldown');
+});
+
+test('extractTimerData: extracts decay entries past boost threshold', () => {
+    const decays = new Map([['vault:Stale', 8], ['vault:Fresh', 2]]);
+    const timers = extractTimerData(new Map(), decays, { decayEnabled: true, decayBoostThreshold: 5 });
+
+    assertEqual(timers.length, 1, 'should only return entries past boost threshold');
+    assertEqual(timers[0].title, 'Stale', 'should extract stale entry');
+    assertEqual(timers[0].timerType, 'decay', 'should label as decay');
+    assertMatch(timers[0].detail, /stale 8 messages/, 'detail should describe staleness');
+});
+
+test('extractTimerData: handles empty trackers', () => {
+    assertEqual(extractTimerData(new Map(), new Map()).length, 0, 'empty trackers return empty array');
+    assertEqual(extractTimerData(null, null).length, 0, 'null trackers return empty array');
+    assertEqual(extractTimerData(undefined, undefined).length, 0, 'undefined trackers return empty array');
+});
+
+test('extractTimerData: skips decay when decayEnabled is false', () => {
+    const decays = new Map([['vault:Stale', 10]]);
+    const timers = extractTimerData(new Map(), decays, { decayEnabled: false });
+    assertEqual(timers.length, 0, 'should skip decay entries when disabled');
 });
 
 summary('Mobile UI foundation tests');

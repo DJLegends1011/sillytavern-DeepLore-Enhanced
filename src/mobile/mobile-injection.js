@@ -77,6 +77,42 @@ const MATCH_LABELS = {
     seed: 'SEED', keyword: 'KEY', keyword_ai: 'KEY+AI', ai: 'AI',
 };
 
+function nameFromTrackerKey(key) {
+    if (!key) return 'Unknown';
+    return key.includes(':') ? key.split(':').slice(1).join(':') : key;
+}
+
+export function extractTimerData(cooldownTracker, decayTracker, settings = {}) {
+    const timers = [];
+    const cooldowns = cooldownTracker instanceof Map ? cooldownTracker : new Map();
+    const decays = decayTracker instanceof Map ? decayTracker : new Map();
+
+    for (const [key, remaining] of cooldowns) {
+        timers.push({
+            title: nameFromTrackerKey(key),
+            timerType: 'cooldown',
+            remaining,
+            detail: `${remaining} message${remaining !== 1 ? 's' : ''} cooldown`,
+        });
+    }
+
+    if (settings.decayEnabled) {
+        const boostThreshold = settings.decayBoostThreshold || 5;
+        for (const [key, staleness] of decays) {
+            if (staleness >= boostThreshold) {
+                timers.push({
+                    title: nameFromTrackerKey(key),
+                    timerType: 'decay',
+                    remaining: staleness,
+                    detail: `stale ${staleness} message${staleness !== 1 ? 's' : ''}`,
+                });
+            }
+        }
+    }
+
+    return timers;
+}
+
 export function buildMobileInjectionRows(entries) {
     if (!Array.isArray(entries)) return [];
     return entries.map(entry => {
