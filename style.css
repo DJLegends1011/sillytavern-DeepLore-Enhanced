@@ -6046,6 +6046,8 @@ body.dle-mobile-ui-active .dle-mobile-shell {
     align-items: center;
     gap: 10px;
     margin-bottom: 10px;
+    flex-wrap: nowrap;
+    overflow: hidden;
 }
 
 .dle-mobile-drill-header strong {
@@ -6211,6 +6213,26 @@ body.dle-mobile-ui-active .dle-mobile-shell {
     min-height: 40px;
 }
 
+.dle-mobile-search input {
+    background: var(--SmartThemeBlurTintColor, #252540);
+    color: var(--SmartThemeBodyColor, #ccc);
+    border: 1px solid var(--SmartThemeBorderColor, #555);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 0.9em;
+}
+
+.dle-mobile-browse-filter-grid select {
+    background: var(--SmartThemeBlurTintColor, #252540);
+    color: var(--SmartThemeBodyColor, #ccc);
+    border: 1px solid var(--SmartThemeBorderColor, #555);
+    border-radius: 6px;
+    padding: 6px 8px;
+    font-size: 0.85em;
+    appearance: none;
+    -webkit-appearance: none;
+}
+
 .dle-mobile-browse-filter-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -6226,6 +6248,13 @@ body.dle-mobile-ui-active .dle-mobile-shell {
 .dle-mobile-browse-quick button,
 .dle-mobile-browse-summary button {
     min-height: 36px;
+    background: var(--SmartThemeBlurTintColor, #252540);
+    color: var(--SmartThemeBodyColor, #ccc);
+    border: 1px solid var(--SmartThemeBorderColor, #555);
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 0.85em;
+    cursor: pointer;
 }
 
 .dle-mobile-browse-list {
@@ -6314,6 +6343,12 @@ body.dle-mobile-ui-active .dle-mobile-shell {
     min-height: 40px;
     min-width: 40px;
     border-radius: 8px;
+    background: var(--SmartThemeBlurTintColor, #252540);
+    color: var(--SmartThemeBodyColor, #ccc);
+    border: 1px solid var(--SmartThemeBorderColor, #555);
+    cursor: pointer;
+    font-size: 0.85em;
+    padding: 4px 10px;
 }
 
 .dle-mobile-browse-actions button[aria-pressed="true"] {
@@ -6538,4 +6573,7 @@ body.dle-mobile-ui-active .dle-mobile-shell {
     color: var(--SmartThemeBodyColor, #888);
     font-size: 0.7em;
     cursor: pointer;
+    padding: 4px 8px;
+    white-space: nowrap;
+    flex-shrink: 0;
 }
