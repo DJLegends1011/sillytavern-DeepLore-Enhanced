@@ -386,7 +386,7 @@ function renderInjection(snapshot, state = mobileState) {
             <button type="button" data-dle-mobile-view="home"><i class="fa-solid fa-chevron-left" aria-hidden="true"></i></button>
             <strong>Injection</strong>
             <span class="dle-mobile-injection-count">${snapshot.injectedCount}</span>
-            <button class="dle-mobile-wide-action-sm" type="button" data-dle-mobile-command="${commandForView('injection')}">Full View <i class="fa-solid fa-up-right-from-square" aria-hidden="true"></i></button>
+            <button class="dle-mobile-wide-action-sm" type="button" data-dle-mobile-command="${commandForView('injection')}" aria-label="Open full Injection view"><i class="fa-solid fa-up-right-from-square" aria-hidden="true"></i></button>
         </div>
         <div class="dle-mobile-injection-filters" role="radiogroup" aria-label="Filter entries">
             ${filterButtons}
@@ -593,7 +593,6 @@ function renderMobileShellContents(snapshot, state = mobileState) {
             <header class="dle-mobile-header">
                 <div>
                     <span>DeepLore</span>
-                    <strong>${escapeHtml(snapshot.statusLabel)}</strong>
                 </div>
                 <button type="button" data-dle-mobile-action="close" aria-label="Close DeepLore mobile panel">
                     <i class="fa-solid fa-xmark" aria-hidden="true"></i>

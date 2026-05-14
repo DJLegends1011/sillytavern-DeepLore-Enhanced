@@ -457,7 +457,7 @@ test('renderMobileShell: labels the mobile injected-sources drill-in as Injectio
     }, { open: true, view: 'injection', mode: 'auto', errorMessage: '' });
 
     assertMatch(html, /<strong>Injection<\/strong>/, 'mobile drill-in header should use the desktop tab name');
-    assertMatch(html, /Full View/, 'full-view button should use the desktop tab name');
+    assertMatch(html, /aria-label="Open full Injection view"/, 'full-view button should use the desktop tab name');
     assert(!/<strong>Why\?<\/strong>/.test(html), 'mobile UI should not expose the old proof-of-concept Why label');
 });
 

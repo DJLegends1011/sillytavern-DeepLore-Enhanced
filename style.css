@@ -6207,6 +6207,19 @@ body.dle-mobile-ui-active .dle-mobile-shell {
     gap: 8px;
 }
 
+.dle-mobile-search button {
+    background: var(--SmartThemeBlurTintColor, #252540);
+    color: var(--SmartThemeBodyColor, #ccc);
+    border: 1px solid var(--SmartThemeBorderColor, #555);
+    border-radius: 6px;
+    cursor: pointer;
+    min-width: 40px;
+    min-height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
 .dle-mobile-search input,
 .dle-mobile-browse-filter-grid select {
     min-width: 0;
