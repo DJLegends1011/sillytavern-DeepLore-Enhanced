@@ -310,6 +310,7 @@ function renderHome(snapshot, state = mobileState) {
     return `
         ${renderStatusTray(snapshot, state)}
         <div class="dle-mobile-summary">
+            ${renderPill('Status', snapshot.statusLabel, snapshot.statusLabel === 'Ready' ? 'ok' : 'warn')}
             ${renderPill('Vault', snapshot.entriesLabel)}
             ${renderPill('Injected', snapshot.injectedCount)}
             ${renderPill('Gaps', snapshot.gapCount, snapshot.gapCount ? 'warn' : 'ok')}
