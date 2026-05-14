@@ -422,6 +422,7 @@ function renderBrowse(snapshot, state = mobileState) {
         <div class="dle-mobile-drill-header">
             <button type="button" data-dle-mobile-view="home"><i class="fa-solid fa-chevron-left" aria-hidden="true"></i></button>
             <strong>Browse</strong>
+            <button class="dle-mobile-wide-action-sm" type="button" data-dle-mobile-command="${commandForView('browse')}" aria-label="Open full Browse view"><i class="fa-solid fa-up-right-from-square" aria-hidden="true"></i></button>
         </div>
         <div class="dle-mobile-browse-controls">
             <label class="dle-mobile-search">
@@ -461,7 +462,6 @@ function renderBrowse(snapshot, state = mobileState) {
         <div class="dle-mobile-browse-list dle-mobile-list">
             ${rows.length ? rows.slice(0, 40).map(row => renderBrowseCard(row, state)).join('') : renderBrowseEmpty(entries, filtered)}
         </div>
-        <button class="dle-mobile-wide-action" type="button" data-dle-mobile-command="${commandForView('browse')}">Open full Browse view</button>
     `;
 }
 
