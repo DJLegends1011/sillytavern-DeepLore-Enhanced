@@ -292,7 +292,6 @@ function renderStatusTray(snapshot, state) {
     return `
         <section class="dle-mobile-status-tray${expandedClass}" aria-label="DeepLore status">
             <button type="button" class="dle-mobile-status-toggle" data-dle-mobile-action="toggle-stats" aria-expanded="${state.statsExpanded ? 'true' : 'false'}">
-                <span>${escapeHtml(stats.collapsed.label)}</span>
                 <strong>${escapeHtml(snapshot.injectedCount)} injected</strong>
                 <i class="fa-solid fa-chevron-${state.statsExpanded ? 'down' : 'up'}" aria-hidden="true"></i>
             </button>
@@ -593,6 +592,7 @@ function renderMobileShellContents(snapshot, state = mobileState) {
             <header class="dle-mobile-header">
                 <div>
                     <span>DeepLore</span>
+                    <strong>${escapeHtml(snapshot.statusLabel)}</strong>
                 </div>
                 <button type="button" data-dle-mobile-action="close" aria-label="Close DeepLore mobile panel">
                     <i class="fa-solid fa-xmark" aria-hidden="true"></i>

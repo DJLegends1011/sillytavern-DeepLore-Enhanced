@@ -509,7 +509,7 @@ test('renderMobileShell: renders collapsed and expanded status tray', () => {
     const collapsed = renderMobileShell(snapshot, { open: true, view: 'home', mode: 'auto', errorMessage: '', statsExpanded: false });
     assertMatch(collapsed, /class="dle-mobile-status-tray[^"]*"/, 'status tray should render on home');
     assertMatch(collapsed, /data-dle-mobile-action="toggle-stats"/, 'tray toggle should be present');
-    assertMatch(collapsed, /Budget high/, 'collapsed warning should be visible');
+    assert(!/Budget high/.test(collapsed), 'collapsed.label should not appear in tray toggle');
     assert(!/2\.9k \/ 3\.1k/.test(collapsed), 'expanded budget value should be hidden while collapsed');
 
     const expanded = renderMobileShell(snapshot, { open: true, view: 'home', mode: 'auto', errorMessage: '', statsExpanded: true });
