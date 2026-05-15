@@ -219,6 +219,69 @@ export function buildObsidianURI(vaultName, filename) {
     return `obsidian://open?vault=${encodedVault}&file=${encodedFile}`;
 }
 
+function escapeHtmlValue(value) {
+    return String(value ?? '').replace(/[&<>"']/g, ch => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;',
+    }[ch]));
+}
+
+export function buildObsidianAnchorHtml(uri, {
+    text = 'Open in Obsidian',
+    className = 'dle-obsidian-link',
+    ariaLabel = 'Open in Obsidian',
+} = {}) {
+    if (!uri) return '';
+    return `<a href="#" data-obsidian-uri="${escapeHtmlValue(uri)}" class="${escapeHtmlValue(className)}" aria-label="${escapeHtmlValue(ariaLabel)}">${escapeHtmlValue(text)}</a>`;
+}
+
+/**
+ * Launch an external protocol without navigating the current SillyTavern tab.
+ * Must be called from a user activation handler (click/keyboard) for browsers
+ * that gate custom protocol launches.
+ * @param {string} uri
+ * @param {{documentRef?: Document, setTimeoutFn?: Function, cleanupDelayMs?: number}} opts
+ * @returns {boolean} true when a launch attempt was made
+ */
+export function openExternalProtocol(uri, {
+    documentRef = globalThis.document,
+    setTimeoutFn = globalThis.setTimeout,
+    cleanupDelayMs = 1000,
+} = {}) {
+    const rawUri = String(uri || '');
+    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(rawUri)) return false;
+    if (!documentRef?.createElement || !documentRef.body?.appendChild) return false;
+
+    const iframe = documentRef.createElement('iframe');
+    iframe.setAttribute('aria-hidden', 'true');
+    iframe.tabIndex = -1;
+    Object.assign(iframe.style, {
+        position: 'absolute',
+        width: '0',
+        height: '0',
+        border: '0',
+        opacity: '0',
+        pointerEvents: 'none',
+    });
+
+    documentRef.body.appendChild(iframe);
+    iframe.src = rawUri;
+
+    const cleanup = () => {
+        try {
+            if (typeof iframe.remove === 'function') iframe.remove();
+            else if (iframe.parentNode?.removeChild) iframe.parentNode.removeChild(iframe);
+        } catch { /* noop */ }
+    };
+
+    if (typeof setTimeoutFn === 'function') setTimeoutFn(cleanup, cleanupDelayMs);
+    else cleanup();
+    return true;
+}
+
 /**
  * Convert a SillyTavern World Info entry into an Obsidian note with frontmatter.
  * @param {object} wiEntry

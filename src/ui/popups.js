@@ -18,7 +18,7 @@ import {
 } from '../state.js';
 import { buildIndex } from '../vault/vault.js';
 import { callAutoSuggest } from '../ai/auto-suggest.js';
-import { extractAiResponseClient, buildObsidianURI, STAGE_COLORS, normalizePinBlock } from '../helpers.js';
+import { extractAiResponseClient, buildObsidianURI, buildObsidianAnchorHtml, openExternalProtocol, STAGE_COLORS, normalizePinBlock } from '../helpers.js';
 import { diagnoseEntry } from './diagnostics.js';
 import { computeEntryTemperatures } from '../drawer/drawer-state.js';
 
@@ -314,7 +314,7 @@ export async function showBrowsePopup() {
                 : (settings.vaults?.[0]?.name || '');
             const obsidianUri = buildObsidianURI(entryVaultName, entry.filename);
             const obsidianLink = obsidianUri
-                ? ` <a href="${escapeHtml(obsidianUri)}" class="dle-text-xs dle-muted">Open in Obsidian</a>`
+                ? ` ${buildObsidianAnchorHtml(obsidianUri, { className: 'dle-text-xs dle-muted' })}`
                 : '';
 
             const temp = tempMap.get(trackerKey(entry));
@@ -374,6 +374,16 @@ export async function showBrowsePopup() {
     }
 
     // Delegation registered once on container — not per render.
+    container.addEventListener('click', (e) => {
+        const link = e.target.closest('.dle-obsidian-link');
+        if (!link) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (!openExternalProtocol(link.dataset?.obsidianUri)) {
+            toastr.warning('Could not open Obsidian link from this browser context.', 'DeepLore Enhanced', { timeOut: 2500 });
+        }
+    });
+
     container.addEventListener('click', (e) => {
         // Skip the row-toggle when the click landed in the inline action group.
         if (e.target.closest('[data-no-toggle="1"]')) return;

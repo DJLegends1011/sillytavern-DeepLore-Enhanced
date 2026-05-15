@@ -1,5 +1,5 @@
 import { getVaultByName } from '../../settings.js';
-import { buildObsidianURI } from '../helpers.js';
+import { buildObsidianURI, openExternalProtocol } from '../helpers.js';
 import { computeGapAnalysis } from './graph-analysis.js';
 
 const escapeHtml = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -122,10 +122,7 @@ export function initEvents(gs, dbg) {
                 const uri = vault ? buildObsidianURI(vault.name, entry.filename) : null;
                 dbg(`Open in Obsidian: vault=${vault?.name || 'NONE'}, uri=${uri || 'NULL'}`);
                 if (uri) {
-                    // Anchor.click() works for custom protocols; some browsers block window.open() with non-http schemes.
-                    const a = document.createElement('a');
-                    a.href = uri;
-                    a.click();
+                    openExternalProtocol(uri);
                 } else {
                     dbg('WARNING: No vault found for entry, cannot build Obsidian URI');
                 }

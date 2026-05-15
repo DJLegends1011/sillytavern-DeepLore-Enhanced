@@ -8,7 +8,7 @@ import {
     fieldDefinitions,
 } from '../state.js';
 import { DEFAULT_FIELD_DEFINITIONS } from '../fields.js';
-import { buildObsidianURI, computeSourcesDiff, categorizeRejections, resolveEntryVault, normalizePinBlock } from '../helpers.js';
+import { buildObsidianURI, buildObsidianAnchorHtml, computeSourcesDiff, categorizeRejections, resolveEntryVault, normalizePinBlock } from '../helpers.js';
 import {
     ds, BROWSE_ROW_HEIGHT, BROWSE_OVERSCAN,
     getMatchLabel, computeEntryTemperatures,
@@ -121,7 +121,7 @@ export function renderInjectionTab() {
             h += `<div class="${classes.join(' ')}" style="--i:${idx}" role="listitem" aria-label="${entryAriaLabel}" data-title="${escapeHtml(src.title)}" data-count-key="${escapeHtml(countKey)}">`;
             h += `<span class="dle-why-title">`;
             if (uri) {
-                h += `<a href="${escapeHtml(uri)}" class="dle-obsidian-link" aria-label="Open in Obsidian">${escapeHtml(src.title)}</a>`;
+                h += buildObsidianAnchorHtml(uri, { text: src.title, ariaLabel: `Open ${src.title} in Obsidian` });
             } else {
                 h += escapeHtml(src.title);
             }
@@ -713,7 +713,7 @@ export function renderBrowseWindow() {
                     const srcVault = entry.vaultSource && settings.vaults ? settings.vaults.find(v => v.name === entry.vaultSource) : null;
                     const vaultName = srcVault ? srcVault.name : (settings.vaults?.[0]?.name || '');
                     const uri = entry.filename ? buildObsidianURI(vaultName, entry.filename) : null;
-                    const linkHtml = uri ? ` <a href="${escapeHtml(uri)}" class="dle-obsidian-link" aria-label="Open in Obsidian">Open in Obsidian</a>` : '';
+                    const linkHtml = uri ? ` ${buildObsidianAnchorHtml(uri)}` : '';
                     let fieldsHtml = '';
                     if (entry.customFields && Object.keys(entry.customFields).length > 0) {
                         const pairs = Object.entries(entry.customFields)

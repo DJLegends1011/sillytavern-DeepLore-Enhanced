@@ -45,7 +45,7 @@ import { validateCachedEntry } from '../src/vault/cache-validate.js';
 import { simpleHash, validateSettings, parseFrontmatter, buildScanText } from '../core/utils.js';
 import { testEntryMatch, formatAndGroup, applyGating, clearScanTextCache } from '../core/matching.js';
 import { parseVaultFile } from '../core/pipeline.js';
-import { normalizePinBlock, matchesPinBlock, cmrsResultToText } from '../src/helpers.js';
+import { normalizePinBlock, matchesPinBlock, cmrsResultToText, buildObsidianAnchorHtml, openExternalProtocol } from '../src/helpers.js';
 
 console.log('DeepLore Enhanced — Regression Tests');
 console.log('Each test guards a specific BUG fix or gotcha.\n');
@@ -1617,7 +1617,88 @@ test('Issue #24: usage falls back through OpenAI/Anthropic field names', () => {
     assertEqual(c.usage.output_tokens, 0);
 });
 
+// Obsidian deep-link safety
 // ============================================================================
+
+section('Obsidian deep-link safety');
+
+test('Obsidian links open outside the SillyTavern tab', () => {
+    const link = buildObsidianAnchorHtml('obsidian://open?vault=First%20Vault&file=Cosplay%20Mode');
+
+    assert(link.includes('href="#"'), 'obsidian:// link should not navigate the ST tab directly');
+    assert(link.includes('data-obsidian-uri="obsidian://open?vault=First%20Vault&amp;file=Cosplay%20Mode"'), 'uri should be stored for the click launcher');
+    assert(!link.includes('target="_blank"'), 'obsidian:// link should not leave a visible browser tab behind');
+});
+
+test('Obsidian links escape labels and attributes', () => {
+    const link = buildObsidianAnchorHtml('obsidian://open?vault=A&B&file=<bad>', {
+        text: 'Open <Mode>',
+        className: 'dle-obsidian-link custom',
+        ariaLabel: 'Open "Mode"',
+    });
+
+    assert(link.includes('Open &lt;Mode&gt;'), 'link text should be escaped');
+    assert(link.includes('class="dle-obsidian-link custom"'), 'class name should be preserved');
+    assert(link.includes('aria-label="Open &quot;Mode&quot;"'), 'aria label should be escaped');
+    assert(link.includes('data-obsidian-uri="obsidian://open?vault=A&amp;B&amp;file=&lt;bad&gt;"'), 'uri data attribute should be escaped');
+});
+
+test('External protocol launcher uses a hidden iframe and cleans it up', () => {
+    const appended = [];
+    let cleanup = null;
+    let cleanupDelay = 0;
+    const fakeBody = {
+        appendChild(node) {
+            appended.push(node);
+            node.parentNode = this;
+        },
+        removeChild(node) {
+            node.removedByParent = true;
+        },
+    };
+    const fakeDocument = {
+        body: fakeBody,
+        createElement(tag) {
+            return {
+                tagName: tag.toUpperCase(),
+                style: {},
+                attributes: {},
+                setAttribute(name, value) { this.attributes[name] = value; },
+                remove() { this.removed = true; },
+            };
+        },
+    };
+
+    const uri = 'obsidian://open?vault=First%20Vault&file=Cosplay%20Mode';
+    const opened = openExternalProtocol(uri, {
+        documentRef: fakeDocument,
+        setTimeoutFn(fn, delay) {
+            cleanup = fn;
+            cleanupDelay = delay;
+        },
+    });
+
+    assert(opened, 'valid external protocol should be launched');
+    assertEqual(appended.length, 1, 'one iframe should be appended');
+    assertEqual(appended[0].tagName, 'IFRAME', 'launcher should use an iframe');
+    assertEqual(appended[0].src, uri, 'iframe should receive the external protocol URI');
+    assertEqual(appended[0].attributes['aria-hidden'], 'true', 'iframe should be hidden from assistive tech');
+    assertEqual(cleanupDelay, 1000, 'iframe cleanup should be delayed briefly');
+    cleanup();
+    assert(appended[0].removed, 'iframe should be removed after launch');
+});
+
+test('External protocol launcher rejects non-protocol or missing document inputs', () => {
+    const fakeDocument = {
+        body: { appendChild() { throw new Error('should not append'); } },
+        createElement() { throw new Error('should not create'); },
+    };
+
+    assert(!openExternalProtocol('', { documentRef: fakeDocument }), 'empty uri should not launch');
+    assert(!openExternalProtocol('/relative/path', { documentRef: fakeDocument }), 'relative uri should not launch');
+    assert(!openExternalProtocol('obsidian://open?vault=A', { documentRef: null }), 'missing document should not launch');
+});
+
 // Summary
 // ============================================================================
 
