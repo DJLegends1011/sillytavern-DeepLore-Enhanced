@@ -5887,6 +5887,72 @@ body.dle-mobile-ui-active .dle-mobile-shell {
     font-size: 12px;
 }
 
+/* ─── FAB Glass Orb ─────────────────────────────────────────────────────── */
+
+.dle-mobile-fab-anchor {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 5001;
+    pointer-events: none;
+    transition: opacity 150ms ease;
+}
+
+.dle-mobile-fab {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: 1px solid color-mix(in srgb, var(--SmartThemeBodyColor, #fff) 8%, transparent);
+    background: color-mix(in srgb, var(--SmartThemeBlurTintColor, #111) 88%, transparent);
+    backdrop-filter: blur(16px);
+    box-shadow: 0 8px 24px var(--SmartThemeShadowColor, rgba(0,0,0,0.4));
+    color: var(--SmartThemeBodyColor, #fff);
+    font-size: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: auto;
+    touch-action: none;
+    cursor: grab;
+    will-change: transform;
+    -webkit-tap-highlight-color: transparent;
+}
+
+@supports not (backdrop-filter: blur(1px)) {
+    .dle-mobile-fab {
+        background: color-mix(in srgb, var(--SmartThemeBlurTintColor, #111) 92%, transparent);
+    }
+}
+
+.dle-mobile-fab--dragging {
+    cursor: grabbing;
+    transform: scale(1.1);
+    box-shadow: 0 12px 32px var(--SmartThemeShadowColor, rgba(0,0,0,0.55));
+    border-color: color-mix(in srgb, var(--SmartThemeBodyColor, #fff) 12%, transparent);
+}
+
+.dle-mobile-fab__badge {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    min-width: 18px;
+    height: 18px;
+    border-radius: 999px;
+    background: var(--SmartThemeQuoteColor, #d4a847);
+    color: #111;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 18px;
+    text-align: center;
+    padding: 0 4px;
+    pointer-events: none;
+}
+
+/* ─── End FAB ───────────────────────────────────────────────────────────── */
+
 .dle-mobile-sheet {
     position: absolute;
     right: 0;

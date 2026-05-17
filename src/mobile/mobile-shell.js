@@ -39,6 +39,12 @@ import {
     buildMobileInjectionRows,
     extractTimerData,
 } from './mobile-injection.js';
+import {
+    createFab,
+    destroyFab,
+    updateBadge,
+    setFabVisible,
+} from './mobile-fab.js';
 
 export const MOBILE_VIEWPORT_WIDTH = 768;
 export const TOUCH_TABLET_WIDTH = 1024;
@@ -381,11 +387,14 @@ function renderInjection(snapshot, state = mobileState) {
         ? timers.map(t => `<div class="dle-mobile-injection-timer"><span>${escapeHtml(t.title)}</span><span class="dle-mobile-injection-timer-badge dle-mobile-injection-timer-${t.timerType}">${escapeHtml(t.detail)}</span></div>`).join('')
         : '<div class="dle-mobile-injection-timer-empty">No active timers</div>';
 
+    const copyDisabled = !rows.length || filter !== 'injected';
+
     return `
         <div class="dle-mobile-drill-header">
             <button type="button" data-dle-mobile-view="home"><i class="fa-solid fa-chevron-left" aria-hidden="true"></i></button>
             <strong>Injection</strong>
             <span class="dle-mobile-injection-count">${snapshot.injectedCount}</span>
+            <button class="dle-mobile-wide-action-sm" type="button" data-dle-mobile-injection-action="copy-titles" aria-label="Copy injected titles"${copyDisabled ? ' disabled' : ''}><i class="fa-solid fa-clipboard" aria-hidden="true"></i></button>
             <button class="dle-mobile-wide-action-sm" type="button" data-dle-mobile-command="${commandForView('injection')}" aria-label="Open full Injection view"><i class="fa-solid fa-up-right-from-square" aria-hidden="true"></i></button>
         </div>
         <div class="dle-mobile-injection-filters" role="radiogroup" aria-label="Filter entries">
@@ -726,6 +735,9 @@ function renderCurrentState() {
 
     const snapshot = buildMobileShellSnapshot();
     root.innerHTML = renderMobileShellContents(snapshot, mobileState);
+
+    updateBadge(snapshot.injectedCount || 0);
+    setFabVisible(!mobileState.open);
 }
 
 function handleMobileClick(event) {
@@ -827,7 +839,15 @@ function handleMobileClick(event) {
     const injectionActionEl = target.closest('[data-dle-mobile-injection-action]');
     if (injectionActionEl) {
         const action = injectionActionEl.getAttribute('data-dle-mobile-injection-action');
-        if (action === 'obsidian') {
+        if (action === 'copy-titles') {
+            const sources = Array.isArray(lastInjectionSources) ? lastInjectionSources : [];
+            const titles = sources.map(s => s.title).filter(Boolean).join('\n');
+            if (titles) {
+                navigator.clipboard.writeText(titles).catch(() => {
+                    setMobileError('Clipboard access denied.');
+                });
+            }
+        } else if (action === 'obsidian') {
             const filename = injectionActionEl.getAttribute('data-filename') || '';
             const vaultSource = injectionActionEl.getAttribute('data-vault') || '';
             openMobileBrowseObsidian(filename, vaultSource || null);
@@ -947,11 +967,20 @@ export function createMobileShell(options = {}) {
     mobileMediaQuery = window.matchMedia?.('(pointer: coarse)');
     mobileMediaQuery?.addEventListener?.('change', mobileResizeHandler);
 
+    destroyFab();
+    createFab({
+        onTap: () => {
+            mobileState.open = !mobileState.open;
+            renderCurrentState();
+        },
+    });
+
     renderCurrentState();
     return root;
 }
 
 export function destroyMobileShell() {
+    destroyFab();
     for (const unsubscribe of mobileUnsubscribers) {
         try { unsubscribe(); } catch { /* noop */ }
     }

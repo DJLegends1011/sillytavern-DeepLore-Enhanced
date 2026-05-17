@@ -1293,4 +1293,14 @@ test('style.css: contains mobile injection card and filter styles', () => {
     assertMatch(css, /\.dle-mobile-injection-expanded/, 'should define expanded card styles');
 });
 
+test('style.css: contains mobile FAB glass orb styles', () => {
+    const css = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+
+    assertMatch(css, /\.dle-mobile-fab-anchor/, 'should define FAB anchor positioning');
+    assertMatch(css, /\.dle-mobile-fab\b/, 'should define FAB orb styles');
+    assertMatch(css, /\.dle-mobile-fab--dragging/, 'should define FAB dragging state');
+    assertMatch(css, /\.dle-mobile-fab__badge/, 'should define FAB badge styles');
+    assertMatch(css, /backdrop-filter:\s*blur\(16px\)/, 'FAB should use 16px glassmorphic blur');
+});
+
 summary('Mobile UI foundation tests');
