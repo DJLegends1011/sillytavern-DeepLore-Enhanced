@@ -118,15 +118,27 @@ function applyPosition(x, y, animate = false) {
     currentPosition.y = y;
 }
 
+let preKeyboardY = null;
+
 function reclampPosition() {
-    if (!fabEl?.style || dragState) return; // don't fight an active drag
+    if (!fabEl?.style || dragState) return;
     const vw = window.innerWidth || 390;
     const vh = window.innerHeight || 844;
     const inputTop = getInputBarTop();
     const insets = getSafeInsets();
     const snapX = computeSnapX(currentPosition.edge, vw, insets.left, insets.right);
-    const clamped = clampPosition(snapX, currentPosition.y, vw, vh, inputTop, insets);
-    applyPosition(clamped.x, clamped.y, true);
+    const maxY = inputTop - FAB_SIZE - EDGE_MARGIN;
+
+    if (currentPosition.y > maxY) {
+        if (preKeyboardY === null) preKeyboardY = currentPosition.y;
+        const clamped = clampPosition(snapX, currentPosition.y, vw, vh, inputTop, insets);
+        applyPosition(clamped.x, clamped.y, true);
+    } else if (preKeyboardY !== null) {
+        const restoreY = preKeyboardY;
+        preKeyboardY = null;
+        const clamped = clampPosition(snapX, restoreY, vw, vh, inputTop, insets);
+        applyPosition(clamped.x, clamped.y, true);
+    }
 }
 
 function snapToEdge(x, y) {
@@ -283,6 +295,7 @@ export function destroyFab() {
     badgeEl = null;
     dragState = null;
     onTapCallback = null;
+    preKeyboardY = null;
 }
 
 export function updateBadge(count) {
