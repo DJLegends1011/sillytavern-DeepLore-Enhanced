@@ -81,6 +81,8 @@ let badgeEl = null;
 let dragState = null;
 let onTapCallback = null;
 let currentPosition = { x: 0, y: 0, edge: 'right' };
+let reclampRafId = null;
+let viewportResizeHandler = null;
 
 function getInputBarTop() {
     try {
@@ -114,6 +116,17 @@ function applyPosition(x, y, animate = false) {
     fabEl.style.transform = `translate(${x}px, ${y}px)`;
     currentPosition.x = x;
     currentPosition.y = y;
+}
+
+function reclampPosition() {
+    if (!fabEl?.style || dragState) return; // don't fight an active drag
+    const vw = window.innerWidth || 390;
+    const vh = window.innerHeight || 844;
+    const inputTop = getInputBarTop();
+    const insets = getSafeInsets();
+    const snapX = computeSnapX(currentPosition.edge, vw, insets.left, insets.right);
+    const clamped = clampPosition(snapX, currentPosition.y, vw, vh, inputTop, insets);
+    applyPosition(clamped.x, clamped.y, true);
 }
 
 function snapToEdge(x, y) {
@@ -239,6 +252,15 @@ export function createFab({ onTap, container } = {}) {
         fabEl.addEventListener('touchend', onTouchEnd, { passive: true });
     }
 
+    viewportResizeHandler = () => {
+        if (reclampRafId) cancelAnimationFrame(reclampRafId);
+        reclampRafId = requestAnimationFrame(reclampPosition);
+    };
+    window.addEventListener('resize', viewportResizeHandler);
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', viewportResizeHandler);
+    }
+
     return wrapper;
 }
 
@@ -248,6 +270,13 @@ export function destroyFab() {
         fabEl.removeEventListener('touchmove', onTouchMove);
         fabEl.removeEventListener('touchend', onTouchEnd);
     }
+    if (viewportResizeHandler && typeof window !== 'undefined') {
+        window.removeEventListener('resize', viewportResizeHandler);
+        window.visualViewport?.removeEventListener('resize', viewportResizeHandler);
+    }
+    viewportResizeHandler = null;
+    if (reclampRafId) cancelAnimationFrame(reclampRafId);
+    reclampRafId = null;
     fabWrapper?.remove();
     fabWrapper = null;
     fabEl = null;
