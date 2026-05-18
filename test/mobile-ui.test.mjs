@@ -433,7 +433,6 @@ test('renderMobileShell: renders hybrid dock, home sheet, and quick actions', ()
     }, { open: true, view: 'home', mode: 'auto', errorMessage: '' });
 
     assertMatch(html, /id="dle-mobile-root"/, 'shell root should be rendered');
-    assertMatch(html, /class="dle-mobile-dock[^"]*dle-mobile-open"/, 'dock should expose open state');
     assertMatch(html, /id="dle-mobile-sheet"/, 'bottom sheet should be rendered');
     assertMatch(html, /id="dle-mobile-sheet"[^>]*aria-hidden="false"/, 'open sheet should be exposed to assistive tech');
     assert(!/id="dle-mobile-sheet"[^>]*inert/.test(html), 'open sheet should not be inert');
@@ -531,7 +530,6 @@ test('renderMobileShell: closed shell keeps sheet mounted and collapsed', () => 
         loreGaps: [],
     }, { open: false, view: 'home', mode: 'auto', errorMessage: '' });
 
-    assertMatch(html, /aria-expanded="false"/, 'dock should report closed state');
     assertMatch(html, /id="dle-mobile-sheet"/, 'sheet should remain mounted for animation and accessibility');
     assertMatch(html, /id="dle-mobile-sheet"[^>]*aria-hidden="true"/, 'closed sheet should be hidden from assistive tech');
     assertMatch(html, /id="dle-mobile-sheet"[^>]*inert/, 'closed sheet should not expose focusable controls');
@@ -921,13 +919,13 @@ test('setup wizard mobile CSS: constrains popup and sticky navigation at phone w
     assertMatch(css, /\.dle-wizard-steps[\s\S]*scroll-snap-type:\s*x mandatory/m, 'step strip should be horizontally scrollable with snap points');
 });
 
-test('mobile shell CSS: positions dock and sheet safely over chat', () => {
+test('mobile shell CSS: positions FAB and sheet safely over chat', () => {
     const css = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
 
     assertMatch(css, /#dle-mobile-root[\s\S]*position:\s*fixed/m, 'mobile root should be fixed over the ST viewport');
     assertMatch(css, /body\.dle-mobile-ui-active #deeplore-drawer[\s\S]*display:\s*none !important/m, 'desktop drawer should hide while mobile shell is active');
-    assertMatch(css, /\.dle-mobile-dock[\s\S]*bottom:\s*calc\(env\(safe-area-inset-bottom,\s*0px\) \+ 76px\)/m, 'dock should sit above the ST input bar with safe area');
-    assertMatch(css, /\.dle-mobile-dock\.dle-mobile-open[\s\S]*opacity:\s*0/m, 'open sheet should hide the dock to avoid ghosting through sheet content');
+    assertMatch(css, /\.dle-mobile-fab-anchor[\s\S]*z-index:\s*5001/m, 'FAB anchor should layer above ST UI');
+    assertMatch(css, /\.dle-mobile-fab\b[\s\S]*border-radius:\s*50%/m, 'FAB should be circular');
     assertMatch(css, /\.dle-mobile-sheet[\s\S]*max-height:\s*min\(78dvh,\s*620px\)/m, 'sheet should be bounded to mobile viewport height');
     assertMatch(css, /\.dle-mobile-mode-btn[\s\S]*min-height:\s*40px/m, 'mode buttons should be touch friendly');
     assertMatch(css, /\.dle-mobile-error[\s\S]*border/m, 'error banner styling should exist');

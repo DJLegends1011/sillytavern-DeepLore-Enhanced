@@ -593,11 +593,6 @@ function renderMobileShellContents(snapshot, state = mobileState) {
     const sheetAriaHidden = state.open ? 'false' : 'true';
     const sheetInert = state.open ? '' : ' inert';
     return `
-        <button class="dle-mobile-dock${openClass}" type="button" data-dle-mobile-action="toggle" aria-expanded="${state.open ? 'true' : 'false'}" aria-controls="dle-mobile-sheet">
-            <i class="fa-solid fa-book-open" aria-hidden="true"></i>
-            <span>DeepLore</span>
-            <strong>${escapeHtml(snapshot.injectedCount)}</strong>
-        </button>
         <section id="dle-mobile-sheet" class="dle-mobile-sheet${openClass}" role="dialog" aria-modal="false" aria-hidden="${sheetAriaHidden}" aria-label="DeepLore mobile controls"${sheetInert}>
             <header class="dle-mobile-header">
                 <div>
