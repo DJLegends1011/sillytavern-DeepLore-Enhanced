@@ -21,6 +21,8 @@
 - [x] **Injection tab** — 3-way filter (injected/filtered/all), entry cards with match badges + tokens, Entry Timers collapsible, Obsidian/Browse action links, Full View icon button
 - [x] **Browse tab** — search bar, status/tag/folder/sort filters, quick filters (Since last gen, Never injected), expandable entry cards with Pin/Block/Copy/Open, Full View icon button
 - [x] **Theme-aware CSS** — all mobile elements use `--SmartTheme*` variables
+- [x] **FAB glass orb** — draggable floating action button replaces old dock bar, edge snap, input-area boundary clamping, keyboard-aware repositioning, injection count badge
+- [x] **Copy Titles button** — clipboard icon in Injection tab header copies injected entry titles
 
 ---
 
@@ -128,9 +130,9 @@ Desktop Zone 3 has context bar, Recent Activity, health icons, and AI stats. The
 
 ---
 
-## Injection Tab — Minor Polish
+## Injection Tab — Complete ✓
 
-- [ ] **Copy Titles button** — copy injected entry titles to clipboard (desktop has clipboard icon in toolbar)
+All Injection tab parity items are done.
 
 ---
 
@@ -138,7 +140,7 @@ Desktop Zone 3 has context bar, Recent Activity, health icons, and AI stats. The
 
 | Area | Done | Remaining |
 |------|------|-----------|
-| Injection | 6 | 1 |
+| Injection | 7 | 0 |
 | Browse | 6 | 1 |
 | Quick Actions | 0 | 7 |
 | Filters (Gating) | 0 | 6 |
@@ -146,4 +148,5 @@ Desktop Zone 3 has context bar, Recent Activity, health icons, and AI stats. The
 | Tools | 4 | 12 |
 | Graph | 0 | 2 |
 | Footer/Activity | 0 | 1 |
-| **Total** | **16** | **37** |
+| Infrastructure | 1 | 0 |
+| **Total** | **18** | **35** |
