@@ -26,9 +26,9 @@
 
 ---
 
-## Browse — Polish
+## Browse — Complete ✓
 
-- [ ] **Search syntax help popover** — current "?" shows a plain one-liner; desktop shows a rich popover with `tag:wizard`, `folder:Locations`, `key:apple`, `summary:"old gods"`, `field:era=medieval` examples. Match the desktop format with theme-aware styling.
+All Browse tab parity items are done.
 
 ---
 
@@ -141,7 +141,7 @@ All Injection tab parity items are done.
 | Area | Done | Remaining |
 |------|------|-----------|
 | Injection | 7 | 0 |
-| Browse | 6 | 1 |
+| Browse | 7 | 0 |
 | Quick Actions | 0 | 7 |
 | Filters (Gating) | 0 | 6 |
 | Librarian | 0 | 7 |
@@ -149,4 +149,4 @@ All Injection tab parity items are done.
 | Graph | 0 | 2 |
 | Footer/Activity | 0 | 1 |
 | Infrastructure | 1 | 0 |
-| **Total** | **18** | **35** |
+| **Total** | **19** | **34** |
