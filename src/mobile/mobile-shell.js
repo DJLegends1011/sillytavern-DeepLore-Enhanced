@@ -442,7 +442,17 @@ function renderBrowse(snapshot, state = mobileState) {
                     <i class="fa-solid fa-circle-question" aria-hidden="true"></i>
                 </button>
             </label>
-            ${state.browseSearchHelpOpen ? '<div class="dle-mobile-browse-help"><strong>Search syntax</strong><span>tag:character folder:Places key:name summary:rumor field:era=Modern</span></div>' : ''}
+            ${state.browseSearchHelpOpen ? `<div class="dle-mobile-browse-help">
+    <strong>Search syntax</strong>
+    <div class="dle-mobile-browse-help-grid">
+        <div><code>tag:wizard</code> — entries tagged <em>wizard</em></div>
+        <div><code>folder:Locations</code> — entries under <em>Locations/</em></div>
+        <div><code>key:apple</code> — keyword exact-match</div>
+        <div><code>summary:"old gods"</code> — phrase in summary</div>
+        <div><code>field:era=medieval</code> — custom-field match</div>
+        <div>Combine prefixes with spaces. Plain words match title/keys/content.</div>
+    </div>
+</div>` : ''}
             <div class="dle-mobile-browse-filter-grid">
                 <select data-dle-mobile-browse-field="status" aria-label="Status filter">
                     <option value="all"${browseState.status === 'all' ? ' selected' : ''}>Status</option>

@@ -1301,4 +1301,11 @@ test('style.css: contains mobile FAB glass orb styles', () => {
     assertMatch(css, /backdrop-filter:\s*blur\(16px\)/, 'FAB should use 16px glassmorphic blur');
 });
 
+test('style.css: contains mobile Browse search help styles', () => {
+    const css = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+
+    assertMatch(css, /\.dle-mobile-browse-help\b/, 'should define browse help popover styles');
+    assertMatch(css, /\.dle-mobile-browse-help-grid/, 'should define browse help grid layout');
+});
+
 summary('Mobile UI foundation tests');

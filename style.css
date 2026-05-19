@@ -6301,6 +6301,42 @@ body.dle-mobile-ui-active .dle-mobile-shell {
     font-size: 0.9em;
 }
 
+.dle-mobile-browse-help {
+    padding: 10px 12px;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,0.16));
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--SmartThemeBlurTintColor, #111) 92%, transparent);
+    color: var(--SmartThemeBodyColor, #ccc);
+    font-size: 0.85em;
+    line-height: 1.5;
+}
+
+.dle-mobile-browse-help strong {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 0.9em;
+    color: var(--SmartThemeEmColor, #aaa);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.dle-mobile-browse-help-grid {
+    display: grid;
+    gap: 4px;
+}
+
+.dle-mobile-browse-help-grid code {
+    background: color-mix(in srgb, var(--SmartThemeBodyColor, #fff) 8%, transparent);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 0.95em;
+}
+
+.dle-mobile-browse-help-grid em {
+    color: var(--SmartThemeQuoteColor, #d4a847);
+    font-style: normal;
+}
+
 .dle-mobile-browse-filter-grid select {
     background: var(--SmartThemeBlurTintColor, #252540);
     color: var(--SmartThemeBodyColor, #ccc);
