@@ -39,7 +39,7 @@ resolveConnectionConfig(toolKey) -> config
 The Librarian's agentic generation loop uses a **separate API path** from `callAI()`. `callWithTools()` in `agentic-api.js` dispatches based on the resolved Librarian connection mode:
 
 - **Proxy mode** (`resolveConnectionConfig('librarian').mode === 'proxy'`): calls `callWithToolsViaProxy()`, which sends directly to an Anthropic-compatible proxy via ST's CORS bridge (`/proxy/` endpoint). Tools are converted from OpenAI to Anthropic format. System messages are extracted into the `system` field. `isToolCallingSupported()` returns true, `getProviderFormat()` returns `'claude'`, and `getActiveMaxTokens()` uses the Librarian's configured maxTokens.
-- **Profile mode** (default): calls `ConnectionManagerRequestService.sendRequest()` using the active connection profile (`getActiveProfileId()`). This is the same connection the user's main chat uses.
+- **Profile mode** (default): calls `ConnectionManagerRequestService.sendRequest()` using the Librarian's own configured profile (`connConfig.profileId`, resolved from `librarianProfileId` or — if mode is `inherit` — the aiSearch profile). NOT the globally-active main-chat profile. Unset profile throws hard error rather than silently inheriting active (#27 sym 2).
 
 The Librarian profile setting (`librarianConnectionMode`, `librarianProfileId`, etc.) is also used by Emma's conversation loop in `librarian-session.js` (the review popup).
 

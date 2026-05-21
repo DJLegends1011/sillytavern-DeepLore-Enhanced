@@ -290,6 +290,14 @@ export async function callWithTools(messages, tools, toolChoice, maxTokens, sign
         return callWithToolsViaProxy(connConfig, messages, tools, toolChoice, maxTokens, signal);
     }
 
+    // #27 sym 2: Librarian must use its own configured profile, not ST's globally-active one.
+    // No silent fallback — if Librarian's profile (or inherited aiSearch profile) is unset,
+    // the user should be told to set it rather than silently inheriting whichever profile
+    // happens to be active when Librarian runs.
+    if (!connConfig.profileId) {
+        throw new Error('Librarian needs a profile in AI Connections settings.');
+    }
+
     const format = getProviderFormat();
 
     // Normalize tool_choice per provider — ST wraps differently per backend:
@@ -331,7 +339,7 @@ export async function callWithTools(messages, tools, toolChoice, maxTokens, sign
     let result;
     try {
         result = await ConnectionManagerRequestService.sendRequest(
-            getActiveProfileId(),
+            connConfig.profileId,
             messages,
             maxTokens,
             {
