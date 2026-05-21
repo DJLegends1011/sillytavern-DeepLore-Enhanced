@@ -86,8 +86,21 @@ Tag-mode extraction also runs inside the `CHARACTER_MESSAGE_RENDERED` handler (s
 
 ### Storage
 - **Per-message:** `message.extra.deeplore_ai_notes` — the extracted notes for this specific message
-- **Accumulated:** `chat_metadata.deeplore_ai_notepad` — all notes concatenated, capped at 64KB (`AI_NOTEPAD_MAX_CHARS`)
-- **Cap function:** `capNotepad(text)` — trims oldest block at paragraph boundary (`\n\n`)
+- **Accumulated:** `chat_metadata.deeplore_ai_notepad` — all notes concatenated
+- **Pinned entries:** `chat_metadata.deeplore_ai_notepad_pins` — array of normalized line keys (see `normalizeNotepadLine()` in `src/helpers.js`). Pinned lines survive both cap passes below.
+
+### Cap function `capNotepad(text, opts?)` (#25)
+
+Applied at every append site. Two passes in order:
+
+1. **Entry-count FIFO** — when `settings.aiNotepadMaxEntries > 0` (default 50), oldest non-pinned lines are dropped first until the line count is at or below the cap. Pinned lines (matched by normalized key against `deeplore_ai_notepad_pins`) are skipped even when they are the oldest, so pin = sticky.
+2. **64KB char backstop** (`AI_NOTEPAD_MAX_CHARS`) — kept as a hard ceiling so a single pathologically large note can't blow up chat metadata. Trims oldest block at paragraph boundary (`\n\n`).
+
+`opts.settings` and `opts.chat_metadata` are accepted for test isolation; production callers pass `text` only.
+
+### Manual fuzzy dedup
+
+The AI Notepad popup exposes a `Deduplicate` button that walks lines in order and drops later entries whose `normalizeNotepadLine()` key matches an earlier kept line OR whose bigram-Dice similarity (`bigramDiceSimilarity()` in `src/helpers.js`) meets `settings.aiNotepadFuzzyDedupThreshold` (default 0.85). If an incoming line is pinned and the existing match is not, the pin wins — pinned text replaces the kept slot. Deterministic, no LLM dependency. LLM-driven culling is deferred past 2.5 by design.
 
 ### Swipe Rollback (BUG-290)
 On `MESSAGE_SWIPED` handler (`_registerEs(event_types.MESSAGE_SWIPED, ...)` — notepad rollback block using `lastIndexOf(anchored)`): Removes the **last occurrence** of the swiped message's notes from `deeplore_ai_notepad`, anchored on `'\n' + notes`. Uses `lastIndexOf` (not first `replace`) to avoid removing an earlier message's identical notes.

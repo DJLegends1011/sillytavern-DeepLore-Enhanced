@@ -114,6 +114,14 @@ export const defaultSettings = {
     aiNotepadModel: '',
     aiNotepadMaxTokens: 1024,
     aiNotepadTimeout: 30000,
+    // FIFO cap on AI Notepad entries (lines) per chat. New entries bump the oldest
+    // non-pinned line when the cap is reached. 0 disables the entry cap (the legacy
+    // 64KB char cap still applies as a backstop).
+    aiNotepadMaxEntries: 50,
+    // Bigram-Dice similarity threshold for the manual "Deduplicate" button in the
+    // AI Notepad popup. 0.0 = identical only; 1.0 = exact strings; ~0.85 catches
+    // near-duplicates without merging distinct notes that happen to share words.
+    aiNotepadFuzzyDedupThreshold: 0.85,
     // AI Search
     aiSearchEnabled: false,
     aiSearchConnectionMode: 'profile',
@@ -341,6 +349,8 @@ export const settingsConstraints = {
     reviewResponseTokens: { min: 0, max: 100000 },
     aiNotepadMaxTokens: { min: 256, max: 8192 },
     aiNotepadTimeout: { min: 5000, max: 999999 },
+    aiNotepadMaxEntries: { min: 0, max: 1000 },
+    aiNotepadFuzzyDedupThreshold: { min: 0, max: 1 },
     aiSearchMaxTokens: { min: 64, max: 4096 },
     aiSearchTimeout: { min: 1000, max: 999999 },
     aiSearchScanDepth: { min: 1, max: 100 },

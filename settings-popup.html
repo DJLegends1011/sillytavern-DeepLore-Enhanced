@@ -792,6 +792,16 @@
                         <span>View AI Notepad</span>
                     </div>
                 </div>
+                <div class="flex-container">
+                    <div class="flex1" title="Maximum number of note lines retained per chat. New notes bump the oldest non-pinned line when the cap is reached. 0 = no limit (the 64KB char backstop still applies).">
+                        <label for="dle-sp-ai-notepad-max-entries"><small>Max Entries (FIFO cap)</small></label>
+                        <input id="dle-sp-ai-notepad-max-entries" type="number" class="text_pole" min="0" max="1000" />
+                    </div>
+                    <div class="flex1" title="Bigram-Dice similarity threshold used by the 'Deduplicate' button in the notepad popup. Lower values catch more near-duplicates but may merge distinct notes. Default 0.85.">
+                        <label for="dle-sp-ai-notepad-fuzzy-threshold"><small>Fuzzy Dedup Threshold</small></label>
+                        <input id="dle-sp-ai-notepad-fuzzy-threshold" type="number" class="text_pole" min="0" max="1" step="0.05" />
+                    </div>
+                </div>
                 <span class="dle-text-xs dle-muted">Injection position: configured in the <a href="#" class="dle-goto-tab-link" data-goto-tab="injection">Injection tab</a>.</span>
                 <div id="dle-sp-ai-notepad-tag-options">
                     <label for="dle-sp-ai-notepad-prompt"><small>Custom Tag Instruction (leave empty for default)</small></label>

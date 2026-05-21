@@ -73,7 +73,7 @@ import { registerSlashCommands } from './src/ui/commands.js';
 import { dedupError, dedupWarning } from './src/toast-dedup.js';
 import { createDrawerPanel, resetDrawerState, destroyDrawerPanel } from './src/drawer/drawer.js';
 import { pushActivity } from './src/drawer/drawer-state.js';
-import { extractAiNotes, normalizeLoreGap } from './src/helpers.js';
+import { extractAiNotes, normalizeLoreGap, normalizeNotepadLine } from './src/helpers.js';
 import { clearSessionActivityLog, persistGaps } from './src/librarian/librarian-tools.js';
 import { injectLibrarianDropdown, removeLibrarianDropdown } from './src/librarian/librarian-ui.js';
 import { clearSessionState as clearLibrarianSessionState } from './src/librarian/librarian-session.js';
@@ -172,14 +172,68 @@ const VISIBLE_NOTES_PATTERNS = [
     /\[Meta:[\s\S]*?\]/gi,
 ];
 
-// BUG-AUDIT-H08: 64KB soft cap on deeplore_ai_notepad — prevents unbounded growth across
-// long sessions. Excess is trimmed from the oldest end at the nearest paragraph boundary.
+// BUG-AUDIT-H08: 64KB soft cap on deeplore_ai_notepad — kept as a hard backstop
+// even after #25 introduced an entry-count cap. Without it a single pathologically
+// large note could still blow up the chat metadata.
 const AI_NOTEPAD_MAX_CHARS = 65536;
-function capNotepad(text) {
-    if (!text || text.length <= AI_NOTEPAD_MAX_CHARS) return text;
-    const trimmed = text.slice(text.length - AI_NOTEPAD_MAX_CHARS);
-    const boundary = trimmed.indexOf('\n\n');
-    return boundary !== -1 ? trimmed.slice(boundary + 2) : trimmed;
+
+/**
+ * Cap the AI Notepad string. Two limits applied in order:
+ *   1. Entry-count FIFO (#25): when settings.aiNotepadMaxEntries > 0, oldest
+ *      non-pinned lines are dropped first; pinned lines (matched by normalized
+ *      key against chat_metadata.deeplore_ai_notepad_pins) are protected.
+ *   2. Char backstop: legacy 64KB cap on the resulting string.
+ *
+ * Pure aside from reading settings + pin list; the chat_metadata object is
+ * accepted so test mocks can pass a plain object instead of pulling ST globals.
+ */
+function capNotepad(text, opts = {}) {
+    if (!text) return text;
+    const settings = opts.settings || getSettings();
+    const metadata = opts.chat_metadata || chat_metadata || {};
+    const maxEntries = Number(settings.aiNotepadMaxEntries) || 0;
+
+    if (maxEntries > 0) {
+        const lines = text.split('\n');
+        // Count non-empty lines as entries; preserve blank lines that separate them.
+        const entryIndices = [];
+        for (let i = 0; i < lines.length; i++) {
+            if (lines[i].trim()) entryIndices.push(i);
+        }
+        if (entryIndices.length > maxEntries) {
+            const pinList = Array.isArray(metadata.deeplore_ai_notepad_pins)
+                ? metadata.deeplore_ai_notepad_pins
+                : [];
+            const pinSet = new Set(pinList.filter(k => typeof k === 'string' && k));
+            const toRemove = entryIndices.length - maxEntries;
+            // Walk oldest → newest, dropping non-pinned entries until we've trimmed
+            // enough. Pinned lines stay even if they're the oldest — pin = sticky.
+            const removeSet = new Set();
+            let removed = 0;
+            for (const idx of entryIndices) {
+                if (removed >= toRemove) break;
+                const key = normalizeNotepadLine(lines[idx]);
+                if (pinSet.has(key)) continue;
+                removeSet.add(idx);
+                removed++;
+            }
+            if (removeSet.size > 0) {
+                const kept = [];
+                for (let i = 0; i < lines.length; i++) {
+                    if (removeSet.has(i)) continue;
+                    kept.push(lines[i]);
+                }
+                text = kept.join('\n').replace(/^\n+/, '');
+            }
+        }
+    }
+
+    if (text.length > AI_NOTEPAD_MAX_CHARS) {
+        const trimmed = text.slice(text.length - AI_NOTEPAD_MAX_CHARS);
+        const boundary = trimmed.indexOf('\n\n');
+        text = boundary !== -1 ? trimmed.slice(boundary + 2) : trimmed;
+    }
+    return text;
 }
 
 // ============================================================================

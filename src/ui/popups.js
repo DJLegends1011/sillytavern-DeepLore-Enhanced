@@ -18,7 +18,7 @@ import {
 } from '../state.js';
 import { buildIndex } from '../vault/vault.js';
 import { callAutoSuggest } from '../ai/auto-suggest.js';
-import { extractAiResponseClient, buildObsidianURI, STAGE_COLORS, normalizePinBlock } from '../helpers.js';
+import { extractAiResponseClient, buildObsidianURI, STAGE_COLORS, normalizePinBlock, normalizeNotepadLine, bigramDiceSimilarity } from '../helpers.js';
 import { diagnoseEntry } from './diagnostics.js';
 import { computeEntryTemperatures } from '../drawer/drawer-state.js';
 
@@ -137,6 +137,14 @@ export async function showAiNotepadPopup() {
     // BUG-AUDIT-DP04: snapshot epoch at open — discard edits if chat changed during edit.
     const epochAtOpen = chatEpoch;
     const currentNotes = chat_metadata?.deeplore_ai_notepad || '';
+    const initialPins = Array.isArray(chat_metadata?.deeplore_ai_notepad_pins)
+        ? chat_metadata.deeplore_ai_notepad_pins.filter(k => typeof k === 'string' && k.trim())
+        : [];
+    const pinnedKeys = new Set(initialPins);
+    const settings = getSettings();
+    const dedupThreshold = Math.max(0, Math.min(1, Number(settings.aiNotepadFuzzyDedupThreshold) || 0.85));
+
+    const splitLines = (text) => String(text || '').split('\n').map(l => l.trim()).filter(Boolean);
 
     const container = document.createElement('div');
     container.classList.add('dle-popup');
@@ -144,7 +152,18 @@ export async function showAiNotepadPopup() {
         <h3>AI Notepad</h3>
         <p class="dle-muted dle-text-sm">Session notes written by the AI using &lt;dle-notes&gt; tags. These are stripped from visible chat and reinjected into future messages.</p>
         <textarea id="dle-ai-notepad-textarea" class="text_pole dle-w-full" rows="15" placeholder="No AI notes yet for this chat.">${escapeHtml(currentNotes)}</textarea>
-        <span id="dle-ai-notepad-token-count" class="dle-text-xs dle-faint"></span>
+        <div class="flex-container" style="align-items: center; gap: 8px; margin-top: 4px;">
+            <span id="dle-ai-notepad-token-count" class="dle-text-xs dle-faint"></span>
+            <span id="dle-ai-notepad-entry-count" class="dle-text-xs dle-faint"></span>
+            <span style="flex: 1;"></span>
+            <button type="button" id="dle-ai-notepad-dedup" class="menu_button menu_button_icon" title="Merge near-duplicate entries (deterministic fuzzy match, pins protected)">
+                <i class="fa-solid fa-broom" aria-hidden="true"></i><span>Deduplicate</span>
+            </button>
+        </div>
+        <div style="margin-top: 10px;">
+            <label><small>Pinned Entries (exempt from FIFO cap and dedup)</small></label>
+            <div id="dle-ai-notepad-pin-list" class="dle-preview dle-preview--short"></div>
+        </div>
     `;
 
     let capturedValue = currentNotes;
@@ -157,17 +176,115 @@ export async function showAiNotepadPopup() {
         onOpen: async () => {
             const textarea = document.getElementById('dle-ai-notepad-textarea');
             const countEl = document.getElementById('dle-ai-notepad-token-count');
-            if (textarea && countEl) {
-                const updateCount = async () => {
+            const entryCountEl = document.getElementById('dle-ai-notepad-entry-count');
+            const pinListEl = document.getElementById('dle-ai-notepad-pin-list');
+            const dedupBtn = document.getElementById('dle-ai-notepad-dedup');
+            if (!textarea) return;
+
+            const maxEntries = Number(settings.aiNotepadMaxEntries) || 0;
+
+            const renderPinList = () => {
+                if (!pinListEl) return;
+                const lines = splitLines(textarea.value);
+                if (lines.length === 0) {
+                    pinListEl.innerHTML = '<div class="dle-text-xs dle-muted"><em>No entries yet.</em></div>';
+                    return;
+                }
+                const seen = new Set();
+                const rows = [];
+                for (const line of lines) {
+                    const key = normalizeNotepadLine(line);
+                    if (!key || seen.has(key)) continue;
+                    seen.add(key);
+                    const checked = pinnedKeys.has(key) ? 'checked' : '';
+                    rows.push(`
+                        <label class="checkbox_label" style="display: flex; gap: 8px; align-items: flex-start; margin: 2px 0;">
+                            <input type="checkbox" class="checkbox dle-ai-notepad-pin-toggle" data-pin-key="${escapeHtml(key)}" ${checked}>
+                            <span>${escapeHtml(line)}</span>
+                        </label>
+                    `);
+                }
+                pinListEl.innerHTML = rows.join('') || '<div class="dle-text-xs dle-muted"><em>No valid entries to pin.</em></div>';
+                pinListEl.querySelectorAll('.dle-ai-notepad-pin-toggle').forEach(el => {
+                    el.addEventListener('change', () => {
+                        const key = el.getAttribute('data-pin-key');
+                        if (!key) return;
+                        if (el.checked) pinnedKeys.add(key);
+                        else pinnedKeys.delete(key);
+                    });
+                });
+            };
+
+            const updateCounts = async () => {
+                capturedValue = textarea.value;
+                const lines = splitLines(textarea.value);
+                if (entryCountEl) {
+                    const capStr = maxEntries > 0 ? ` / ${maxEntries}` : '';
+                    entryCountEl.textContent = `${lines.length} entries${capStr}`;
+                }
+                if (countEl) {
                     try {
-                        capturedValue = textarea.value;
                         const tokens = await getTokenCountAsync(textarea.value);
                         countEl.textContent = `~${tokens} tokens`;
                     } catch { countEl.textContent = ''; }
-                };
-                textarea.addEventListener('input', updateCount);
-                await updateCount();
+                }
+            };
+
+            textarea.addEventListener('input', async () => {
+                await updateCounts();
+                renderPinList();
+            });
+
+            if (dedupBtn) {
+                dedupBtn.addEventListener('click', async () => {
+                    const lines = textarea.value.split('\n');
+                    // Walk lines in order. For each non-blank entry, drop later
+                    // entries whose normalized form is identical OR whose
+                    // bigram-Dice score >= threshold. Pinned entries stay; if a
+                    // pinned and an unpinned line collide, the pinned one wins.
+                    const kept = [];
+                    const keptKeys = [];
+                    let dropped = 0;
+                    for (const raw of lines) {
+                        const trimmed = raw.trim();
+                        if (!trimmed) { kept.push(raw); continue; }
+                        const key = normalizeNotepadLine(trimmed);
+                        if (!key) { kept.push(raw); continue; }
+                        let dupIdx = -1;
+                        for (let i = 0; i < keptKeys.length; i++) {
+                            const k = keptKeys[i];
+                            if (!k) continue;
+                            if (k === key || bigramDiceSimilarity(k, key) >= dedupThreshold) {
+                                dupIdx = i; break;
+                            }
+                        }
+                        if (dupIdx === -1) {
+                            kept.push(raw);
+                            keptKeys.push(key);
+                        } else {
+                            // If incoming line is pinned and existing isn't, swap so pin survives.
+                            const existingPinned = pinnedKeys.has(keptKeys[dupIdx]);
+                            const incomingPinned = pinnedKeys.has(key);
+                            if (incomingPinned && !existingPinned) {
+                                kept[kept.findIndex((l, i) => i === kept.findIndex(x => normalizeNotepadLine(x) === keptKeys[dupIdx]))] = raw;
+                                keptKeys[dupIdx] = key;
+                            }
+                            dropped++;
+                        }
+                    }
+                    if (dropped === 0) {
+                        toastr.info('No near-duplicates found.', 'DeepLore Enhanced');
+                        return;
+                    }
+                    textarea.value = kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+                    await updateCounts();
+                    renderPinList();
+                    toastr.success(`Merged ${dropped} duplicate ${dropped === 1 ? 'entry' : 'entries'}.`, 'DeepLore Enhanced');
+                });
             }
+
+            await updateCounts();
+            renderPinList();
         },
     });
 
@@ -177,6 +294,7 @@ export async function showAiNotepadPopup() {
             return;
         }
         chat_metadata.deeplore_ai_notepad = capturedValue;
+        chat_metadata.deeplore_ai_notepad_pins = [...pinnedKeys];
         saveMetadataDebounced();
     }
 }

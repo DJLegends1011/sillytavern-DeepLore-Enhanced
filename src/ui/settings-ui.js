@@ -1271,6 +1271,8 @@ function loadPopupSettings($container) {
     $c(`input[name="dle-sp-ai-notepad-mode"][value="${aiNbMode}"]`).prop('checked', true);
     $c('#dle-sp-ai-notepad-prompt').val(settings.aiNotepadPrompt || '');
     $c('#dle-sp-ai-notepad-extract-prompt').val(settings.aiNotepadExtractPrompt || '');
+    $c('#dle-sp-ai-notepad-max-entries').val(settings.aiNotepadMaxEntries ?? 50);
+    $c('#dle-sp-ai-notepad-fuzzy-threshold').val(settings.aiNotepadFuzzyDedupThreshold ?? 0.85);
     $c('#dle-sp-ai-notepad-mode-tag-desc').toggle(aiNbMode === 'tag');
     $c('#dle-sp-ai-notepad-mode-extract-desc').toggle(aiNbMode === 'extract');
     $c('#dle-sp-ai-notepad-tag-options').toggle(aiNbMode === 'tag');
@@ -1912,6 +1914,16 @@ function bindPopupEvents($container) {
     });
     $c('#dle-sp-ai-notepad-prompt').on('input', function () { settings.aiNotepadPrompt = $(this).val(); saveSettingsDebounced(); });
     $c('#dle-sp-ai-notepad-extract-prompt').on('input', function () { settings.aiNotepadExtractPrompt = $(this).val(); saveSettingsDebounced(); });
+    $c('#dle-sp-ai-notepad-max-entries').on('input', function () {
+        const n = Math.max(0, Math.min(1000, numVal($(this).val(), 50)));
+        settings.aiNotepadMaxEntries = n; saveSettingsDebounced();
+    });
+    $c('#dle-sp-ai-notepad-fuzzy-threshold').on('input', function () {
+        let v = Number($(this).val());
+        if (!isFinite(v)) v = 0.85;
+        v = Math.max(0, Math.min(1, v));
+        settings.aiNotepadFuzzyDedupThreshold = v; saveSettingsDebounced();
+    });
     $c('input[name="dle-sp-ai-notepad-mode"]').on('change', function () {
         settings.aiNotepadMode = $(this).val(); saveSettingsDebounced();
         const isTag = settings.aiNotepadMode === 'tag';

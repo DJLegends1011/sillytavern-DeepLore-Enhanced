@@ -673,6 +673,42 @@ function bigrams(str) {
 }
 
 /**
+ * Bigram-Dice similarity between two strings, in [0, 1]. Pairwise score used
+ * where consumers need a similarity number for one specific pair (e.g. AI
+ * Notepad manual dedup), as opposed to fuzzyTitleMatch's best-of-many search.
+ *
+ * Returns 0 when either side has no bigrams (empty/one-char strings).
+ */
+export function bigramDiceSimilarity(a, b) {
+    if (!a || !b) return 0;
+    const aBg = bigrams(String(a).toLowerCase());
+    const bBg = bigrams(String(b).toLowerCase());
+    if (aBg.size === 0 || bBg.size === 0) return 0;
+    let overlap = 0;
+    for (const bg of aBg) if (bBg.has(bg)) overlap++;
+    return (2 * overlap) / (aBg.size + bBg.size);
+}
+
+/**
+ * Normalize an AI-Notepad line into a comparison key. Strips bullet markers,
+ * checkbox prefixes, numbered-list prefixes, punctuation, and case so
+ * semantically-equal notes ("- The party met Alia." vs "* the party met alia.")
+ * collapse to the same key. Used for pin matching and dedup grouping.
+ */
+export function normalizeNotepadLine(line) {
+    if (!line) return '';
+    return String(line)
+        .replace(/^\s*[-*+•]\s+/, '')
+        .replace(/^\s*\[[ xX]\]\s+/, '')
+        .replace(/^\s*\d+[.)]\s+/, '')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+/**
  * Extract <dle-notes> content from a message; returns cleaned message + notes.
  * @param {string} messageText
  * @returns {{ notes: string|null, cleanedMessage: string }}
