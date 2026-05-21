@@ -254,11 +254,13 @@ Guide modes prepend `buildLibrarianBootstrapSystemPrompt()` (from librarian-prom
 
 Outer loop (tool_call -> re-enter AI) with inner loop (validation retries).
 
-**Caps:**
-- `MAX_VALIDATION_RETRIES = 3`
-- `MAX_TOOL_CALLS_PER_TURN = 10`
-- `MAX_AGENTIC_ITERATIONS = 15` (BUG-232)
-- `MAX_HISTORY_MESSAGES = 10`
+**Caps (all user-tunable via Librarian Advanced Budgets — defaults shown):**
+- `librarianMaxValidationRetries` (default 3): inner validation-retry loop bound
+- `librarianMaxToolCallsPerTurn` (default 10): per-turn search+flag cap before forced finalize
+- Outer iteration cap = per-turn cap + 5 (BUG-232 safety net, derived not configured)
+- `librarianSessionHistoryMessages` (default 10): Emma's own session history window for `buildUserPromptFromHistory()`
+- `librarianAgenticHistoryMessages` (default 40): writing-AI grounding window in `buildChatMessages()`
+- `librarianSessionToolCallCap` (default `null` = unlimited): session-wide ceiling on total search+flag calls since page load. When hit, forces finalize with a distinct session-cap nudge string. Counted off `librarianSessionStats.searchCalls + flagCalls`.
 
 **Epoch guards (BUG-273):** Snapshots `chatEpoch` at entry. Re-checks after every `await callAI()` (both success and error paths) and at top of each loop iteration. On mismatch, restores history from snapshot and returns.
 

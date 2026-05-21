@@ -1080,6 +1080,35 @@
                         </div>
                     </div>
 
+                    <h5 class="dle-settings-subsection-label" style="margin-top: 12px;">Tool-Call Budgets</h5>
+                    <p class="dle-text-xs dle-muted">Raise these if Emma keeps hitting "tool call limit reached" before finishing a write. Lower them to bound runaway agentic loops.</p>
+                    <div class="flex-container">
+                        <div class="flex1" title="Maximum search/flag tool calls Emma can make within a single user turn before being forced to finalize. Default: 10.">
+                            <label for="dle-sp-librarian-max-tool-calls-per-turn"><small>Max Tool Calls / Turn</small></label>
+                            <input id="dle-sp-librarian-max-tool-calls-per-turn" type="number" class="text_pole" min="1" max="50" />
+                        </div>
+                        <div class="flex1" title="How many times Emma retries when her response fails JSON validation (truncation, bad tool args, etc.) before giving up. Default: 3.">
+                            <label for="dle-sp-librarian-max-validation-retries"><small>Validation Retries</small></label>
+                            <input id="dle-sp-librarian-max-validation-retries" type="number" class="text_pole" min="0" max="10" />
+                        </div>
+                    </div>
+                    <div class="flex-container">
+                        <div class="flex1" title="How many of Emma's own session messages she sees as context when continuing a draft. Default: 10.">
+                            <label for="dle-sp-librarian-session-history"><small>Emma Session Memory (msgs)</small></label>
+                            <input id="dle-sp-librarian-session-history" type="number" class="text_pole" min="5" max="100" />
+                        </div>
+                        <div class="flex1" title="How many recent chat messages the writing AI sees as grounding context during agentic dispatch. Default: 40.">
+                            <label for="dle-sp-librarian-agentic-history"><small>Writing-AI Grounding (msgs)</small></label>
+                            <input id="dle-sp-librarian-agentic-history" type="number" class="text_pole" min="10" max="200" />
+                        </div>
+                    </div>
+                    <div class="flex-container">
+                        <div class="flex1" title="Optional session-wide cap on total tool calls (search + flag) across all turns since page load. Empty/0 = unlimited. Useful for runaway-budget protection on long sessions.">
+                            <label for="dle-sp-librarian-session-tool-cap"><small>Session Tool-Call Cap (empty = unlimited)</small></label>
+                            <input id="dle-sp-librarian-session-tool-cap" type="number" class="text_pole" min="0" max="1000" placeholder="unlimited" />
+                        </div>
+                    </div>
+
                     <h5 class="dle-settings-subsection-label" style="margin-top: 12px;">System Prompt</h5>
                     <div class="flex-container flexFlowColumn">
                         <div class="radio_group">

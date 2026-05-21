@@ -1238,6 +1238,11 @@ function loadPopupSettings($container) {
     $c('#dle-sp-librarian-related-max').val(settings.librarianRelatedEntriesMaxChars || 4000);
     $c('#dle-sp-librarian-chat-context-max').val(settings.librarianChatContextMaxChars || 4000);
     $c('#dle-sp-librarian-draft-max').val(settings.librarianDraftMaxChars || 4000);
+    $c('#dle-sp-librarian-max-tool-calls-per-turn').val(settings.librarianMaxToolCallsPerTurn ?? 10);
+    $c('#dle-sp-librarian-max-validation-retries').val(settings.librarianMaxValidationRetries ?? 3);
+    $c('#dle-sp-librarian-session-history').val(settings.librarianSessionHistoryMessages ?? 10);
+    $c('#dle-sp-librarian-agentic-history').val(settings.librarianAgenticHistoryMessages ?? 40);
+    $c('#dle-sp-librarian-session-tool-cap').val(settings.librarianSessionToolCallCap ?? '');
     $c(`input[name="dle-sp-librarian-prompt-mode"][value="${settings.librarianSystemPromptMode || 'default'}"]`).prop('checked', true);
     $c('#dle-sp-librarian-custom-prompt').val(settings.librarianCustomSystemPrompt || '');
     $c('#dle-sp-librarian-custom-prompt').toggle((settings.librarianSystemPromptMode || 'default') !== 'default');
@@ -1858,6 +1863,31 @@ function bindPopupEvents($container) {
     $c('#dle-sp-librarian-related-max').on('input', function () { settings.librarianRelatedEntriesMaxChars = numVal($(this).val(), 4000); saveSettingsDebounced(); });
     $c('#dle-sp-librarian-chat-context-max').on('input', function () { settings.librarianChatContextMaxChars = numVal($(this).val(), 4000); saveSettingsDebounced(); });
     $c('#dle-sp-librarian-draft-max').on('input', function () { settings.librarianDraftMaxChars = numVal($(this).val(), 4000); saveSettingsDebounced(); });
+    $c('#dle-sp-librarian-max-tool-calls-per-turn').on('input', function () {
+        settings.librarianMaxToolCallsPerTurn = Math.max(1, Math.min(50, numVal($(this).val(), 10)));
+        saveSettingsDebounced();
+    });
+    $c('#dle-sp-librarian-max-validation-retries').on('input', function () {
+        settings.librarianMaxValidationRetries = Math.max(0, Math.min(10, numVal($(this).val(), 3)));
+        saveSettingsDebounced();
+    });
+    $c('#dle-sp-librarian-session-history').on('input', function () {
+        settings.librarianSessionHistoryMessages = Math.max(5, Math.min(100, numVal($(this).val(), 10)));
+        saveSettingsDebounced();
+    });
+    $c('#dle-sp-librarian-agentic-history').on('input', function () {
+        settings.librarianAgenticHistoryMessages = Math.max(10, Math.min(200, numVal($(this).val(), 40)));
+        saveSettingsDebounced();
+    });
+    $c('#dle-sp-librarian-session-tool-cap').on('input', function () {
+        const raw = String($(this).val()).trim();
+        if (raw === '') { settings.librarianSessionToolCallCap = null; }
+        else {
+            const n = Math.max(0, Math.min(1000, Number(raw)));
+            settings.librarianSessionToolCallCap = Number.isFinite(n) ? n : null;
+        }
+        saveSettingsDebounced();
+    });
     $c('input[name="dle-sp-librarian-prompt-mode"]').on('change', function () {
         settings.librarianSystemPromptMode = $(this).val();
         $c('#dle-sp-librarian-custom-prompt').toggle(settings.librarianSystemPromptMode !== 'default');

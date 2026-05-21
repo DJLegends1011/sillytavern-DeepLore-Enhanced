@@ -244,6 +244,12 @@ export const defaultSettings = {
     librarianModel: '',                  // blank = inherit from AI Search.
     librarianSessionMaxTokens: 4096,
     librarianSessionTimeout: 120000,    // 120s headroom — opus-4-6 forced-final-response with thinking can exceed 60s.
+    // Hard caps on the Emma agentic loop, surfaced for users who hit them.
+    librarianMaxToolCallsPerTurn: 10,
+    librarianMaxValidationRetries: 3,
+    librarianSessionHistoryMessages: 10,    // Emma's own session memory window
+    librarianAgenticHistoryMessages: 40,    // writing-AI grounding window (buildChatMessages)
+    librarianSessionToolCallCap: null,      // null = unlimited; otherwise total search+flag calls allowed per session
     librarianManifestMaxChars: 8000,
     librarianRelatedEntriesMaxChars: 4000,
     librarianDraftMaxChars: 4000,
@@ -351,6 +357,11 @@ export const settingsConstraints = {
     aiNotepadTimeout: { min: 5000, max: 999999 },
     aiNotepadMaxEntries: { min: 0, max: 1000 },
     aiNotepadFuzzyDedupThreshold: { min: 0, max: 1 },
+    librarianMaxToolCallsPerTurn: { min: 1, max: 50 },
+    librarianMaxValidationRetries: { min: 0, max: 10 },
+    librarianSessionHistoryMessages: { min: 5, max: 100 },
+    librarianAgenticHistoryMessages: { min: 10, max: 200 },
+    librarianSessionToolCallCap: { min: 0, max: 1000 },
     aiSearchMaxTokens: { min: 64, max: 4096 },
     aiSearchTimeout: { min: 1000, max: 999999 },
     aiSearchScanDepth: { min: 1, max: 100 },
