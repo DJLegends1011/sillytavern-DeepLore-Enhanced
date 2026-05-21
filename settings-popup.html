@@ -828,6 +828,12 @@
                         <input id="dle-sp-scribe-folder" type="text" class="text_pole" placeholder="Sessions" />
                     </div>
                 </div>
+                <div class="flex-container">
+                    <div class="flex1" title="Which vault to write Scribe session notes to. Defaults to the primary (first enabled) vault.">
+                        <label for="dle-sp-scribe-write-vault"><small>Write to Vault</small></label>
+                        <select id="dle-sp-scribe-write-vault" class="text_pole"></select>
+                    </div>
+                </div>
                 <span class="dle-text-xs dle-muted">Connection settings: <a href="#" class="dle-goto-ai-connections">AI Connections</a> in Connection tab.</span>
                 <div class="flex-container">
                     <div class="flex1" title="Messages to include as context. Default: 20.">
@@ -865,6 +871,12 @@
                     <div class="flex1" title="Obsidian folder where new entries are saved.">
                         <label for="dle-sp-autosuggest-folder"><small>Target Folder</small></label>
                         <input id="dle-sp-autosuggest-folder" type="text" class="text_pole" placeholder="Lorebook" />
+                    </div>
+                </div>
+                <div class="flex-container">
+                    <div class="flex1" title="Which vault Auto Lorebook writes new entries to. Defaults to the primary vault.">
+                        <label for="dle-sp-autosuggest-write-vault"><small>Write to Vault</small></label>
+                        <select id="dle-sp-autosuggest-write-vault" class="text_pole"></select>
                     </div>
                 </div>
                 <label class="checkbox_label" for="dle-sp-autosuggest-skip-review" title="Write entries directly to Obsidian without showing review popup.">
@@ -1020,6 +1032,10 @@
                     <div class="flex1" title="Folder path for written entries (relative to vault root). Leave blank for root.">
                         <label for="dle-sp-librarian-write-folder"><small>Write Folder</small></label>
                         <input id="dle-sp-librarian-write-folder" type="text" class="text_pole" placeholder="Root of vault" />
+                    </div>
+                    <div class="flex1" title="Default vault the Librarian writes new entries to. Per-write override is available in the entry popup when multiple vaults are enabled.">
+                        <label for="dle-sp-librarian-write-vault"><small>Default Write Vault</small></label>
+                        <select id="dle-sp-librarian-write-vault" class="text_pole"></select>
                     </div>
                 </div>
                 <label class="checkbox_label" for="dle-sp-librarian-auto-send" title="Automatically send a draft prompt when opening a gap from the inbox.">

@@ -143,6 +143,9 @@ export const defaultSettings = {
     scribeMaxTokens: 1024,
     scribeTimeout: 60000,
     scribeScanDepth: 20,
+    // Vault name to write Scribe summaries to. '' = use primary (first enabled) vault.
+    // The value is a vault.name string (vaults are identified by name, not numeric id).
+    scribeWriteVaultId: '',
     // Vault Sync
     syncPollingInterval: 0,
     showSyncToasts: true,
@@ -158,6 +161,8 @@ export const defaultSettings = {
     autoSuggestTimeout: 30000,
     autoSuggestFolder: '',
     autoSuggestPrompt: '',
+    // Vault name to write auto-suggest entries to. '' = use primary vault.
+    autoSuggestWriteVaultId: '',
     stripDuplicateInjections: true,
     stripLookbackDepth: 2,
     // BUG-AUDIT-H20: must match HTML <option value="keyword">, NOT "keyword-only".
@@ -221,6 +226,10 @@ export const defaultSettings = {
     librarianResultTokenBudget: 1500,
     librarianAutoSendOnGap: true,
     librarianWriteFolder: '',
+    // Default vault (by name) the Librarian writes new entries to. '' = primary.
+    // Librarian popup also exposes a per-write override dropdown when multiple
+    // vaults are configured.
+    librarianWriteVaultId: '',
     librarianConnectionMode: 'inherit', // intentionally separate from aiSearchConnectionMode — see CLAUDE.md
     librarianProfileId: '',
     librarianProxyUrl: 'http://127.0.0.1:42069',
@@ -504,4 +513,38 @@ export function getVaultByName(settings, vaultName) {
         if (match) return match;
     }
     return getPrimaryVault(settings);
+}
+
+const WRITE_VAULT_KEYS = {
+    librarian: 'librarianWriteVaultId',
+    scribe: 'scribeWriteVaultId',
+    autoSuggest: 'autoSuggestWriteVaultId',
+};
+
+/**
+ * Resolve which vault a write-capable tool should target.
+ *
+ * Precedence: explicit override (per-write picker) > tool's configured default
+ * (settings.{tool}WriteVaultId) > primary enabled vault. Each step falls back
+ * to the next on miss/disabled — never throws so writes can't fail because
+ * config drifted from the vault list.
+ *
+ * @param {'librarian'|'scribe'|'autoSuggest'} toolKey
+ * @param {typeof defaultSettings} [settings]
+ * @param {string} [overrideName]  Per-call override (e.g. Librarian popup picker)
+ * @returns {{ name: string, host: string, port: number, apiKey: string, https: boolean, enabled: boolean }}
+ */
+export function resolveWriteVault(toolKey, settings, overrideName) {
+    const s = settings || getSettings();
+    if (overrideName) {
+        const match = s.vaults?.find(v => v.name === overrideName && v.enabled);
+        if (match) return match;
+    }
+    const key = WRITE_VAULT_KEYS[toolKey];
+    const configuredName = key ? s[key] : '';
+    if (configuredName) {
+        const match = s.vaults?.find(v => v.name === configuredName && v.enabled);
+        if (match) return match;
+    }
+    return getPrimaryVault(s);
 }

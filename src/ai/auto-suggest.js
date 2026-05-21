@@ -10,7 +10,7 @@ import {
 } from '../../../../../../script.js';
 import { escapeHtml } from '../../../../../utils.js';
 import { callGenericPopup, POPUP_TYPE } from '../../../../../popup.js';
-import { getSettings, getPrimaryVault, resolveConnectionConfig } from '../../settings.js';
+import { getSettings, getPrimaryVault, resolveConnectionConfig, resolveWriteVault } from '../../settings.js';
 import { writeNote } from '../vault/obsidian-api.js';
 import { buildAiChatContext, yamlEscape, classifyError } from '../../core/utils.js';
 import { callAI } from './ai.js';
@@ -184,7 +184,7 @@ ${safeContent}`;
 async function writeSuggestionToVault(s, settings) {
     try {
         const { filename, fileContent } = _buildSuggestionFile(s, settings);
-        const suggestVault = getPrimaryVault(settings);
+        const suggestVault = resolveWriteVault('autoSuggest', settings);
         const data = await writeNote(suggestVault.host, suggestVault.port, suggestVault.apiKey, filename, fileContent, !!suggestVault.https);
         if (data?.ok) return { ok: true, title: s.title, filename };
         return { ok: false, title: s.title, filename, error: data?.error || 'unknown' };
@@ -339,7 +339,7 @@ summary: "${(s.summary || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"').replac
 ${safeContent}`;
 
                     try {
-                        const suggestVault = getPrimaryVault(settings);
+                        const suggestVault = resolveWriteVault('autoSuggest', settings);
                         const data = await writeNote(suggestVault.host, suggestVault.port, suggestVault.apiKey, filename, fileContent, !!suggestVault.https);
                         if (data.ok) {
                             card.classList.add('dle-suggest-card--accepted');

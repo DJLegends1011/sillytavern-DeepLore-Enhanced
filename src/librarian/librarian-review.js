@@ -7,7 +7,7 @@ import { escapeHtml } from '../../../../../utils.js';
 import { yamlEscape, classifyError } from '../../core/utils.js';
 import { stripObsidianSyntax, sanitizeFilename } from '../helpers.js';
 import { writeNote } from '../vault/obsidian-api.js';
-import { getSettings, getPrimaryVault } from '../../settings.js';
+import { getSettings, getPrimaryVault, resolveWriteVault } from '../../settings.js';
 import { getContext } from '../../../../../extensions.js';
 import { accountStorage } from '../../../../../util/AccountStorage.js';
 import { chatEpoch } from '../state.js';
@@ -244,8 +244,15 @@ export async function openLibrarianPopup(entryPoint = 'new', options = {}) {
             }
 
             // Inject "Write to Vault" button + status next to Close in the popup chrome.
+            // Vault picker appears only when 2+ vaults are enabled — single-vault
+            // users keep the previous chrome unchanged.
             let writeBtn = null;
             let writeStatusEl = null;
+            let writeVaultSelect = null;
+            const _libSettings = getSettings();
+            const enabledVaults = (_libSettings.vaults || []).filter(v => v.enabled);
+            const showVaultPicker = enabledVaults.length >= 2;
+            const defaultPickerValue = _libSettings.librarianWriteVaultId || '';
             try {
                 const dlg = popup?.dlg;
                 const controls = dlg?.querySelector('.popup-controls');
@@ -253,7 +260,24 @@ export async function openLibrarianPopup(entryPoint = 'new', options = {}) {
                 if (controls && okBtn) {
                     const wrap = document.createElement('div');
                     wrap.className = 'dle-librarian-write-action';
+                    let pickerHtml = '';
+                    if (showVaultPicker) {
+                        const opts = ['<option value="">(default)</option>']
+                            .concat(enabledVaults.map(v => {
+                                const name = String(v.name || '');
+                                const selected = name === defaultPickerValue ? ' selected' : '';
+                                return `<option value="${escapeHtml(name)}"${selected}>${escapeHtml(name)}</option>`;
+                            }))
+                            .join('');
+                        pickerHtml = `
+                            <label for="dle-lib-write-vault" class="dle-lib-write-vault-label" title="Vault this entry will be written to">
+                                <span>Write to:</span>
+                                <select id="dle-lib-write-vault" class="dle-lib-write-vault-select">${opts}</select>
+                            </label>
+                        `;
+                    }
                     wrap.innerHTML = `
+                        ${pickerHtml}
                         <span id="dle-lib-write-status" class="dle-lib-write-status" aria-live="polite"></span>
                         <button type="button" id="dle-lib-write-btn" class="menu_button interactable" title="Write entry to Obsidian vault (Ctrl+S)">
                             <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i><span>Write to Vault</span>
@@ -262,6 +286,14 @@ export async function openLibrarianPopup(entryPoint = 'new', options = {}) {
                     controls.insertBefore(wrap, okBtn);
                     writeBtn = wrap.querySelector('#dle-lib-write-btn');
                     writeStatusEl = wrap.querySelector('#dle-lib-write-status');
+                    writeVaultSelect = wrap.querySelector('#dle-lib-write-vault');
+                    if (writeVaultSelect) {
+                        // '(default)' option -> empty -> falls back to setting/primary.
+                        session.writeTargetVault = writeVaultSelect.value || '';
+                        writeVaultSelect.addEventListener('change', () => {
+                            session.writeTargetVault = writeVaultSelect.value || '';
+                        });
+                    }
                 }
             } catch { /* fallback below */ }
             // Fallback if chrome injection failed — look in container.
@@ -1147,7 +1179,10 @@ async function writeToVault(session, opts = {}) {
         if (proceed !== POPUP_RESULT.AFFIRMATIVE) return false;
     }
 
-    const vault = getPrimaryVault(settings);
+    // Per-write destination: explicit picker (session.writeTargetVault) wins,
+    // else the configured librarianWriteVaultId, else primary. resolveWriteVault
+    // falls through cleanly when a configured name no longer exists.
+    const vault = resolveWriteVault('librarian', settings, session?.writeTargetVault);
     const safeTitle = sanitizeFilename(draft.title);
     const folder = settings.librarianWriteFolder || settings.autoSuggestFolder || '';
     const filename = folder ? `${folder}/${safeTitle}.md` : `${safeTitle}.md`;

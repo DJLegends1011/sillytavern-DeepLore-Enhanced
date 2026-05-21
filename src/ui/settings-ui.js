@@ -1091,6 +1091,29 @@ export async function openSettingsPopup(navigateTo = null) {
     });
 }
 
+// Populate a per-tool "Write to Vault" <select>. Empty option means "use primary".
+// Vaults appear by .name; disabled vaults are still listed (marked) so users can
+// see why a previously-chosen vault is now inactive instead of silently losing it.
+function populateWriteVaultSelect($el, settings, selectedName) {
+    if (!$el || $el.length === 0) return;
+    const vaults = settings.vaults || [];
+    const opts = ['<option value="">(primary vault)</option>'];
+    for (const v of vaults) {
+        const name = String(v.name || '');
+        if (!name) continue;
+        const safe = escapeHtml(name);
+        const suffix = v.enabled ? '' : ' (disabled)';
+        const sel = name === selectedName ? ' selected' : '';
+        opts.push(`<option value="${safe}"${sel}>${safe}${suffix}</option>`);
+    }
+    $el.html(opts.join(''));
+    // Keep the configured value even if no <option> matches (e.g. vault renamed).
+    // Empty value falls back to primary at resolveWriteVault() time.
+    if (selectedName && !vaults.some(v => v.name === selectedName)) {
+        $el.append(`<option value="${escapeHtml(selectedName)}" selected>${escapeHtml(selectedName)} (missing)</option>`);
+    }
+}
+
 // ── Popup: Load Settings ──
 
 function loadPopupSettings($container) {
@@ -1208,6 +1231,7 @@ function loadPopupSettings($container) {
     $c('#dle-sp-librarian-max-results').val(settings.librarianMaxResults);
     $c('#dle-sp-librarian-token-budget').val(settings.librarianResultTokenBudget);
     $c('#dle-sp-librarian-write-folder').val(settings.librarianWriteFolder || '');
+    populateWriteVaultSelect($c('#dle-sp-librarian-write-vault'), settings, settings.librarianWriteVaultId || '');
     $c('#dle-sp-librarian-auto-send').prop('checked', settings.librarianAutoSendOnGap !== false);
     $c('#dle-sp-librarian-sub').toggle(settings.librarianEnabled);
     $c('#dle-sp-librarian-manifest-max').val(settings.librarianManifestMaxChars || 8000);
@@ -1259,6 +1283,7 @@ function loadPopupSettings($container) {
     $c('#dle-sp-scribe-controls').find('.menu_button').toggleClass('disabled', !settings.scribeEnabled);
     $c('#dle-sp-scribe-interval').val(settings.scribeInterval);
     $c('#dle-sp-scribe-folder').val(settings.scribeFolder);
+    populateWriteVaultSelect($c('#dle-sp-scribe-write-vault'), settings, settings.scribeWriteVaultId || '');
     $c('#dle-sp-scribe-scan-depth').val(settings.scribeScanDepth);
     $c('#dle-sp-scribe-prompt').val(settings.scribePrompt);
 
@@ -1267,6 +1292,7 @@ function loadPopupSettings($container) {
     $c('#dle-sp-autosuggest-controls').find('input, textarea, select').prop('disabled', !settings.autoSuggestEnabled);
     $c('#dle-sp-autosuggest-interval').val(settings.autoSuggestInterval);
     $c('#dle-sp-autosuggest-folder').val(settings.autoSuggestFolder);
+    populateWriteVaultSelect($c('#dle-sp-autosuggest-write-vault'), settings, settings.autoSuggestWriteVaultId || '');
     $c('#dle-sp-autosuggest-skip-review').prop('checked', settings.autoSuggestSkipReview);
     $c('#dle-sp-autosuggest-prompt').val(settings.autoSuggestPrompt);
     $c('#dle-sp-optimize-keys-prompt').val(settings.optimizeKeysPrompt);
@@ -1824,6 +1850,7 @@ function bindPopupEvents($container) {
     $c('#dle-sp-librarian-max-results').on('input', function () { settings.librarianMaxResults = numVal($(this).val(), 5); saveSettingsDebounced(); });
     $c('#dle-sp-librarian-token-budget').on('input', function () { settings.librarianResultTokenBudget = numVal($(this).val(), 1500); saveSettingsDebounced(); });
     $c('#dle-sp-librarian-write-folder').on('input', function () { settings.librarianWriteFolder = $(this).val().trim(); saveSettingsDebounced(); });
+    $c('#dle-sp-librarian-write-vault').on('change', function () { settings.librarianWriteVaultId = String($(this).val() || ''); saveSettingsDebounced(); });
     $c('#dle-sp-librarian-auto-send').on('change', function () { settings.librarianAutoSendOnGap = $(this).prop('checked'); saveSettingsDebounced(); });
     $c('#dle-sp-librarian-manifest-max').on('input', function () { settings.librarianManifestMaxChars = numVal($(this).val(), 8000); saveSettingsDebounced(); });
     $c('#dle-sp-librarian-related-max').on('input', function () { settings.librarianRelatedEntriesMaxChars = numVal($(this).val(), 4000); saveSettingsDebounced(); });
@@ -1905,6 +1932,7 @@ function bindPopupEvents($container) {
     });
     $c('#dle-sp-scribe-interval').on('input', function () { settings.scribeInterval = numVal($(this).val(), 5); saveSettingsDebounced(); });
     $c('#dle-sp-scribe-folder').on('input', function () { settings.scribeFolder = String($(this).val()).trim() || 'Sessions'; saveSettingsDebounced(); });
+    $c('#dle-sp-scribe-write-vault').on('change', function () { settings.scribeWriteVaultId = String($(this).val() || ''); saveSettingsDebounced(); });
     $c('#dle-sp-scribe-prompt').on('input', function () { settings.scribePrompt = String($(this).val()); saveSettingsDebounced(); });
     $c('#dle-sp-scribe-scan-depth').on('input', function () { settings.scribeScanDepth = numVal($(this).val(), 20); saveSettingsDebounced(); });
 
@@ -1915,6 +1943,7 @@ function bindPopupEvents($container) {
     });
     $c('#dle-sp-autosuggest-interval').on('input', function () { settings.autoSuggestInterval = numVal($(this).val(), 10); saveSettingsDebounced(); });
     $c('#dle-sp-autosuggest-folder').on('input', function () { settings.autoSuggestFolder = String($(this).val()).trim(); saveSettingsDebounced(); });
+    $c('#dle-sp-autosuggest-write-vault').on('change', function () { settings.autoSuggestWriteVaultId = String($(this).val() || ''); saveSettingsDebounced(); });
     $c('#dle-sp-autosuggest-skip-review').on('change', function () { settings.autoSuggestSkipReview = $(this).prop('checked'); saveSettingsDebounced(); });
     $c('#dle-sp-autosuggest-prompt').on('input', function () { settings.autoSuggestPrompt = String($(this).val()); saveSettingsDebounced(); });
     $c('#dle-sp-optimize-keys-prompt').on('input', function () { settings.optimizeKeysPrompt = String($(this).val()); saveSettingsDebounced(); });

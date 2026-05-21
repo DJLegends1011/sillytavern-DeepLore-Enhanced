@@ -44,6 +44,12 @@ All vault-aware code iterates `settings.vaults.filter(v => v.enabled)`. Vault or
 
 Returns first enabled vault, or `vaults[0]`, or a fallback object `{ name: 'Default', host: '127.0.0.1', port: 27124, apiKey: '', https: true, enabled: false }`.
 
+### `resolveWriteVault(toolKey, settings, overrideName?)` (settings.js)
+
+Per-tool write destination. `toolKey` is `'librarian' | 'scribe' | 'autoSuggest'`. Precedence: `overrideName` (per-write picker) > `settings[{tool}WriteVaultId]` (configured default, a vault `name` string) > primary. Each step falls through cleanly if the named vault is missing or disabled — never throws. Use this instead of `getPrimaryVault()` at any AI-driven write site so the user can route Scribe / Auto Lorebook / Librarian writes to different vaults.
+
+Settings keys: `librarianWriteVaultId`, `scribeWriteVaultId`, `autoSuggestWriteVaultId`. Value is the target `vault.name`; empty string means "use primary." Librarian additionally exposes a per-write picker in its review popup (visible only when 2+ vaults are enabled) which feeds `overrideName`.
+
 ### Field definitions source
 
 Custom field definitions are loaded from a YAML file in the primary vault at `settings.fieldDefinitionsPath` (default `DeepLore/field-definitions.yaml`). Loaded via `fetchFieldDefinitions()` from obsidian-api.js. Both `buildIndex()` and `buildIndexWithReuse()` load them independently.
