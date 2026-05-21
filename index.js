@@ -1842,9 +1842,11 @@ jQuery(async function () {
             } catch (err) { console.warn('[DLE] MESSAGE_SWIPE_DELETED reindex failed:', err?.message); }
         });
 
-        // BUG-038: ST wipes chat_metadata itself on delete, but the Librarian session draft
-        // lives in localStorage (librarian-session.js SESSION_STORAGE_KEY) and would otherwise
-        // linger as an orphan pointing at a now-deleted chat.
+        // BUG-038: ST wipes chat_metadata itself on delete, so the chat_metadata-stored
+        // Librarian session draft (BUG-043) goes with it. This handler stays in place
+        // mainly to evict any leftover legacy localStorage draft from pre-BUG-043 installs
+        // and to no-op the chat_metadata cleanup defensively in case ST's wipe order
+        // changes upstream.
         const _onChatDeleted = () => {
             try { clearLibrarianSessionState(); } catch (err) { console.warn('[DLE] CHAT_DELETED cleanup failed:', err.message); }
         };

@@ -46,6 +46,7 @@ import { simpleHash, validateSettings, parseFrontmatter, buildScanText } from '.
 import { testEntryMatch, formatAndGroup, applyGating, clearScanTextCache } from '../core/matching.js';
 import { parseVaultFile } from '../core/pipeline.js';
 import { normalizePinBlock, matchesPinBlock, cmrsResultToText } from '../src/helpers.js';
+import { planSessionLoad, SESSION_METADATA_KEY, LEGACY_STORAGE_KEY } from '../src/librarian/librarian-session-pure.js';
 
 console.log('DeepLore Enhanced — Regression Tests');
 console.log('Each test guards a specific BUG fix or gotcha.\n');
@@ -1615,6 +1616,80 @@ test('Issue #24: usage falls back through OpenAI/Anthropic field names', () => {
     const c = cmrsResultToText({ content: '' });
     assertEqual(c.usage.input_tokens, 0);
     assertEqual(c.usage.output_tokens, 0);
+});
+
+// ============================================================================
+// BUG-043: Librarian session draft localStorage → chat_metadata migration
+// ============================================================================
+
+section('BUG-043: Librarian session draft chat_metadata round-trip');
+
+test('BUG-043: storage keys are aligned (chat_metadata key == legacy localStorage key)', () => {
+    assertEqual(SESSION_METADATA_KEY, 'deeplore_librarian_session');
+    assertEqual(LEGACY_STORAGE_KEY, 'deeplore_librarian_session');
+});
+
+test('BUG-043: chat_metadata already populated → load wins, legacy ignored', () => {
+    const md = { [SESSION_METADATA_KEY]: { messages: [{ role: 'user', content: 'fresh' }], draftState: { title: 'A' } } };
+    const legacyRaw = JSON.stringify({ messages: [{ role: 'user', content: 'stale' }], draftState: { title: 'B' } });
+    const plan = planSessionLoad(md, legacyRaw);
+    assertEqual(plan.action, 'load');
+    assertEqual(plan.data.draftState.title, 'A');
+    assertEqual(plan.data.messages[0].content, 'fresh');
+});
+
+test('BUG-043: chat_metadata empty + legacy raw present → migrate plan with parsed payload', () => {
+    const md = {};
+    const draft = { messages: [{ role: 'user', content: 'hi' }], draftState: { title: 'Migrated' }, entryPoint: 'new' };
+    const plan = planSessionLoad(md, JSON.stringify(draft));
+    assertEqual(plan.action, 'migrate');
+    assertEqual(plan.data.draftState.title, 'Migrated');
+    assertEqual(plan.data.entryPoint, 'new');
+});
+
+test('BUG-043: legacy raw is corrupt → discard plan with null data (caller evicts localStorage)', () => {
+    const plan = planSessionLoad({}, '{ not valid json ');
+    assertEqual(plan.action, 'discard');
+    assertNull(plan.data);
+});
+
+test('BUG-043: neither side has anything → none plan', () => {
+    const plan = planSessionLoad({}, null);
+    assertEqual(plan.action, 'none');
+    assertNull(plan.data);
+});
+
+test('BUG-043: chat_metadata null (no active chat) + legacy raw present → migrate (caller writes when chat is active)', () => {
+    const draft = { messages: [], draftState: null };
+    const plan = planSessionLoad(null, JSON.stringify(draft));
+    assertEqual(plan.action, 'migrate');
+    assertNotNull(plan.data);
+});
+
+test('BUG-043: chat_metadata null + nothing legacy → none', () => {
+    const plan = planSessionLoad(null, null);
+    assertEqual(plan.action, 'none');
+});
+
+test('BUG-043: empty-string legacy raw treated as nothing (not parse attempt)', () => {
+    const plan = planSessionLoad({}, '');
+    assertEqual(plan.action, 'none');
+});
+
+test('BUG-043: round-trip simulation — first load migrates, second load reads from metadata', () => {
+    // Simulate two sequential loadSessionState() calls. The first should migrate;
+    // the second should hit the metadata branch because the (real) caller would
+    // have stored data on the chat_metadata object between calls.
+    const md = {};
+    let legacy = JSON.stringify({ draftState: { title: 'First' } });
+    const plan1 = planSessionLoad(md, legacy);
+    assertEqual(plan1.action, 'migrate');
+    // Caller writes migrated data and clears legacy.
+    md[SESSION_METADATA_KEY] = plan1.data;
+    legacy = null;
+    const plan2 = planSessionLoad(md, legacy);
+    assertEqual(plan2.action, 'load');
+    assertEqual(plan2.data.draftState.title, 'First');
 });
 
 // ============================================================================

@@ -190,11 +190,14 @@ export function createSession(entryPoint, options = {}) {
 
 // ════════════════════════════════════════════════════════════════════════════
 // Session Persistence (BUG-043: now in chat_metadata so session is per-chat,
-// not browser-global. Legacy localStorage key is migrated once on load.)
+// not browser-global. Legacy localStorage key is migrated once on load. The
+// pure decision helper + storage-key constants live in librarian-session-pure.js
+// so the migration can be regression-tested without ST globals.)
 // ════════════════════════════════════════════════════════════════════════════
 
-const SESSION_METADATA_KEY = 'deeplore_librarian_session';
-const LEGACY_STORAGE_KEY = 'deeplore_librarian_session';
+import { SESSION_METADATA_KEY, LEGACY_STORAGE_KEY, planSessionLoad } from './librarian-session-pure.js';
+const _planSessionLoadPure = planSessionLoad;
+export { planSessionLoad };
 
 function getChatMetadata() {
     try {
@@ -246,19 +249,20 @@ export function saveSessionState(session, expectedEpoch) {
 export function loadSessionState() {
     try {
         const md = getChatMetadata();
-        if (md && md[SESSION_METADATA_KEY]) {
-            return md[SESSION_METADATA_KEY];
-        }
-        // Legacy migration: browser-global draft → current chat, once.
-        const raw = localStorage.getItem(LEGACY_STORAGE_KEY);
-        if (raw) {
-            const parsed = JSON.parse(raw);
+        const raw = (() => { try { return localStorage.getItem(LEGACY_STORAGE_KEY); } catch { return null; } })();
+        const plan = _planSessionLoadPure(md, raw);
+        if (plan.action === 'load') return plan.data;
+        if (plan.action === 'migrate') {
             if (md) {
-                md[SESSION_METADATA_KEY] = parsed;
+                md[SESSION_METADATA_KEY] = plan.data;
                 saveMetadataDebounced();
             }
-            localStorage.removeItem(LEGACY_STORAGE_KEY);
-            return parsed;
+            try { localStorage.removeItem(LEGACY_STORAGE_KEY); } catch { /* noop */ }
+            return plan.data;
+        }
+        if (plan.action === 'discard') {
+            // Corrupt legacy entry — evict so we don't retry on every popup open.
+            try { localStorage.removeItem(LEGACY_STORAGE_KEY); } catch { /* noop */ }
         }
         return null;
     } catch (e) {
