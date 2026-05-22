@@ -1945,13 +1945,19 @@ function bindPopupEvents($container) {
     $c('#dle-sp-ai-notepad-prompt').on('input', function () { settings.aiNotepadPrompt = $(this).val(); saveSettingsDebounced(); });
     $c('#dle-sp-ai-notepad-extract-prompt').on('input', function () { settings.aiNotepadExtractPrompt = $(this).val(); saveSettingsDebounced(); });
     $c('#dle-sp-ai-notepad-max-entries').on('input', function () {
-        const n = Math.max(0, Math.min(1000, numVal($(this).val(), 50)));
+        const raw = String($(this).val()).trim();
+        // Empty input → fall back to default 50 instead of silently storing 0
+        // (Number('') === 0). 0 is still allowed as an explicit "no limit" choice.
+        const n = raw === '' ? 50 : Math.max(0, Math.min(1000, numVal(raw, 50)));
         settings.aiNotepadMaxEntries = n; saveSettingsDebounced();
     });
     $c('#dle-sp-ai-notepad-fuzzy-threshold').on('input', function () {
-        let v = Number($(this).val());
-        if (!isFinite(v)) v = 0.85;
-        v = Math.max(0, Math.min(1, v));
+        const raw = String($(this).val()).trim();
+        let v = raw === '' ? 0.85 : Number(raw);
+        // Refuse non-positive / non-finite values — threshold 0 would merge
+        // everything on Deduplicate click. Lower bound 0.1 prevents accidental data-wipe.
+        if (!Number.isFinite(v) || v <= 0) v = 0.85;
+        v = Math.max(0.1, Math.min(1, v));
         settings.aiNotepadFuzzyDedupThreshold = v; saveSettingsDebounced();
     });
     $c('input[name="dle-sp-ai-notepad-mode"]').on('change', function () {

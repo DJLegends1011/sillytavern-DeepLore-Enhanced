@@ -142,7 +142,13 @@ export async function showAiNotepadPopup() {
         : [];
     const pinnedKeys = new Set(initialPins);
     const settings = getSettings();
-    const dedupThreshold = Math.max(0, Math.min(1, Number(settings.aiNotepadFuzzyDedupThreshold) || 0.85));
+    // Guard against threshold === 0 or non-finite: Dice >= 0 is always true, so
+    // a zero threshold would merge every entry into the first one. Treat any
+    // non-positive / non-finite value as "use default 0.85". Clamp upper to 1.
+    const rawDedupThreshold = Number(settings.aiNotepadFuzzyDedupThreshold);
+    const dedupThreshold = (Number.isFinite(rawDedupThreshold) && rawDedupThreshold > 0)
+        ? Math.min(1, rawDedupThreshold)
+        : 0.85;
 
     const splitLines = (text) => String(text || '').split('\n').map(l => l.trim()).filter(Boolean);
 
