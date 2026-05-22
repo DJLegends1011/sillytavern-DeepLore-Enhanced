@@ -1697,7 +1697,7 @@ test('updateFrontmatterFields: no-op when updates object is empty', () => {
 
 // --- #15 summary feature: parseRange + buildSummaryUserMessage ---
 
-import { parseRange, buildSummaryUserMessage } from '../src/ai/summarize-pure.js';
+import { parseRange, buildSummaryUserMessage, applyHideAndPrepend, rollbackById } from '../src/ai/summarize-pure.js';
 
 test('parseRange: start-end', () => {
     const r = parseRange('5-15', 100);
@@ -1748,6 +1748,89 @@ test('buildSummaryUserMessage: includes name + body, skips hidden', () => {
     assert(msg.includes('### Alice (#0)\nhello'), 'msg 0 included');
     assert(!msg.includes('hidden line'), 'hidden msg skipped');
     assert(msg.includes('### Alice (#2)\nworld'), 'msg 2 included');
+});
+
+// --- F1 + M3 audit regression: applyHideAndPrepend / rollbackById round-trip ---
+
+test('applyHideAndPrepend: marks each in-range msg with original is_system + summary id', () => {
+    const chat = [
+        { mes: 'a', is_system: false, name: 'u' },
+        { mes: 'b', is_system: true, name: 'u' },   // pre-hidden
+        { mes: 'c', is_system: false, name: 'u' },
+    ];
+    const { hiddenCount, summaryMsg } = applyHideAndPrepend(chat, { start: 0, end: 2 }, 'sum_X', 'summary text');
+    assertEqual(hiddenCount, 3, 'all three hidden');
+    assertEqual(chat.length, 4, 'summary inserted, originals preserved');
+    assertEqual(chat[0], summaryMsg, 'summary at start of range');
+    assertEqual(chat[1].extra.dle_original_is_system, false, 'msg a original was visible');
+    assertEqual(chat[2].extra.dle_original_is_system, true, 'msg b original was hidden — F1 regression');
+    assertEqual(chat[3].extra.dle_original_is_system, false, 'msg c original was visible');
+    assert(chat[1].is_system && chat[2].is_system && chat[3].is_system, 'all marked hidden post-apply');
+    assertEqual(chat[1].extra.dle_summarized_into, 'sum_X', 'summary id stamped');
+});
+
+test('rollbackById: restores exact original is_system for every message (F1 fix)', () => {
+    const chat = [
+        { mes: 'a', is_system: false, name: 'u' },
+        { mes: 'b', is_system: true, name: 'u' },   // pre-hidden — the F1 bug scenario
+        { mes: 'c', is_system: false, name: 'u' },
+    ];
+    applyHideAndPrepend(chat, { start: 0, end: 2 }, 'sum_X', 'summary text');
+    const { restored, removed } = rollbackById(chat, 'sum_X');
+    assertEqual(removed, 1, 'summary message removed');
+    assertEqual(restored, 3, 'three messages restored');
+    assertEqual(chat.length, 3, 'back to original length');
+    assertEqual(chat[0].is_system, false, 'msg a restored to visible');
+    assertEqual(chat[1].is_system, true, 'msg b restored to HIDDEN (this is the F1 fix — old code wrongly flipped to false)');
+    assertEqual(chat[2].is_system, false, 'msg c restored to visible');
+    // Marker keys cleaned up.
+    assert(!chat[0].extra?.dle_summarized_into, 'dle_summarized_into removed');
+    assert(!chat[0].extra?.dle_original_is_system, 'dle_original_is_system removed');
+});
+
+test('rollbackById: multi-summary out-of-order rollback restores correctly (M3 fix)', () => {
+    // Two summaries: A covers [0,2], then B covers post-A range [4,5] (originally [3,4] pre-A).
+    const chat = [
+        { mes: '0', is_system: false }, // hidden by A
+        { mes: '1', is_system: true },  // hidden by A, pre-hidden
+        { mes: '2', is_system: false }, // hidden by A
+        { mes: '3', is_system: false }, // hidden by B (post-A index 4)
+        { mes: '4', is_system: true },  // hidden by B, pre-hidden (post-A index 5)
+        { mes: '5', is_system: false }, // outside both
+    ];
+    applyHideAndPrepend(chat, { start: 0, end: 2 }, 'sum_A', 'A');
+    // Post-A chat: [sumA, msg0, msg1, msg2, msg3, msg4, msg5]
+    applyHideAndPrepend(chat, { start: 4, end: 5 }, 'sum_B', 'B');
+    // Post-B chat: [sumA, msg0, msg1, msg2, sumB, msg3, msg4, msg5]
+
+    // Roll back A FIRST (older), B second — historically the broken case.
+    const { restored: rA, removed: xA } = rollbackById(chat, 'sum_A');
+    assertEqual(xA, 1, 'sum_A removed');
+    assertEqual(rA, 3, 'three A-hidden msgs restored');
+    const { restored: rB, removed: xB } = rollbackById(chat, 'sum_B');
+    assertEqual(xB, 1, 'sum_B removed');
+    assertEqual(rB, 2, 'two B-hidden msgs restored');
+
+    assertEqual(chat.length, 6, 'back to original 6 messages');
+    assertEqual(chat[0].is_system, false, 'msg 0 visible (orig)');
+    assertEqual(chat[1].is_system, true, 'msg 1 still hidden (pre-hidden, F1+M3 fix)');
+    assertEqual(chat[2].is_system, false, 'msg 2 visible (orig)');
+    assertEqual(chat[3].is_system, false, 'msg 3 visible (orig)');
+    assertEqual(chat[4].is_system, true, 'msg 4 still hidden (pre-hidden, F1+M3 fix)');
+    assertEqual(chat[5].is_system, false, 'msg 5 visible (orig, outside both)');
+});
+
+test('rollbackById: unknown id is a no-op', () => {
+    const chat = [{ mes: 'a', is_system: false }];
+    const { restored, removed } = rollbackById(chat, 'sum_nope');
+    assertEqual(restored, 0, 'nothing restored');
+    assertEqual(removed, 0, 'nothing removed');
+    assertEqual(chat.length, 1, 'chat unchanged');
+});
+
+test('rollbackById: invalid args bail safely', () => {
+    assertEqual(rollbackById(null, 'sum_X').restored, 0, 'null chat');
+    assertEqual(rollbackById([], '').restored, 0, 'empty id');
 });
 
 test('buildSummaryUserMessage: skips empty body', () => {

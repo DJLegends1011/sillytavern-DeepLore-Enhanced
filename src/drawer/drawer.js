@@ -63,10 +63,14 @@ export function resetDrawerState() {
     ds.browseNavigateTarget = null;
     ds.browseCustomFieldFilters = {}; // BUG-AUDIT-11
     ds.browseFolderFilter = '';
-    // #26: selection is chat-specific (trackerKeys can collide across vault sets); selectMode follows.
+    // #26: selection is chat-specific (trackerKeys can collide across vault sets).
+    // Clear browseSelected BEFORE flipping selectMode so any future selectMode observer
+    // sees a consistent (off + empty) state.
     if (ds.browseSelected instanceof Set) ds.browseSelected.clear();
     ds.browseSelectMode = false;
-    // ds.browseFolderGrouping + ds.browseExpandedFolders are UI prefs like browseSort — kept across chat changes.
+    // ds.browseFolderGrouping + ds.browseExpandedFolders are session-scoped UI state (NOT
+    // persisted to accountStorage like browseSort is — they only survive chat-switches).
+    // BUG-042 will promote them to accountStorage in a later wave.
     ds.contextTokens = 0;
     // ds.stGenerating tracks ST's generation state across chat switches — GENERATION_ENDED clears it.
     ds.librarianFilter = 'flag';

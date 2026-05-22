@@ -623,8 +623,14 @@ export function wireBrowseTab($drawer) {
         // user sees their entries — collapsing on demand is opt-in.
         if (ds.browseFolderGrouping) {
             if (!(ds.browseExpandedFolders instanceof Set)) ds.browseExpandedFolders = new Set();
+            // Audit M7: on first toggle, browseFilteredEntries may still be []
+            // (drawer just opened, no filter pass yet). Fall through to vaultIndex so the
+            // expanded set isn't empty — empty Set means "all collapsed" in the pure helper.
+            const source = (ds.browseFilteredEntries && ds.browseFilteredEntries.length)
+                ? ds.browseFilteredEntries
+                : vaultIndex;
             const folders = new Set();
-            for (const e of ds.browseFilteredEntries || []) {
+            for (const e of source || []) {
                 folders.add(e.folderPath ? e.folderPath.split('/')[0] : '(root)');
             }
             ds.browseExpandedFolders = folders;
@@ -638,7 +644,10 @@ export function wireBrowseTab($drawer) {
     });
 
     // ─── #13 — folder header expand/collapse ───
-    $drawer.on('click', '.dle-browse-folder-header', function (e) {
+    // Audit M5: scope delegation to .dle-browse-list so future .dle-browse-folder-header
+    // CSS uses elsewhere in the drawer (gating tab, librarian, etc.) can't trigger Browse
+    // expand/collapse and corrupt browseExpandedFolders.
+    $drawer.find('.dle-browse-list').on('click', '.dle-browse-folder-header', function (e) {
         // Don't toggle when the user is interacting with the select-all checkbox.
         if (e.target && (e.target.tagName === 'INPUT' || e.target.closest('.dle-browse-folder-select'))) return;
         const folder = $(this).data('folder');
@@ -655,7 +664,7 @@ export function wireBrowseTab($drawer) {
         ds.browseExpandedExtraHeight = 0;
         scheduleRender(renderBrowseTab);
     });
-    $drawer.on('keydown', '.dle-browse-folder-header', function (e) {
+    $drawer.find('.dle-browse-list').on('keydown', '.dle-browse-folder-header', function (e) {
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $(this).trigger('click'); }
     });
 
@@ -682,6 +691,12 @@ export function wireBrowseTab($drawer) {
         // Cheap re-render to update toolbar count + row highlight + folder-header tri-state.
         ds.browseLastRangeStart = -1;
         scheduleRender(renderBrowseTab);
+    });
+    // Audit M2: Space toggles the checkbox natively AND bubbles to the info-row keydown
+    // handler (which treats Space as "expand/collapse preview"). Stop that bubble so the
+    // user doesn't get a surprise preview toggle every time they tick a selection.
+    $drawer.find('.dle-browse-list').on('keydown', '.dle-browse-row-select', function (e) {
+        if (e.key === ' ' || e.key === 'Enter') e.stopPropagation();
     });
 
     // ─── #26 — folder header select-all ───
@@ -718,8 +733,12 @@ export function wireBrowseTab($drawer) {
 
     // ─── #26 — Optimize Selected (handler in popups.js to avoid circular import) ───
     $drawer.find('.dle-browse-optimize-selected').on('click', async function () {
+        // Audit M1: prevent double-click from spawning two parallel batch runs.
+        if (ds._batchOptimizeInflight) return;
         const trks = ds.browseSelected instanceof Set ? [...ds.browseSelected] : [];
         if (!trks.length) return;
+        ds._batchOptimizeInflight = true;
+        const $btn = $(this).prop('disabled', true);
         try {
             const mod = await import('../ui/popups.js');
             if (typeof mod.runBatchOptimize !== 'function') {
@@ -734,6 +753,9 @@ export function wireBrowseTab($drawer) {
         } catch (err) {
             console.error('[DLE] runBatchOptimize failed:', err);
             toastr.error('Batch optimize failed: ' + (err?.message || err), 'DeepLore Enhanced');
+        } finally {
+            ds._batchOptimizeInflight = false;
+            $btn.prop('disabled', false);
         }
     });
 }

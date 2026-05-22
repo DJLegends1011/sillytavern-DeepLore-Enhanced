@@ -331,7 +331,7 @@ export function registerAiCommands() {
             }
             const range = parseRange(rangeArg || '', chat.length);
             if (!range) {
-                toastr.warning('Usage: /dle-summarize-range <start-end> | <N-> | <-N>. Examples: 5-15, 10- (from 10 to end), -8 (last 8).', 'DeepLore Enhanced');
+                toastr.warning('Usage: /dle-summarize-range <start-end> | <N-> | <-N> | <N>. Examples: 5-15, 10- (from 10 to end), -8 (last 8), 7 (just message 7).', 'DeepLore Enhanced');
                 return '';
             }
             const loading = toastr.info(`Summarizing messages ${range.start}–${range.end}...`, 'DeepLore Enhanced', { timeOut: 0, extendedTimeOut: 0 });
@@ -355,7 +355,7 @@ export function registerAiCommands() {
             typeList: [ARGUMENT_TYPE.STRING],
             isRequired: true,
         })],
-        helpString: 'AI-summarize a chat range, hide originals, prepend the summary. Usage: /dle-summarize-range <range>. Examples: 5-15, 10- (from 10 to end), -8 (last 8 messages).',
+        helpString: 'AI-summarize a chat range, hide originals, prepend the summary. Usage: /dle-summarize-range <range>. Examples: 5-15 (range), 10- (from 10 to end), -8 (last 8 messages), 7 (single message).',
         returns: ARGUMENT_TYPE.STRING,
     }));
 

@@ -12,12 +12,12 @@
  * back to its pre-summary value and removes the summary message.
  */
 
-import { chat, chat_metadata, saveChatConditional, reloadCurrentChat } from '../../../../../../script.js';
+import { chat, chat_metadata, saveChatConditional, reloadCurrentChat, saveMetadata } from '../../../../../../script.js';
 import { saveMetadataDebounced } from '../../../../../extensions.js';
 import { getSettings, resolveConnectionConfig } from '../../settings.js';
 import { callAI } from './ai.js';
 import { classifyError } from '../../core/utils.js';
-import { parseRange, buildSummaryUserMessage } from './summarize-pure.js';
+import { parseRange, buildSummaryUserMessage, applyHideAndPrepend, rollbackById } from './summarize-pure.js';
 
 export { parseRange, buildSummaryUserMessage };
 
@@ -30,6 +30,13 @@ const DEFAULT_PROMPT = 'You are a session summarizer. Read the following chat ra
 function makeSummaryId() {
     return 'sum_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }
+
+/**
+ * Module-level in-flight guard. Two concurrent summarizeRange calls (slash +
+ * UI button, or two rapid invocations) would interleave chat.splice() and
+ * corrupt each other's records. Audit H1.
+ */
+let _summarizing = false;
 
 /**
  * Run the summary AI call against the resolved scribe connection (reuses the
@@ -60,6 +67,9 @@ async function callSummaryAI(userMessage, signal) {
  * @returns {Promise<{ok: boolean, summaryId?: string, summary?: string, error?: string, hiddenCount?: number}>}
  */
 export async function summarizeRange(range, signal) {
+    if (_summarizing) {
+        return { ok: false, error: 'A summary is already in progress — wait for it to finish before starting another.' };
+    }
     if (!range || typeof range.start !== 'number' || typeof range.end !== 'number') {
         return { ok: false, error: 'Invalid range' };
     }
@@ -73,63 +83,53 @@ export async function summarizeRange(range, signal) {
         return { ok: false, error: 'Selected range has no visible messages to summarize' };
     }
 
-    let summaryText;
+    _summarizing = true;
     try {
-        summaryText = await callSummaryAI(userMessage, signal);
-    } catch (err) {
-        return { ok: false, error: `AI call failed: ${classifyError(err)}` };
+        if (signal?.aborted) return { ok: false, error: 'Aborted before AI call' };
+
+        let summaryText;
+        try {
+            summaryText = await callSummaryAI(userMessage, signal);
+        } catch (err) {
+            return { ok: false, error: `AI call failed: ${classifyError(err)}` };
+        }
+        // Audit H2: AI may resolve after user aborted. Don't mutate chat in that case.
+        if (signal?.aborted) return { ok: false, error: 'Aborted after AI call' };
+        if (!summaryText) {
+            return { ok: false, error: 'AI returned empty summary' };
+        }
+        // Chat could have changed underneath us (CHAT_CHANGED) — re-check bounds.
+        if (!Array.isArray(chat) || range.end >= chat.length) {
+            return { ok: false, error: 'Chat changed during summary; aborting to avoid corruption.' };
+        }
+
+        const summaryId = makeSummaryId();
+        // Audit F1+M3+M6 fix: applyHideAndPrepend writes the prior is_system value to
+        // each hidden message's `.extra.dle_original_is_system`. Pure helper, tested
+        // separately in test/unit.mjs.
+        const { hiddenCount } = applyHideAndPrepend(chat, range, summaryId, summaryText);
+
+        // Persist record for rollback — only the metadata needed to FIND the messages,
+        // not their pre-summary state (that's on the messages themselves now).
+        if (!Array.isArray(chat_metadata.deeplore_summary_log)) chat_metadata.deeplore_summary_log = [];
+        chat_metadata.deeplore_summary_log.push({
+            id: summaryId,
+            createdAt: Date.now(),
+            summaryIndex: range.start,
+            hiddenCount,
+        });
+        // Audit H3: reloadCurrentChat re-reads from disk; debounced metadata save may not
+        // have flushed yet. Try sync save first; fall back to debounced on failure.
+        try { saveMetadata(); } catch { saveMetadataDebounced(); }
+        await saveChatConditional();
+
+        // Force UI redraw — splice doesn't trigger ST's incremental render.
+        await reloadCurrentChat();
+
+        return { ok: true, summaryId, summary: summaryText, hiddenCount };
+    } finally {
+        _summarizing = false;
     }
-    if (!summaryText) {
-        return { ok: false, error: 'AI returned empty summary' };
-    }
-
-    const summaryId = makeSummaryId();
-    const hiddenIndices = [];
-    const originalIsSystem = {};
-
-    // Mark originals hidden, recording prior is_system so rollback can restore exactly.
-    for (let i = range.start; i <= range.end; i++) {
-        const msg = chat[i];
-        if (!msg) continue;
-        if (!msg.extra || typeof msg.extra !== 'object') msg.extra = {};
-        originalIsSystem[i] = !!msg.is_system;
-        msg.is_system = true;
-        msg.extra.dle_summarized_into = summaryId;
-        hiddenIndices.push(i);
-    }
-
-    // Insert summary as a new message immediately before the (now-hidden) range.
-    const summaryMsg = {
-        name: 'DeepLore Summary',
-        is_user: false,
-        is_system: false,
-        send_date: new Date().toISOString(),
-        mes: summaryText,
-        extra: {
-            dle_summary_id: summaryId,
-            dle_summary_range: { start: range.start, end: range.end },
-            dle_summary_original_is_system: originalIsSystem,
-        },
-    };
-    chat.splice(range.start, 0, summaryMsg);
-
-    // Persist record for rollback.
-    if (!Array.isArray(chat_metadata.deeplore_summary_log)) chat_metadata.deeplore_summary_log = [];
-    chat_metadata.deeplore_summary_log.push({
-        id: summaryId,
-        createdAt: Date.now(),
-        // Note: indices shift after splice; record post-shift positions for rollback math.
-        summaryIndex: range.start,
-        hiddenIndices: hiddenIndices.map(i => i + 1), // +1 because splice pushed them
-        originalIsSystem,
-    });
-    saveMetadataDebounced();
-    await saveChatConditional();
-
-    // Force UI redraw — splice doesn't trigger ST's incremental render.
-    await reloadCurrentChat();
-
-    return { ok: true, summaryId, summary: summaryText, hiddenCount: hiddenIndices.length };
 }
 
 /**
@@ -153,30 +153,24 @@ export async function rollbackSummary(summaryId) {
 
     let restored = 0;
     let removed = 0;
-    // Process in reverse order so index math doesn't drift across removals.
+    // Newest-first: even single-id rollback walks newer summaries' index spaces first
+    // so removals never drift older summaries' message lookups. With the on-message
+    // is_system storage (audit F1+M3 fix), index math no longer matters for the restore
+    // step itself — but reverse order still keeps `chat.findIndex` deterministic.
     targets.sort((a, b) => b.createdAt - a.createdAt);
     for (const record of targets) {
-        // Find the summary message by id (don't trust the stored index — chat may have shifted).
-        const sumIdx = chat.findIndex(m => m?.extra?.dle_summary_id === record.id);
-        if (sumIdx >= 0) {
-            chat.splice(sumIdx, 1);
-            removed++;
-        }
-        // Restore is_system on hidden originals by id, again finding fresh (post-removal).
-        for (let i = 0; i < chat.length; i++) {
-            const msg = chat[i];
-            if (msg?.extra?.dle_summarized_into === record.id) {
-                const orig = record.originalIsSystem?.[i + (sumIdx >= 0 && i >= sumIdx ? 1 : 0)] ?? false;
-                msg.is_system = !!orig;
-                delete msg.extra.dle_summarized_into;
-                restored++;
-            }
-        }
+        // Audit F1+M3 fix: rollbackById restores is_system from each message's own
+        // .extra.dle_original_is_system — no index math, no cross-record coupling.
+        const { restored: r, removed: x } = rollbackById(chat, record.id);
+        restored += r;
+        removed += x;
         // Drop the record from the log.
         chat_metadata.deeplore_summary_log = chat_metadata.deeplore_summary_log.filter(r => r.id !== record.id);
     }
 
-    saveMetadataDebounced();
+    // Audit H3: same sync-save pattern as summarizeRange — reloadCurrentChat re-reads
+    // from disk and could lose the log update if only debounced.
+    try { saveMetadata(); } catch { saveMetadataDebounced(); }
     await saveChatConditional();
     await reloadCurrentChat();
 
@@ -193,6 +187,9 @@ export function listSummaries() {
         id: r.id,
         createdAt: r.createdAt,
         summaryIndex: r.summaryIndex,
-        hiddenCount: Array.isArray(r.hiddenIndices) ? r.hiddenIndices.length : 0,
+        // New shape uses hiddenCount; older legacy records had hiddenIndices array.
+        hiddenCount: typeof r.hiddenCount === 'number'
+            ? r.hiddenCount
+            : (Array.isArray(r.hiddenIndices) ? r.hiddenIndices.length : 0),
     }));
 }

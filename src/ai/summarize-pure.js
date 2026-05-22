@@ -67,3 +67,79 @@ export function buildSummaryUserMessage(chatArr, start, end) {
     }
     return lines.join('\n\n');
 }
+
+/**
+ * Apply the "hide range + insert summary message" mutation to a chat array.
+ * Pure for testability — summarizeRange (in summarize.js) wraps this with the
+ * ST-side I/O. Mutates `chatArr` in place; returns the inserted summary
+ * message + hiddenCount for caller bookkeeping.
+ *
+ * Audit F1+M3 contract: stores the pre-summary `is_system` value on each
+ * hidden message's `.extra.dle_original_is_system` so rollback can read it
+ * back without any cross-record index math.
+ *
+ * @param {Array<object>} chatArr
+ * @param {{start: number, end: number}} range
+ * @param {string} summaryId
+ * @param {string} summaryText
+ * @param {object} [summaryExtra] - extra fields to set on the inserted summary message
+ * @returns {{ summaryMsg: object, hiddenCount: number }}
+ */
+export function applyHideAndPrepend(chatArr, range, summaryId, summaryText, summaryExtra = {}) {
+    let hiddenCount = 0;
+    for (let i = range.start; i <= range.end; i++) {
+        const msg = chatArr[i];
+        if (!msg) continue;
+        if (!msg.extra || typeof msg.extra !== 'object') msg.extra = {};
+        msg.extra.dle_original_is_system = !!msg.is_system;
+        msg.extra.dle_summarized_into = summaryId;
+        msg.is_system = true;
+        hiddenCount++;
+    }
+    const summaryMsg = {
+        name: 'DeepLore Summary',
+        is_user: false,
+        is_system: false,
+        send_date: new Date().toISOString(),
+        mes: summaryText,
+        extra: {
+            dle_summary_id: summaryId,
+            dle_summary_range: { start: range.start, end: range.end },
+            ...summaryExtra,
+        },
+    };
+    chatArr.splice(range.start, 0, summaryMsg);
+    return { summaryMsg, hiddenCount };
+}
+
+/**
+ * Reverse `applyHideAndPrepend` for a given summary id. Removes the summary
+ * message and restores `is_system` on every message marked with that id.
+ *
+ * Audit F1+M3 contract: reads `.extra.dle_original_is_system` from each
+ * hidden message — no index math, no record lookup. Multi-summary rollback
+ * works in any order because state lives on the messages themselves.
+ *
+ * @param {Array<object>} chatArr
+ * @param {string} summaryId
+ * @returns {{ restored: number, removed: number }}
+ */
+export function rollbackById(chatArr, summaryId) {
+    let restored = 0;
+    let removed = 0;
+    if (!Array.isArray(chatArr) || !summaryId) return { restored, removed };
+    const sumIdx = chatArr.findIndex(m => m?.extra?.dle_summary_id === summaryId);
+    if (sumIdx >= 0) {
+        chatArr.splice(sumIdx, 1);
+        removed = 1;
+    }
+    for (const msg of chatArr) {
+        if (msg?.extra?.dle_summarized_into !== summaryId) continue;
+        const orig = msg.extra.dle_original_is_system;
+        msg.is_system = !!orig;
+        delete msg.extra.dle_summarized_into;
+        delete msg.extra.dle_original_is_system;
+        restored++;
+    }
+    return { restored, removed };
+}
