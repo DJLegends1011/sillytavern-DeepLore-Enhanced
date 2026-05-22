@@ -1695,6 +1695,71 @@ test('updateFrontmatterFields: no-op when updates object is empty', () => {
     assertEqual(result.content, input, 'content byte-identical');
 });
 
+// --- #15 summary feature: parseRange + buildSummaryUserMessage ---
+
+import { parseRange, buildSummaryUserMessage } from '../src/ai/summarize-pure.js';
+
+test('parseRange: start-end', () => {
+    const r = parseRange('5-15', 100);
+    assertEqual(r.start, 5);
+    assertEqual(r.end, 15);
+});
+
+test('parseRange: -N (last N)', () => {
+    const r = parseRange('-8', 100);
+    assertEqual(r.start, 92);
+    assertEqual(r.end, 99);
+});
+
+test('parseRange: -N caps at 0 when N > chatLen', () => {
+    const r = parseRange('-200', 50);
+    assertEqual(r.start, 0);
+    assertEqual(r.end, 49);
+});
+
+test('parseRange: N- (from N to end)', () => {
+    const r = parseRange('10-', 50);
+    assertEqual(r.start, 10);
+    assertEqual(r.end, 49);
+});
+
+test('parseRange: bare N (single message)', () => {
+    const r = parseRange('7', 50);
+    assertEqual(r.start, 7);
+    assertEqual(r.end, 7);
+});
+
+test('parseRange: rejects invalid ranges', () => {
+    assertEqual(parseRange('', 50), null, 'empty');
+    assertEqual(parseRange('abc', 50), null, 'non-numeric');
+    assertEqual(parseRange('50-100', 50), null, 'end >= chatLen');
+    assertEqual(parseRange('20-10', 50), null, 'start > end');
+    assertEqual(parseRange('-0', 50), null, 'last-zero');
+    assertEqual(parseRange('99', 50), null, 'bare N out of bounds');
+});
+
+test('buildSummaryUserMessage: includes name + body, skips hidden', () => {
+    const chat = [
+        { name: 'Alice', mes: 'hello', is_system: false },
+        { name: 'Bob', mes: 'hidden line', is_system: true },
+        { name: 'Alice', mes: 'world', is_system: false },
+    ];
+    const msg = buildSummaryUserMessage(chat, 0, 2);
+    assert(msg.includes('### Alice (#0)\nhello'), 'msg 0 included');
+    assert(!msg.includes('hidden line'), 'hidden msg skipped');
+    assert(msg.includes('### Alice (#2)\nworld'), 'msg 2 included');
+});
+
+test('buildSummaryUserMessage: skips empty body', () => {
+    const chat = [
+        { name: 'X', mes: '   ', is_system: false },
+        { name: 'Y', mes: 'content', is_system: false },
+    ];
+    const msg = buildSummaryUserMessage(chat, 0, 1);
+    assert(!msg.includes('#0'), 'empty-body msg skipped');
+    assert(msg.includes('content'), 'real msg included');
+});
+
 // --- Fuzzy name matching (all-results variant) ---
 
 import { fuzzyTitleMatchAll } from '../src/helpers.js';

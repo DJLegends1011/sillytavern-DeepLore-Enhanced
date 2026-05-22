@@ -280,6 +280,10 @@ export const defaultSettings = {
     // source — some accept it as continuation, others may ignore).
     responsePrefillSeed: '',
     responsePrefillMode: 'off',
+    // #15: dedicated summary feature — /dle-summarize-range AI prompt + budgets.
+    summarySystemPrompt: '',     // empty = use built-in default in summarize.js
+    summaryMaxTokens: 400,
+    summaryTimeout: 30000,
     analyticsData: {},
     _wizardCompleted: false,
     // Increment to trigger migrations in runMigrations().

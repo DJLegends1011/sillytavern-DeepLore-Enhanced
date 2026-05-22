@@ -18,6 +18,7 @@ import { runScribe } from '../ai/scribe.js';
 import { runAutoSuggest, showSuggestionPopup } from '../ai/auto-suggest.js';
 import { optimizeEntryKeys, showOptimizePopup } from './popups.js';
 import { fuzzyTitleMatchAll } from '../helpers.js';
+import { parseRange, summarizeRange, rollbackSummary, listSummaries } from '../ai/summarize.js';
 
 export function registerAiCommands() {
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
@@ -317,6 +318,72 @@ export function registerAiCommands() {
             },
         })],
         helpString: 'Open the Librarian AI session. Usage: /dle-librarian [gap &lt;id&gt; | review | audit]',
+        returns: ARGUMENT_TYPE.STRING,
+    }));
+
+    // #15 — Dedicated summary feature: AI-summarize a chat range, hide originals, prepend summary.
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'dle-summarize-range',
+        callback: async (_args, rangeArg) => {
+            if (!chat || chat.length === 0) {
+                toastr.info('No active chat.', 'DeepLore Enhanced');
+                return '';
+            }
+            const range = parseRange(rangeArg || '', chat.length);
+            if (!range) {
+                toastr.warning('Usage: /dle-summarize-range <start-end> | <N-> | <-N>. Examples: 5-15, 10- (from 10 to end), -8 (last 8).', 'DeepLore Enhanced');
+                return '';
+            }
+            const loading = toastr.info(`Summarizing messages ${range.start}–${range.end}...`, 'DeepLore Enhanced', { timeOut: 0, extendedTimeOut: 0 });
+            try {
+                const result = await summarizeRange(range);
+                toastr.clear(loading);
+                if (!result.ok) {
+                    toastr.error(result.error, 'DeepLore Enhanced');
+                    return '';
+                }
+                toastr.success(`Summarized ${result.hiddenCount} messages. ID: ${result.summaryId} (use /dle-summarize-rollback ${result.summaryId} to undo).`, 'DeepLore Enhanced', { timeOut: 8000 });
+                return result.summaryId;
+            } catch (err) {
+                toastr.clear(loading);
+                toastr.error(`Summarize failed: ${err.message}`, 'DeepLore Enhanced');
+                return '';
+            }
+        },
+        unnamedArgumentList: [SlashCommandArgument.fromProps({
+            description: 'range: start-end, N- (from N), -N (last N), or single N',
+            typeList: [ARGUMENT_TYPE.STRING],
+            isRequired: true,
+        })],
+        helpString: 'AI-summarize a chat range, hide originals, prepend the summary. Usage: /dle-summarize-range <range>. Examples: 5-15, 10- (from 10 to end), -8 (last 8 messages).',
+        returns: ARGUMENT_TYPE.STRING,
+    }));
+
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'dle-summarize-rollback',
+        callback: async (_args, idArg) => {
+            const id = (idArg || '').trim();
+            const result = await rollbackSummary(id || 'all');
+            if (!result.ok) {
+                toastr.warning(result.error || 'Rollback failed', 'DeepLore Enhanced');
+                return '';
+            }
+            toastr.success(`Restored ${result.restored} messages, removed ${result.removed} summary message${result.removed === 1 ? '' : 's'}.`, 'DeepLore Enhanced');
+            return '';
+        },
+        unnamedArgumentList: [SlashCommandArgument.fromProps({
+            description: 'summary id to roll back (omit or "all" = roll back every summary in this chat)',
+            typeList: [ARGUMENT_TYPE.STRING],
+            isRequired: false,
+            enumProvider: () => {
+                const list = listSummaries();
+                return [
+                    new SlashCommandEnumValue('all', 'roll back every summary'),
+                    ...list.map(s => new SlashCommandEnumValue(s.id, `#${s.summaryIndex} · ${s.hiddenCount} hidden · ${new Date(s.createdAt).toLocaleTimeString()}`)),
+                ];
+            },
+        })],
+        helpString: 'Roll back a /dle-summarize-range operation. Usage: /dle-summarize-rollback [id|all].',
         returns: ARGUMENT_TYPE.STRING,
     }));
 }
