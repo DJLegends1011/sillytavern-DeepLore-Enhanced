@@ -364,6 +364,33 @@ export function releaseHalfOpenProbe() {
     aiCircuitProbeTimestamp = 0;
 }
 /**
+ * PR #28.1 — Operator-initiated reset of the AI circuit breaker.
+ *
+ * Differs from `recordAiSuccess()` in intent: recordAiSuccess fires on actual
+ * AI call success and zeroes the failure count as a side effect; this is the
+ * "user clicked Reset" path that discards pending cooldown without claiming
+ * the underlying service recovered. Same end state (closed circuit) but the
+ * emitted event is tagged so analytics / debug logs can distinguish manual
+ * resets from organic recoveries.
+ *
+ * Returns the prior state so callers can show a meaningful toast.
+ * @returns {{ wasOpen: boolean, hadPendingCooldown: boolean }}
+ */
+export function resetAiCircuitBreaker() {
+    const wasOpen = aiCircuitOpen;
+    const hadPendingCooldown = wasOpen && (Date.now() - aiCircuitOpenedAt) < AI_CIRCUIT_COOLDOWN;
+    aiCircuitHalfOpenProbe = false;
+    aiCircuitProbeTimestamp = 0;
+    aiCircuitFailures = 0;
+    aiCircuitOpen = false;
+    aiCircuitOpenedAt = 0;
+    if (wasOpen) {
+        pushEventSafe('ai_circuit', { from: 'open', to: 'closed', manualReset: true });
+        notifyCircuitStateChanged();
+    }
+    return { wasOpen, hadPendingCooldown };
+}
+/**
  * Circuit breaker state machine (3 states):
  *   CLOSED  — aiCircuitOpen=false, all calls pass through normally.
  *   OPEN    — aiCircuitOpen=true, cooldown not expired. All calls blocked.

@@ -21,6 +21,7 @@ import {
     librarianSessionStats, librarianChatStats,
     claudeAutoEffortBad, claudeAutoEffortDetail, onClaudeAutoEffortChanged,
     notifyDebugModeChanged,
+    resetAiCircuitBreaker,
 } from '../state.js';
 import { ensureIndexFresh, buildIndex, buildIndexWithReuse } from '../vault/vault.js';
 import {
@@ -2090,6 +2091,21 @@ function bindPopupEvents($container) {
 
         loadPopupSettings($container);
         toastr.success('All settings reset to defaults. Connections preserved.', 'DeepLore Enhanced');
+    });
+
+    // PR #28.1 — Settings-side Reset AI Breaker.
+    $c('#dle-sp-reset-ai-breaker').on('click', async function () {
+        const confirmed = await callGenericPopup(
+            '<div style="text-align:center;"><p><strong>Reset AI breaker?</strong></p><p>Pending cooldown will be discarded. Next AI call attempts immediately.</p></div>',
+            POPUP_TYPE.CONFIRM, '', { okButton: 'Reset', cancelButton: 'Cancel' },
+        );
+        if (!confirmed) return;
+        const result = resetAiCircuitBreaker();
+        if (result.wasOpen) {
+            toastr.success(result.hadPendingCooldown ? 'AI breaker reset — pending cooldown discarded.' : 'AI breaker reset.', 'DeepLore Enhanced');
+        } else {
+            toastr.info('AI breaker was already closed.', 'DeepLore Enhanced');
+        }
     });
 
     const clampMap = {

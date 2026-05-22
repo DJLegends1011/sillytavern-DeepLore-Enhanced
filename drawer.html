@@ -453,6 +453,10 @@
             <button class="dle-health-icon" data-health="ai" title="AI search service status — click for details" aria-label="AI service status: loading">
                 <i class="fa-solid fa-robot" aria-hidden="true"></i>
             </button>
+            <!-- PR #28.1: only visible when breaker open (renderFooter toggles dle-hidden). -->
+            <button id="dle-reset-ai-breaker" class="dle-health-icon dle-hidden" title="Reset AI breaker — discard pending cooldown" aria-label="Reset AI circuit breaker">
+                <i class="fa-solid fa-rotate-right" aria-hidden="true"></i>
+            </button>
         </div>
         <div class="dle-ai-stats" aria-label="AI search session statistics — cumulative for this browser session, not per-chat">
             <span class="dle-ai-stat" data-ai-stat="calls" title="AI search calls made this browser session — resets when you reload">0 calls</span>
