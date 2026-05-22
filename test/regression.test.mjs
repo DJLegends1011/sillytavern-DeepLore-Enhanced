@@ -47,6 +47,7 @@ import { testEntryMatch, formatAndGroup, applyGating, clearScanTextCache } from 
 import { parseVaultFile } from '../core/pipeline.js';
 import { normalizePinBlock, matchesPinBlock, cmrsResultToText } from '../src/helpers.js';
 import { planSessionLoad, SESSION_METADATA_KEY, LEGACY_STORAGE_KEY } from '../src/librarian/librarian-session-pure.js';
+import { buildVerdict, buildPerEntry, diffVerdicts, evictRing, selectPruneVictims } from '../src/verdict/verdict-pure.js';
 
 console.log('DeepLore Enhanced — Regression Tests');
 console.log('Each test guards a specific BUG fix or gotcha.\n');
@@ -1690,6 +1691,107 @@ test('BUG-043: round-trip simulation — first load migrates, second load reads 
     const plan2 = planSessionLoad(md, legacy);
     assertEqual(plan2.action, 'load');
     assertEqual(plan2.data.draftState.title, 'First');
+});
+
+// ============================================================================
+// Verdict refactor guards (D-05, R-03 — 2026-05-22)
+// ============================================================================
+
+section('Verdict refactor — racing-globals replacement');
+
+test('VRD-1: Verdict carries injectedSources + trace together — no race window', () => {
+    // Old shape had 4 racing globals (lastInjectionSources / lastPipelineTrace /
+    // previousSources / lastInjectionEpoch). Verdict bundles them in one record.
+    const v = buildVerdict({
+        trace: { keywordMatched: [{ title: 'A', vaultSource: 'v', matchedBy: 'a' }], injected: [], aiSelected: [] },
+        injectedSources: [{ title: 'A', vaultSource: 'v', tokens: 50, matchedBy: 'a', filename: 'a.md', priority: 100 }],
+        chatId: 'c', msgIdx: 5, epoch: 3, lockEpoch: 12,
+    });
+    assertNotNull(v.trace, 'trace co-lives on verdict');
+    assertEqual(v.injectedSources.length, 1, 'sources co-live on verdict');
+    assertEqual(v.epoch, 3, 'epoch tag carried for stale-read detection');
+    assertEqual(v.lockEpoch, 12, 'lockEpoch tag carried');
+    assertEqual(v.msgIdx, 5, 'msgIdx anchors verdict to a specific message');
+});
+
+test('VRD-2: perEntry aggregation tolerates multi-vault same-title (no collision)', () => {
+    // CLAUDE.md invariant: trackerKey is vaultSource:title to prevent cross-vault collision
+    // under multiVaultConflictResolution='all'. Verdict perEntry honors that.
+    const rows = buildPerEntry({
+        keywordMatched: [
+            { title: 'Alice', vaultSource: 'vault-a', matchedBy: 'alice' },
+            { title: 'Alice', vaultSource: 'vault-b', matchedBy: 'alice' },
+        ],
+        injected: [],
+    }, []);
+    assertEqual(rows.length, 2, 'two distinct entries despite same title');
+    assertNotEqual(rows[0].vaultSource, rows[1].vaultSource, 'vault sources differ');
+});
+
+test('VRD-3: perEntry injected wins over earlier stage outcomes (lateness order)', () => {
+    // Pipeline order: matched_only → context_gated → cooldown → gated_out → dedup
+    // → budget_cut → rejected_by_ai → injected. Last write wins per entry.
+    const rows = buildPerEntry({
+        keywordMatched: [{ title: 'X', vaultSource: '', matchedBy: 'x' }],
+        cooldownRemoved: [{ title: 'X', vaultSource: '', reason: 'cd' }],
+        injected: [],
+    }, [{ title: 'X', vaultSource: '', tokens: 50 }]);
+    assertEqual(rows[0].finalState, 'injected', 'injected wins last');
+    assert(rows[0].reasons.length >= 2, 'reason chain preserved');
+});
+
+test('VRD-4: diffVerdicts replaces computeSourcesDiff for verdict→verdict comparisons', () => {
+    const prev = buildVerdict({
+        trace: null,
+        injectedSources: [{ title: 'A', vaultSource: '' }, { title: 'B', vaultSource: '' }],
+        chatId: null, msgIdx: 0, epoch: 0, lockEpoch: 0,
+    });
+    const cur = buildVerdict({
+        trace: null,
+        injectedSources: [{ title: 'A', vaultSource: '' }, { title: 'C', vaultSource: '' }],
+        chatId: null, msgIdx: 1, epoch: 0, lockEpoch: 0,
+    });
+    const { added, removed } = diffVerdicts(cur, prev);
+    assertEqual(added.length, 1, 'C added');
+    assertEqual(added[0].title, 'C', 'C is the added entry');
+    assertEqual(removed.length, 1, 'B removed');
+    assertEqual(removed[0].title, 'B', 'B is the removed entry');
+});
+
+test('VRD-5: Ring eviction keeps newest verdicts when over cap', () => {
+    const buf = [];
+    for (let i = 0; i < 60; i++) {
+        buf.push({ msgIdx: i, injectedSources: [], perEntry: [], epoch: 0 });
+    }
+    const trimmed = evictRing(buf, 50);
+    assertEqual(trimmed.length, 50, 'trimmed to cap');
+    assertEqual(trimmed[0].msgIdx, 10, 'oldest 10 dropped');
+    assertEqual(trimmed[trimmed.length - 1].msgIdx, 59, 'newest preserved');
+});
+
+test('VRD-6: IDB prune selection drops oldest msgIdx first', () => {
+    // Simulates the IDB-side prune logic: catalog of recent records, cap, returns victim keys.
+    const catalog = [];
+    for (let i = 0; i < 250; i++) catalog.push({ msgIdx: i, ts: 1000 + i, key: `k${i}` });
+    const victims = selectPruneVictims(catalog, 200);
+    assertEqual(victims.length, 50, '50 victims for 250-row catalog capped at 200');
+    assert(victims.includes('k0'), 'oldest message in victims');
+    assert(victims.includes('k49'), 'boundary still a victim (msgIdx 49 < survivor min 50)');
+    assert(!victims.includes('k50'), 'msgIdx 50 survives (first of newest 200)');
+    assert(!victims.includes('k249'), 'newest survives');
+});
+
+test('VRD-7: Empty verdict shape stays valid for empty-turn case', () => {
+    // No-lore turns still write a verdict (with injectedSources=[]) so consumers see
+    // "nothing this turn" instead of the prior verdict bleeding through.
+    const v = buildVerdict({
+        trace: { keywordMatched: [], aiSelected: [], injected: [] },
+        injectedSources: [],
+        chatId: null, msgIdx: 7, epoch: 0, lockEpoch: 0,
+    });
+    assertEqual(v.injectedSources.length, 0, 'empty injectedSources OK');
+    assertEqual(v.perEntry.length, 0, 'perEntry empty when no candidates');
+    assertNotNull(v.trace, 'trace still attached');
 });
 
 // ============================================================================

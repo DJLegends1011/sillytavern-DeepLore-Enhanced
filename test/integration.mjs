@@ -17,7 +17,6 @@
 import {
     // State values
     vaultIndex, indexEverLoaded, indexing,
-    lastInjectionSources, lastPipelineTrace,
     cooldownTracker, generationCount, injectionHistory, consecutiveInjections,
     chatInjectionCounts, trackerKey,
     lastWarningRatio, decayTracker, chatEpoch,
@@ -25,17 +24,17 @@ import {
     aiSearchCache, aiSearchStats, entityNameSet, entityShortNameRegexes,
     aiCircuitOpen, aiCircuitFailures, aiCircuitOpenedAt,
     lastVaultFailureCount, lastVaultAttemptCount,
-    previousSources, lastHealthResult,
+    lastHealthResult,
     syncIntervalId,
 
     // Setters
     setVaultIndex, setIndexTimestamp, setIndexing, setIndexEverLoaded,
-    setAiSearchCache, setLastInjectionSources, setLastPipelineTrace,
+    setAiSearchCache,
     setGenerationCount, setLastWarningRatio, setChatEpoch,
     setGenerationLock, setGenerationLockEpoch,
     setChatInjectionCounts, setAutoSuggestMessageCount,
     setLastScribeChatLength, setScribeInProgress, setLastScribeSummary,
-    setPreviousIndexSnapshot, setPreviousSources,
+    setPreviousIndexSnapshot,
     setEntityNameSet, setEntityShortNameRegexes,
     setLastVaultFailureCount, setLastVaultAttemptCount,
     setLastHealthResult, setFuzzySearchIndex,
@@ -88,6 +87,23 @@ import { parseVaultFile, clearPrompts } from '../core/pipeline.js';
 import { takeIndexSnapshot, detectChanges } from '../core/sync.js';
 import { buildScanText, validateSettings, simpleHash } from '../core/utils.js';
 
+// Verdict store — replaces lastInjectionSources / lastPipelineTrace / previousSources globals.
+// In-memory ring only (test env has no IndexedDB); chatId=null forces ring-only behavior.
+import { buildVerdict } from '../src/verdict/verdict-pure.js';
+import {
+    writeVerdict as _writeVerdict,
+    getCurrent as getCurrentVerdict,
+    getPrevious as getPreviousVerdict,
+    clearChat as clearVerdictChat,
+    setCurrentChatId as setVerdictChatId,
+    resetForTests as resetVerdictForTests,
+} from '../src/verdict/verdict-store.js';
+
+/** Tests run before IndexedDB exists in node — wrap writeVerdict to swallow IDB-spill failures. */
+function writeVerdictSync(v) {
+    try { _writeVerdict(v); } catch { /* IDB unavailable in node test env — ring write already happened */ }
+}
+
 // ============================================================================
 // Test Runner (shared from helpers.mjs)
 // ============================================================================
@@ -104,8 +120,7 @@ function resetAllState() {
     setIndexing(false);
     setBuildPromise(null);
     setAiSearchCache({ hash: '', manifestHash: '', chatLineCount: 0, results: [] });
-    setLastInjectionSources(null);
-    setLastPipelineTrace(null);
+    resetVerdictForTests();
     setGenerationCount(0);
     setLastWarningRatio(0);
     setChatEpoch(0);
@@ -116,7 +131,6 @@ function resetAllState() {
     setScribeInProgress(false);
     setLastScribeSummary('');
     setPreviousIndexSnapshot(null);
-    setPreviousSources(null);
     setEntityNameSet(new Set());
     setEntityShortNameRegexes(new Map());
     setLastVaultFailureCount(0);
@@ -141,19 +155,18 @@ function resetAllState() {
 // A. Event Lifecycle Tests
 // ============================================================================
 
-test('A1: Sources set after pipeline stages, readable before clear', () => {
+test('A1: Verdict written after pipeline stages, readable via getCurrent', () => {
     resetAllState();
-    // Simulate: pipeline runs, sets sources
+    // Simulate: pipeline runs, writes verdict
     const sources = [{ title: 'Eris', tokens: 50, matchedBy: 'keyword', vaultSource: '' }];
-    setLastInjectionSources(sources);
-    assertEqual(lastInjectionSources, sources, 'sources should be set');
+    writeVerdictSync(buildVerdict({ trace: null, injectedSources: sources, chatId: null, msgIdx: 0, epoch: chatEpoch, lockEpoch: 0 }));
+    const current = getCurrentVerdict();
+    assertEqual(current.injectedSources, sources, 'verdict injectedSources should be set');
 
-    // Simulate: CHARACTER_MESSAGE_RENDERED reads and clears
-    const readSources = lastInjectionSources;
-    setLastInjectionSources(null);
-    assertEqual(readSources.length, 1, 'should have read 1 source');
-    assertEqual(readSources[0].title, 'Eris', 'source title should match');
-    assertEqual(lastInjectionSources, null, 'sources should be cleared after read');
+    // Replaces the old "clear on read" semantics: a new verdict supersedes the prior one.
+    writeVerdictSync(buildVerdict({ trace: null, injectedSources: [], chatId: null, msgIdx: 1, epoch: chatEpoch, lockEpoch: 0 }));
+    const next = getCurrentVerdict();
+    assertEqual(next.injectedSources.length, 0, 'next-turn verdict overrides prior injection list');
 });
 
 test('A2: Quiet generation type skips pipeline', () => {
@@ -229,9 +242,7 @@ test('B6: State reset on chat change', () => {
     setLastWarningRatio(0);
     setAiSearchCache({ hash: '', manifestHash: '', chatLineCount: 0, results: [] });
     setAutoSuggestMessageCount(0);
-    setLastPipelineTrace(null);
-    setLastInjectionSources(null);
-    setPreviousSources(null);
+    resetVerdictForTests();
 
     assertEqual(cooldownTracker.size, 0, 'cooldownTracker should be cleared');
     assertEqual(injectionHistory.size, 0, 'injectionHistory should be cleared');
@@ -240,8 +251,7 @@ test('B6: State reset on chat change', () => {
     assertEqual(generationCount, 0, 'generationCount should be reset');
     assertEqual(chatInjectionCounts.size, 0, 'chatInjectionCounts should be cleared');
     assertEqual(aiSearchCache.hash, '', 'AI cache should be cleared');
-    assertEqual(lastPipelineTrace, null, 'pipeline trace should be cleared');
-    assertEqual(lastInjectionSources, null, 'injection sources should be cleared');
+    assertEqual(getCurrentVerdict(), null, 'verdict ring should be cleared');
 });
 
 test('B7: Chat metadata hydration on chat change', () => {
@@ -275,18 +285,14 @@ test('B9: chatEpoch increments on chat change', () => {
 });
 
 test('B10: Drawer ephemeral state reset on chat change', () => {
-    // Simulated: resetDrawerState() clears browse filters, query, expanded entry
-    // We test that the function exists and state vars are resettable
+    // Verdict store + drawer state both reset on chat change. Drawer state lives in
+    // drawer-state.js (can't import from node — pulls in ST), so we verify the verdict
+    // store side: writing then resetting drops what drawer would read.
     resetAllState();
-    // Drawer state is in drawer-state.js (ds object) — can't import directly as it imports from ST
-    // But we verify the state.js variables that drawer depends on are cleared
-    setLastPipelineTrace({ mode: 'test' });
-    setLastInjectionSources([{ title: 'X' }]);
-    // Simulate reset
-    setLastPipelineTrace(null);
-    setLastInjectionSources(null);
-    assertEqual(lastPipelineTrace, null, 'pipeline trace cleared for drawer');
-    assertEqual(lastInjectionSources, null, 'sources cleared for drawer');
+    writeVerdictSync(buildVerdict({ trace: { mode: 'test' }, injectedSources: [{ title: 'X', vaultSource: '' }], chatId: null, msgIdx: 0, epoch: chatEpoch, lockEpoch: 0 }));
+    assert(getCurrentVerdict() !== null, 'verdict present before reset');
+    resetVerdictForTests();
+    assertEqual(getCurrentVerdict(), null, 'verdict cleared for drawer');
 });
 
 // ============================================================================
@@ -573,34 +579,37 @@ test('E29: Pipeline uses snapshot, not live index', () => {
     assertEqual(snapshot[0].title, 'A', 'snapshot should have original entries');
 });
 
-test('E30: Pipeline trace as fallback when sources are null', () => {
+test('E30: Verdict carries trace + injectedSources together (no fallback needed)', () => {
     resetAllState();
-    setLastInjectionSources(null);
-    setLastPipelineTrace({ injected: [{ title: 'Eris', tokens: 50 }] });
-
-    // CHARACTER_MESSAGE_RENDERED finds no sources, uses trace as fallback
-    const sources = lastInjectionSources;
-    const fallback = sources || (lastPipelineTrace?.injected || []);
-    assertEqual(fallback.length, 1, 'should fall back to pipeline trace');
-    assertEqual(fallback[0].title, 'Eris', 'fallback should have correct entry');
+    writeVerdictSync(buildVerdict({
+        trace: { injected: [{ title: 'Eris', tokens: 50 }], keywordMatched: [], aiSelected: [] },
+        injectedSources: [{ title: 'Eris', vaultSource: '', tokens: 50, matchedBy: 'keyword', filename: 'eris.md', priority: 100 }],
+        chatId: null, msgIdx: 0, epoch: chatEpoch, lockEpoch: 0,
+    }));
+    const v = getCurrentVerdict();
+    // Both sources and trace populated on a single verdict — no global racing.
+    assertEqual(v.injectedSources.length, 1, 'injectedSources populated');
+    assertEqual(v.trace.injected.length, 1, 'trace.injected populated');
+    assertEqual(v.injectedSources[0].title, v.trace.injected[0].title, 'sources/trace stay in sync');
 });
 
-test('E31: Sources cleared by new generation, render uses trace', () => {
+test('E31: New verdict supersedes prior one; trace history stays on prior verdict', () => {
     resetAllState();
-    // Gen 1 sets sources
-    setLastInjectionSources([{ title: 'A' }]);
-    setLastPipelineTrace({ injected: [{ title: 'A', tokens: 50 }] });
-
-    // Gen 2 starts, clears sources
-    setLastInjectionSources(null);
-
-    // Render from gen 1 tries to read — sources gone
-    const sources = lastInjectionSources;
-    assert(sources === null, 'sources should be null');
-
-    // Fallback to trace
-    const fallback = lastPipelineTrace?.injected || [];
-    assertEqual(fallback.length, 1, 'trace should still have data');
+    // Gen 1 writes a verdict
+    writeVerdictSync(buildVerdict({
+        trace: { injected: [{ title: 'A', tokens: 50 }], keywordMatched: [], aiSelected: [] },
+        injectedSources: [{ title: 'A', vaultSource: '', tokens: 50, matchedBy: 'k', filename: 'a.md', priority: 100 }],
+        chatId: null, msgIdx: 0, epoch: chatEpoch, lockEpoch: 0,
+    }));
+    // Gen 2 writes an empty verdict (no entries matched this turn)
+    writeVerdictSync(buildVerdict({
+        trace: { injected: [], keywordMatched: [], aiSelected: [] },
+        injectedSources: [],
+        chatId: null, msgIdx: 1, epoch: chatEpoch, lockEpoch: 0,
+    }));
+    // Current verdict reflects gen 2; previous still accessible via getPrevious().
+    assertEqual(getCurrentVerdict().injectedSources.length, 0, 'gen 2 verdict empty');
+    assertEqual(getPreviousVerdict()?.injectedSources?.length ?? -1, 1, 'gen 1 verdict retained for diff');
 });
 
 // ============================================================================
@@ -698,16 +707,17 @@ test('F40: Entity name set should be refreshable after index rebuild', () => {
 // G. Drawer State Tests (state-level, not DOM)
 // ============================================================================
 
-test('G41: Tab state concepts — active tab tracking', () => {
-    // Drawer state tracks which tab is active via DOM classes.
-    // We verify the state machinery that supports it.
+test('G41: Tab state concepts — verdict trace accessible to drawer', () => {
+    // Drawer state tracks which tab is active via DOM classes; trace data lives on the verdict.
     resetAllState();
-    // The drawer uses ds.whyTabFilter (to be added in Part 3C)
-    // For now, test that state variables used by drawer are resettable
-    setLastPipelineTrace({ mode: 'two-stage', injected: [{ title: 'A', tokens: 50 }] });
-    assert(lastPipelineTrace !== null, 'trace should be set');
-    setLastPipelineTrace(null);
-    assert(lastPipelineTrace === null, 'trace should be clearable');
+    writeVerdictSync(buildVerdict({
+        trace: { mode: 'two-stage', injected: [{ title: 'A', tokens: 50 }], keywordMatched: [], aiSelected: [] },
+        injectedSources: [{ title: 'A', vaultSource: '', tokens: 50, matchedBy: 'k', filename: 'a.md', priority: 100 }],
+        chatId: null, msgIdx: 0, epoch: chatEpoch, lockEpoch: 0,
+    }));
+    assert(getCurrentVerdict()?.trace !== null, 'verdict trace should be set');
+    resetVerdictForTests();
+    assertEqual(getCurrentVerdict(), null, 'verdict cleared');
 });
 
 test('G44: Browse filter changes reset state', () => {
@@ -748,11 +758,18 @@ test('G46: Status zone 3-state label logic', () => {
     assertEqual(label, 'Idle', 'should show Idle when neither locked nor generating');
 });
 
-test('G47: Tab badge counts from state data', () => {
+test('G47: Tab badge counts from verdict store', () => {
     resetAllState();
-    // Injection tab badge = lastInjectionSources?.length
-    setLastInjectionSources([{ title: 'A' }, { title: 'B' }]);
-    assertEqual(lastInjectionSources.length, 2, 'injection badge should show 2');
+    // Injection tab badge = current verdict's injectedSources length.
+    writeVerdictSync(buildVerdict({
+        trace: null,
+        injectedSources: [
+            { title: 'A', vaultSource: '', tokens: 10, matchedBy: 'k', filename: 'a.md', priority: 100 },
+            { title: 'B', vaultSource: '', tokens: 10, matchedBy: 'k', filename: 'b.md', priority: 100 },
+        ],
+        chatId: null, msgIdx: 0, epoch: chatEpoch, lockEpoch: 0,
+    }));
+    assertEqual(getCurrentVerdict().injectedSources.length, 2, 'injection badge should show 2');
 
     // Browse tab badge = vaultIndex.length
     setVaultIndex([makeEntry('X'), makeEntry('Y'), makeEntry('Z')]);
