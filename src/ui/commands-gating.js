@@ -57,11 +57,13 @@ async function resolveEntryByName(name, candidates, { commandLabel }) {
     let picked = null;
     await callGenericPopup(html, POPUP_TYPE.TEXT, '', {
         wide: true,
-        onOpen: () => {
-            document.querySelectorAll('.dle-fuzzy-pick').forEach(btn => {
+        // Scope queries to this popup's dialog so a stacked popup doesn't
+        // cross-fire (global document.querySelector* would pick up sibling popups).
+        onOpen: (popup) => {
+            popup.dlg.querySelectorAll('.dle-fuzzy-pick').forEach(btn => {
                 btn.addEventListener('click', () => {
                     picked = btn.getAttribute('data-title');
-                    document.querySelector('.popup-button-ok')?.click();
+                    popup.okButton?.click();
                 });
             });
         },

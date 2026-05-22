@@ -80,7 +80,7 @@ import { clearSessionActivityLog, persistGaps } from './src/librarian/librarian-
 import { injectLibrarianDropdown, removeLibrarianDropdown } from './src/librarian/librarian-ui.js';
 import { clearSessionState as clearLibrarianSessionState } from './src/librarian/librarian-session.js';
 import { runAgenticLoop } from './src/librarian/agentic-loop.js';
-import { isToolCallingSupported, getActiveMaxTokens, isReasoningOnlyModel, getResolvedModel } from './src/librarian/agentic-api.js';
+import { isToolCallingSupported, getActiveMaxTokens, isReasoningOnlyModel, getResolvedModel, isUnderlyingClaude } from './src/librarian/agentic-api.js';
 import { buildChatMessages } from './src/librarian/agentic-messages.js';
 
 // ============================================================================
@@ -281,12 +281,69 @@ function _removePipelineStatus() {
  * @param {function} abort         abort(true) breaks the interceptor chain immediately
  * @param {string} type            generation type ('normal' | 'continue' | 'append' | 'quiet' | ...)
  */
+/**
+ * DLE-Side Response Prefill: inject seed text as a final assistant-role
+ * extension prompt at chat depth 0, so the writing AI continues from it
+ * instead of starting with "Certainly, here's…".
+ *
+ * Lifted to the top of onGenerate so every meaningful generation (including
+ * pipeline-skip paths and pipeline early-aborts) gets consistent prefill
+ * state — otherwise stale prefill from a prior generation leaks via the
+ * "obsidian no fallback" / "empty match" / "stale pipeline" early returns
+ * that don't reach the in-flow registration (REG-B1).
+ *
+ * Uses a dle_-prefixed id (NOT deeplore_) so the various clearPrompts()
+ * calls — including the Librarian agentic-loop clear — don't sweep it
+ * away as if it were lore prompt state (REG-B3).
+ */
+const PREFILL_ID = 'dle_response_prefill';
+function applyResponsePrefill(settings) {
+    const seed = (settings.responsePrefillSeed || '').trim();
+    const mode = settings.responsePrefillMode || 'off';
+    let apply = false;
+    if (seed && mode !== 'off') {
+        if (mode === 'all-providers') {
+            apply = true;
+        } else if (mode === 'anthropic-only') {
+            const src = oai_settings?.chat_completion_source || '';
+            const model = oai_settings?.[`${src}_model`] || '';
+            // Use isUnderlyingClaude — catches Bedrock/Vertex Custom-source
+            // `claude-*` models as well as OpenRouter `anthropic/claude-*`,
+            // not just the OR variant (REG-B2).
+            apply = src === 'claude' || isUnderlyingClaude(model);
+        }
+    }
+    if (apply) {
+        setExtensionPrompt(
+            PREFILL_ID,
+            seed,
+            extension_prompt_types.IN_CHAT,
+            0,
+            false,
+            extension_prompt_roles.ASSISTANT,
+        );
+    } else {
+        // Clear stale prefill from a prior generation.
+        setExtensionPrompt(PREFILL_ID, '', extension_prompt_types.NONE, 0);
+    }
+}
+
 async function onGenerate(chatMessages, contextSize, abort, type) {
     const settings = getSettings();
 
     if (type === 'quiet' || !settings.enabled) {
+        // Quiet/disabled paths should also drop any stale prefill so it
+        // doesn't survive a settings toggle mid-session.
+        if (!settings.enabled) {
+            setExtensionPrompt(PREFILL_ID, '', extension_prompt_types.NONE, 0);
+        }
         return;
     }
+
+    // Run BEFORE the skip guards so prefill survives stepped-thinking,
+    // skipNextPipeline, and tool-call continuation generations (those still
+    // emit a writing-AI call that benefits from prefill).
+    applyResponsePrefill(settings);
 
     // Stepped Thinking coexistence: skip pipeline + Librarian dispatch while a
     // stepped-thinking generation pass is in flight. See `inSteppedThinking`
@@ -860,39 +917,6 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
                     settings.aiNotepadRole,
                 );
             }
-        }
-
-        // DLE-Side Response Prefill: inject seed text as a final assistant-role
-        // extension prompt at chat depth 0, so the writing AI continues from it
-        // instead of starting fresh with "Certainly, here's…". anthropic-only mode
-        // gates on the underlying model — covers raw Claude (chat_completion_source
-        // = 'claude') and OpenRouter-fronted Claude (anthropic/claude-*).
-        // all-providers mode always injects; other providers may treat the trailing
-        // assistant message as completion-continuation, others may ignore it.
-        const _prefillSeed = (settings.responsePrefillSeed || '').trim();
-        const _prefillMode = settings.responsePrefillMode || 'off';
-        let _prefillApply = false;
-        if (_prefillSeed && _prefillMode !== 'off') {
-            if (_prefillMode === 'all-providers') {
-                _prefillApply = true;
-            } else if (_prefillMode === 'anthropic-only') {
-                const _src = oai_settings?.chat_completion_source || '';
-                const _model = oai_settings?.[`${_src}_model`] || '';
-                _prefillApply = _src === 'claude' || /^anthropic\/claude/i.test(_model);
-            }
-        }
-        if (_prefillApply) {
-            setExtensionPrompt(
-                'deeplore_response_prefill',
-                _prefillSeed,
-                extension_prompt_types.IN_CHAT,
-                0,
-                false,
-                extension_prompt_roles.ASSISTANT,
-            );
-        } else {
-            // Clear stale prefill from a prior generation that did apply it.
-            setExtensionPrompt('deeplore_response_prefill', '', extension_prompt_types.NONE, 0);
         }
 
         // Stage 7: track cooldowns + injection history. Both epoch+lockEpoch guards required —

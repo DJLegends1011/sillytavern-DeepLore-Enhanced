@@ -12,7 +12,7 @@ import { SlashCommandArgument, ARGUMENT_TYPE } from '../../../../../slash-comman
 import { SlashCommandEnumValue } from '../../../../../slash-commands/SlashCommandEnumValue.js';
 import { classifyError, NO_ENTRIES_MSG, yamlEscape } from '../../core/utils.js';
 import { getSettings, getPrimaryVault } from '../../settings.js';
-import { vaultIndex, scribeInProgress, setIndexTimestamp, setSkipNextPipeline } from '../state.js';
+import { vaultIndex, scribeInProgress, setIndexTimestamp, setSkipNextPipeline, loreGaps } from '../state.js';
 import { buildIndex, ensureIndexFresh, getMaxResponseTokens } from '../vault/vault.js';
 import { runScribe } from '../ai/scribe.js';
 import { runAutoSuggest, showSuggestionPopup } from '../ai/auto-suggest.js';
@@ -61,11 +61,12 @@ export function registerAiCommands() {
                     let picked = null;
                     await callGenericPopup(html, POPUP_TYPE.TEXT, '', {
                         wide: true,
-                        onOpen: () => {
-                            document.querySelectorAll('.dle-fuzzy-pick').forEach(btn => {
+                        // Scope queries to this popup's dialog so a stacked popup doesn't cross-fire.
+                        onOpen: (popup) => {
+                            popup.dlg.querySelectorAll('.dle-fuzzy-pick').forEach(btn => {
                                 btn.addEventListener('click', () => {
                                     picked = btn.getAttribute('data-title');
-                                    document.querySelector('.popup-button-ok')?.click();
+                                    popup.okButton?.click();
                                 });
                             });
                         },
@@ -301,8 +302,10 @@ export function registerAiCommands() {
             typeList: [ARGUMENT_TYPE.STRING],
             isRequired: false,
             // Dynamic enum: static subcommands + gap-by-id for any open gaps.
-            enumProvider: async () => {
-                const { loreGaps } = await import('../state.js');
+            // MUST be sync — ST's SlashCommandAutoCompleteNameResult calls
+            // enumProvider without awaiting and reads `.length` immediately, so
+            // returning a Promise produces silent autocomplete failure.
+            enumProvider: () => {
                 const base = [
                     new SlashCommandEnumValue('review', 'open the review browser'),
                     new SlashCommandEnumValue('audit', 'audit existing entries'),
