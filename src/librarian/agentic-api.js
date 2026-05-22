@@ -49,13 +49,19 @@ export function isReasoningOnlyModel(model) {
  * Resolve the active model id for the Librarian connection.
  * Proxy: configured model. Profile: CMRS profile model first (most accurate),
  * then `oai_settings.{source}_model` fallback.
+ *
+ * Reads `resolveConnectionConfig('librarian').profileId` — Librarian's *configured*
+ * profile, not ST's globally-active profile. Using getActiveProfileId() here would
+ * silently mis-resolve the model whenever the user's active profile differs from
+ * the one wired into Librarian (the same root cause as #27 sym 2).
  */
 export function getResolvedModel() {
-    if (getLibrarianMode() === 'proxy') {
-        return resolveConnectionConfig('librarian').model || '';
+    const connConfig = resolveConnectionConfig('librarian');
+    if (connConfig.mode === 'proxy') {
+        return connConfig.model || '';
     }
     try {
-        const profileId = getActiveProfileId();
+        const profileId = connConfig.profileId;
         if (profileId) {
             const profile = ConnectionManagerRequestService.getProfile?.(profileId);
             if (profile?.model) return profile.model;
