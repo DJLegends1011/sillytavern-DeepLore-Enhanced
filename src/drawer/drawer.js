@@ -5,12 +5,13 @@ import { escapeHtml } from '../../../../../utils.js';
 import { getSettings } from '../../settings.js';
 import {
     vaultIndex, generationLock,
-    lastInjectionSources, loreGaps,
+    loreGaps,
     onIndexUpdated, onAiStatsUpdated, onCircuitStateChanged,
     onPipelineComplete, onInjectionSourcesReady, onGatingChanged, onPinBlockChanged, onGenerationLockChanged,
     onIndexingChanged, onLoreGapsChanged, onClaudeAutoEffortChanged, onPipelinePhaseChanged,
-    onChatInjectionCountsUpdated, onPipelineTraceUpdated, onFieldDefinitionsUpdated,
+    onChatInjectionCountsUpdated, onFieldDefinitionsUpdated,
 } from '../state.js';
+import { getCurrent as getCurrentVerdict, onVerdictChanged } from '../verdict/verdict-store.js';
 
 import {
     ds, DRAWER_ID, OVERLAY_CHAT_WIDTH_THRESHOLD,
@@ -523,17 +524,19 @@ export async function createDrawerPanel() {
         if (drawerDestroyed) return;
         invalidateTemperatureCache();
         scheduleRender(renderStatusZone);
-        // Re-render the injection tab on complete only when sources are empty —
-        // transitions "Choosing lore…" spinner → empty-state guide. With populated
-        // sources, onInjectionSourcesReady has already rendered them.
-        if (!lastInjectionSources || lastInjectionSources.length === 0) {
+        // Re-render the injection tab on complete only when verdict's injectedSources
+        // are empty — transitions "Choosing lore…" spinner → empty-state guide. With
+        // populated sources, onInjectionSourcesReady has already rendered them.
+        const _completeVerdict = getCurrentVerdict();
+        const _completeInjCount = _completeVerdict?.injectedSources?.length ?? 0;
+        if (_completeInjCount === 0) {
             scheduleRender(renderInjectionTab);
         }
         scheduleRender(renderBrowseTab);
         scheduleRender(renderTimers);
         scheduleRender(renderFooter);
-        if (lastInjectionSources !== null && lastInjectionSources.length > 0) {
-            setTimeout(() => announceToScreenReader(`Pipeline complete: ${lastInjectionSources.length} entries injected.`), 0);
+        if (_completeInjCount > 0) {
+            setTimeout(() => announceToScreenReader(`Pipeline complete: ${_completeInjCount} entries injected.`), 0);
         }
     }));
 
@@ -606,11 +609,11 @@ export async function createDrawerPanel() {
         scheduleRender(updateInjectionCountBadges);
     }));
 
-    // Browse tab's rejected-entry lookup uses lastPipelineTrace.
+    // Browse tab's rejected-entry lookup reads the current verdict's trace.
     // Why? tab is NOT re-rendered here — onInjectionSourcesReady covers the same pipeline
-    // commit (trace + sources are set together), and CHAT_CHANGED's trace clear is covered
-    // by onPipelineComplete's empty-sources branch.
-    drawerListeners.stateObservers.push(onPipelineTraceUpdated(() => {
+    // commit (trace + sources are set together on the verdict), and CHAT_CHANGED's clear
+    // is covered by onPipelineComplete's empty-sources branch.
+    drawerListeners.stateObservers.push(onVerdictChanged(() => {
         if (drawerDestroyed) return;
         scheduleRender(renderBrowseTab);
     }));

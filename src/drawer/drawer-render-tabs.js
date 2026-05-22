@@ -2,13 +2,15 @@ import { chat_metadata } from '../../../../../../script.js';
 import { escapeHtml } from '../../../../../utils.js';
 import { getSettings } from '../../settings.js';
 import {
-    vaultIndex, lastInjectionSources, previousSources, lastPipelineTrace,
+    vaultIndex,
     generationLock, indexing,
     cooldownTracker, decayTracker, chatInjectionCounts, trackerKey,
     fieldDefinitions,
 } from '../state.js';
+import { getCurrent as getCurrentVerdict, getPrevious as getPreviousVerdict } from '../verdict/verdict-store.js';
+import { diffVerdicts } from '../verdict/verdict-pure.js';
 import { DEFAULT_FIELD_DEFINITIONS } from '../fields.js';
-import { buildObsidianURI, computeSourcesDiff, categorizeRejections, resolveEntryVault, normalizePinBlock, comparePriority } from '../helpers.js';
+import { buildObsidianURI, categorizeRejections, resolveEntryVault, normalizePinBlock, comparePriority } from '../helpers.js';
 import {
     ds, BROWSE_ROW_HEIGHT, BROWSE_OVERSCAN,
     getMatchLabel, computeEntryTemperatures,
@@ -32,9 +34,13 @@ let _lastInjectionRenderHash = null;
 export function renderInjectionTab() {
     const $drawer = ds.$drawer;
     if (!$drawer) return;
-    const sources = lastInjectionSources;
-    const prev = previousSources;
-    const trace = lastPipelineTrace;
+    // Verdict store is the single source of truth for "what did DLE decide this turn."
+    // Empty verdict (injectedSources=[]) is a valid result; null means no verdict written yet.
+    const currentVerdict = getCurrentVerdict();
+    const previousVerdict = getPreviousVerdict();
+    const sources = currentVerdict?.injectedSources?.length ? currentVerdict.injectedSources : null;
+    const prev = previousVerdict?.injectedSources?.length ? previousVerdict.injectedSources : null;
+    const trace = currentVerdict?.trace ?? null;
 
     // Content-hash guard — skip full re-render when inputs are unchanged. Hash inputs:
     // sources (title/tokens/matchedBy/vaultSource), filter state, trace's rejected-entry
@@ -86,7 +92,7 @@ export function renderInjectionTab() {
     $filterToggle.find('.dle-why-filter-btn').removeClass('active').attr('aria-checked', 'false').attr('tabindex', '-1');
     $filterToggle.find(`[data-filter="${ds.whyTabFilter}"]`).addClass('active').attr('aria-checked', 'true').attr('tabindex', '0');
 
-    const diff = computeSourcesDiff(sources, prev);
+    const diff = diffVerdicts(currentVerdict, previousVerdict);
 
     $diff.attr('aria-live', 'polite');
     const diffParts = [];
@@ -375,9 +381,12 @@ export function renderBrowseTab() {
     const pinSet = new Set(pins.map(p => { const n = normalizePinBlock(p); return `${n.vaultSource || ''}:${n.title.toLowerCase()}`; }));
     const blockSet = new Set(blocks.map(b => { const n = normalizePinBlock(b); return `${n.vaultSource || ''}:${n.title.toLowerCase()}`; }));
 
-    // lastInjectionSources gets cleared after message render — fall back to lastPipelineTrace.
+    // Verdict carries both injectedSources and trace together; no post-render clear semantics.
+    const _browseVerdict = getCurrentVerdict();
     const injectedSet = new Set();
-    const injSources = lastInjectionSources ?? lastPipelineTrace?.injected;
+    const injSources = _browseVerdict?.injectedSources?.length
+        ? _browseVerdict.injectedSources
+        : _browseVerdict?.trace?.injected;
     if (injSources) {
         for (const s of injSources) injectedSet.add(s.title.toLowerCase());
     }
@@ -491,8 +500,8 @@ export function renderBrowseTab() {
         `<span class="dle-qf-pill${sinceGenActive ? ' dle-qf-active' : ''}" role="button" tabindex="0" aria-pressed="${sinceGenActive}" data-qf="since-gen">Since last gen</span>` +
         `<span class="dle-qf-pill${neverInjectedActive ? ' dle-qf-active' : ''}" role="button" tabindex="0" aria-pressed="${neverInjectedActive}" data-qf="never-injected">Never injected</span>`
     );
-    if (sinceGenActive && lastInjectionSources && previousSources) {
-        const diff = computeSourcesDiff(lastInjectionSources, previousSources);
+    if (sinceGenActive && _browseVerdict && getPreviousVerdict()) {
+        const diff = diffVerdicts(_browseVerdict, getPreviousVerdict());
         const addedKeys = new Set(diff.added.map(s => s.title.toLowerCase()));
         entries = entries.filter(e => addedKeys.has(e.title.toLowerCase()));
     } else if (neverInjectedActive) {
@@ -655,9 +664,13 @@ export function renderBrowseWindow() {
     const blocks = chat_metadata?.deeplore_blocks || [];
     const pinSet = new Set(pins.map(p => { const n = normalizePinBlock(p); return `${n.vaultSource || ''}:${n.title.toLowerCase()}`; }));
     const blockSet = new Set(blocks.map(b => { const n = normalizePinBlock(b); return `${n.vaultSource || ''}:${n.title.toLowerCase()}`; }));
-    // CHARACTER_MESSAGE_RENDERED moves sources to message.extra; lastPipelineTrace is the fallback.
+    // Verdict carries injectedSources + trace together; one read covers both.
+    const _windowVerdict = getCurrentVerdict();
+    const _windowTrace = _windowVerdict?.trace ?? null;
     const injectedSet = new Set();
-    const injSources = lastInjectionSources ?? lastPipelineTrace?.injected;
+    const injSources = _windowVerdict?.injectedSources?.length
+        ? _windowVerdict.injectedSources
+        : _windowTrace?.injected;
     if (injSources) {
         for (const s of injSources) injectedSet.add(s.title.toLowerCase());
     }
@@ -665,11 +678,11 @@ export function renderBrowseWindow() {
     const tempMap = computeEntryTemperatures();
 
     // Rejection lookup is cached; rebuild only when the trace identity changes.
-    if (lastPipelineTrace !== _cachedRejectionTrace) {
+    if (_windowTrace !== _cachedRejectionTrace) {
         _cachedRejectionMap = new Map();
-        _cachedRejectionTrace = lastPipelineTrace;
-        if (lastPipelineTrace) {
-            const rejGroups = categorizeRejections(lastPipelineTrace, injectedSet);
+        _cachedRejectionTrace = _windowTrace;
+        if (_windowTrace) {
+            const rejGroups = categorizeRejections(_windowTrace, injectedSet);
             for (const group of rejGroups) {
                 for (const entry of group.entries) {
                     if (!_cachedRejectionMap.has(entry.title.toLowerCase())) {

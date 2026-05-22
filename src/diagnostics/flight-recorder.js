@@ -1,8 +1,8 @@
 /**
  * flight-recorder.js — Always-on per-generation summary capture.
  *
- * Subscribes to onPipelineComplete and snapshots a SUMMARY of lastPipelineTrace
- * (not the full trace — keeps size bounded across many gens). Always-on
+ * Subscribes to onPipelineComplete and snapshots a SUMMARY of the current verdict's
+ * trace (not the full trace — keeps size bounded across many gens). Always-on
  * regardless of debugMode; primary data source for pipeline diagnostics.
  */
 
@@ -96,12 +96,14 @@ export async function startFlightRecorder() {
         }
 
         generationBuffer.push({ t: Date.now(), kind: 'recorder_started' });
+        const verdictMod = await import('../verdict/verdict-store.js');
         onPipelineComplete(() => {
             try {
-                const trace = stateMod.lastPipelineTrace;
+                const verdict = verdictMod.getCurrent ? verdictMod.getCurrent() : null;
+                const trace = verdict?.trace ?? null;
                 generationBuffer.push({
                     t: Date.now(),
-                    genId: stateMod.lastPipelineTrace?.genId ?? null,
+                    genId: trace?.genId ?? null,
                     generationCount: stateMod.generationCount ?? null,
                     chatEpoch: stateMod.chatEpoch ?? null,
                     aiCircuitOpen: !!stateMod.aiCircuitOpen,

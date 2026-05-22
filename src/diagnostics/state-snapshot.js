@@ -10,6 +10,7 @@ import * as state from '../state.js';
 import { getSettings, resolveConnectionConfig } from '../../settings.js';
 import { runHealthCheck } from '../ui/diagnostics.js';
 import { getAllCircuitStates } from '../vault/obsidian-api.js';
+import { getCurrent as getCurrentVerdict, _debugRingSnapshot } from '../verdict/verdict-store.js';
 
 // DLE version — fetched once from manifest.json and cached.
 let _cachedDleVersion = null;
@@ -454,11 +455,21 @@ export function captureStateSnapshot() {
             lastScribeChatLength: state.lastScribeChatLength ?? null,
             hasLastScribeSummary: !!state.lastScribeSummary,
             perSwipeInjectedKeysCount: state.perSwipeInjectedKeys?.size ?? 0,
-            lastPipelineTrace: pseudonymizeTrace(state.lastPipelineTrace),
-            // Count + epoch — verifies pipeline output vs actual injection.
-            lastInjectionSourceCount: Array.isArray(state.lastInjectionSources) ? state.lastInjectionSources.length : 0,
-            lastInjectionEpoch: state.lastInjectionEpoch ?? null,
-            injectionEpochMatchesChatEpoch: state.lastInjectionEpoch === state.chatEpoch,
+            verdict: (() => {
+                const v = getCurrentVerdict();
+                return v ? {
+                    genId: v.genId,
+                    msgIdx: v.msgIdx,
+                    epoch: v.epoch,
+                    lockEpoch: v.lockEpoch,
+                    ts: v.ts,
+                    injectedSourceCount: v.injectedSources?.length ?? 0,
+                    perEntryCount: v.perEntry?.length ?? 0,
+                    epochMatchesChatEpoch: v.epoch === state.chatEpoch,
+                    trace: pseudonymizeTrace(v.trace),
+                } : null;
+            })(),
+            verdictRingDepth: _debugRingSnapshot().length,
         };
     } catch (e) { snap.pipeline = { __error: String(e) }; }
 

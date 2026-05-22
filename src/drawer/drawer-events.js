@@ -5,16 +5,17 @@ import { escapeHtml } from '../../../../../utils.js';
 import { getSettings, invalidateSettingsCache } from '../../settings.js';
 import {
     vaultIndex, indexTimestamp, indexEverLoaded,
-    aiSearchStats, lastInjectionSources,
+    aiSearchStats,
     generationLock, indexing,
     notifyGatingChanged, notifyPinBlockChanged,
     fieldDefinitions, folderList,
     loreGaps,
-    resetAiSearchCache, setLastInjectionSources,
+    resetAiSearchCache,
     aiSearchCache, lastGenerationTrackerSnapshot,
     generationCount, chatEpoch,
     suppressNextAgenticLoop, setSuppressNextAgenticLoop,
 } from '../state.js';
+import { getCurrent as getCurrentVerdict } from '../verdict/verdict-store.js';
 import { DEFAULT_FIELD_DEFINITIONS } from '../fields.js';
 import { normalizePinBlock, buildObsidianURI } from '../helpers.js';
 import { buildIndex } from '../vault/vault.js';
@@ -158,9 +159,10 @@ export function wireTabExpand($drawer) {
             const target = $(this).data('expand');
             // Why tab "Full View" → Context Cartographer popup (no API call).
             if (target === 'injection') {
-                const { lastInjectionSources } = await import('../state.js');
-                let sources = lastInjectionSources;
-                // lastInjectionSources gets cleared after render — fall back to the last AI message.
+                const currentVerdict = getCurrentVerdict();
+                let sources = currentVerdict?.injectedSources?.length ? currentVerdict.injectedSources : null;
+                // Verdict ring buffer can miss a turn after reload before hydrate finishes —
+                // fall back to deeplore_sources on the last AI message for resume continuity.
                 if (!sources || sources.length === 0) {
                     const { chat } = await import('../../../../../../script.js');
                     if (chat) {
@@ -260,13 +262,12 @@ export function wireStatusActions($drawer) {
                             consecutiveSize: snap.consecutive?.size ?? 0,
                             historySize: snap.injectionHistory?.size ?? 0,
                         } : null,
-                        lastInjectionSources: lastInjectionSources ? 'set' : 'null',
+                        verdictInjected: getCurrentVerdict()?.injectedSources?.length ?? 0,
                         generationCount,
                         chatEpoch,
                     });
                 }
                 resetAiSearchCache();
-                setLastInjectionSources(null);
                 // BUG-396: clear injection log too, so strip-dedup doesn't remove entries that were in deleted/regenerated messages.
                 if (chat_metadata.deeplore_injection_log) {
                     chat_metadata.deeplore_injection_log = [];
@@ -352,7 +353,7 @@ export function wireInjectionTab($drawer) {
 
     $drawer.on('click', '.dle-copy-titles-btn', function () {
         const $btn = $(this);
-        const sources = lastInjectionSources;
+        const sources = getCurrentVerdict()?.injectedSources ?? null;
         if (!sources || sources.length === 0) {
             toastr.warning('No injected entries to copy.', 'DeepLore Enhanced', { timeOut: 2000 });
             return;

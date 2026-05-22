@@ -10,9 +10,10 @@ import { formatAndGroup } from '../../core/matching.js';
 import { buildExemptionPolicy, applyRequiresExcludesGating, applyContextualGating } from '../stages.js';
 import { getSettings, PROMPT_TAG_PREFIX } from '../../settings.js';
 import {
-    vaultIndex, getWriterVisibleEntries, lastPipelineTrace, injectionHistory, generationCount,
+    vaultIndex, getWriterVisibleEntries, injectionHistory, generationCount,
     generationLock, trackerKey, buildPromise, fieldDefinitions,
 } from '../state.js';
+import { getCurrent as getCurrentVerdict } from '../verdict/verdict-store.js';
 import { DEFAULT_FIELD_DEFINITIONS } from '../fields.js';
 import { ensureIndexFresh } from '../vault/vault.js';
 import { runPipeline } from '../pipeline/pipeline.js';
@@ -133,11 +134,12 @@ export function registerPipelineCommands() {
         name: 'dle-inspect',
         aliases: ['dle-i'],
         callback: async () => {
-            if (!lastPipelineTrace) {
+            const _inspectTrace = getCurrentVerdict()?.trace ?? null;
+            if (!_inspectTrace) {
                 toastr.info('No inspection data available yet. Send a chat message first so DeepLore can process entries.', 'DeepLore Enhanced');
                 return '';
             }
-            const t = lastPipelineTrace;
+            const t = _inspectTrace;
             const settings = getSettings();
             const statusIcon = (ok) => ok ? '✓' : '✗';
 

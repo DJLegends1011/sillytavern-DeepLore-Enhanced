@@ -9,7 +9,6 @@ import { getSettings } from '../../settings.js';
 import {
     loreGaps, setLoreGaps,
     loreGapSearchCount, setLoreGapSearchCount,
-    lastInjectionSources,
     fuzzySearchIndex, vaultIndex,
     buildPromise,
     generationCount,
@@ -19,6 +18,7 @@ import {
     notifyLoreGapsChanged,
     notifyAiStatsUpdated,
 } from '../state.js';
+import { getCurrent as getCurrentVerdict } from '../verdict/verdict-store.js';
 
 // ════════════════════════════════════════════════════════════════════════════
 // Session Activity Log
@@ -356,8 +356,9 @@ export async function searchLoreAction(args) {
     }
 
     const injectedTitles = new Set();
-    if (lastInjectionSources && Array.isArray(lastInjectionSources)) {
-        for (const src of lastInjectionSources) {
+    const _libVerdictSources = getCurrentVerdict()?.injectedSources;
+    if (_libVerdictSources && Array.isArray(_libVerdictSources)) {
+        for (const src of _libVerdictSources) {
             if (src.title) injectedTitles.add(src.title.toLowerCase());
         }
     }

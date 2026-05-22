@@ -5,13 +5,19 @@ import { buildCopyButton, attachCopyHandler } from './popups.js';
 import { chat } from '../../../../../../script.js';
 import { simpleHash } from '../../core/utils.js';
 import { getSettings } from '../../settings.js';
-import { vaultIndex, vaultAvgTokens, previousSources, setPreviousSources, lastPipelineTrace, chatInjectionCounts, trackerKey } from '../state.js';
+import { vaultIndex, vaultAvgTokens, chatInjectionCounts, trackerKey } from '../state.js';
+import { getCurrent as getCurrentVerdict, getPrevious as getPreviousVerdict } from '../verdict/verdict-store.js';
+import { diffVerdicts } from '../verdict/verdict-pure.js';
 import { diagnoseEntry } from './diagnostics.js';
-import { STAGE_COLORS, computeSourcesDiff, categorizeRejections, resolveEntryVault, parseMatchReason, tokenBarColor, formatRelativeTime, comparePriority } from '../helpers.js';
+import { STAGE_COLORS, categorizeRejections, resolveEntryVault, parseMatchReason, tokenBarColor, formatRelativeTime, comparePriority } from '../helpers.js';
 import { navigateToBrowseEntry } from '../drawer/drawer.js';
-/** Clears previousSources so stale diffs don't carry across chats. */
+/**
+ * No-op kept for backward compatibility with CHAT_CHANGED handler. Verdict store
+ * already wipes per-chat state on chat switch via clearVerdictChat — no separate
+ * cartographer-local state to reset.
+ */
 export function resetCartographer() {
-    setPreviousSources(null);
+    // Intentionally empty: previousSources global is gone; getPreviousVerdict() reads ring buffer.
 }
 
 export function injectSourcesButton(messageId) {
@@ -58,8 +64,14 @@ export function showSourcesPopup(sources, opts = {}) {
         groups.get(posKey).push({ ...src, entry });
     }
 
-    const diff = computeSourcesDiff(sources, previousSources);
-    setPreviousSources(sources.map(s => ({ title: s.title, tokens: s.tokens, matchedBy: s.matchedBy })));
+    // Diff "current vs previous turn" from the verdict ring buffer. The popup's `sources`
+    // param may come from a fallback path (msg.extra.deeplore_sources after reload) — diff
+    // anchors on the verdict that produced those sources where possible.
+    const _currentVerdict = getCurrentVerdict();
+    const _previousVerdict = getPreviousVerdict();
+    const diff = (_currentVerdict && Array.isArray(_currentVerdict.injectedSources) && _currentVerdict.injectedSources === sources)
+        ? diffVerdicts(_currentVerdict, _previousVerdict)
+        : diffVerdicts({ injectedSources: sources }, _currentVerdict);
 
     const plainLines = [`Injected Sources (${sources.length} entries, ~${totalTokens} tokens)`, '', 'Entry\tTokens\tMatched By\tFolder\tChat×\tAll-time Inj\tAll-time Match\tLast Used'];
     for (const src of sources) {
@@ -182,9 +194,10 @@ export function showSourcesPopup(sources, opts = {}) {
     }
 
     // ── Rejected Entries (staged breakdown) ──
-    if (lastPipelineTrace && chat && chat.length > 0) {
+    const _cartoTrace = getCurrentVerdict()?.trace ?? null;
+    if (_cartoTrace && chat && chat.length > 0) {
         const injectedTitles = new Set(sources.map(s => s.title));
-        const rejectedGroups = categorizeRejections(lastPipelineTrace, injectedTitles);
+        const rejectedGroups = categorizeRejections(_cartoTrace, injectedTitles);
 
         if (rejectedGroups.length > 0) {
             const totalRejected = rejectedGroups.reduce((sum, g) => sum + g.entries.length, 0);

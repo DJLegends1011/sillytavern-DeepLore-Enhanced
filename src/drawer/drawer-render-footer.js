@@ -1,10 +1,11 @@
 import { amount_gen } from '../../../../../../script.js';
 import { getSettings } from '../../settings.js';
 import {
-    vaultIndex, lastPipelineTrace, librarianChatStats,
+    vaultIndex, librarianChatStats,
     aiSearchStats, isAiCircuitOpen, aiCircuitOpenedAt, resetAiCircuitBreaker,
     indexEverLoaded, indexTimestamp, lastHealthResult,
 } from '../state.js';
+import { getCurrent as getCurrentVerdict } from '../verdict/verdict-store.js';
 import { getCircuitState } from '../vault/obsidian-api.js';
 import { ds, formatTokensCompact, activityLog, announceToScreenReader } from './drawer-state.js';
 import { callGenericPopup, POPUP_TYPE } from '../../../../../popup.js';
@@ -147,9 +148,10 @@ export function renderFooter() {
     }
 
     const $pipe = $footer.find('[data-health="pipeline"]');
-    if (lastPipelineTrace) {
-        const entryCount = lastPipelineTrace.injected?.length || 0;
-        const hasResults = entryCount > 0 || lastPipelineTrace.totalTokens > 0;
+    const _footerTrace = getCurrentVerdict()?.trace ?? null;
+    if (_footerTrace) {
+        const entryCount = _footerTrace.injected?.length || 0;
+        const hasResults = entryCount > 0 || _footerTrace.totalTokens > 0;
         if (hasResults) {
             $pipe.removeClass('dle-health-warn dle-health-error').addClass('dle-health-ok');
             $pipe.attr('aria-label', `Lore selection: last run found ${entryCount} entries — click for details`).attr('title', `Lore selection: last run found ${entryCount} entries — click for details`);
