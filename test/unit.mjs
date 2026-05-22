@@ -1891,6 +1891,37 @@ test('entryKeysInFolder: collects keyFn results only for matching folder', () =>
     assert(keys.includes('V:A1') && keys.includes('V:A2'), 'A entries collected');
 });
 
+// --- #16 priority reverse: comparePriority (src/helpers.js) ---
+
+import { comparePriority } from '../src/helpers.js';
+
+test('comparePriority: normal order — lower priority wins', () => {
+    const arr = [{ priority: 50 }, { priority: 10 }, { priority: 30 }];
+    arr.sort((a, b) => comparePriority(a, b, false));
+    assertEqual(arr[0].priority, 10, 'lowest first');
+    assertEqual(arr[2].priority, 50, 'highest last');
+});
+
+test('comparePriority: reversed — higher priority wins', () => {
+    const arr = [{ priority: 50 }, { priority: 10 }, { priority: 30 }];
+    arr.sort((a, b) => comparePriority(a, b, true));
+    assertEqual(arr[0].priority, 50, 'highest first in reversed');
+    assertEqual(arr[2].priority, 10, 'lowest last in reversed');
+});
+
+test('comparePriority: missing priority defaults to 50', () => {
+    const a = {};
+    const b = { priority: 10 };
+    // 50 vs 10 → b wins in normal order; a (50) loses → positive diff.
+    assert(comparePriority(a, b, false) > 0, 'missing acts as 50');
+    assert(comparePriority(a, b, true) < 0, 'reversed flips sign');
+});
+
+test('comparePriority: equal priorities return 0', () => {
+    assertEqual(comparePriority({ priority: 25 }, { priority: 25 }, false), 0, 'equal scalar');
+    assertEqual(comparePriority({ priority: 25 }, { priority: 25 }, true), 0, 'equal scalar reversed');
+});
+
 // --- Agent C audit regression guards ---
 
 test('updateFrontmatterFields: CRLF-authored file updates in place, no duplicate keys', () => {

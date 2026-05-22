@@ -55,6 +55,7 @@ import {
 
     // Circuit breaker
     recordAiFailure, recordAiSuccess, isAiCircuitOpen, tryAcquireHalfOpenProbe,
+    resetAiCircuitBreaker,
 
     // Build epoch (BUG-015)
     buildEpoch, setBuildEpoch,
@@ -473,6 +474,56 @@ test('D26: Circuit recovery on success', () => {
     recordAiSuccess();
     assert(!isAiCircuitOpen(), 'circuit closed after success');
     assertEqual(aiCircuitFailures, 0, 'failures reset');
+});
+
+// PR #28.1 — manual reset
+
+test('PR#28.1: resetAiCircuitBreaker on closed circuit returns wasOpen=false', () => {
+    resetAllState();
+    const result = resetAiCircuitBreaker();
+    assertEqual(result.wasOpen, false, 'wasOpen=false on already-closed');
+    assertEqual(result.hadPendingCooldown, false, 'no pending cooldown on closed');
+    assert(!isAiCircuitOpen(), 'still closed after reset');
+});
+
+test('PR#28.1: resetAiCircuitBreaker on tripped circuit returns wasOpen=true + clears all state', () => {
+    resetAllState();
+    recordAiFailure();
+    recordAiFailure();
+    assert(isAiCircuitOpen(), 'circuit tripped');
+
+    const result = resetAiCircuitBreaker();
+    assertEqual(result.wasOpen, true, 'wasOpen reflects pre-reset state');
+    assertEqual(result.hadPendingCooldown, true, 'cooldown was pending when reset');
+    assert(!isAiCircuitOpen(), 'circuit closed after manual reset');
+    assertEqual(aiCircuitFailures, 0, 'failure count cleared');
+});
+
+test('PR#28.1: resetAiCircuitBreaker fires circuit-state observer when going open→closed', () => {
+    resetAllState();
+    let observerFired = false;
+    const unsubscribe = onCircuitStateChanged(() => { observerFired = true; });
+    try {
+        recordAiFailure();
+        recordAiFailure();
+        observerFired = false; // ignore the open-transition firing
+        resetAiCircuitBreaker();
+        assert(observerFired, 'observer should fire on manual reset open→closed');
+    } finally {
+        unsubscribe();
+    }
+});
+
+test('PR#28.1: resetAiCircuitBreaker does NOT fire observer when circuit already closed', () => {
+    resetAllState();
+    let observerFired = false;
+    const unsubscribe = onCircuitStateChanged(() => { observerFired = true; });
+    try {
+        resetAiCircuitBreaker();
+        assert(!observerFired, 'observer should not fire when no transition happened');
+    } finally {
+        unsubscribe();
+    }
 });
 
 // ============================================================================
