@@ -799,7 +799,7 @@
                     </div>
                     <div class="flex1" title="Bigram-Dice similarity threshold used by the 'Deduplicate' button in the notepad popup. Lower values catch more near-duplicates but may merge distinct notes. Default 0.85.">
                         <label for="dle-sp-ai-notepad-fuzzy-threshold"><small>Fuzzy Dedup Threshold</small></label>
-                        <input id="dle-sp-ai-notepad-fuzzy-threshold" type="number" class="text_pole" min="0" max="1" step="0.05" />
+                        <input id="dle-sp-ai-notepad-fuzzy-threshold" type="number" class="text_pole" min="0.1" max="1" step="0.05" />
                     </div>
                 </div>
                 <span class="dle-text-xs dle-muted">Injection position: configured in the <a href="#" class="dle-goto-tab-link" data-goto-tab="injection">Injection tab</a>.</span>
@@ -1104,7 +1104,7 @@
                     </div>
                     <div class="flex-container">
                         <div class="flex1" title="Optional session-wide cap on total tool calls (search + flag) across all turns since page load. Empty/0 = unlimited. Useful for runaway-budget protection on long sessions.">
-                            <label for="dle-sp-librarian-session-tool-cap"><small>Session Tool-Call Cap (empty = unlimited)</small></label>
+                            <label for="dle-sp-librarian-session-tool-cap"><small>Session Tool-Call Cap (empty or 0 = unlimited)</small></label>
                             <input id="dle-sp-librarian-session-tool-cap" type="number" class="text_pole" min="0" max="1000" placeholder="unlimited" />
                         </div>
                     </div>

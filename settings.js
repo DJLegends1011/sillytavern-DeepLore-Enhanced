@@ -356,7 +356,7 @@ export const settingsConstraints = {
     aiNotepadMaxTokens: { min: 256, max: 8192 },
     aiNotepadTimeout: { min: 5000, max: 999999 },
     aiNotepadMaxEntries: { min: 0, max: 1000 },
-    aiNotepadFuzzyDedupThreshold: { min: 0, max: 1 },
+    aiNotepadFuzzyDedupThreshold: { min: 0.1, max: 1 },
     librarianMaxToolCallsPerTurn: { min: 1, max: 50 },
     librarianMaxValidationRetries: { min: 0, max: 10 },
     librarianSessionHistoryMessages: { min: 5, max: 100 },
@@ -434,10 +434,13 @@ export function getSettings() {
     const s = extension_settings[MODULE_NAME];
 
     // BUG-071: coerce string-typed numbers (e.g. JSON imports) or reset to default if non-numeric.
+    // Skip null — used as a sentinel meaning "unset / unlimited" for some keys
+    // (e.g. librarianSessionToolCallCap). Without this skip, Number(null) === 0
+    // would silently persist 0, which downstream code may treat as a hard cap.
     for (const key of Object.keys(settingsConstraints)) {
         // Enum keys are validated by validateSettings() below.
         if (Array.isArray(settingsConstraints[key].enum)) continue;
-        if (s[key] !== undefined && typeof s[key] !== 'number') {
+        if (s[key] !== undefined && s[key] !== null && typeof s[key] !== 'number') {
             const num = Number(s[key]);
             if (!Number.isNaN(num)) {
                 s[key] = num;

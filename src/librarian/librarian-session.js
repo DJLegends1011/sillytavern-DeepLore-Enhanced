@@ -82,7 +82,9 @@ function getSessionToolCallCap() {
     const raw = getSettings().librarianSessionToolCallCap;
     if (raw == null || raw === '') return Infinity;
     const v = Number(raw);
-    return Number.isFinite(v) && v >= 0 ? v : Infinity;
+    // 0 means unlimited per UI tooltip — would otherwise trip forced-finalize on every iteration.
+    if (!Number.isFinite(v) || v <= 0) return Infinity;
+    return v;
 }
 // BUG-232: hard cap on outer agentic-loop iterations (one iteration = one AI call).
 // Prevents unbounded looping when the AI ignores the budget-reached nudge and keeps
