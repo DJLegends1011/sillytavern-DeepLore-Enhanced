@@ -224,24 +224,40 @@ export function cmrsResultToText(result) {
     const text = typeof rawContent === 'string'
         ? rawContent
         : (rawContent == null ? '' : JSON.stringify(rawContent));
-    const usage = result?.usage || {};
+    // PR #28.3 clean-fix half: Gemini reports token usage as
+    // `usageMetadata.{promptTokenCount, candidatesTokenCount}` instead of OAI-style
+    // `usage.{prompt_tokens, completion_tokens}`. Without these aliases, all Gemini
+    // calls show 0/0 in DLE stats. Credit Ryah (PR #28). See PR-28.3-VERDICT.md.
+    const usage = result?.usage || result?.usageMetadata || {};
     return {
         text,
         usage: {
-            input_tokens: usage.input_tokens || usage.prompt_tokens || 0,
-            output_tokens: usage.output_tokens || usage.completion_tokens || 0,
+            input_tokens: usage.input_tokens || usage.prompt_tokens || usage.promptTokenCount || 0,
+            output_tokens: usage.output_tokens || usage.completion_tokens || usage.candidatesTokenCount || 0,
         },
     };
 }
 
 /**
  * Extract a JSON array from AI response text. Handles direct JSON, code-fenced
- * JSON, and raw arrays via bracket-balancing.
- * @param {string} text
+ * JSON, dangling closing fences (Gemini quirk), and raw arrays via
+ * bracket-balancing. Also accepts a pre-parsed array input to short-circuit
+ * the string path.
+ *
+ * PR #28.3 partial port (credit Ryah, PR #28):
+ *   - Dangling-fence strip: defense-in-depth for the direct-parse path. NOTE:
+ *     this does NOT close the json_schema Gemini breaker-trip bug — by the time
+ *     text reaches DLE in that flow, ST has already replaced the content with
+ *     `'{}'` (tryParse failed on the fence upstream). That bug needs an upstream
+ *     ST fix or a larger DLE workaround. See audit/v2.5-prep/PR-28.3-VERDICT.md.
+ *   - Pre-parsed array input acceptance: forward-compatible with callers that
+ *     skip the stringify step.
+ *
+ * @param {string|Array} text
  * @returns {Array|null}
  */
 export function extractAiResponseClient(text) {
-    if (!text || typeof text !== 'string') return null;
+    if (text == null) return null;
 
     /** BUG-046: usable result arrays have at least one usable element (or are empty). */
     function isValidResultArray(val) {
@@ -253,11 +269,28 @@ export function extractAiResponseClient(text) {
         );
     }
 
+    // PR #28.3: short-circuit when caller already has the parsed object. The
+    // ai.js BUG-383 unwrap handles non-array objects with known wrapper keys, so
+    // we just return what we got and let the caller figure out the shape.
+    if (typeof text === 'object') {
+        if (isValidResultArray(text)) return text;
+        return null;
+    }
+    if (typeof text !== 'string') return null;
+
+    // PR #28.3: Gemini sometimes appends a stray ``` after the JSON payload
+    // (no matching opener). Plain JSON.parse fails on the extra chars; without
+    // this strip, json_schema-flow responses come back as '{}' and aiSearch
+    // trips the breaker. The fenced-content regex below catches matched pairs;
+    // this handles the dangling-closer case.
+    const stripDanglingFence = (s) => s.replace(/^\s*`{3,}\s*$/gm, '').trim();
+    const cleaned = stripDanglingFence(text);
+
     try {
-        const parsed = JSON.parse(text);
+        const parsed = JSON.parse(cleaned);
         if (isValidResultArray(parsed)) return parsed;
     } catch { /* noop */ }
-    const fenceMatch = text.match(/`{3,}(?:json)?\s*([\s\S]*?)`{3,}/);
+    const fenceMatch = cleaned.match(/`{3,}(?:json)?\s*([\s\S]*?)`{3,}/);
     if (fenceMatch) {
         try {
             const parsed = JSON.parse(fenceMatch[1]);
@@ -265,13 +298,14 @@ export function extractAiResponseClient(text) {
         } catch { /* noop */ }
     }
     // Bracket-balanced extraction — non-greedy regex fails on nested arrays
-    // like ["a", ["b"]]. Prefer largest (outer) match.
+    // like ["a", ["b"]]. Prefer largest (outer) match. Walk `cleaned` so any
+    // stripped dangling fence is consistent across all parse paths.
     const candidates = [];
-    for (let i = 0; i < text.length; i++) {
-        if (text[i] === '[') {
+    for (let i = 0; i < cleaned.length; i++) {
+        if (cleaned[i] === '[') {
             let depth = 1, inStr = false, inSingleStr = false, escape = false;
-            for (let j = i + 1; j < text.length && depth > 0; j++) {
-                const c = text[j];
+            for (let j = i + 1; j < cleaned.length && depth > 0; j++) {
+                const c = cleaned[j];
                 if (escape) { escape = false; continue; }
                 if (c === '\\') { escape = true; continue; }
                 if (c === '"' && !inSingleStr) { inStr = !inStr; continue; }
@@ -280,7 +314,7 @@ export function extractAiResponseClient(text) {
                 if (c === '[') depth++;
                 else if (c === ']') depth--;
                 if (depth === 0) {
-                    candidates.push(text.substring(i, j + 1));
+                    candidates.push(cleaned.substring(i, j + 1));
                     break;
                 }
             }

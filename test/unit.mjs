@@ -20,7 +20,7 @@ import { parseVaultFile, clearPrompts } from '../core/pipeline.js';
 import { takeIndexSnapshot, detectChanges } from '../core/sync.js';
 
 // Enhanced-only pure functions (imported from production code, not reimplemented)
-import { extractAiResponseClient, clusterEntries, buildCategoryManifest, buildObsidianURI, convertWiEntry, stripObsidianSyntax, normalizeResults as normalizeResultsProd, checkHealthPure, parseMatchReason, computeSourcesDiff, categorizeRejections, resolveEntryVault, tokenBarColor, formatRelativeTime, isForceInjected, normalizePinBlock, matchesPinBlock, normalizeLoreGap, fuzzyTitleMatch, extractAiNotes, validateSessionResponse, parseSessionResponse, sanitizeFilename } from '../src/helpers.js';
+import { extractAiResponseClient, clusterEntries, buildCategoryManifest, buildObsidianURI, convertWiEntry, stripObsidianSyntax, normalizeResults as normalizeResultsProd, checkHealthPure, parseMatchReason, computeSourcesDiff, categorizeRejections, resolveEntryVault, tokenBarColor, formatRelativeTime, isForceInjected, normalizePinBlock, matchesPinBlock, normalizeLoreGap, fuzzyTitleMatch, extractAiNotes, validateSessionResponse, parseSessionResponse, sanitizeFilename, cmrsResultToText } from '../src/helpers.js';
 import { encodeVaultPath, validateVaultPath, pruneCircuitBreakers } from '../src/vault/obsidian-api.js';
 
 // BM25 functions (extracted to bm25.js for testability)
@@ -1399,6 +1399,71 @@ test('extractAiResponseClient: null/undefined/empty', () => {
 
 test('extractAiResponseClient: non-JSON text', () => {
     assertEqual(extractAiResponseClient('Just some text with no JSON'), null, 'no JSON → null');
+});
+
+// PR #28.3 partial port — defensive parser hardening (dangling fence + object input).
+// IMPORTANT: these do NOT fix the json_schema-flow Gemini breaker-trip bug. That bug
+// happens at the ST layer: ST.extractJsonFromData runs tryParse(text), the trailing
+// fence makes parse fail, ST returns '{}' to DLE. By the time the text reaches
+// extractAiResponseClient it is already '{}' with no fence to strip. Real fix needs
+// either an upstream ST PR (harden tryParse) or a larger DLE workaround that
+// bypasses ST's json_schema processing. See PR-28.3-VERDICT.md.
+
+test('extractAiResponseClient: strips dangling closing fence (defense-in-depth)', () => {
+    // Pre-fix, this input is rescued by the bracket-balanced extraction fallback
+    // (the `[...]` substring still parses cleanly). The strip is belt-and-suspenders
+    // for the direct-parse path so the first JSON.parse attempt succeeds without
+    // having to walk the whole string.
+    const result = extractAiResponseClient('[{"title":"Bob","confidence":"high","reason":"r"}]\n```');
+    assert(Array.isArray(result), 'should parse despite trailing fence line');
+    assertEqual(result[0].title, 'Bob', 'should extract Bob');
+});
+
+test('extractAiResponseClient: object-wrapped response with dangling fence', () => {
+    // Bracket-balance finds the inner [{...}] of selected and returns it. The strip
+    // is not what rescues this case (object-wrap drops to bracket-balance regardless);
+    // covered here to lock the multi-path behavior in case bracket-balance regresses.
+    const result = extractAiResponseClient('{"selected":[{"title":"Charlotte","confidence":"high","reason":"active"}]}\n```');
+    assert(Array.isArray(result), 'bracket-balance still extracts the inner array');
+    assertEqual(result[0].title, 'Charlotte', 'inner array yields Charlotte');
+});
+
+test('extractAiResponseClient: accepts pre-parsed array input', () => {
+    const result = extractAiResponseClient([{ title: 'Alice', confidence: 'high', reason: 'r' }]);
+    assert(Array.isArray(result), 'array input returned as-is');
+    assertEqual(result[0].title, 'Alice', 'preserves Alice');
+});
+
+test('extractAiResponseClient: rejects non-array object input (caller unwraps)', () => {
+    // Object inputs that aren't valid result arrays return null so the caller
+    // (ai.js BUG-383 unwrap) can decide what to do with the shape. Parity with
+    // pre-change behavior, which treated all non-strings as null.
+    const result = extractAiResponseClient({ selected: [{ title: 'X' }] });
+    assertEqual(result, null, 'wrapper object is not a valid result array on its own');
+});
+
+// PR #28.3 partial port — cmrsResultToText usageMetadata aliases (the real fix).
+// Without these, Gemini token-usage stats reported 0/0 because the OAI usage path
+// missed Gemini's promptTokenCount / candidatesTokenCount field names.
+
+test('cmrsResultToText: maps Gemini usageMetadata to OAI-style usage', () => {
+    const out = cmrsResultToText({
+        content: 'hello',
+        usageMetadata: { promptTokenCount: 42, candidatesTokenCount: 7 },
+    });
+    assertEqual(out.text, 'hello', 'text passthrough');
+    assertEqual(out.usage.input_tokens, 42, 'promptTokenCount → input_tokens');
+    assertEqual(out.usage.output_tokens, 7, 'candidatesTokenCount → output_tokens');
+});
+
+test('cmrsResultToText: standard OAI usage still wins when both present', () => {
+    const out = cmrsResultToText({
+        content: 'x',
+        usage: { input_tokens: 10, output_tokens: 5 },
+        usageMetadata: { promptTokenCount: 999 },
+    });
+    assertEqual(out.usage.input_tokens, 10, 'standard input_tokens prioritized');
+    assertEqual(out.usage.output_tokens, 5, 'standard output_tokens prioritized');
 });
 
 test('extractAiResponseClient: nested brackets in strings', () => {
