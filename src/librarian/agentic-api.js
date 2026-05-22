@@ -11,6 +11,7 @@ import { getContext } from '../../../../../extensions.js';
 import { resolveConnectionConfig } from '../../settings.js';
 import { validateProxyUrl } from '../ai/proxy-api.js';
 import { abortWith } from '../diagnostics/interceptors.js';
+import { isUnderlyingClaudeModel } from './agentic-api-pure.js';
 
 // ════════════════════════════════════════════════════════════════════════════
 // Provider Detection
@@ -121,9 +122,9 @@ export function getProviderFormat() {
  * the message parser, which must stay OpenAI-shape for OR responses.
  */
 export function isUnderlyingClaude(model) {
-    const m = model || getResolvedModel();
-    if (!m || typeof m !== 'string') return false;
-    return /^claude-/i.test(m) || /^anthropic\/claude/i.test(m);
+    // Delegate the regex contract to the pure helper; only the ST-context
+    // fallback (getResolvedModel) lives here.
+    return isUnderlyingClaudeModel(model || getResolvedModel());
 }
 
 /**

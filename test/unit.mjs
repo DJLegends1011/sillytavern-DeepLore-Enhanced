@@ -2141,6 +2141,43 @@ test('entryKeysInFolder: collects keyFn results only for matching folder', () =>
     assert(keys.includes('V:A1') && keys.includes('V:A2'), 'A entries collected');
 });
 
+// --- Wave 6.5 backfill: isUnderlyingClaudeModel (src/librarian/agentic-api-pure.js) ---
+// BUG-AUDIT (REG-B2) regression guard: anthropic/claude-* routes via OpenRouter must
+// trigger the same Claude-specific request mitigations as bare claude-* names.
+
+import { isUnderlyingClaudeModel } from '../src/librarian/agentic-api-pure.js';
+
+test('isUnderlyingClaudeModel: matches bare claude-* names', () => {
+    assert(isUnderlyingClaudeModel('claude-sonnet-4-5'), 'sonnet-4-5');
+    assert(isUnderlyingClaudeModel('claude-3-opus-20240229'), 'classic 3-opus');
+    assert(isUnderlyingClaudeModel('claude-haiku-4-5'), 'haiku');
+});
+
+test('isUnderlyingClaudeModel: matches anthropic/claude-* OpenRouter routes', () => {
+    assert(isUnderlyingClaudeModel('anthropic/claude-3.5-sonnet'), 'OR 3.5 sonnet');
+    assert(isUnderlyingClaudeModel('anthropic/claude-opus-4'), 'OR opus-4');
+});
+
+test('isUnderlyingClaudeModel: case insensitive on both prefixes', () => {
+    assert(isUnderlyingClaudeModel('CLAUDE-SONNET-4-5'), 'upper bare');
+    assert(isUnderlyingClaudeModel('Anthropic/Claude-3'), 'mixed case OR');
+});
+
+test('isUnderlyingClaudeModel: rejects non-Claude models', () => {
+    assert(!isUnderlyingClaudeModel('gpt-4o'), 'gpt-4o not claude');
+    assert(!isUnderlyingClaudeModel('gemini-2.5-pro'), 'gemini not claude');
+    assert(!isUnderlyingClaudeModel('mistral-large'), 'mistral not claude');
+    assert(!isUnderlyingClaudeModel('openrouter/anthropic/claude-3'), 'OR-prefixed-anthropic-prefixed does not match — must start with anthropic/');
+});
+
+test('isUnderlyingClaudeModel: handles null / undefined / non-string safely', () => {
+    assert(!isUnderlyingClaudeModel(null), 'null');
+    assert(!isUnderlyingClaudeModel(undefined), 'undefined');
+    assert(!isUnderlyingClaudeModel(''), 'empty');
+    assert(!isUnderlyingClaudeModel(42), 'number');
+    assert(!isUnderlyingClaudeModel({}), 'object');
+});
+
 // --- #16 priority reverse: comparePriority (src/helpers.js) ---
 
 import { comparePriority } from '../src/helpers.js';
