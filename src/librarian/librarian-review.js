@@ -7,7 +7,7 @@ import { escapeHtml } from '../../../../../utils.js';
 import { yamlEscape, classifyError } from '../../core/utils.js';
 import { stripObsidianSyntax, sanitizeFilename } from '../helpers.js';
 import { writeNote } from '../vault/obsidian-api.js';
-import { getSettings, getPrimaryVault, resolveWriteVault } from '../../settings.js';
+import { getSettings, resolveWriteVault } from '../../settings.js';
 import { getContext } from '../../../../../extensions.js';
 import { accountStorage } from '../../../../../util/AccountStorage.js';
 import { chatEpoch } from '../state.js';

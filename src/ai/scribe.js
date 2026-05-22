@@ -10,7 +10,7 @@ import {
     event_types,
 } from '../../../../../../script.js';
 import { getContext, saveMetadataDebounced } from '../../../../../extensions.js';
-import { getSettings, getPrimaryVault, resolveConnectionConfig, resolveWriteVault } from '../../settings.js';
+import { getSettings, resolveConnectionConfig, resolveWriteVault } from '../../settings.js';
 import { writeNote } from '../vault/obsidian-api.js';
 import { buildIndex } from '../vault/vault.js';
 import { buildAiChatContext } from '../../core/utils.js';

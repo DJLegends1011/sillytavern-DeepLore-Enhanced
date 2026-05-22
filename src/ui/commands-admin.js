@@ -7,7 +7,7 @@ import { SlashCommandParser } from '../../../../../slash-commands/SlashCommandPa
 import { SlashCommand } from '../../../../../slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE } from '../../../../../slash-commands/SlashCommandArgument.js';
 import { parseFrontmatter, simpleHash, classifyError } from '../../core/utils.js';
-import { getSettings, getPrimaryVault } from '../../settings.js';
+import { getSettings, resolveWriteVault } from '../../settings.js';
 import { fetchScribeNotes } from '../vault/obsidian-api.js';
 import {
     vaultIndex, aiSearchStats, indexTimestamp, trackerKey,
@@ -145,7 +145,10 @@ export function registerAdminCommands() {
             toastr.info('Fetching session notes...', 'DeepLore Enhanced', { timeOut: 2000 });
 
             try {
-                const histVault = getPrimaryVault(settings);
+                // Scribe writes go to the per-tool configured vault (#32). Reading
+                // history from the primary vault here would silently show "no notes"
+                // whenever the user routes Scribe to a non-primary vault.
+                const histVault = resolveWriteVault('scribe', settings);
                 const data = await fetchScribeNotes(histVault.host, histVault.port, histVault.apiKey, settings.scribeFolder, !!histVault.https);
                 if (!data.ok) throw new Error(data.error || 'Failed to fetch notes');
 

@@ -10,7 +10,7 @@ import {
 } from '../../../../../../script.js';
 import { escapeHtml } from '../../../../../utils.js';
 import { callGenericPopup, POPUP_TYPE } from '../../../../../popup.js';
-import { getSettings, getPrimaryVault, resolveConnectionConfig, resolveWriteVault } from '../../settings.js';
+import { getSettings, resolveConnectionConfig, resolveWriteVault } from '../../settings.js';
 import { writeNote } from '../vault/obsidian-api.js';
 import { buildAiChatContext, yamlEscape, classifyError } from '../../core/utils.js';
 import { callAI } from './ai.js';
