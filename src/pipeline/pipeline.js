@@ -148,7 +148,7 @@ export async function runPipeline(chat, externalSnapshot, contextualGatingContex
                     const kwResult = matchEntries(chat, vaultSnapshot);
                     finalEntries = kwResult.matched;
                     matchedKeys = kwResult.matchedKeys;
-                    trace.keywordMatched = kwResult.matched.map(e => ({ title: e.title, matchedBy: kwResult.matchedKeys.get(e.title) || '?' }));
+                    trace.keywordMatched = kwResult.matched.map(e => ({ title: e.title, vaultSource: e.vaultSource || '', matchedBy: kwResult.matchedKeys.get(e.title) || '?' }));
                     trace.probabilitySkipped = kwResult.probabilitySkipped;
                     trace.warmupFailed = kwResult.warmupFailed;
                     trace.fuzzyStats = kwResult.fuzzyStats;
@@ -182,7 +182,7 @@ export async function runPipeline(chat, externalSnapshot, contextualGatingContex
                 finalEntries = [...alwaysInject, ...aiResult.results.map(r => r.entry).filter(e => !isForceInjected(e, { bootstrapActive }))];
                 for (const r of aiResult.results) {
                     matchedKeys.set(r.entry.title, `AI: ${r.reason} (${r.confidence})`);
-                    trace.aiSelected.push({ title: r.entry.title, reason: r.reason, confidence: r.confidence });
+                    trace.aiSelected.push({ title: r.entry.title, vaultSource: r.entry.vaultSource || '', reason: r.reason, confidence: r.confidence });
                 }
             }
         } else {
@@ -194,7 +194,7 @@ export async function runPipeline(chat, externalSnapshot, contextualGatingContex
         const keywordResult = matchEntries(chat, vaultSnapshot);
         trace.keywordMatchMs = Math.round(performance.now() - _kwStart);
         matchedKeys = keywordResult.matchedKeys;
-        trace.keywordMatched = keywordResult.matched.map(e => ({ title: e.title, matchedBy: matchedKeys.get(e.title) || '?' }));
+        trace.keywordMatched = keywordResult.matched.map(e => ({ title: e.title, vaultSource: e.vaultSource || '', matchedBy: matchedKeys.get(e.title) || '?' }));
         trace.probabilitySkipped = keywordResult.probabilitySkipped;
         trace.warmupFailed = keywordResult.warmupFailed;
         trace.fuzzyStats = keywordResult.fuzzyStats;
@@ -218,7 +218,7 @@ export async function runPipeline(chat, externalSnapshot, contextualGatingContex
         }
         const expandedMatched = [...keywordResult.matched, ...linkedCandidates];
         if (linkedCandidates.length > 0) {
-            trace.keywordMatched.push(...linkedCandidates.map(e => ({ title: e.title, matchedBy: matchedKeys.get(e.title) || '?' })));
+            trace.keywordMatched.push(...linkedCandidates.map(e => ({ title: e.title, vaultSource: e.vaultSource || '', matchedBy: matchedKeys.get(e.title) || '?' })));
             if (settings.debugMode) {
                 console.log(`[DLE] Wiki-link expansion: +${linkedCandidates.length} candidates (${linkedCandidates.map(e => e.title).join(', ')})`);
             }
@@ -294,7 +294,7 @@ export async function runPipeline(chat, externalSnapshot, contextualGatingContex
                     matchedKeys.set(r.entry.title, existing
                         ? `${existing} → AI: ${r.reason} (${r.confidence})`
                         : `AI: ${r.reason} (${r.confidence})`);
-                    trace.aiSelected.push({ title: r.entry.title, reason: r.reason, confidence: r.confidence });
+                    trace.aiSelected.push({ title: r.entry.title, vaultSource: r.entry.vaultSource || '', reason: r.reason, confidence: r.confidence });
                 }
             }
         }
@@ -305,7 +305,7 @@ export async function runPipeline(chat, externalSnapshot, contextualGatingContex
         trace.keywordMatchMs = Math.round(performance.now() - _kwStart2);
         finalEntries = keywordResult.matched;
         matchedKeys = keywordResult.matchedKeys;
-        trace.keywordMatched = keywordResult.matched.map(e => ({ title: e.title, matchedBy: matchedKeys.get(e.title) || '?' }));
+        trace.keywordMatched = keywordResult.matched.map(e => ({ title: e.title, vaultSource: e.vaultSource || '', matchedBy: matchedKeys.get(e.title) || '?' }));
         trace.probabilitySkipped = keywordResult.probabilitySkipped;
         trace.warmupFailed = keywordResult.warmupFailed;
         trace.fuzzyStats = keywordResult.fuzzyStats;

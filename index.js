@@ -21,6 +21,7 @@ import {
     setSendButtonState,
     activateSendButtons,
     deactivateSendButtons,
+    getCurrentChatId,
 } from '../../../../script.js';
 import { renderExtensionTemplateAsync, saveMetadataDebounced } from '../../../extensions.js';
 import { eventSource, event_types } from '../../../events.js';
@@ -36,7 +37,7 @@ import { clearPrompts } from './core/pipeline.js';
 import { getSettings, PROMPT_TAG_PREFIX, PROMPT_TAG, invalidateSettingsCache, resolveConnectionConfig, DEFAULT_AI_NOTEPAD_PROMPT } from './settings.js';
 import {
     vaultIndex, getWriterVisibleEntries, indexEverLoaded, indexing,
-    lastInjectionSources, lastInjectionEpoch, lastScribeChatLength, scribeInProgress,
+    lastScribeChatLength, scribeInProgress,
     cooldownTracker, generationCount, injectionHistory, consecutiveInjections,
     chatInjectionCounts, setChatInjectionCounts, trackerKey,
     lastWarningRatio, decayTracker, chatEpoch,
@@ -44,10 +45,9 @@ import {
     lastGenerationTrackerSnapshot, setLastGenerationTrackerSnapshot,
     setCooldownTracker, setDecayTracker, setConsecutiveInjections, setInjectionHistory,
     generationLock, generationLockTimestamp, generationLockEpoch, setGenerationLock, setGenerationLockEpoch,
-    setLastInjectionSources, setLastInjectionEpoch, setLastScribeChatLength, setLastScribeSummary,
+    setLastScribeChatLength, setLastScribeSummary,
     setGenerationCount, setLastWarningRatio, setChatEpoch, setLastIndexGenerationCount,
-    aiSearchCache, resetAiSearchCache, setAutoSuggestMessageCount, autoSuggestMessageCount, setLastPipelineTrace,
-    setPreviousSources, lastPipelineTrace,
+    aiSearchCache, resetAiSearchCache, setAutoSuggestMessageCount, autoSuggestMessageCount,
     notepadExtractInProgress, setNotepadExtractInProgress,
     notifyPipelineComplete, notifyInjectionSourcesReady, notifyGatingChanged,
     notifyChatInjectionCountsUpdated,
@@ -82,6 +82,14 @@ import { clearSessionState as clearLibrarianSessionState } from './src/librarian
 import { runAgenticLoop } from './src/librarian/agentic-loop.js';
 import { isToolCallingSupported, getActiveMaxTokens, isReasoningOnlyModel, getResolvedModel, isUnderlyingClaude } from './src/librarian/agentic-api.js';
 import { buildChatMessages } from './src/librarian/agentic-messages.js';
+import {
+    buildVerdict,
+    writeVerdict,
+    clearChat as clearVerdictChat,
+    setCurrentChatId as setVerdictChatId,
+    hydrateChat as hydrateVerdictChat,
+    getCurrent as getCurrentVerdictForRender,
+} from './src/verdict/verdict-store.js';
 
 // ============================================================================
 // BUG-063: Lifecycle / teardown infrastructure.
@@ -414,6 +422,11 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
     const epoch = chatEpoch;
     // Capture lock epoch to detect if this pipeline has been superseded by a force-released lock
     const lockEpoch = generationLockEpoch;
+    // Verdict identity — captured before any await so CHAT_CHANGED mid-flight can't bind
+    // this verdict to the wrong chat. msgIdx = the chat length at gen start (stable per turn).
+    let verdictChatId = null;
+    try { verdictChatId = getCurrentChatId() || null; } catch { verdictChatId = null; }
+    const verdictMsgIdx = Array.isArray(chatMessages) ? chatMessages.length : -1;
 
     // Generation correlation ID — threads through trace, flight recorder, and log lines
     const genId = Math.random().toString(36).slice(2, 8);
@@ -439,8 +452,9 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
 
     try {
         // Two intentional non-clears at pipeline entry:
-        // 1) lastInjectionSources is NOT cleared — CHARACTER_MESSAGE_RENDERED handler clears
-        //    after consumption, and the epoch tag prevents stale-source consumption.
+        // 1) Verdict ring buffer is NOT cleared here — it stays valid until next verdict
+        //    overwrites it. CHARACTER_MESSAGE_RENDERED reads the current verdict by msgIdx
+        //    so stale-turn sources can't bleed onto the wrong message.
         // 2) clearPrompts is deferred to commit phase. Clearing here caused silent lore loss
         //    when early returns fired (vault timeout, empty vault, no matches) — old prompts
         //    were destroyed with nothing replacing them.
@@ -610,15 +624,17 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
 
         // Stage 2: Contextual gating.
         const _gatingStart = performance.now();
-        const preContextual = new Set(finalEntries.map(e => e.title));
+        // Capture pre/post entry refs so vaultSource survives the diff (title-only Set
+        // would conflate multi-vault entries with the same title in conflictResolution='all').
+        const preContextual = new Map(finalEntries.map(e => [`${e.vaultSource || ''}:${e.title}`, e]));
         const fieldDefs = fieldDefinitions.length > 0 ? fieldDefinitions : DEFAULT_FIELD_DEFINITIONS;
         finalEntries = applyContextualGating(finalEntries, ctx, policy, settings.debugMode, settings, fieldDefs);
         trace.contextualGatingMs = Math.round(performance.now() - _gatingStart);
         if (trace) {
-            const postContextual = new Set(finalEntries.map(e => e.title));
-            trace.contextualGatingRemoved = [...preContextual]
-                .filter(t => !postContextual.has(t))
-                .map(title => ({ title, reason: 'Filtered by era/location/scene/character' }));
+            const postContextual = new Set(finalEntries.map(e => `${e.vaultSource || ''}:${e.title}`));
+            trace.contextualGatingRemoved = [...preContextual.entries()]
+                .filter(([k]) => !postContextual.has(k))
+                .map(([, entry]) => ({ title: entry.title, vaultSource: entry.vaultSource || '', reason: 'Filtered by era/location/scene/character' }));
         }
 
         if (trace?.aiFallback) {
@@ -654,14 +670,14 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
 
         // Stage 3: re-injection cooldown.
         const _cooldownStart = performance.now();
-        const preCooldown = new Set(finalEntries.map(e => e.title));
+        const preCooldown = new Map(finalEntries.map(e => [`${e.vaultSource || ''}:${e.title}`, e]));
         finalEntries = applyReinjectionCooldown(finalEntries, policy, injectionHistory, generationCount, settings.reinjectionCooldown, settings.debugMode);
         trace.reinjectionCooldownMs = Math.round(performance.now() - _cooldownStart);
         if (trace) {
-            const postCooldown = new Set(finalEntries.map(e => e.title));
-            trace.cooldownRemoved = [...preCooldown]
-                .filter(t => !postCooldown.has(t))
-                .map(title => ({ title, reason: 'Cooldown active' }));
+            const postCooldown = new Set(finalEntries.map(e => `${e.vaultSource || ''}:${e.title}`));
+            trace.cooldownRemoved = [...preCooldown.entries()]
+                .filter(([k]) => !postCooldown.has(k))
+                .map(([, entry]) => ({ title: entry.title, vaultSource: entry.vaultSource || '', reason: 'Cooldown active' }));
         }
 
         if (finalEntries.length === 0) {
@@ -734,10 +750,10 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
                 });
             }
             if (trace) {
-                const postDedupTitles = new Set(postDedup.map(e => e.title));
+                const postDedupKeys = new Set(postDedup.map(e => `${e.vaultSource || ''}:${e.title}`));
                 trace.stripDedupRemoved = gated
-                    .filter(e => !postDedupTitles.has(e.title))
-                    .map(e => ({ title: e.title, reason: 'Already in recent context' }));
+                    .filter(e => !postDedupKeys.has(`${e.vaultSource || ''}:${e.title}`))
+                    .map(e => ({ title: e.title, vaultSource: e.vaultSource || '', reason: 'Already in recent context' }));
             }
         }
         trace.stripDedupMs = Math.round(performance.now() - _stripDedupStart);
@@ -752,11 +768,11 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
 
         if (trace) {
             trace.gatedOut = gatingRemoved.map(e => ({
-                title: e.title, requires: e.requires, excludes: e.excludes,
+                title: e.title, vaultSource: e.vaultSource || '', requires: e.requires, excludes: e.excludes,
             }));
-            const acceptedTitles = new Set(acceptedEntries.map(e => e.title));
-            trace.budgetCut = postDedup.filter(e => !acceptedTitles.has(e.title))
-                .map(e => ({ title: e.title, tokens: e.tokenEstimate, priority: e.priority }));
+            const acceptedKeys = new Set(acceptedEntries.map(e => `${e.vaultSource || ''}:${e.title}`));
+            trace.budgetCut = postDedup.filter(e => !acceptedKeys.has(`${e.vaultSource || ''}:${e.title}`))
+                .map(e => ({ title: e.title, vaultSource: e.vaultSource || '', tokens: e.tokenEstimate, priority: e.priority }));
             trace.injected = acceptedEntries.map(e => ({
                 title: e.title,
                 tokens: e.tokenEstimate,
@@ -765,12 +781,10 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
             }));
             trace.totalTokens = totalTokens;
             trace.budgetLimit = settings.maxTokensBudget;
-            // BUG-278/279: stale-pipeline guard on trace publish + activity feed. Both write to
-            // session-global state read by the drawer — a stale pipeline landing here would
-            // overwrite the new chat's trace / push a stale activity row.
+            // BUG-278/279: stale-pipeline guard on activity feed. A stale pipeline landing here
+            // would push a stale activity row. Trace lands inside the verdict written below;
+            // the verdict's epoch/lockEpoch tag carries the same staleness signal forward.
             if (epoch === chatEpoch && lockEpoch === generationLockEpoch) {
-                setLastPipelineTrace(trace);
-
                 const aiUsed = trace.aiSelected?.length > 0;
                 const modeLabel = trace.mode === 'keywords-only' ? 'Keywords'
                     : aiUsed ? (trace.aiFallback ? 'Fallback' : 'AI')
@@ -836,17 +850,27 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
                 );
             }
 
-            // Capture injection sources for Context Cartographer; epoch-tagged so
-            // CHARACTER_MESSAGE_RENDERED only consumes sources from the matching generation.
-            setLastInjectionSources(injectedEntries.map(e => ({
+            // Capture injection sources for the verdict. Single authoritative per-turn record;
+            // the verdict carries trace + sources together so consumers don't need to coordinate
+            // multiple globals. msgIdx + epoch on the verdict gate cross-chat staleness on read.
+            const injectedSourceRecords = injectedEntries.map(e => ({
                 title: e.title,
                 filename: e.filename,
                 matchedBy: matchedKeys.get(e.title) || '?',
                 priority: e.priority,
                 tokens: e.tokenEstimate,
                 vaultSource: e.vaultSource || '',
-            })));
-            setLastInjectionEpoch(epoch);
+            }));
+            try {
+                writeVerdict(buildVerdict({
+                    trace,
+                    injectedSources: injectedSourceRecords,
+                    chatId: verdictChatId,
+                    msgIdx: verdictMsgIdx,
+                    epoch,
+                    lockEpoch,
+                })).catch(err => console.warn('[DLE] Verdict write failed:', err?.message));
+            } catch (err) { console.warn('[DLE] Verdict build failed:', err?.message); }
             // Notify drawer early so Why? tab populates BEFORE agentic loop / ST generation starts.
             notifyInjectionSourcesReady();
         } else {
@@ -858,9 +882,18 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
                     if (pmEntry) pmEntry.content = '';
                 }
             }
-            // Clear stale sources so the Why? tab doesn't show prior-generation data.
-            setLastInjectionSources(null);
-            setLastInjectionEpoch(epoch);
+            // Empty-injected verdict so consumers see "nothing this turn" rather than the
+            // prior verdict's state. Trace still carries the rejection breakdown.
+            try {
+                writeVerdict(buildVerdict({
+                    trace,
+                    injectedSources: [],
+                    chatId: verdictChatId,
+                    msgIdx: verdictMsgIdx,
+                    epoch,
+                    lockEpoch,
+                })).catch(err => console.warn('[DLE] Verdict write failed:', err?.message));
+            } catch (err) { console.warn('[DLE] Verdict build failed:', err?.message); }
             notifyInjectionSourcesReady();
         }
 
@@ -1134,7 +1167,7 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
                     // awaited MESSAGE_RECEIVED, addOneMessage, awaited CHARACTER_MESSAGE_RENDERED.
                     //
                     // The CHARACTER_MESSAGE_RENDERED handler (L1315) then:
-                    //   - attaches deeplore_sources from lastInjectionSources
+                    //   - attaches deeplore_sources from the current verdict (matched by msgIdx)
                     //   - injects the sources button
                     //   - extracts AI notes (mutates message.mes → cleaned text)
                     //
@@ -1676,17 +1709,22 @@ jQuery(async function () {
 
             // --- Cartographer: attach sources, inject button ---
             try {
-                if (settings.showLoreSources && lastInjectionSources && lastInjectionSources.length > 0) {
-                    if (lastInjectionEpoch === chatEpoch && lastInjectionSources._consumedByMesId !== messageId) {
-                        if (message && !message.is_user) {
-                            message.extra = message.extra || {};
-                            message.extra.deeplore_sources = lastInjectionSources;
-                            lastInjectionSources._consumedByMesId = messageId;
+                if (settings.showLoreSources) {
+                    // Verdict store is authoritative. Match msgIdx + epoch so a verdict from
+                    // a prior turn (or a different chat) can't bleed onto this message.
+                    const v = getCurrentVerdictForRender();
+                    if (v && v.msgIdx === messageId && v.epoch === chatEpoch
+                        && Array.isArray(v.injectedSources) && v.injectedSources.length > 0
+                        && message && !message.is_user) {
+                        message.extra = message.extra || {};
+                        // Guard against double-attach on swipe → same verdict, same message.
+                        const tag = `${v.genId || ''}:${v.ts}`;
+                        if (message.extra._deeplore_sources_tag !== tag) {
+                            message.extra.deeplore_sources = v.injectedSources;
+                            message.extra._deeplore_sources_tag = tag;
                             saveMetadataDebounced();
                         }
                     }
-                }
-                if (settings.showLoreSources) {
                     injectSourcesButton(messageId);
                 }
             } catch (err) { console.warn('[DLE] Cartographer render-handler failed:', err?.message); }
@@ -2091,15 +2129,24 @@ jQuery(async function () {
             setLastGenerationTrackerSnapshot(null);
             setGenerationCount(0);
             setLastIndexGenerationCount(0);
-            setLastInjectionEpoch(-1);
             setLastWarningRatio(0);
             resetAiSearchCache();
             resetAiThrottle();
             setAutoSuggestMessageCount(0);
-            setLastPipelineTrace(null);
-            setLastInjectionSources(null);
-            setPreviousSources(null);
             resetCartographer();
+
+            // Verdict store: drop prior chat's ring entries, rebind, then async-hydrate
+            // from IDB for resume-after-reload continuity. hydrateChat is fire-and-forget
+            // because CHAT_CHANGED is synchronous from ST's side.
+            {
+                let newVerdictChatId = null;
+                try { newVerdictChatId = getCurrentChatId() || null; } catch { /* noop */ }
+                setVerdictChatId(newVerdictChatId);
+                clearVerdictChat(null).catch(err => console.warn('[DLE] Verdict clear (CHAT_CHANGED) failed:', err?.message));
+                if (newVerdictChatId) {
+                    hydrateVerdictChat(newVerdictChatId).catch(err => console.warn('[DLE] Verdict hydrate failed:', err?.message));
+                }
+            }
 
             // Librarian: hydrate gaps + reset counters. normalizeLoreGap collapses legacy v1
             // statuses (acknowledged / in_progress / rejected) → v2 set (pending ↔ written).
@@ -2300,7 +2347,8 @@ jQuery(async function () {
                         fieldDefinitions: fieldDefinitions.slice(),
                     };
                 },
-                get trace() { return lastPipelineTrace; },
+                get trace() { return getCurrentVerdictForRender()?.trace ?? null; },
+                get verdict() { return getCurrentVerdictForRender(); },
                 get buffers() {
                     return {
                         console: consoleBuffer.drain(),

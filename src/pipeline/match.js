@@ -75,27 +75,27 @@ export function matchEntries(chat, snapshot = null, { settings, characterName } 
                 // Primary hit but refine keys blocked.
                 const primaryHit = testPrimaryMatchOnly(entry, scanText, settings);
                 if (primaryHit) {
-                    refineKeyBlocked.push({ title: entry.title, primaryKey: primaryHit, refineKeys: [...entry.refineKeys] });
+                    refineKeyBlocked.push({ title: entry.title, vaultSource: entry.vaultSource || '', primaryKey: primaryHit, refineKeys: [...entry.refineKeys] });
                 }
             }
             if (key) {
                 if (entry.warmup !== null) {
                     const occurrences = countKeywordOccurrences(entry, scanText, settings);
                     if (occurrences < entry.warmup) {
-                        warmupFailed.push({ title: entry.title, needed: entry.warmup, found: occurrences });
+                        warmupFailed.push({ title: entry.title, vaultSource: entry.vaultSource || '', needed: entry.warmup, found: occurrences });
                         continue;
                     }
                 }
 
                 // probability=0 = never fires (distinct from null = always).
                 if (entry.probability === 0) {
-                    probabilitySkipped.push({ title: entry.title, probability: 0, roll: 0 });
+                    probabilitySkipped.push({ title: entry.title, vaultSource: entry.vaultSource || '', probability: 0, roll: 0 });
                     continue;
                 }
                 if (entry.probability !== null && entry.probability < 1.0) {
                     const roll = Math.random();
                     if (roll > entry.probability) {
-                        probabilitySkipped.push({ title: entry.title, probability: entry.probability, roll });
+                        probabilitySkipped.push({ title: entry.title, vaultSource: entry.vaultSource || '', probability: entry.probability, roll });
                         continue;
                     }
                 }
