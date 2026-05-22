@@ -3,7 +3,7 @@ import { escapeHtml } from '../../../../../utils.js';
 import { callGenericPopup, POPUP_TYPE } from '../../../../../popup.js';
 import { SlashCommandParser } from '../../../../../slash-commands/SlashCommandParser.js';
 import { SlashCommand } from '../../../../../slash-commands/SlashCommand.js';
-import { ARGUMENT_TYPE } from '../../../../../slash-commands/SlashCommandArgument.js';
+import { SlashCommandArgument, ARGUMENT_TYPE } from '../../../../../slash-commands/SlashCommandArgument.js';
 import { classifyError } from '../../core/utils.js';
 import { getSettings } from '../../settings.js';
 import { vaultIndex, setIndexTimestamp } from '../state.js';
@@ -260,6 +260,11 @@ export function registerVaultCommands() {
             }
             return '';
         },
+        unnamedArgumentList: [SlashCommandArgument.fromProps({
+            description: 'optional target folder in the vault (default: vault root)',
+            typeList: [ARGUMENT_TYPE.STRING],
+            isRequired: false,
+        })],
         helpString: 'Import SillyTavern World Info JSON into the Obsidian vault. Usage: /dle-import <folder>. Example: /dle-import Imported.',
         returns: ARGUMENT_TYPE.STRING,
     }));

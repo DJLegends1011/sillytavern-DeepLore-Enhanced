@@ -5,7 +5,8 @@ import { escapeHtml } from '../../../../../utils.js';
 import { callGenericPopup, POPUP_TYPE } from '../../../../../popup.js';
 import { SlashCommandParser } from '../../../../../slash-commands/SlashCommandParser.js';
 import { SlashCommand } from '../../../../../slash-commands/SlashCommand.js';
-import { ARGUMENT_TYPE } from '../../../../../slash-commands/SlashCommandArgument.js';
+import { SlashCommandArgument, ARGUMENT_TYPE } from '../../../../../slash-commands/SlashCommandArgument.js';
+import { SlashCommandEnumValue } from '../../../../../slash-commands/SlashCommandEnumValue.js';
 import { parseFrontmatter, simpleHash, classifyError } from '../../core/utils.js';
 import { getSettings, resolveWriteVault } from '../../settings.js';
 import { fetchScribeNotes } from '../vault/obsidian-api.js';
@@ -89,6 +90,12 @@ export function registerAdminCommands() {
             await showAiNotepadPopup();
             return '';
         },
+        unnamedArgumentList: [SlashCommandArgument.fromProps({
+            description: 'optional subcommand',
+            typeList: [ARGUMENT_TYPE.STRING],
+            isRequired: false,
+            enumProvider: () => [new SlashCommandEnumValue('clear', 'wipe AI Notepad for this chat')],
+        })],
         helpString: 'View or clear AI-written session notes. Usage: /dle-ai-notepad [clear]',
         returns: ARGUMENT_TYPE.STRING,
     }));
@@ -513,6 +520,15 @@ export function registerAdminCommands() {
             toastr.success(`Debug mode ${settings.debugMode ? 'ON' : 'OFF'}`, 'DeepLore Enhanced');
             return '';
         },
+        unnamedArgumentList: [SlashCommandArgument.fromProps({
+            description: 'optional explicit state',
+            typeList: [ARGUMENT_TYPE.STRING],
+            isRequired: false,
+            enumProvider: () => [
+                new SlashCommandEnumValue('on', 'force debug logging on'),
+                new SlashCommandEnumValue('off', 'force debug logging off'),
+            ],
+        })],
         helpString: 'Toggle debug logging. Usage: /dle-debug [on|off]',
         returns: ARGUMENT_TYPE.STRING,
     }));
@@ -543,6 +559,11 @@ export function registerAdminCommands() {
             });
             return '';
         },
+        unnamedArgumentList: [SlashCommandArgument.fromProps({
+            description: 'how many entries to show (1-500, default 50)',
+            typeList: [ARGUMENT_TYPE.NUMBER],
+            isRequired: false,
+        })],
         helpString: 'Show recent DLE console log entries. Usage: /dle-logs [count]',
         returns: ARGUMENT_TYPE.STRING,
     }));

@@ -8,7 +8,8 @@ import { escapeHtml } from '../../../../../utils.js';
 import { callGenericPopup, POPUP_TYPE } from '../../../../../popup.js';
 import { SlashCommandParser } from '../../../../../slash-commands/SlashCommandParser.js';
 import { SlashCommand } from '../../../../../slash-commands/SlashCommand.js';
-import { ARGUMENT_TYPE } from '../../../../../slash-commands/SlashCommandArgument.js';
+import { SlashCommandArgument, ARGUMENT_TYPE } from '../../../../../slash-commands/SlashCommandArgument.js';
+import { SlashCommandEnumValue } from '../../../../../slash-commands/SlashCommandEnumValue.js';
 import { classifyError, NO_ENTRIES_MSG, yamlEscape } from '../../core/utils.js';
 import { getSettings, getPrimaryVault } from '../../settings.js';
 import { vaultIndex, scribeInProgress, setIndexTimestamp, setSkipNextPipeline } from '../state.js';
@@ -52,6 +53,12 @@ export function registerAiCommands() {
             }
             return '';
         },
+        unnamedArgumentList: [SlashCommandArgument.fromProps({
+            description: 'vault entry title',
+            typeList: [ARGUMENT_TYPE.STRING],
+            isRequired: true,
+            enumProvider: () => vaultIndex.map(e => new SlashCommandEnumValue(e.title)),
+        })],
         helpString: 'Suggest better keywords for an entry using AI. Usage: /dle-optimize-keys <entry name>.',
         returns: ARGUMENT_TYPE.STRING,
     }));
@@ -104,6 +111,11 @@ export function registerAiCommands() {
             await runScribe(userPrompt?.trim() || '');
             return 'Session note written.';
         },
+        unnamedArgumentList: [SlashCommandArgument.fromProps({
+            description: 'optional focus topic for the scribe',
+            typeList: [ARGUMENT_TYPE.STRING],
+            isRequired: false,
+        })],
         helpString: 'Write a session summary note to Obsidian. Usage: /dle-scribe <focus topic>. Example: /dle-scribe What happened with the sword?',
         returns: ARGUMENT_TYPE.STRING,
     }));
@@ -170,6 +182,11 @@ export function registerAiCommands() {
                 return '';
             }
         },
+        unnamedArgumentList: [SlashCommandArgument.fromProps({
+            description: 'optional question to ask about the vault',
+            typeList: [ARGUMENT_TYPE.STRING],
+            isRequired: false,
+        })],
         helpString: 'Send the entire vault to the AI for review and feedback. Usage: /dle-review <question>. Example: /dle-review What inconsistencies do you see?',
         returns: ARGUMENT_TYPE.STRING,
     }));
@@ -245,6 +262,23 @@ export function registerAiCommands() {
             }
             return '';
         },
+        unnamedArgumentList: [SlashCommandArgument.fromProps({
+            description: 'subcommand: review | audit | gap <id>',
+            typeList: [ARGUMENT_TYPE.STRING],
+            isRequired: false,
+            // Dynamic enum: static subcommands + gap-by-id for any open gaps.
+            enumProvider: async () => {
+                const { loreGaps } = await import('../state.js');
+                const base = [
+                    new SlashCommandEnumValue('review', 'open the review browser'),
+                    new SlashCommandEnumValue('audit', 'audit existing entries'),
+                ];
+                const gaps = (Array.isArray(loreGaps) ? loreGaps : []).map(g =>
+                    new SlashCommandEnumValue(`gap ${g.id}`, g.summary || g.title || g.id),
+                );
+                return [...base, ...gaps];
+            },
+        })],
         helpString: 'Open the Librarian AI session. Usage: /dle-librarian [gap &lt;id&gt; | review | audit]',
         returns: ARGUMENT_TYPE.STRING,
     }));
