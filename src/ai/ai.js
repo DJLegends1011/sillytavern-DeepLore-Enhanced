@@ -165,6 +165,17 @@ export async function callViaProfile(systemPrompt, userMessage, maxTokens, timeo
         // and the debug-preview slice downstream. Issue #24.
         return cmrsResultToText(result);
     } catch (err) {
+        // ST's CMRS catch (shared.js:473) wraps every throw as
+        // `new Error('API request failed', { cause: <original> })`. That strips
+        // err.name='AbortError' from fetch cancels, so the timeout/userAbort
+        // classification below would silently fail and we'd mis-label cancels
+        // as generic errors (losing userAborted/timedOut). Unwrap once at the
+        // top of the catch so the rest of this handler sees the real cause.
+        // BUG-249 source-trace verdict: signal IS honored by CMRS → fetch; this
+        // wrapper is the only thing that ever made it look otherwise.
+        if (err?.message === 'API request failed' && err.cause) {
+            err = err.cause;
+        }
         const profileLabel = resolvedProfileId ? ` [profile: ${resolvedProfileId}]` : '';
         const modelLabel = resolvedModel ? ` [model: ${resolvedModel}]` : '';
         // Either signal can win the race; prefer controller-side reason, fall back to external.
