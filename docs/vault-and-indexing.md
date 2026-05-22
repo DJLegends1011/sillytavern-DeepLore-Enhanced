@@ -460,7 +460,7 @@ Handles three ST World Info JSON formats:
 
 Returns `{entries: object[], source: string}`. Filters out null/non-object entries.
 
-### `convertWiEntry(wiEntry, lorebookTag)` (src/helpers.js:convertWiEntry())
+### `convertWiEntry(wiEntry, lorebookTag, options?)` (src/helpers.js:convertWiEntry())
 
 Maps a single ST World Info entry to `{filename, content}` (Obsidian markdown with frontmatter).
 
@@ -470,19 +470,57 @@ Maps a single ST World Info entry to `{filename, content}` (Obsidian markdown wi
 - Position: maps ST's 5-value enum `{0: 'after', 1: 'before', 2: 'before', 3: 'after', 4: 'in_chat'}` (lossy).
 - Content: `wiEntry.content` as markdown body after frontmatter.
 
-### `importEntries(entries, folder, onProgress)` (import.js:importEntries())
+**`options.compress`** (#18) — when truthy (or `'caveman'`), pipe the body through `compressCaveman()` before writing and annotate frontmatter with `compress: caveman`. Other strings are passed through `resolveCompressMode` for forward compatibility, but only modes in `APPLIED_COMPRESS_MODES` (currently just `'caveman'`) actually transform and annotate — unknown modes log a warning and leave the body untouched rather than emit a misleading annotation.
+
+### `importEntries(entries, folder, onProgress, options?)` (import.js:importEntries())
 
 Writes entries to the primary vault one at a time.
 
-**Dedup logic:** Before writing, checks if file already exists via `obsidianFetch` GET. If it does, tries suffixes: `_imported`, `_imported_2`, ... up to `_imported_20` (MAX_DEDUP_ATTEMPTS). Each suffix existence-check is a separate Obsidian fetch.
+**Dedup logic:** Before writing, checks if file already exists via `obsidianFetch` GET. If it does, tries suffixes: `_imported`, `_imported_2`, ... up to `_imported_20` (`MAX_DEDUP_ATTEMPTS`, module-scoped in `import.js`). Each suffix existence-check is a separate Obsidian fetch. The walk is extracted into `_findUniquePath(vault, filename, folder)` (private) so both `importEntries` and `upsertConvertedEntry` share the same behavior.
 
 **Error handling:**
-- AbortError on dedup check -> skip entry (FIX-M6), not use undefined path.
-- Network error on existence check -> skip entry with error message.
+- AbortError on dedup check → skip entry (FIX-M6), not use undefined path.
+- Network error on existence check → skip entry with error message.
+- Cap exhausted (>20 dedup attempts) → skip entry.
 - Returns `{imported, failed, renamed, errors}`.
+
+**`options.compress`** (#18) — forwarded into `convertWiEntry`. Defaults to `settings.importCompressByDefault`.
 
 **State read:** `getSettings()`, `getPrimaryVault(settings)`.
 **State written:** None (writes directly to Obsidian vault via API).
+
+### `upsertConvertedEntry(wiEntry, folder, options?)` (import.js:upsertConvertedEntry())
+
+PR #28.2 — Single-entry convert-and-upsert. Designed for companion-extension integration that wants to push one entry without running the full batch flow.
+
+**Vault selection:** `options.vault` if given, else `resolveWriteVault('autoSuggest', settings)`. Returns `{ok:false, error: 'No vault configured…'}` when host/port/apiKey not all set.
+
+**Collision policy** (`options.policy`, default `'rename'`):
+- `'rename'` — find unique `_imported[_N]` suffix via `_findUniquePath`.
+- `'replace'` — overwrite existing file. Destructive — companion callers should confirm.
+- `'skip'` — bail with `{ok:true, action:'skipped'}`.
+
+**Returns** `{ok, action: 'created'|'replaced'|'renamed'|'skipped'|null, path, error?}`.
+
+**`options.compress`** — forwarded into `convertWiEntry`, defaults to `settings.importCompressByDefault`.
+
+### `updateEntryFields(host, port, apiKey, filename, updates, useHttps?)` (obsidian-api.js:updateEntryFields())
+
+Surgical frontmatter-field update. Reads the file via REST, hands the content to `updateFrontmatterFields()` (in `src/helpers.js`), writes back. Body and untouched frontmatter fields preserved byte-for-byte.
+
+**Scope (v1):**
+- Scalar values only (string / number / boolean). Arrays / objects refused, reported via `skipped`.
+- `null` value deletes an existing field (or is silently skipped for new fields).
+- New fields appended before the closing `---`.
+- Refuses to overwrite block scalars (`|`, `>`) — would orphan body lines and silently corrupt.
+- Refuses to overwrite inline-flow arrays (`[a, b]`) — same data-loss risk.
+- CRLF input handled (strips `\r` before key matching so Windows-authored files don't grow duplicate keys on every update).
+- Hyphenated / dotted keys (`refine-keys`, `x.y`) match the read-side parser.
+- `NaN` / `±Infinity` refused (returned in `skipped`) rather than emitted as malformed YAML.
+
+**Returns** `{ok, applied: string[], skipped: string[], error?}`. No-op write (no mtime touch) when `applied.length === 0`.
+
+**Does NOT create the file if missing** — returns `ok:false` with a 404 message. Caller should use `writeNote` or `upsertConvertedEntry` when create-or-update is wanted.
 
 ### Progress callback
 

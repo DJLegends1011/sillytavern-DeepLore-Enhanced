@@ -260,6 +260,14 @@ export const defaultSettings = {
     // librarianPerMessageActivity: ON ties gap/flag records to messages (clear on new gen, keep on swipe, delete with msg).
     // OFF = legacy behavior (gaps accumulate, dropdowns ephemeral). See CLAUDE.md "non-obvious settings semantics".
     librarianPerMessageActivity: false,
+    // #16: global priority-order toggle. false = lower priority number wins (Obsidian/WI convention).
+    // true = higher wins. Affects pipeline budget allocation, Librarian view, Cartographer display.
+    // Browse popup's explicit priority_asc/desc dropdown bypasses this — user-typed sort always wins literal.
+    priorityReversed: false,
+    // #18: when true, importEntries / upsertConvertedEntry caveman-compress each entry's body
+    // before writing to the vault. Per-import option can still override per call. Stored
+    // entries are annotated with `compress: caveman` in frontmatter for audit.
+    importCompressByDefault: false,
     analyticsData: {},
     _wizardCompleted: false,
     // Increment to trigger migrations in runMigrations().

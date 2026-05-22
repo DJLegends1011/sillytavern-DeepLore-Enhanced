@@ -1489,6 +1489,292 @@ test('convertWiEntry: depth only included when > 0', () => {
 });
 
 // ============================================================================
+// Tests: #18 caveman-compress import (src/caveman.js + convertWiEntry hook)
+// ============================================================================
+
+import { compressCaveman, resolveCompressMode } from '../src/caveman.js';
+
+test('caveman: drops articles at word boundaries', () => {
+    const out = compressCaveman('The cat sat on the mat. A dog watched an apple.');
+    assert(!/\bthe\b/i.test(out), 'no "the" in output');
+    assert(!/\ba\b/i.test(out), 'no standalone "a" in output');
+    assert(!/\ban\b/i.test(out), 'no standalone "an" in output');
+    assert(out.includes('cat sat on'), 'core words survive');
+    assert(out.includes('Alabama') === false && /apple/.test(out), 'fruit survives');
+});
+
+test('caveman: drops fillers without changing meaning', () => {
+    const out = compressCaveman('This is just really basically a test that simply works.');
+    assert(!/\bjust\b/i.test(out), 'just dropped');
+    assert(!/\breally\b/i.test(out), 'really dropped');
+    assert(!/\bbasically\b/i.test(out), 'basically dropped');
+    assert(!/\bsimply\b/i.test(out), 'simply dropped');
+    assert(out.includes('test that') && out.includes('works'), 'core preserved');
+});
+
+test('caveman: preserves fenced code blocks untouched', () => {
+    const input = 'The code:\n```js\nconst the = a; // the var\n```\nAnd a note.';
+    const out = compressCaveman(input);
+    assert(out.includes('const the = a; // the var'), 'fenced block body untouched');
+    assert(!/^And a note/m.test(out), '"a" outside code is dropped');
+});
+
+test('caveman: preserves inline code', () => {
+    const out = compressCaveman('Use the `the.api()` function.');
+    assert(out.includes('`the.api()`'), 'inline code untouched');
+    assert(!/Use the /.test(out), 'plain-text "the" dropped');
+});
+
+test('caveman: preserves URLs', () => {
+    const out = compressCaveman('See https://example.com/the/page for the docs.');
+    assert(out.includes('https://example.com/the/page'), 'URL untouched');
+    assert(!/for the docs/.test(out), '"the" outside URL dropped');
+});
+
+test('caveman: collapses multi-space artifacts', () => {
+    const out = compressCaveman('The   spaces   are   wide.');
+    assert(!/  /.test(out), 'no double spaces remain');
+});
+
+test('caveman: tidies space before punctuation after drops', () => {
+    const out = compressCaveman('I saw the , and the .');
+    assert(!/ ,/.test(out), 'no space-comma');
+    assert(!/ \./.test(out), 'no space-period');
+});
+
+test('caveman: preserves markdown list indent', () => {
+    const out = compressCaveman('- the first item\n- the second item');
+    assert(out.startsWith('- '), 'list bullet survives');
+    assert(out.includes('first item'), 'item body survives');
+});
+
+test('caveman: handles empty / null input', () => {
+    assertEqual(compressCaveman(''), '', 'empty string passes through');
+    assertEqual(compressCaveman(null), null, 'null passes through');
+    assertEqual(compressCaveman(undefined), undefined, 'undefined passes through');
+});
+
+test('resolveCompressMode: normalizes truthy values to "caveman"', () => {
+    assertEqual(resolveCompressMode(true), 'caveman', 'true → caveman');
+    assertEqual(resolveCompressMode('true'), 'caveman', '"true" → caveman');
+    assertEqual(resolveCompressMode('caveman'), 'caveman', '"caveman" → caveman');
+});
+
+test('resolveCompressMode: normalizes falsy values to null', () => {
+    assertEqual(resolveCompressMode(false), null, 'false → null');
+    assertEqual(resolveCompressMode('false'), null, '"false" → null');
+    assertEqual(resolveCompressMode(''), null, 'empty string → null');
+    assertEqual(resolveCompressMode(null), null, 'null → null');
+    assertEqual(resolveCompressMode(undefined), null, 'undefined → null');
+});
+
+test('resolveCompressMode: forward-compat passes unknown modes through', () => {
+    assertEqual(resolveCompressMode('ai-summary'), 'ai-summary', 'unknown mode survives for future use');
+});
+
+// --- Agent B audit regression guards ---
+
+test('caveman: preserves hyphenated "A-frame" / "A-list" / "the-end" tokens', () => {
+    const out = compressCaveman('She built an A-frame house. Buy A-list talent. Watch the-end-of-days.');
+    assert(out.includes('A-frame'), 'A-frame preserved (regression: \\b stripped the A)');
+    assert(out.includes('A-list'), 'A-list preserved');
+    assert(out.includes('the-end-of-days'), 'the-end-of-days preserved');
+});
+
+test('caveman: numeric / non-string input does not throw', () => {
+    assertEqual(compressCaveman(123), 123, 'number passes through');
+    assertEqual(compressCaveman(true), true, 'boolean passes through');
+    assertEqual(compressCaveman({}), {}, 'object passes through');
+});
+
+test('caveman: mask marker survives adjacent punctuation (no DLEPRES leak)', () => {
+    const out = compressCaveman('Use `the.api()`, not the old way.');
+    assert(!/DLEPRES/.test(out), 'no placeholder leak in output');
+    assert(out.includes('`the.api()`'), 'inline code preserved verbatim');
+});
+
+test('convertWiEntry: unknown compress mode does NOT annotate frontmatter', () => {
+    const wi = { comment: 'X', key: ['x'], content: 'The body text here.' };
+    const result = convertWiEntry(wi, 'lorebook', { compress: 'ai-summary' });
+    assert(!result.content.includes('compress:'), 'no annotation for unknown mode (avoids lying)');
+    assert(result.content.includes('The body text here.'), 'body untouched');
+});
+
+test('convertWiEntry: explicit compress: true annotates as caveman', () => {
+    const wi = { comment: 'X', key: ['x'], content: 'The cat is just a cat.' };
+    const result = convertWiEntry(wi, 'lorebook', { compress: true });
+    assert(result.content.includes('compress: caveman'), 'caveman annotation present');
+});
+
+// ============================================================================
+// Tests: Update Existing Entries — updateFrontmatterFields (src/helpers.js)
+// ============================================================================
+
+import { updateFrontmatterFields } from '../src/helpers.js';
+
+test('updateFrontmatterFields: replaces existing scalar value in place', () => {
+    const input = '---\npriority: 50\nstatus: active\n---\n\n# Body\n\nBody text.';
+    const result = updateFrontmatterFields(input, { priority: 10 });
+    assert(result.applied.includes('priority'), 'priority applied');
+    assert(result.content.includes('priority: 10'), 'new value present');
+    assert(!result.content.includes('priority: 50'), 'old value gone');
+    assert(result.content.includes('status: active'), 'untouched field preserved');
+    assert(result.content.includes('Body text.'), 'body preserved');
+});
+
+test('updateFrontmatterFields: appends new field before closing delimiter', () => {
+    const input = '---\npriority: 50\n---\n\nbody';
+    const result = updateFrontmatterFields(input, { newField: 'hello' });
+    assert(result.applied.includes('newField'), 'newField applied');
+    assert(result.content.includes('newField: hello'), 'appended');
+    assert(result.content.match(/newField: hello\s*\n---/), 'appended before closing ---');
+});
+
+test('updateFrontmatterFields: null value deletes existing field', () => {
+    const input = '---\npriority: 50\nstatus: active\n---\n\nbody';
+    const result = updateFrontmatterFields(input, { status: null });
+    assert(result.applied.includes('status'), 'status delete applied');
+    assert(!result.content.includes('status:'), 'status removed');
+    assert(result.content.includes('priority: 50'), 'other field intact');
+});
+
+test('updateFrontmatterFields: null value on absent field is skipped', () => {
+    const input = '---\npriority: 50\n---\n\nbody';
+    const result = updateFrontmatterFields(input, { nonexistent: null });
+    assert(result.skipped.includes('nonexistent'), 'reported as skipped');
+    assert(!result.content.includes('nonexistent'), 'no phantom field');
+});
+
+test('updateFrontmatterFields: refuses non-scalar values', () => {
+    const input = '---\npriority: 50\n---\n\nbody';
+    const result = updateFrontmatterFields(input, { priority: [1, 2, 3], obj: { a: 1 } });
+    assert(result.skipped.includes('priority'), 'array refused');
+    assert(result.skipped.includes('obj'), 'object refused');
+    assert(result.content.includes('priority: 50'), 'original priority preserved');
+});
+
+test('updateFrontmatterFields: refuses to overwrite array-block fields', () => {
+    const input = '---\nkeys:\n  - one\n  - two\n---\n\nbody';
+    const result = updateFrontmatterFields(input, { keys: 'replacement' });
+    assert(result.skipped.includes('keys'), 'array-block keys refused');
+    assert(result.content.includes('  - one'), 'array preserved');
+});
+
+test('updateFrontmatterFields: preserves quoting style of untouched fields', () => {
+    const input = '---\nname: "Alice"\npriority: 50\n---\n\nbody';
+    const result = updateFrontmatterFields(input, { priority: 10 });
+    assert(result.content.includes('name: "Alice"'), 'quoted name unchanged');
+});
+
+test('updateFrontmatterFields: serializes booleans/numbers/strings correctly', () => {
+    const input = '---\na: x\n---\n\nbody';
+    const result = updateFrontmatterFields(input, { b: true, c: 42, d: 'has spaces' });
+    assert(result.content.includes('b: true'), 'boolean');
+    assert(result.content.includes('c: 42'), 'number');
+    assert(result.content.match(/d:.*has spaces/), 'string');
+});
+
+test('updateFrontmatterFields: creates frontmatter when file has none', () => {
+    const input = '# Title\n\nplain body';
+    const result = updateFrontmatterFields(input, { priority: 50 });
+    assert(result.content.startsWith('---'), 'starts with delim');
+    assert(result.content.includes('priority: 50'), 'field present');
+    assert(result.content.includes('plain body'), 'body intact');
+});
+
+test('updateFrontmatterFields: handles BOM-prefixed input', () => {
+    const input = '﻿---\npriority: 50\n---\n\nbody';
+    const result = updateFrontmatterFields(input, { priority: 10 });
+    assert(result.content.includes('priority: 10'), 'BOM file updated');
+});
+
+test('updateFrontmatterFields: no-op when updates object is empty', () => {
+    const input = '---\npriority: 50\n---\n\nbody';
+    const result = updateFrontmatterFields(input, {});
+    assertEqual(result.applied.length, 0, 'no applied');
+    assertEqual(result.content, input, 'content byte-identical');
+});
+
+// --- Agent C audit regression guards ---
+
+test('updateFrontmatterFields: CRLF-authored file updates in place, no duplicate keys', () => {
+    const input = '---\r\npriority: 50\r\nstatus: active\r\n---\r\n\r\nbody';
+    const result = updateFrontmatterFields(input, { priority: 10 });
+    assert(result.applied.includes('priority'), 'priority applied');
+    const priorityHits = (result.content.match(/^priority:/gm) || []).length;
+    assertEqual(priorityHits, 1, 'exactly one priority line (no duplicate)');
+    assert(result.content.includes('priority: 10'), 'new value present');
+    assert(/\r\n/.test(result.content), 'CRLF line endings preserved');
+    assert(result.content.includes('status: active'), 'untouched field preserved');
+});
+
+test('updateFrontmatterFields: block scalar header is not overwritten', () => {
+    const input = '---\nsummary: |\n  line one\n  line two\n---\n\nbody';
+    const result = updateFrontmatterFields(input, { summary: 'replaced' });
+    assert(result.skipped.includes('summary'), 'block-scalar key reported as skipped');
+    assert(!result.applied.includes('summary'), 'block-scalar key NOT applied');
+    assert(result.content.includes('summary: |'), 'block-scalar header preserved');
+    assert(result.content.includes('line one'), 'block-scalar body preserved');
+});
+
+test('updateFrontmatterFields: folded block scalar (>) is not overwritten', () => {
+    const input = '---\nsummary: >\n  folded line\n---\n\nbody';
+    const result = updateFrontmatterFields(input, { summary: 'replaced' });
+    assert(result.skipped.includes('summary'), 'folded-scalar key reported as skipped');
+    assert(result.content.includes('summary: >'), 'folded-scalar header preserved');
+});
+
+test('updateFrontmatterFields: hyphenated key updates in place, no duplicate', () => {
+    const input = '---\nrefine-keys: oldval\n---\n\nbody';
+    const result = updateFrontmatterFields(input, { 'refine-keys': 'newval' });
+    assert(result.applied.includes('refine-keys'), 'hyphenated key applied');
+    const hits = (result.content.match(/^refine-keys:/gm) || []).length;
+    assertEqual(hits, 1, 'exactly one refine-keys line');
+    assert(result.content.includes('refine-keys: newval'), 'value updated');
+});
+
+test('updateFrontmatterFields: dotted key updates in place, no duplicate', () => {
+    const input = '---\nx.y: oldval\n---\n\nbody';
+    const result = updateFrontmatterFields(input, { 'x.y': 'newval' });
+    assert(result.applied.includes('x.y'), 'dotted key applied');
+    const hits = (result.content.match(/^x\.y:/gm) || []).length;
+    assertEqual(hits, 1, 'exactly one x.y line');
+});
+
+test('updateFrontmatterFields: inline-flow array refused not silently rewritten', () => {
+    const input = '---\nkeys: [one, two, three]\n---\n\nbody';
+    const result = updateFrontmatterFields(input, { keys: 'flat' });
+    assert(result.skipped.includes('keys'), 'inline-flow array reported as skipped');
+    assert(result.content.includes('[one, two, three]'), 'inline-flow array preserved');
+});
+
+test('updateFrontmatterFields: NaN/Infinity numeric values are skipped not corrupted', () => {
+    const input = '---\nweight: 1\n---\n\nbody';
+    const nanResult = updateFrontmatterFields(input, { weight: NaN });
+    assert(nanResult.skipped.includes('weight'), 'NaN reported as skipped');
+    assert(!nanResult.applied.includes('weight'), 'NaN NOT applied');
+    assert(nanResult.content.includes('weight: 1'), 'original value preserved');
+    const infResult = updateFrontmatterFields(input, { weight: Infinity });
+    assert(infResult.skipped.includes('weight'), 'Infinity reported as skipped');
+});
+
+test('updateFrontmatterFields: new field with NaN refused, no corruption', () => {
+    const input = '---\na: 1\n---\n\nbody';
+    const result = updateFrontmatterFields(input, { newField: NaN });
+    assert(result.skipped.includes('newField'), 'NaN new field skipped');
+    assert(!result.content.includes('newField'), 'no malformed line emitted');
+});
+
+test('convertWiEntry: compress option annotates frontmatter and shrinks body', () => {
+    const wi = { comment: 'CavemanTest', key: ['c'], content: 'The protagonist is a hero who really, basically saves the day.' };
+    const plain = convertWiEntry(wi, 'lorebook');
+    const compressed = convertWiEntry(wi, 'lorebook', { compress: true });
+    assert(!plain.content.includes('compress:'), 'no annotation when omitted');
+    assert(compressed.content.includes('compress: caveman'), 'caveman annotation added');
+    assert(compressed.content.length < plain.content.length, 'compressed body is shorter');
+});
+
+// ============================================================================
 // Tests: encodeVaultPath + validateVaultPath (src/obsidian-api.js — production code)
 // ============================================================================
 

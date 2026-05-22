@@ -618,7 +618,7 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
 
         // Stage 4: requires/excludes gating (forceInject entries exempt).
         const _reqExclStart = performance.now();
-        const { result: gated, removed: gatingRemoved } = applyRequiresExcludesGating(finalEntries, policy, settings.debugMode);
+        const { result: gated, removed: gatingRemoved } = applyRequiresExcludesGating(finalEntries, policy, settings.debugMode, settings.priorityReversed);
         trace.requiresExcludesMs = Math.round(performance.now() - _reqExclStart);
 
         if (gated.length === 0) {

@@ -8,6 +8,7 @@ import { queryBM25 } from '../vault/bm25.js';
 import { getContext } from '../../../../../extensions.js';
 import { persistGaps, gapId } from './librarian-tools.js';
 import { getSettings } from '../../settings.js';
+import { comparePriority } from '../helpers.js';
 
 // ════════════════════════════════════════════════════════════════════════════
 // Constants
@@ -334,7 +335,7 @@ function toolGetBacklinks(args) {
     if (backlinks.length === 0) return `No entries link to "${title}".`;
 
     const lines = backlinks
-        .sort((a, b) => (a.priority || 50) - (b.priority || 50))
+        .sort((a, b) => comparePriority(a, b, getSettings().priorityReversed))
         .map(e => `- **${e.title}** (${e.type || '?'}, p${e.priority || 50})`);
     return truncate(`${backlinks.length} entries link to "${title}":\n${lines.join('\n')}`, TOOL_RESULT_MAX_CHARS);
 }
@@ -355,7 +356,7 @@ function toolListEntries(args) {
     }
 
     const capped = entries
-        .sort((a, b) => (a.priority || 50) - (b.priority || 50))
+        .sort((a, b) => comparePriority(a, b, getSettings().priorityReversed))
         .slice(0, 50);
 
     const lines = capped.map(e => `- **${e.title}** (p${e.priority || 50}) — ${(e.keys || []).slice(0, 3).join(', ')}`);

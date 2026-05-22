@@ -18,7 +18,7 @@ import {
 } from '../state.js';
 import { buildIndex } from '../vault/vault.js';
 import { callAutoSuggest } from '../ai/auto-suggest.js';
-import { extractAiResponseClient, buildObsidianURI, STAGE_COLORS, normalizePinBlock, normalizeNotepadLine, bigramDiceSimilarity } from '../helpers.js';
+import { extractAiResponseClient, buildObsidianURI, STAGE_COLORS, normalizePinBlock, normalizeNotepadLine, bigramDiceSimilarity, comparePriority } from '../helpers.js';
 import { diagnoseEntry } from './diagnostics.js';
 import { computeEntryTemperatures } from '../drawer/drawer-state.js';
 
@@ -406,7 +406,8 @@ export async function showBrowsePopup() {
             case 'tokens_asc': filtered.sort((a, b) => (a.tokenEstimate || 0) - (b.tokenEstimate || 0)); break;
             case 'injected_desc': filtered.sort((a, b) => getInjected(b) - getInjected(a)); break;
             case 'injected_asc': filtered.sort((a, b) => getInjected(a) - getInjected(b)); break;
-            default: filtered.sort((a, b) => a.priority - b.priority);
+            // #16: default sort honors settings.priorityReversed (explicit priority_asc/desc above bypass it).
+            default: filtered.sort((a, b) => comparePriority(a, b, settings.priorityReversed));
         }
         countEl.textContent = `Showing ${filtered.length} of ${vaultIndex.length} entries`;
 

@@ -325,6 +325,18 @@
                 </label>
                 <span class="dle-text-xs dle-muted dle-sp-indent"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i> May increase processing time on large vaults — counts occurrences for every matched entry.</span>
 
+                <label class="dle-advanced-subheader"><small>Priority Order</small></label>
+                <label class="checkbox_label" for="dle-sp-priority-reversed" title="By default, LOWER priority numbers win (Obsidian/WI convention: 0 = most important). When checked, HIGHER numbers win instead. Affects pipeline budget allocation, Librarian view, Cartographer, and the default Browse sort. Explicit priority_asc/priority_desc dropdown choices in Browse still sort literally.">
+                    <input id="dle-sp-priority-reversed" type="checkbox" class="checkbox">
+                    <span>Reverse Priority (higher number wins)</span>
+                </label>
+
+                <label class="dle-advanced-subheader"><small>Import</small></label>
+                <label class="checkbox_label" for="dle-sp-import-compress-default" title="When checked, World Info imports run each entry's body through the caveman compressor before writing. Drops articles / fillers / pleasantries to shrink token count ~15-30% without changing meaning. Stored frontmatter is annotated with `compress: caveman`. Code blocks, inline code, and URLs are preserved.">
+                    <input id="dle-sp-import-compress-default" type="checkbox" class="checkbox">
+                    <span>Compress imported entries (caveman)</span>
+                </label>
+
                 <label class="dle-advanced-subheader"><small>Chain Matching</small></label>
                 <label class="checkbox_label" for="dle-sp-recursive-scan" title="Scan matched entries' content for keywords that might trigger additional entries.">
                     <input id="dle-sp-recursive-scan" type="checkbox" class="checkbox">

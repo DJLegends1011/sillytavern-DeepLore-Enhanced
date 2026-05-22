@@ -11,7 +11,7 @@ import {
 } from '../state.js';
 import { DEFAULT_FIELD_DEFINITIONS } from '../fields.js';
 import { buildCandidateManifest, aiSearch, hierarchicalPreFilter } from '../ai/ai.js';
-import { isForceInjected } from '../helpers.js';
+import { isForceInjected, comparePriority } from '../helpers.js';
 import { ensureIndexFresh } from '../vault/vault.js';
 import { name2 } from '../../../../../../script.js';
 import { dedupWarning } from '../toast-dedup.js';
@@ -327,8 +327,8 @@ export async function runPipeline(chat, externalSnapshot, contextualGatingContex
     }
 
     // Restore user priority after AI modes — confidence sort may have overridden it,
-    // and budget trimming must respect the explicit priority field.
-    finalEntries.sort((a, b) => a.priority - b.priority || a.title.localeCompare(b.title));
+    // and budget trimming must respect the explicit priority field. #16: reverse via setting.
+    finalEntries.sort((a, b) => comparePriority(a, b, settings.priorityReversed) || a.title.localeCompare(b.title));
 
     clearScanTextCache();
 
@@ -360,7 +360,7 @@ export async function matchTextForExternal(scanInput) {
     const { matched } = matchEntries(fakeChat, getWriterVisibleEntries());
     clearScanTextCache();
     const policy = buildExemptionPolicy(matched, [], []);
-    const { result: gated } = applyRequiresExcludesGating(matched, policy, false);
+    const { result: gated } = applyRequiresExcludesGating(matched, policy, false, getSettings().priorityReversed);
     const { groups, count, totalTokens } = formatAndGroup(gated, getSettings(), PROMPT_TAG_PREFIX);
 
     const combinedText = groups.map(g => g.text).join('\n\n');

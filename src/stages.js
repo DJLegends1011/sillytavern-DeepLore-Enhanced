@@ -3,7 +3,7 @@
  * Pure(ish) — each stage takes explicit inputs, no implicit global reads.
  */
 import { trackerKey } from './state.js';
-import { normalizePinBlock, matchesPinBlock } from './helpers.js';
+import { normalizePinBlock, matchesPinBlock, comparePriority } from './helpers.js';
 import { evaluateOperator } from './fields.js';
 
 /** Lazy debugMode read — avoids importing settings.js (ST globals break tests). */
@@ -266,11 +266,13 @@ export function applyReinjectionCooldown(entries, policy, injectionHistory, gene
  * @param {boolean} debugMode
  * @returns {{ result: Array, removed: Array }}
  */
-export function applyRequiresExcludesGating(entries, policy, debugMode) {
-    // BUG-029: descending by priority-number (higher number = lower priority,
-    // processed first). Higher-priority entries are checked last, so their
-    // excludes-targets may already be gone — the higher-priority entry survives.
-    let result = [...entries].sort((a, b) => (b.priority || 50) - (a.priority || 50) || a.title.localeCompare(b.title));
+export function applyRequiresExcludesGating(entries, policy, debugMode, priorityReversed = false) {
+    // BUG-029: order so HIGHER-priority entries are processed LAST (so their
+    // excludes-targets may already be gone — the high-priority entry survives).
+    // Default: lower priority-number = higher importance → descending raw.
+    // #16 reversed: higher priority-number = higher importance → ascending raw.
+    // comparePriority returns the "important-first" ordering; negate to get "important-last".
+    let result = [...entries].sort((a, b) => -comparePriority(a, b, priorityReversed) || a.title.localeCompare(b.title));
     let changed = true;
     let iterations = 0;
     const MAX_ITERATIONS = 10;
@@ -332,10 +334,10 @@ export function applyRequiresExcludesGating(entries, policy, debugMode) {
             removed.map(e => ({ title: e.title, requires: e.requires, excludes: e.excludes })));
     }
 
-    // BUG-012: re-sort ascending before returning. The descending iteration order
-    // is an internal detail of the excludes-resolution loop; downstream consumers
-    // (formatAndGroup budget cap) need ascending so important entries survive truncation.
-    result.sort((a, b) => (a.priority || 50) - (b.priority || 50) || a.title.localeCompare(b.title));
+    // BUG-012: re-sort "important first" before returning. The reversed iteration
+    // order is an internal detail of the excludes-resolution loop; downstream
+    // consumers (formatAndGroup budget cap) need important-first so they survive truncation.
+    result.sort((a, b) => comparePriority(a, b, priorityReversed) || a.title.localeCompare(b.title));
 
     return { result, removed };
 }

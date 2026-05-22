@@ -7,7 +7,7 @@ import { simpleHash } from '../../core/utils.js';
 import { getSettings } from '../../settings.js';
 import { vaultIndex, vaultAvgTokens, previousSources, setPreviousSources, lastPipelineTrace, chatInjectionCounts, trackerKey } from '../state.js';
 import { diagnoseEntry } from './diagnostics.js';
-import { STAGE_COLORS, computeSourcesDiff, categorizeRejections, resolveEntryVault, parseMatchReason, tokenBarColor, formatRelativeTime } from '../helpers.js';
+import { STAGE_COLORS, computeSourcesDiff, categorizeRejections, resolveEntryVault, parseMatchReason, tokenBarColor, formatRelativeTime, comparePriority } from '../helpers.js';
 import { navigateToBrowseEntry } from '../drawer/drawer.js';
 /** Clears previousSources so stale diffs don't carry across chats. */
 export function resetCartographer() {
@@ -100,8 +100,8 @@ export function showSourcesPopup(sources, opts = {}) {
     }
 
     for (const [posLabel, groupSources] of groups) {
-        // Lower priority number = higher priority.
-        groupSources.sort((a, b) => (a.priority ?? 50) - (b.priority ?? 50));
+        // #16: settings.priorityReversed flips. Default lower-is-higher.
+        groupSources.sort((a, b) => comparePriority(a, b, settings.priorityReversed));
 
         const groupTokens = groupSources.reduce((sum, s) => sum + s.tokens, 0);
         html += `<h4 class="dle-carto-heading">${escapeHtml(posLabel)} (~${groupTokens} tokens)</h4>`;

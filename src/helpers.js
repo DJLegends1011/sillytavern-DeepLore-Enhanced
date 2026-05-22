@@ -2,8 +2,176 @@
  * DeepLore Enhanced — Pure helpers (no ST imports). Browser + Node testable.
  */
 import { yamlEscape } from '../core/utils.js';
+import { compressCaveman, resolveCompressMode, APPLIED_COMPRESS_MODES } from './caveman.js';
 
 export const MAX_PRIORITY_VALUE = 999;
+
+/**
+ * Update Existing Entries — surgical frontmatter-field update.
+ *
+ * Changes specific scalar fields in a markdown file's YAML frontmatter
+ * without disturbing other fields, comments, array fields, or the body.
+ * Preserves the original quoting / spacing of fields not touched, which
+ * means round-trip-safe even for entries that use unusual YAML styles.
+ *
+ * Scope (v1):
+ *   - Scalar values only (strings, numbers, booleans). Array / nested-object
+ *     fields are not supported; pass them through `convertWiEntry` or rewrite
+ *     the whole file instead.
+ *   - To DELETE a field, pass `null` as the value.
+ *   - New fields (not present in the original frontmatter) are appended
+ *     immediately before the closing `---`.
+ *   - When the file has no frontmatter at all, an empty block is created.
+ *
+ * @param {string} content - full markdown (frontmatter + body)
+ * @param {Record<string, string|number|boolean|null>} updates - field → new value (null = delete)
+ * @returns {{ content: string, applied: string[], skipped: string[] }}
+ *   `applied` = field names whose value was changed.
+ *   `skipped` = field names refused (non-scalar value, or new field with null value).
+ */
+export function updateFrontmatterFields(content, updates) {
+    const applied = [];
+    const skipped = [];
+    if (!updates || typeof updates !== 'object') {
+        return { content, applied, skipped };
+    }
+
+    // Validate value types up-front so we don't half-apply.
+    const isScalar = (v) => v === null || typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean';
+    for (const [k, v] of Object.entries(updates)) {
+        if (!isScalar(v)) skipped.push(k);
+    }
+    const validUpdates = Object.fromEntries(
+        Object.entries(updates).filter(([k]) => !skipped.includes(k)),
+    );
+
+    // Strip BOM the same way parseFrontmatter does.
+    const cleaned = content.charCodeAt(0) === 0xFEFF ? content.slice(1) : content;
+    const fmMatch = cleaned.match(/^(---\r?\n)([\s\S]*?)(\r?\n---[ \t]*\r?\n?)([\s\S]*)$/);
+
+    let openDelim, fmBody, closeDelim, body;
+    if (fmMatch) {
+        openDelim = fmMatch[1];
+        fmBody = fmMatch[2];
+        closeDelim = fmMatch[3];
+        body = fmMatch[4];
+    } else {
+        // No frontmatter — create a minimal block. New fields will append below.
+        openDelim = '---\n';
+        fmBody = '';
+        closeDelim = '\n---\n';
+        body = cleaned;
+    }
+
+    // Strip trailing \r BEFORE matching so CRLF-authored files don't
+    // silently fall through the in-place loop's key regex (which would
+    // otherwise duplicate every key on every write — Windows-authored
+    // entries grow on each update). Reassemble with the file's detected
+    // line ending so the write round-trips cleanly.
+    const usesCRLF = /\r\n/.test(fmBody);
+    const fmLines = fmBody.split(/\r?\n/);
+
+    const serializeValue = (v) => {
+        if (typeof v === 'boolean') return String(v);
+        if (typeof v === 'number') {
+            // NaN / ±Infinity are not valid YAML scalars and would silently corrupt
+            // the file if emitted as empty strings. Caller's value is rejected via
+            // `skipped` instead — see in-place loop's serialize-and-validate path.
+            if (!Number.isFinite(v)) return null;
+            return String(v);
+        }
+        return yamlEscape(String(v));
+    };
+
+    // Detect block-scalar headers ("|", ">", with optional chomp/indent indicators).
+    // Overwriting the header would orphan the indented body lines as dangling YAML,
+    // silently corrupting the file when read by a strict parser.
+    const BLOCK_SCALAR_VALUE = /^[|>][-+]?\d*\s*$/;
+
+    // First pass: in-place replacement for existing scalar keys.
+    // Key regex allows hyphens and dots (refine-keys, x.y) — same chars that
+    // `parseFrontmatter` already accepts on the read side. Anything narrower
+    // would silently duplicate hyphenated/dotted keys on each update.
+    const KEY_RE = /^([A-Za-z_][A-Za-z0-9_.\-]*)\s*:\s*(.*)$/;
+    const remainingNew = new Map(Object.entries(validUpdates));
+    for (let i = 0; i < fmLines.length; i++) {
+        const line = fmLines[i];
+        const m = line.match(KEY_RE);
+        if (!m) continue;
+        const key = m[1];
+        const rawValue = m[2];
+        if (!remainingNew.has(key)) continue;
+        // Skip if this key heads a block scalar (|, >) — overwriting the header
+        // would leave the body lines as untyped dangling YAML.
+        if (BLOCK_SCALAR_VALUE.test(rawValue)) { skipped.push(key); remainingNew.delete(key); continue; }
+        // Skip if this key heads an array block — either flow style (`[a, b]`
+        // detected via rawValue) or block style (next non-blank line is `  - …`).
+        let isArray = /^\[.*\]\s*$/.test(rawValue);
+        if (!isArray) {
+            for (let j = i + 1; j < fmLines.length; j++) {
+                const peek = fmLines[j];
+                if (peek.trim() === '') continue;
+                if (/^\s+-\s+/.test(peek)) isArray = true;
+                break;
+            }
+        }
+        if (isArray) { skipped.push(key); remainingNew.delete(key); continue; }
+
+        const newValue = remainingNew.get(key);
+        const serialized = serializeValue(newValue);
+        if (serialized === null && newValue !== null) {
+            // serializeValue rejected the value (NaN/Infinity). Skip rather than
+            // emit a malformed line.
+            skipped.push(key);
+            remainingNew.delete(key);
+            continue;
+        }
+        remainingNew.delete(key);
+        if (newValue === null) {
+            fmLines.splice(i, 1);
+            i--;
+        } else {
+            fmLines[i] = `${key}: ${serialized}`;
+        }
+        applied.push(key);
+    }
+
+    // Second pass: append new fields (non-null only — can't "delete a key that
+    // wasn't there"). Insert before the trailing blank line if one exists so
+    // the block stays visually tidy.
+    for (const [key, value] of remainingNew) {
+        if (value === null) { skipped.push(key); continue; }
+        const serialized = serializeValue(value);
+        if (serialized === null) { skipped.push(key); continue; } // NaN/Infinity refused
+        // Drop a single trailing blank line, append field, restore blank
+        // line — this keeps the block visually flush against `---`.
+        while (fmLines.length && fmLines[fmLines.length - 1].trim() === '') fmLines.pop();
+        fmLines.push(`${key}: ${serialized}`);
+        applied.push(key);
+    }
+
+    const newFmBody = fmLines.join(usesCRLF ? '\r\n' : '\n');
+    return { content: openDelim + newFmBody + closeDelim + body, applied, skipped };
+}
+
+/**
+ * #16 — Reverse-priority comparator. By default lower priority number = higher
+ * importance (Obsidian/WI convention). When `reversed` is true, flip so higher
+ * number wins. Applies to pipeline budget allocation, Librarian view order,
+ * and Cartographer display. Browse popup's explicit `priority_asc/desc`
+ * dropdown bypasses this — user-typed sort always wins literal.
+ *
+ * Default priority value 50 matches what callers already coalesced inline.
+ *
+ * @param {{priority?: number}} a
+ * @param {{priority?: number}} b
+ * @param {boolean} reversed
+ * @returns {number}
+ */
+export function comparePriority(a, b, reversed) {
+    const diff = (a.priority || 50) - (b.priority || 50);
+    return reversed ? -diff : diff;
+}
 
 /**
  * Sanitize a title for use as an Obsidian vault filename.
@@ -223,9 +391,16 @@ export function buildObsidianURI(vaultName, filename) {
  * Convert a SillyTavern World Info entry into an Obsidian note with frontmatter.
  * @param {object} wiEntry
  * @param {string} lorebookTag
+ * @param {object} [options]
+ * @param {boolean|string} [options.compress] - #18: when truthy (or 'caveman'),
+ *   pass the body through `compressCaveman()` before writing and annotate the
+ *   frontmatter with `compress: caveman`. Forward-compat values pass through
+ *   unmodified (annotation only) so future modes like `ai-summary` can be
+ *   wired up without churning callers.
  * @returns {{filename: string, content: string}}
  */
-export function convertWiEntry(wiEntry, lorebookTag) {
+export function convertWiEntry(wiEntry, lorebookTag, options = {}) {
+    const compressMode = resolveCompressMode(options.compress);
     // Title from `comment` (ST convention) or joined keys. Strip newlines to
     // prevent H1 injection.
     // BUG-008: older ST exports use a comma-separated string for `key`.
@@ -293,6 +468,12 @@ export function convertWiEntry(wiEntry, lorebookTag) {
         fm.push(`group_weight: ${Number(wiEntry.groupWeight)}`);
     }
     fm.push(`summary: "Imported from SillyTavern World Info"`);
+    // Only annotate the compress flag for modes this build can actually apply.
+    // Annotating an unknown mode (e.g. 'ai-summary') would let the frontmatter
+    // claim the body is compressed when in fact it's still raw, which would
+    // double-compress on a future re-import or confuse readers.
+    const willApplyCompression = compressMode && APPLIED_COMPRESS_MODES.has(compressMode);
+    if (willApplyCompression) fm.push(`compress: ${compressMode}`);
     fm.push('---');
 
     // Sanitize against YAML / control sequence injection.
@@ -300,6 +481,15 @@ export function convertWiEntry(wiEntry, lorebookTag) {
     content = content.replace(/^---$/gm, '- - -');
     content = content.replace(/%%deeplore-exclude%%[\s\S]*?%%\/deeplore-exclude%%/g, '');
     content = stripObsidianSyntax(content);
+    // #18: compression runs at import time only. Stored form is compressed;
+    // read-path treats it as the authoritative body.
+    if (willApplyCompression && compressMode === 'caveman') {
+        content = compressCaveman(content);
+    } else if (compressMode && !willApplyCompression) {
+        // User asked for a mode we don't know how to apply. Warn instead of
+        // silently storing an annotation that lies about transform state.
+        console.warn(`[DLE] convertWiEntry: unknown compress mode "${compressMode}" — body stored uncompressed, no annotation written.`);
+    }
     const fullContent = `${fm.join('\n')}\n\n# ${title}\n\n${content}`;
 
     return { filename: `${safeTitle}.md`, content: fullContent };

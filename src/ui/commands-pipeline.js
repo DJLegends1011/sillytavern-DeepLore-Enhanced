@@ -106,7 +106,7 @@ export function registerPipelineCommands() {
             }
 
             const cmdPolicy2 = buildExemptionPolicy(vaultIndex, cmdPins, cmdBlocks);
-            const { result: gated } = applyRequiresExcludesGating(filtered, cmdPolicy2, settings.debugMode);
+            const { result: gated } = applyRequiresExcludesGating(filtered, cmdPolicy2, settings.debugMode, settings.priorityReversed);
             const { count: injectedCount, acceptedEntries } = formatAndGroup(gated, settings, PROMPT_TAG_PREFIX);
             const injected = acceptedEntries || gated.slice(0, injectedCount);
 

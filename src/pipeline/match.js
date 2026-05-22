@@ -8,6 +8,7 @@
  */
 
 import { buildScanText } from '../../core/utils.js';
+import { comparePriority } from '../helpers.js';
 import { testEntryMatch, testPrimaryMatchOnly, countKeywordOccurrences } from '../../core/matching.js';
 import { vaultIndex, cooldownTracker, trackerKey, fuzzySearchIndex } from '../state.js';
 import { queryBM25 } from '../vault/bm25.js';
@@ -218,8 +219,8 @@ export function matchEntries(chat, snapshot = null, { settings, characterName } 
         }
     }
 
-    // Priority ascending = higher priority.
-    const matched = [...matchedSet].sort((a, b) => a.priority - b.priority || a.title.localeCompare(b.title));
+    // Default: priority ascending = higher priority. #16: settings.priorityReversed flips.
+    const matched = [...matchedSet].sort((a, b) => comparePriority(a, b, settings.priorityReversed) || a.title.localeCompare(b.title));
 
     // Tiebreak within priority group using hit count.
     if (settings.keywordOccurrenceWeighting) {
@@ -235,7 +236,8 @@ export function matchEntries(chat, snapshot = null, { settings, characterName } 
             return count;
         };
         matched.sort((a, b) => {
-            if (a.priority !== b.priority) return a.priority - b.priority;
+            const pri = comparePriority(a, b, settings.priorityReversed);
+            if (pri !== 0) return pri;
             return getCachedCount(b) - getCachedCount(a) || a.title.localeCompare(b.title);
         });
     }

@@ -8,7 +8,7 @@ import {
     fieldDefinitions,
 } from '../state.js';
 import { DEFAULT_FIELD_DEFINITIONS } from '../fields.js';
-import { buildObsidianURI, computeSourcesDiff, categorizeRejections, resolveEntryVault, normalizePinBlock } from '../helpers.js';
+import { buildObsidianURI, computeSourcesDiff, categorizeRejections, resolveEntryVault, normalizePinBlock, comparePriority } from '../helpers.js';
 import {
     ds, BROWSE_ROW_HEIGHT, BROWSE_OVERSCAN,
     getMatchLabel, computeEntryTemperatures,
@@ -472,7 +472,8 @@ export function renderBrowseTab() {
         case 'tokens_desc': entries.sort((a, b) => (b.tokenEstimate || 0) - (a.tokenEstimate || 0)); break;
         case 'tokens_asc': entries.sort((a, b) => (a.tokenEstimate || 0) - (b.tokenEstimate || 0)); break;
         case 'injections_desc': entries.sort((a, b) => (chatInjectionCounts.get(trackerKey(b)) || 0) - (chatInjectionCounts.get(trackerKey(a)) || 0)); break;
-        default: entries.sort((a, b) => (a.priority || 50) - (b.priority || 50));
+        // #16: default sort honors settings.priorityReversed (explicit priority_asc/desc above bypass it).
+        default: entries.sort((a, b) => comparePriority(a, b, getSettings().priorityReversed));
     }
 
     // P10: ds.browseQuickFilter = null | 'since-gen' | 'never-injected' (undefined = off).

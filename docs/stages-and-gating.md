@@ -156,14 +156,16 @@ applyRequiresExcludesGating(entries, policy, debugMode)
 **Location:** `src/stages.js:applyRequiresExcludesGating()`
 
 **Iterative loop** (max 10 iterations) until stable:
-1. Sort entries descending by priority number (higher number = lower priority, processed first) (BUG-029)
+1. Sort entries so HIGHER-priority entries are processed LAST (so their `excludes`-targets may already be gone — the high-priority entry survives) (BUG-029). Default: descending raw number (lower-number-is-higher). When `settings.priorityReversed` (#16): ascending raw number (higher-number-is-higher). Uses `comparePriority()` helper, negated.
 2. For each entry:
    - ForceInject → keep
    - `requires`: ALL titles must be in the active set (AND logic). Missing any → remove.
    - `excludes`: ANY title in the active set → remove (OR logic).
 3. Repeat if any entry was removed (cascading dependencies)
 
-**Re-sort on return**: Ascending by priority (lower number = higher priority) so downstream `formatAndGroup` budget cap keeps the most important entries.
+**Re-sort on return**: "Important first" order so downstream `formatAndGroup` budget cap keeps the most important entries. Same `comparePriority()` helper, not negated.
+
+**Signature** takes `priorityReversed` as its 4th arg; callers in `pipeline.js` and `index.js` pass `settings.priorityReversed`.
 
 **Contradiction detection**: Warns if entry A requires B but B excludes A.
 
@@ -198,7 +200,7 @@ formatAndGroup(entries, settings, promptTagPrefix)
 ```
 
 **Budget enforcement:**
-- Expects entries pre-sorted by priority ascending (lower number = higher priority) — Stage 4 re-sorts before returning
+- Expects entries pre-sorted "important-first" (default: ascending raw priority number; reversed when `settings.priorityReversed`) — Stage 4 re-sorts before returning
 - Adds entries until `maxTokensBudget` or `maxEntries` is reached (unless `unlimited*` is set)
 - Truncates the last entry to fit budget if needed (`_truncated` flag, `_originalTokens` preserved)
 
