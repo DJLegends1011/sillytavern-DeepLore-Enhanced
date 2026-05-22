@@ -1196,6 +1196,8 @@ function loadPopupSettings($container) {
     $c('#dle-sp-ai-system-prompt').val(settings.aiSearchSystemPrompt);
     $c('#dle-sp-ai-summary-length').val(settings.aiSearchManifestSummaryLength);
     $c('#dle-sp-ai-manifest-fields').val(Array.isArray(settings.aiManifestIncludeFields) ? settings.aiManifestIncludeFields.join(', ') : '');
+    $c('#dle-sp-response-prefill-mode').val(settings.responsePrefillMode || 'off');
+    $c('#dle-sp-response-prefill-seed').val(settings.responsePrefillSeed || '');
     $c('#dle-sp-ai-claude-prefix').prop('checked', settings.aiSearchClaudeCodePrefix);
     $c('#dle-sp-ai-force-user-role').prop('checked', settings.aiForceUserRole);
     $c('#dle-sp-scribe-informed-retrieval').prop('checked', settings.scribeInformedRetrieval);
@@ -1762,6 +1764,8 @@ function bindPopupEvents($container) {
         settings.aiManifestIncludeFields = raw.split(',').map(s => s.trim()).filter(Boolean);
         saveSettingsDebounced();
     });
+    $c('#dle-sp-response-prefill-mode').on('change', function () { settings.responsePrefillMode = String($(this).val()); saveSettingsDebounced(); });
+    $c('#dle-sp-response-prefill-seed').on('input', function () { settings.responsePrefillSeed = String($(this).val()); saveSettingsDebounced(); });
     $c('#dle-sp-ai-claude-prefix').on('change', function () { settings.aiSearchClaudeCodePrefix = $(this).prop('checked'); saveSettingsDebounced(); });
     $c('#dle-sp-ai-force-user-role').on('change', function () { settings.aiForceUserRole = $(this).prop('checked'); saveSettingsDebounced(); });
     $c('#dle-sp-scribe-informed-retrieval').on('change', function () { settings.scribeInformedRetrieval = $(this).prop('checked'); saveSettingsDebounced(); });

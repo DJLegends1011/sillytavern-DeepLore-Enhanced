@@ -8,6 +8,8 @@ import './src/diagnostics/boot.js';
 import {
     setExtensionPrompt,
     extension_prompts,
+    extension_prompt_types,
+    extension_prompt_roles,
     saveSettingsDebounced,
     chat,
     chat_metadata,
@@ -22,7 +24,7 @@ import {
 } from '../../../../script.js';
 import { renderExtensionTemplateAsync, saveMetadataDebounced } from '../../../extensions.js';
 import { eventSource, event_types } from '../../../events.js';
-import { promptManager } from '../../../openai.js';
+import { promptManager, oai_settings } from '../../../openai.js';
 import { formatAndGroup } from './core/matching.js';
 import { classifyError } from './core/utils.js';
 import {
@@ -858,6 +860,39 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
                     settings.aiNotepadRole,
                 );
             }
+        }
+
+        // DLE-Side Response Prefill: inject seed text as a final assistant-role
+        // extension prompt at chat depth 0, so the writing AI continues from it
+        // instead of starting fresh with "Certainly, here's…". anthropic-only mode
+        // gates on the underlying model — covers raw Claude (chat_completion_source
+        // = 'claude') and OpenRouter-fronted Claude (anthropic/claude-*).
+        // all-providers mode always injects; other providers may treat the trailing
+        // assistant message as completion-continuation, others may ignore it.
+        const _prefillSeed = (settings.responsePrefillSeed || '').trim();
+        const _prefillMode = settings.responsePrefillMode || 'off';
+        let _prefillApply = false;
+        if (_prefillSeed && _prefillMode !== 'off') {
+            if (_prefillMode === 'all-providers') {
+                _prefillApply = true;
+            } else if (_prefillMode === 'anthropic-only') {
+                const _src = oai_settings?.chat_completion_source || '';
+                const _model = oai_settings?.[`${_src}_model`] || '';
+                _prefillApply = _src === 'claude' || /^anthropic\/claude/i.test(_model);
+            }
+        }
+        if (_prefillApply) {
+            setExtensionPrompt(
+                'deeplore_response_prefill',
+                _prefillSeed,
+                extension_prompt_types.IN_CHAT,
+                0,
+                false,
+                extension_prompt_roles.ASSISTANT,
+            );
+        } else {
+            // Clear stale prefill from a prior generation that did apply it.
+            setExtensionPrompt('deeplore_response_prefill', '', extension_prompt_types.NONE, 0);
         }
 
         // Stage 7: track cooldowns + injection history. Both epoch+lockEpoch guards required —

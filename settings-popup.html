@@ -673,6 +673,23 @@
                         <label for="dle-sp-ai-manifest-fields"><small>Custom Fields in Manifest (empty = all)</small></label>
                         <input id="dle-sp-ai-manifest-fields" type="text" class="text_pole" placeholder="era, faction, mood">
                     </div>
+
+                    <h5 class="dle-settings-subsection-label" style="margin-top: 12px;">Response Prefill</h5>
+                    <span class="dle-text-xs dle-muted">Inject seed text as the last assistant message so the writing AI continues from it instead of starting with "Certainly, here's…".</span>
+                    <div class="flex-container">
+                        <div class="flex1" title="Mode: off (no injection), anthropic-only (only when underlying model is Claude — uses Anthropic's native prefill behavior), all-providers (every chat-completion source — some treat it as continuation, others may ignore).">
+                            <label for="dle-sp-response-prefill-mode"><small>Prefill Mode</small></label>
+                            <select id="dle-sp-response-prefill-mode" class="text_pole">
+                                <option value="off">Off</option>
+                                <option value="anthropic-only">Anthropic-only (Claude / OR-Claude)</option>
+                                <option value="all-providers">All providers</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div title="Seed text injected as the assistant's response opener. Common uses: a story prefix, a forbidden-phrase blocker like 'Without preamble, here we go:', or roleplay continuation glue.">
+                        <label for="dle-sp-response-prefill-seed"><small>Prefill Seed (empty = no injection)</small></label>
+                        <textarea id="dle-sp-response-prefill-seed" class="text_pole textarea_compact" rows="2" placeholder="e.g. *continuing from where we left off*"></textarea>
+                    </div>
                 </div>
 
                 <!-- Toggle: Show Filtering -->

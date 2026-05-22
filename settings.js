@@ -273,6 +273,13 @@ export const defaultSettings = {
     // values (current behavior). Populate to prune the manifest for token control —
     // e.g. ['era', 'faction'] sends only those even if entries have more.
     aiManifestIncludeFields: [],
+    // DLE-Side Response Prefill: inject seed text as the last assistant message so
+    // the writing AI continues from it instead of starting with "Certainly, here's…".
+    // Mode: off (no injection), anthropic-only (only when underlying model is Claude
+    // — native prefill behavior), all-providers (applies to every chat-completion
+    // source — some accept it as continuation, others may ignore).
+    responsePrefillSeed: '',
+    responsePrefillMode: 'off',
     analyticsData: {},
     _wizardCompleted: false,
     // Increment to trigger migrations in runMigrations().
@@ -423,6 +430,7 @@ export const settingsConstraints = {
     // unrecognized value, which deduplicateMultiVault then silently treated like 'first'
     // (drop duplicates instead of preserving). Safe default 'all' restored on mismatch.
     multiVaultConflictResolution: { enum: ['all', 'first', 'last', 'merge'] },
+    responsePrefillMode: { enum: ['off', 'anthropic-only', 'all-providers'] },
 };
 
 // BUG-088: settings cache REMOVED. ST's native pattern is direct read of
