@@ -400,7 +400,7 @@ if (lockEpoch === generationLockEpoch) setGenerationLock(false);
 
 **Why (BUG-396):** Strip-dedup uses `deeplore_injection_log` to suppress entries "already in context." If a user deletes a message and clears picks, the log still contains entries from the deleted message — strip-dedup removes them as duplicates even though the injected content is gone. The user sees entries vanish despite their keywords appearing in chat.
 
-**Where:** `src/drawer/drawer-events.js` Clear Picks handler. The three things it must clear: (1) `aiSearchCache` — AI selection results, (2) `lastInjectionSources` — drawer display, (3) `chat_metadata.deeplore_injection_log` — strip-dedup history.
+**Where:** `src/drawer/drawer-events.js` Clear Picks handler. The two things it must clear: (1) `aiSearchCache` — AI selection results, (2) `chat_metadata.deeplore_injection_log` — strip-dedup history. The verdict store is NOT cleared here — clearing user-visible verdict history would lose the "what did DLE choose for message #47?" affordance. Next generation's verdict supersedes the prior one naturally.
 
 ---
 
@@ -497,3 +497,23 @@ if (lockEpoch === generationLockEpoch) setGenerationLock(false);
 **Why:** Title is interpolated as the wrapper tag name (`<{{title}}>`), so unescaped `<` in a title produces an unparseable wrapper. Content is freeform text to ST, the LLM, and every downstream consumer in the injection path — there is no XML parser between `setExtensionPrompt` and the model. Vault authors intentionally embed XML, markdown, code samples, `<3`, nested tags, and ampersands in entry content; escaping clobbers all of those (issue #16). Earlier BUG-090 expanded the escape on the assumption of "downstream XML tooling" — no such tooling exists. The original pre-BUG-090 stub was paranoia about prompt-injection from `</system>`-style tokens, but vault content is author-controlled, not user-input, and ST's prompt structure is JSON-shaped, not text-parsed.
 
 **Where:** `core/matching.js` — `formatEntry` arrow inside `formatAndGroup`. Test: `test/unit.mjs` "XML escaping in content templates: title escaped, content raw (issue #16)".
+
+---
+
+## 46. Verdict Store Replaces the Four Racing Globals
+
+**Rule:** Pipeline outputs (injected sources, full trace, previous-turn diff) live on a single per-turn record in `src/verdict/verdict-store.js`. Read via `getCurrent()` / `getPrevious()` / `getByMessage()`. The legacy globals (`lastInjectionSources`, `lastPipelineTrace`, `previousSources`, `lastInjectionEpoch`) are gone — references in new code must be replaced with verdict reads. Do not reintroduce module-level globals for this data.
+
+**Why (D-05, 2026-05-22):** The four globals raced. `lastInjectionSources` was cleared on render but `lastPipelineTrace` survived → drawer fallback chains (`lastInjectionSources ?? lastPipelineTrace?.injected`) had to be threaded through every consumer. Cartographer + drawer + `/dle-inspect` could disagree across messages because they read different globals at different epoch boundaries. Swipes left partial state behind (rollback only touched some globals). "What did DLE inject on message #47?" was unanswerable — the data was overwritten on message #48. The verdict store fixes all three: one record per turn, msgIdx-anchored, ring buffer + per-chat IDB spill (cap 200, auto-pruned).
+
+**Storage rules:**
+- In-memory ring buffer (`RING_CAP=50`) is the fast path. `getCurrent()` / `getPrevious()` read from it synchronously.
+- IDB spill (`IDB_PER_CHAT_CAP=200`) is current-chat-only. On CHAT_CHANGED: `clearChat(null)` drops the ring, `setCurrentChatId(newId)` rebinds scope, `hydrateChat(newId)` async-pulls IDB rows for resume-after-reload.
+- **NEVER** persist verdicts to `chat_metadata` — that would bloat chat files. The Roadmap explicitly rejected that variant.
+- Pipeline writes ONE verdict per turn at commit (after `setExtensionPrompt` calls). Empty-injection turns still write a verdict (`injectedSources: []`) so consumers see "nothing this turn" instead of the prior verdict bleeding through.
+
+**Trace shape note:** `trace.keywordMatched`, `aiSelected`, `cooldownRemoved`, `contextualGatingRemoved`, `gatedOut`, `stripDedupRemoved`, `budgetCut`, `refineKeyBlocked`, `probabilitySkipped`, `warmupFailed` now carry `vaultSource` on each entry (2026-05-22). The perEntry aggregator in `verdict-pure.js` requires this to honor the trackerKey invariant (vaultSource:title) under `multiVaultConflictResolution='all'`.
+
+**CHARACTER_MESSAGE_RENDERED attachment:** The handler in `index.js` reads the current verdict and attaches `message.extra.deeplore_sources` only when `verdict.msgIdx === messageId && verdict.epoch === chatEpoch`. The `message.extra._deeplore_sources_tag` flag prevents double-attach on swipe.
+
+**Where:** `src/verdict/verdict-store.js` (live), `src/verdict/verdict-pure.js` (testable helpers), `src/vault/cache.js` (shared IDB `DeepLoreEnhanced` schema v2). Consumer call sites: drawer (`drawer-render-tabs.js` / `-status.js` / `-footer.js` / `drawer.js` / `drawer-events.js`), `src/ui/cartographer.js`, `src/ui/commands-pipeline.js` (`/dle-inspect`), `src/ui/diagnostics.js`, `src/librarian/librarian-tools.js`, `src/diagnostics/flight-recorder.js`, `src/diagnostics/state-snapshot.js`. Tests: `test/verdict.test.mjs` (70 pure-helper), regression VRD-1..VRD-7.

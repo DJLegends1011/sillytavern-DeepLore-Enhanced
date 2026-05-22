@@ -133,7 +133,7 @@ Queries are trimmed, filtered, capped to 4 (in `searchLoreAction()` input normal
 2. Increment `loreGapSearchCount` IMMEDIATELY (in `searchLoreAction()`, right after the max-searches guard) -- before any await -- to prevent race when AI sends multiple concurrent search_lore calls.
 3. Await `buildPromise` if vault index still loading.
 4. BM25 search via `queryBM25(fuzzySearchIndex, query, librarianMaxResults, fuzzySearchMinScore)`.
-5. Filter out already-injected titles (`lastInjectionSources`) and `guide` entries (in `searchLoreAction()` per-query BM25 hit filter).
+5. Filter out already-injected titles (from `getCurrentVerdict()?.injectedSources` — verdict store) and `guide` entries (in `searchLoreAction()` per-query BM25 hit filter).
 6. Select single best hit (highest BM25 score across all queries), return full content.
 7. Resolve up to 3 linked entries from best hit's `resolvedLinks` -- manifest/summary format only.
 8. Report other match counts across remaining queries.

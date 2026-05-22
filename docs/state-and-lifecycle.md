@@ -54,11 +54,38 @@ No getter functions exist — other modules `import { vaultIndex } from './state
 | `lastIndexGenerationCount` | `number` | Chat (→0) | vault.js | generation-based rebuild trigger |
 
 ### Injection Tracking
+
+**Verdict store** (`src/verdict/verdict-store.js`, 2026-05-22) replaces four racing globals
+(`lastInjectionSources`, `lastInjectionEpoch`, `previousSources`, `lastPipelineTrace`).
+A verdict is one authoritative per-turn record carrying `injectedSources`, full pipeline
+`trace`, `perEntry` aggregation, `chatId` + `msgIdx` for cross-chat staleness detection,
+and `epoch`/`lockEpoch` tags. Storage: in-memory ring buffer (cap 50) + IndexedDB spill
+(per-chat, cap 200, auto-pruned). Never written to `chat_metadata` — chat files stay clean.
+
+**Verdict APIs (verdict-store.js):**
+| API | Use |
+|---|---|
+| `writeVerdict(v)` | Pipeline writes one verdict at commit (replaces 4× setLast*). |
+| `getCurrent()` | Newest verdict (any chat in ring). |
+| `getCurrentForChat(chatId)` | Newest for a specific chat. |
+| `getPrevious()` | Second-newest for the current chat (replaces `previousSources` diff anchor). |
+| `getByMessage(msgIdx, chatId?)` | Verdict-by-message lookup; falls back to IDB. |
+| `setCurrentChatId(chatId)` | Rebind scope on CHAT_CHANGED. |
+| `clearChat(chatId)` | Drop ring + IDB records for a chat. `null` = wipe everything. |
+| `hydrateChat(chatId)` | Pull recent IDB records for resume-after-reload. |
+| `onVerdictChanged(cb)` | Observer; fires on every write / clear / hydrate. |
+
+**Verdict shape (per record):** `genId`, `chatId`, `msgIdx`, `epoch`, `lockEpoch`, `ts`,
+`injectedSources[]`, `trace` (full pipeline trace — keywordMatched, aiSelected, gatedOut,
+budgetCut, injected, all stage `*Ms` timings, fuzzyStats, etc.), `perEntry[]` (one row per
+candidate seen this turn with `finalState`, reason chain, confidence, tokens).
+
+**`trace.keywordMatched` / `aiSelected` and removal-stage arrays now carry `vaultSource`**
+(2026-05-22) so `perEntry` aggregation can distinguish multi-vault same-title entries
+under `multiVaultConflictResolution='all'` (CLAUDE.md trackerKey invariant).
+
 | Variable | Type | Reset scope | Writers | Readers |
 |---|---|---|---|---|
-| `lastInjectionSources` | `array\|null` | Chat (→null) | onGenerate commit, CHAT_CHANGED | Cartographer |
-| `lastInjectionEpoch` | `number` | Chat (→-1) | onGenerate, CHAT_CHANGED | Cartographer epoch guard |
-| `previousSources` | `array\|null` | Chat (→null) | cartographer.js, CHAT_CHANGED | Cartographer diff display |
 | `cooldownTracker` | `Map<trackerKey, remaining>` | Chat (cleared) | trackGeneration, decrementTrackers, CHAT_CHANGED | matching, cooldown stage |
 | `decayTracker` | `Map<trackerKey, gensSince>` | Chat (cleared) | trackGeneration, decrementTrackers, CHAT_CHANGED | matching decay boost |
 | `consecutiveInjections` | `Map<trackerKey, count>` | Chat (cleared) | trackGeneration, CHAT_CHANGED | decay calculation |
@@ -67,9 +94,6 @@ No getter functions exist — other modules `import { vaultIndex } from './state
 | `perSwipeInjectedKeys` | `Map<swipeKey, Set<trackerKey>>` | Chat (hydrated) | onGenerate stage 9, CHAT_CHANGED | swipe rollback |
 | `lastGenerationTrackerSnapshot` | `object\|null` | Chat (→null) | onGenerate swipe phase, CHAT_CHANGED | swipe rollback |
 | `lastWarningRatio` | `number` | Chat (→0) | onGenerate context warning | warning dedup |
-| `lastPipelineTrace` | `object\|null` | Chat (→null) | onGenerate trace publish, CHAT_CHANGED | /dle-inspect, drawer |
-
-**`lastPipelineTrace` shape note:** Contains `genId` (6-char string or `null`) and 10 `*Ms` timing fields (all `number|null`): `ensureIndexFreshMs`, `pinBlockMs`, `contextualGatingMs`, `reinjectionCooldownMs`, `requiresExcludesMs`, `stripDedupMs`, `formatGroupMs`, `trackGenerationMs`, `recordAnalyticsMs`, `perChatCountsMs`. Set by `onGenerate()` in `index.js` via `performance.now()` bookends around each stage call. No new state variables — these are fields on the existing trace object initialized in `runPipeline()` (`src/pipeline/pipeline.js`).
 
 ### Scribe State
 | Variable | Type | Reset scope | Writers | Readers |

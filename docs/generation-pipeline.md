@@ -212,9 +212,11 @@ Enriches `trace` with gating/budget/dedup details. **Epoch-guarded** (in `onGene
       → Outlet groups (position -1): setExtensionPrompt with outlet tag
       → Prompt List mode: write to PM entry directly
       → Extension mode: setExtensionPrompt with position/depth/role
-    → Tag lastInjectionSources + lastInjectionEpoch for Cartographer
+    → writeVerdict({trace, injectedSources, chatId, msgIdx, epoch, lockEpoch})
+       (verdict store; replaces lastInjectionSources / lastInjectionEpoch / lastPipelineTrace)
   → Else (no groups):
     → clearPrompts() (in onGenerate() else branch) — stale prompts from prior generation
+    → writeVerdict({trace, injectedSources: [], ...}) so consumers see "nothing this turn"
 ```
 
 **Two epoch checks** before committing (in `onGenerate()`). Both must pass.
