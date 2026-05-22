@@ -855,6 +855,34 @@ export function fuzzyTitleMatch(aiTitle, candidateTitles, threshold = 0.6) {
     return bestScore >= threshold ? { title: bestTitle, similarity: bestScore } : null;
 }
 
+/**
+ * All-results variant of fuzzyTitleMatch — returns every candidate that scores
+ * at or above the threshold, sorted descending by similarity. Used by slash
+ * commands (`/dle-pin`, `/dle-block`, etc.) to surface multiple plausible
+ * matches via a tie-break picker when the user typed something ambiguous.
+ *
+ * @param {string} query
+ * @param {string[]} candidateTitles
+ * @param {number} [threshold=0.6]
+ * @returns {Array<{title: string, similarity: number}>} — empty array if none match
+ */
+export function fuzzyTitleMatchAll(query, candidateTitles, threshold = 0.6) {
+    const qBigrams = bigrams(String(query || '').toLowerCase());
+    if (qBigrams.size === 0) return [];
+
+    const matches = [];
+    for (const candidate of candidateTitles) {
+        const cBigrams = bigrams(String(candidate).toLowerCase());
+        if (cBigrams.size === 0) continue;
+        let overlap = 0;
+        for (const bg of qBigrams) { if (cBigrams.has(bg)) overlap++; }
+        const score = (2 * overlap) / (qBigrams.size + cBigrams.size);
+        if (score >= threshold) matches.push({ title: candidate, similarity: score });
+    }
+    matches.sort((a, b) => b.similarity - a.similarity);
+    return matches;
+}
+
 /** @param {string} str @returns {Set<string>} */
 function bigrams(str) {
     const set = new Set();

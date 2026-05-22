@@ -17,6 +17,7 @@ import { buildIndex, ensureIndexFresh, getMaxResponseTokens } from '../vault/vau
 import { runScribe } from '../ai/scribe.js';
 import { runAutoSuggest, showSuggestionPopup } from '../ai/auto-suggest.js';
 import { optimizeEntryKeys, showOptimizePopup } from './popups.js';
+import { fuzzyTitleMatchAll } from '../helpers.js';
 
 export function registerAiCommands() {
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
@@ -36,10 +37,43 @@ export function registerAiCommands() {
                 toastr.info('Usage: /dle-optimize-keys <entry name>', 'DeepLore Enhanced');
                 return '';
             }
-            const entry = vaultIndex.find(e => e.title.toLowerCase() === name.toLowerCase());
+            let entry = vaultIndex.find(e => e.title.toLowerCase() === name.toLowerCase());
             if (!entry) {
-                toastr.warning(`Entry "${name}" not found.`, 'DeepLore Enhanced');
-                return '';
+                // Fuzzy fallback so a typo / partial name doesn't drop on the floor.
+                const titles = vaultIndex.map(e => e.title);
+                const matches = fuzzyTitleMatchAll(name, titles, 0.6);
+                if (matches.length === 0) {
+                    toastr.warning(`Entry "${name}" not found.`, 'DeepLore Enhanced');
+                    return '';
+                }
+                if (matches.length === 1) {
+                    entry = vaultIndex.find(e => e.title === matches[0].title);
+                    toastr.info(`Matched "${entry.title}" (${Math.round(matches[0].similarity * 100)}%).`, 'DeepLore Enhanced');
+                } else {
+                    const top = matches.slice(0, 10);
+                    const html = `<div class="dle-popup">
+                        <h3>Optimize keys: pick an entry</h3>
+                        <p class="dle-text-xs dle-muted">No exact match for "${escapeHtml(name)}". Found ${matches.length} similar:</p>
+                        <ol class="dle-fuzzy-picker-list">
+                            ${top.map(m => `<li><button type="button" class="menu_button dle-fuzzy-pick" data-title="${escapeHtml(m.title)}">${escapeHtml(m.title)} <span class="dle-dimmed">(${Math.round(m.similarity * 100)}%)</span></button></li>`).join('')}
+                        </ol>
+                    </div>`;
+                    let picked = null;
+                    await callGenericPopup(html, POPUP_TYPE.TEXT, '', {
+                        wide: true,
+                        onOpen: () => {
+                            document.querySelectorAll('.dle-fuzzy-pick').forEach(btn => {
+                                btn.addEventListener('click', () => {
+                                    picked = btn.getAttribute('data-title');
+                                    document.querySelector('.popup-button-ok')?.click();
+                                });
+                            });
+                        },
+                    });
+                    if (!picked) return '';
+                    entry = vaultIndex.find(e => e.title === picked);
+                    if (!entry) return '';
+                }
             }
             const loadingToast = toastr.info(`Optimizing keywords for "${entry.title}"...`, 'DeepLore Enhanced', { timeOut: 0, extendedTimeOut: 0 });
             try {

@@ -1695,6 +1695,36 @@ test('updateFrontmatterFields: no-op when updates object is empty', () => {
     assertEqual(result.content, input, 'content byte-identical');
 });
 
+// --- Fuzzy name matching (all-results variant) ---
+
+import { fuzzyTitleMatchAll } from '../src/helpers.js';
+
+test('fuzzyTitleMatchAll: returns empty array on empty input', () => {
+    assertEqual(fuzzyTitleMatchAll('', ['foo', 'bar']).length, 0, 'empty query');
+    assertEqual(fuzzyTitleMatchAll('foo', []).length, 0, 'empty candidates');
+});
+
+test('fuzzyTitleMatchAll: returns all matches above threshold, sorted desc', () => {
+    const candidates = ['Alice', 'Alicia', 'Bob', 'Alic'];
+    const matches = fuzzyTitleMatchAll('Alic', candidates, 0.3);
+    assert(matches.length >= 2, 'multiple matches surfaced');
+    for (let i = 1; i < matches.length; i++) {
+        assert(matches[i - 1].similarity >= matches[i].similarity, 'sorted desc by similarity');
+    }
+});
+
+test('fuzzyTitleMatchAll: respects threshold cutoff', () => {
+    const candidates = ['Apple', 'Application', 'Banana'];
+    const strict = fuzzyTitleMatchAll('App', candidates, 0.9);
+    const lenient = fuzzyTitleMatchAll('App', candidates, 0.1);
+    assert(lenient.length > strict.length, 'lenient threshold finds more');
+});
+
+test('fuzzyTitleMatchAll: handles non-string input safely', () => {
+    assertEqual(fuzzyTitleMatchAll(null, ['x']).length, 0, 'null query');
+    assertEqual(fuzzyTitleMatchAll(undefined, ['x']).length, 0, 'undefined query');
+});
+
 // --- Agent C audit regression guards ---
 
 test('updateFrontmatterFields: CRLF-authored file updates in place, no duplicate keys', () => {
