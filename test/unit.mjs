@@ -1466,6 +1466,108 @@ test('cmrsResultToText: standard OAI usage still wins when both present', () => 
     assertEqual(out.usage.output_tokens, 5, 'standard output_tokens prioritized');
 });
 
+// Wave 6.5 coverage backfill — edge inputs to cmrsResultToText that production
+// hits when ST's CMRS or upstream returns degenerate shapes.
+
+test('cmrsResultToText: null result returns empty text + zero usage', () => {
+    const out = cmrsResultToText(null);
+    assertEqual(out.text, '', 'null → empty text');
+    assertEqual(out.usage.input_tokens, 0, 'no input tokens');
+    assertEqual(out.usage.output_tokens, 0, 'no output tokens');
+});
+
+test('cmrsResultToText: undefined / empty object passes through safely', () => {
+    const a = cmrsResultToText(undefined);
+    assertEqual(a.text, '', 'undefined safe');
+    const b = cmrsResultToText({});
+    assertEqual(b.text, '', 'empty result.content missing → empty text');
+    assertEqual(b.usage.input_tokens, 0, 'empty usage zero');
+});
+
+test('cmrsResultToText: JSON-schema parsed object content stringifies (issue #24 contract)', () => {
+    // ST replaces result.content with the parsed object when data.json_schema is set;
+    // cmrsResultToText re-stringifies so downstream string ops (extractAiResponseClient,
+    // debug-preview .slice) keep working. Locks the issue #24 fix.
+    const out = cmrsResultToText({ content: { selected: [{ title: 'X' }] } });
+    assertEqual(typeof out.text, 'string', 'string contract preserved');
+    assert(out.text.includes('"selected"'), 'object serialized into text');
+    assert(out.text.includes('"X"'), 'inner payload preserved');
+});
+
+test('cmrsResultToText: partial Gemini usageMetadata maps what is present', () => {
+    const out = cmrsResultToText({
+        content: 'x',
+        usageMetadata: { candidatesTokenCount: 3 },
+    });
+    assertEqual(out.usage.input_tokens, 0, 'missing promptTokenCount → 0');
+    assertEqual(out.usage.output_tokens, 3, 'candidatesTokenCount mapped');
+});
+
+// Wave 6.5 backfill — summarize-pure purity + multi-summary contract.
+
+test('applyHideAndPrepend: does not mutate messages outside the range', () => {
+    const chat = [
+        { mes: 'before', is_system: false },
+        { mes: 'r0', is_system: false },
+        { mes: 'r1', is_system: false },
+        { mes: 'after', is_system: false },
+    ];
+    const beforeSnapshot = JSON.stringify(chat[0]);
+    const afterSnapshot = JSON.stringify(chat[3]);
+    applyHideAndPrepend(chat, { start: 1, end: 2 }, 'sum_X', 'text');
+    // chat[0] still original (not touched); chat[4] (was [3]) still original.
+    assertEqual(JSON.stringify(chat[0]), beforeSnapshot, 'pre-range message untouched');
+    assertEqual(JSON.stringify(chat[4]), afterSnapshot, 'post-range message untouched');
+});
+
+test('rollbackById: idempotent — second call with same id is a no-op', () => {
+    const chat = [
+        { mes: 'a', is_system: false },
+        { mes: 'b', is_system: false },
+    ];
+    applyHideAndPrepend(chat, { start: 0, end: 1 }, 'sum_X', 'text');
+    const first = rollbackById(chat, 'sum_X');
+    assertEqual(first.removed, 1, 'first removes summary');
+    assertEqual(first.restored, 2, 'first restores 2 messages');
+    const second = rollbackById(chat, 'sum_X');
+    assertEqual(second.removed, 0, 'second finds no summary to remove');
+    assertEqual(second.restored, 0, 'second finds no marked messages');
+    assertEqual(chat.length, 2, 'chat unchanged on second call');
+});
+
+test('applyHideAndPrepend: skips null/undefined entries inside range gracefully', () => {
+    const chat = [
+        { mes: 'a', is_system: false },
+        null,
+        { mes: 'c', is_system: false },
+    ];
+    const { hiddenCount } = applyHideAndPrepend(chat, { start: 0, end: 2 }, 'sum_X', 'text');
+    assertEqual(hiddenCount, 2, 'null entry skipped, two hidden');
+    assertEqual(chat.length, 4, 'summary inserted, null preserved');
+    // The null is still present (un-touched).
+    assertEqual(chat[2], null, 'null entry untouched');
+});
+
+// Wave 6.5 backfill — caveman edges.
+
+test('caveman: preserves contractions (do-not, we-have, I-am)', () => {
+    const out = compressCaveman("Don't worry, we've been there. I'm fine.");
+    assert(out.includes("Don't"), 'contraction preserved');
+    assert(out.includes("we've"), 'second contraction preserved');
+    assert(out.includes("I'm"), 'third contraction preserved');
+});
+
+test('caveman: handles em-dash and smart quotes without crashing', () => {
+    const out = compressCaveman('She said “the truth” — a strange thing.');
+    assert(typeof out === 'string', 'returns string');
+    assert(out.length > 0, 'non-empty output');
+});
+
+test('caveman: preserves URLs with query strings and fragments', () => {
+    const out = compressCaveman('Visit https://example.com/the/page?q=the+answer#section for the docs.');
+    assert(out.includes('https://example.com/the/page?q=the+answer#section'), 'URL preserved verbatim');
+});
+
 test('extractAiResponseClient: nested brackets in strings', () => {
     const result = extractAiResponseClient('[{"title":"Entry [with brackets]","confidence":"high","reason":"test"}]');
     assert(Array.isArray(result), 'should handle brackets in strings');
