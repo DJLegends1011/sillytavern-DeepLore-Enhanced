@@ -268,6 +268,11 @@ export const defaultSettings = {
     // before writing to the vault. Per-import option can still override per call. Stored
     // entries are annotated with `compress: caveman` in frontmatter for audit.
     importCompressByDefault: false,
+    // Custom Fields in AI Manifest: whitelist of custom-field names sent to the AI
+    // alongside each candidate entry. Empty array = include ALL custom fields with
+    // values (current behavior). Populate to prune the manifest for token control —
+    // e.g. ['era', 'faction'] sends only those even if entries have more.
+    aiManifestIncludeFields: [],
     analyticsData: {},
     _wizardCompleted: false,
     // Increment to trigger migrations in runMigrations().

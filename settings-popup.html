@@ -669,6 +669,10 @@
                         <input id="dle-sp-scribe-informed-retrieval" type="checkbox" class="checkbox">
                         <span>Use Session Notes as AI Context</span>
                     </label>
+                    <div title="Comma-separated list of custom field names (era, faction, mood, etc.) to send to the AI in each candidate's manifest line. Leave empty to include ALL custom fields with values. Populate to prune the manifest for token control.">
+                        <label for="dle-sp-ai-manifest-fields"><small>Custom Fields in Manifest (empty = all)</small></label>
+                        <input id="dle-sp-ai-manifest-fields" type="text" class="text_pole" placeholder="era, faction, mood">
+                    </div>
                 </div>
 
                 <!-- Toggle: Show Filtering -->

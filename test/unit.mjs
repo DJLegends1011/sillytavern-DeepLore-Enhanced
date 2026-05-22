@@ -5647,6 +5647,39 @@ test('buildCandidateManifest: custom field annotations', () => {
     assert(manifest.includes('Location: mountain'), 'location annotation');
 });
 
+test('buildCandidateManifest: aiManifestIncludeFields whitelist prunes fields', () => {
+    const candidates = [makeEntry('Dragon', {
+        summary: 'A dragon', tokenEstimate: 50,
+        customFields: { era: ['medieval'], location: 'mountain' },
+    })];
+    const settings = makeSettings({ aiManifestIncludeFields: ['era'] });
+    const { manifest } = buildCandidateManifest(candidates, false, settings);
+    assert(manifest.includes('Era: medieval'), 'era kept (in whitelist)');
+    assert(!manifest.includes('Location: mountain'), 'location pruned (not in whitelist)');
+});
+
+test('buildCandidateManifest: empty aiManifestIncludeFields includes everything', () => {
+    const candidates = [makeEntry('Dragon', {
+        summary: 'A dragon', tokenEstimate: 50,
+        customFields: { era: ['medieval'], location: 'mountain' },
+    })];
+    const settings = makeSettings({ aiManifestIncludeFields: [] });
+    const { manifest } = buildCandidateManifest(candidates, false, settings);
+    assert(manifest.includes('Era: medieval'), 'era kept');
+    assert(manifest.includes('Location: mountain'), 'location kept');
+});
+
+test('buildCandidateManifest: whitelist with no matches drops field block entirely', () => {
+    const candidates = [makeEntry('Dragon', {
+        summary: 'A dragon', tokenEstimate: 50,
+        customFields: { era: ['medieval'] },
+    })];
+    const settings = makeSettings({ aiManifestIncludeFields: ['faction'] });
+    const { manifest } = buildCandidateManifest(candidates, false, settings);
+    assert(!manifest.includes('Era:'), 'era pruned (not in whitelist)');
+    assert(!manifest.includes('Faction:'), 'no faction (none on entry)');
+});
+
 test('buildCandidateManifest: decay STALE hint', () => {
     const candidates = [makeEntry('Dragon', { summary: 'A dragon', tokenEstimate: 50 })];
     const settings = makeSettings({ decayEnabled: true, decayBoostThreshold: 5 });
