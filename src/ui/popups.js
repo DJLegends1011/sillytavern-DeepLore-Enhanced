@@ -801,3 +801,102 @@ export async function showOptimizePopup(entry, result) {
         }
     }
 }
+
+/**
+ * #26 — Batch optimize: run `optimizeEntryKeys` + `showOptimizePopup` sequentially
+ * over the selected entries. Sequential by design — each entry deserves individual
+ * review before writing to Obsidian, and limiting concurrency keeps AI cost
+ * predictable. A confirm popup states the count + per-entry-popup expectation
+ * up front so the user isn't blindsided by 12 modals in a row.
+ *
+ * @param {string[]} trackerKeys - vaultSource:title selector strings
+ * @returns {Promise<{accepted: number, skipped: number, errored: number}>}
+ */
+export async function runBatchOptimize(trackerKeys) {
+    if (!Array.isArray(trackerKeys) || trackerKeys.length === 0) {
+        return { accepted: 0, skipped: 0, errored: 0 };
+    }
+
+    // Resolve entries; drop any selection that no longer exists in the live index.
+    const entries = [];
+    for (const trk of trackerKeys) {
+        const found = vaultIndex.find(e => trackerKey(e) === trk);
+        if (found) entries.push(found);
+    }
+    if (entries.length === 0) {
+        toastr.info('No selected entries remain in the index.', 'DeepLore Enhanced');
+        return { accepted: 0, skipped: 0, errored: 0 };
+    }
+
+    const count = entries.length;
+    const listHtml = entries.slice(0, 12).map(e => `<li>${escapeHtml(e.title)}</li>`).join('')
+        + (entries.length > 12 ? `<li><em>…and ${entries.length - 12} more</em></li>` : '');
+    const confirmHtml = `<div class="dle-popup">
+        <h3>Batch Optimize Keywords (${count})</h3>
+        <p>Each entry runs an AI call to suggest new keywords, then opens its own review popup where you accept or reject the change. This is intentional — keyword writes mutate your vault, so we never apply suggestions blindly.</p>
+        <p><strong>What to expect:</strong></p>
+        <ul>
+            <li>${count} AI call${count === 1 ? '' : 's'} run one at a time (cancel-friendly, predictable cost)</li>
+            <li>${count} review popup${count === 1 ? '' : 's'} open in sequence — cancel any one to skip it</li>
+            <li>Progress shown in a toast; close it any time to abort the batch</li>
+        </ul>
+        <details><summary>Entries (${count})</summary>
+            <ol class="dle-fuzzy-picker-list">${listHtml}</ol>
+        </details>
+    </div>`;
+    const proceed = await callGenericPopup(confirmHtml, POPUP_TYPE.CONFIRM, '', {
+        wide: true,
+        okButton: `Run ${count}`,
+        cancelButton: 'Cancel',
+    });
+    if (!proceed) return { accepted: 0, skipped: 0, errored: 0 };
+
+    let accepted = 0;
+    let skipped = 0;
+    let errored = 0;
+    let aborted = false;
+
+    // Persistent progress toast — closing it sets `aborted=true` so the loop bails after the in-flight call.
+    const progressToast = toastr.info(
+        `Optimizing 0 / ${count}…`,
+        'DeepLore Enhanced',
+        { timeOut: 0, extendedTimeOut: 0, closeButton: true, tapToDismiss: false, onHidden: () => { aborted = true; } }
+    );
+
+    for (let i = 0; i < entries.length; i++) {
+        if (aborted) break;
+        const entry = entries[i];
+        const $progressBody = progressToast && progressToast.find ? progressToast.find('.toast-message') : null;
+        if ($progressBody && $progressBody.length) {
+            $progressBody.text(`Optimizing ${i + 1} / ${count} — ${entry.title}`);
+        }
+        try {
+            const result = await optimizeEntryKeys(entry);
+            if (!result) {
+                errored++;
+                continue;
+            }
+            // showOptimizePopup returns true if the user accepted (writes happen inside).
+            // We can't tell accept vs cancel reliably here — assume any reach of the user-facing
+            // popup counts the entry as "reviewed". Track accept-on-success separately by checking
+            // the toast text would be brittle, so the conservative counter is reviewed=true / errored=false.
+            await showOptimizePopup(entry, result);
+            accepted++;
+        } catch (err) {
+            console.error('[DLE] Batch optimize entry failed:', entry.title, err);
+            errored++;
+        }
+    }
+
+    if (progressToast) toastr.clear(progressToast);
+    const summaryParts = [`${accepted} reviewed`];
+    if (errored > 0) summaryParts.push(`${errored} failed`);
+    if (aborted) {
+        skipped = entries.length - accepted - errored;
+        if (skipped > 0) summaryParts.push(`${skipped} skipped`);
+        toastr.warning(`Batch aborted: ${summaryParts.join(', ')}.`, 'DeepLore Enhanced');
+    } else {
+        toastr.success(`Batch complete: ${summaryParts.join(', ')}.`, 'DeepLore Enhanced');
+    }
+    return { accepted, skipped, errored };
+}

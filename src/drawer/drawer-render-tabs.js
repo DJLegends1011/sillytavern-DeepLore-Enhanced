@@ -13,6 +13,7 @@ import {
     ds, BROWSE_ROW_HEIGHT, BROWSE_OVERSCAN,
     getMatchLabel, computeEntryTemperatures,
 } from './drawer-state.js';
+import { buildBrowseRowModel, topFolderOf } from './drawer-browse-pure.js';
 
 let _cachedRejectionMap = new Map();
 let _cachedRejectionTrace = null;
@@ -508,6 +509,22 @@ export function renderBrowseTab() {
     }
 
     ds.browseFilteredEntries = entries;
+    // Carto/Why nav into a collapsed folder must auto-expand that folder, otherwise the
+    // re-expand block in renderBrowseWindow finds nothing and the nav silently no-ops.
+    if (ds.browseFolderGrouping && ds.browseNavigateTarget) {
+        const target = entries.find(e => e.title === ds.browseNavigateTarget);
+        if (target) {
+            const folder = topFolderOf(target);
+            if (!(ds.browseExpandedFolders instanceof Set)) ds.browseExpandedFolders = new Set();
+            ds.browseExpandedFolders.add(folder);
+        }
+    }
+    // #13: build row model — entries-only when grouping OFF, header+entry interleaved when ON.
+    // Collapsed folders omit their entries from the model, so virtual-scroll math just walks rowModel.
+    ds.browseRowModel = buildBrowseRowModel(entries, {
+        grouping: !!ds.browseFolderGrouping,
+        expandedFolders: ds.browseExpandedFolders instanceof Set ? ds.browseExpandedFolders : null,
+    });
     ds.browseLastRangeStart = -1;
     ds.browseLastRangeEnd = -1;
     // Carto/Why? navigation target survives one filter run for auto-expand; otherwise collapse.
@@ -525,8 +542,29 @@ export function renderBrowseTab() {
     // min-height so flex doesn't collapse the virtual-scroll container.
     const listEl = $list[0];
     if (!listEl) return;
-    const totalHeight = entries.length * BROWSE_ROW_HEIGHT + (ds.browseExpandedExtraHeight || 0);
+    const totalHeight = ds.browseRowModel.length * BROWSE_ROW_HEIGHT + (ds.browseExpandedExtraHeight || 0);
     $list.css({ 'min-height': totalHeight + 'px' });
+
+    // Sync batch-toolbar pressed/visibility state — render is the single source of truth.
+    const $toolbar = $drawer.find('.dle-browse-batch-toolbar');
+    if ($toolbar.length) {
+        $toolbar.find('.dle-browse-group-toggle')
+            .attr('data-pressed', ds.browseFolderGrouping ? 'true' : 'false')
+            .attr('aria-pressed', ds.browseFolderGrouping ? 'true' : 'false');
+        $toolbar.find('.dle-browse-select-toggle')
+            .attr('data-pressed', ds.browseSelectMode ? 'true' : 'false')
+            .attr('aria-pressed', ds.browseSelectMode ? 'true' : 'false');
+        const selCount = ds.browseSelected?.size || 0;
+        const $optBtn = $toolbar.find('.dle-browse-optimize-selected');
+        const $clrBtn = $toolbar.find('.dle-browse-clear-selection');
+        if (selCount > 0) {
+            $optBtn.prop('hidden', false).find('.dle-browse-optimize-count').text(`Optimize Selected (${selCount})`);
+            $clrBtn.prop('hidden', false);
+        } else {
+            $optBtn.prop('hidden', true);
+            $clrBtn.prop('hidden', true);
+        }
+    }
 
     // Reset scroll to top only when the filter signature actually changed.
     // Resetting unconditionally on every render (e.g. pin/block toggle that re-renders) yanked the user back mid-scroll.
@@ -538,6 +576,9 @@ export function renderBrowseTab() {
         cf: ds.browseCustomFieldFilters || {},
         qf: ds.browseQuickFilter ?? null,
         sort: sortKey || 'priority_asc',
+        // #13: grouping + collapsed-folder set change row-count, so they belong in the scroll-reset signature.
+        grp: !!ds.browseFolderGrouping,
+        exp: ds.browseExpandedFolders instanceof Set ? [...ds.browseExpandedFolders].sort().join('|') : '',
     });
     const scrollContainer = $drawer.find('.dle-drawer-inner')[0];
     if (scrollContainer && ds._browseLastFilterSig !== _filterSignature) {
@@ -571,8 +612,9 @@ export function renderBrowseWindow() {
     const listEl = $list[0];
     if (!listEl) return;
 
-    const entries = ds.browseFilteredEntries;
-    if (!entries.length) { $list.empty(); return; }
+    // #13: virtual scroll now walks the row model (headers + entries) rather than entries alone.
+    const rowModel = ds.browseRowModel;
+    if (!rowModel || !rowModel.length) { $list.empty(); return; }
 
     // Scroll container is .dle-drawer-inner (scrollableInner), not the tab panel.
     const scrollContainer = $drawer.find('.dle-drawer-inner')[0];
@@ -602,7 +644,7 @@ export function renderBrowseWindow() {
     const adjustedEnd = (relativeScroll + viewHeight) > expandedBoundary
         ? (relativeScroll + viewHeight) - expandedOffset : (relativeScroll + viewHeight);
     const startIdx = Math.max(0, Math.floor(adjustedStart / BROWSE_ROW_HEIGHT) - BROWSE_OVERSCAN);
-    const endIdx = Math.min(entries.length, Math.ceil(adjustedEnd / BROWSE_ROW_HEIGHT) + BROWSE_OVERSCAN);
+    const endIdx = Math.min(rowModel.length, Math.ceil(adjustedEnd / BROWSE_ROW_HEIGHT) + BROWSE_OVERSCAN);
 
     if (startIdx === ds.browseLastRangeStart && endIdx === ds.browseLastRangeEnd) return;
     ds.browseLastRangeStart = startIdx;
@@ -638,18 +680,58 @@ export function renderBrowseWindow() {
         }
     }
     const rejectionMap = _cachedRejectionMap;
+    const selectMode = !!ds.browseSelectMode;
+    const selectedSet = ds.browseSelected instanceof Set ? ds.browseSelected : new Set();
 
     let html = '';
     for (let i = startIdx; i < endIdx; i++) {
-        const e = entries[i];
+        const row = rowModel[i];
+        if (!row) continue;
+
+        let top = i * BROWSE_ROW_HEIGHT;
+        if (ds.browseExpandedIdx !== null && i > ds.browseExpandedIdx) {
+            top += ds.browseExpandedExtraHeight;
+        }
+
+        if (row.type === 'header') {
+            // Folder header row — collapsible, hosts "select all in folder" checkbox in select mode.
+            const folder = row.folder;
+            // Tri-state: all-selected, partial, none.
+            let selCount = 0;
+            let totalInFolder = 0;
+            if (selectMode) {
+                for (const e of ds.browseFilteredEntries) {
+                    if (topFolderOf(e) !== folder) continue;
+                    totalInFolder++;
+                    if (selectedSet.has(trackerKey(e))) selCount++;
+                }
+            }
+            const allSelected = selectMode && totalInFolder > 0 && selCount === totalInFolder;
+            const someSelected = selectMode && selCount > 0 && selCount < totalInFolder;
+            const selectorHtml = selectMode
+                ? `<input type="checkbox" class="dle-browse-folder-select" data-folder="${escapeHtml(folder)}"${allSelected ? ' checked' : ''}${someSelected ? ' data-indeterminate="true"' : ''} aria-label="Select all entries in ${escapeHtml(folder)}" />`
+                : '';
+            html += `<div class="dle-browse-folder-header" data-folder="${escapeHtml(folder)}" data-expanded="${row.expanded ? 'true' : 'false'}" role="button" tabindex="0" aria-expanded="${row.expanded ? 'true' : 'false'}" aria-label="${escapeHtml(folder)} (${row.count} entries) — ${row.expanded ? 'expanded' : 'collapsed'}, click to toggle" style="position:absolute;top:${top}px;left:0;right:0;height:${BROWSE_ROW_HEIGHT}px;">`;
+            html += `${selectorHtml}<span class="dle-browse-folder-caret"><i class="fa-solid fa-chevron-right" aria-hidden="true"></i></span>`;
+            html += `<span class="dle-browse-folder-name">${escapeHtml(folder)}</span>`;
+            html += `<span class="dle-browse-folder-count">${row.count}</span>`;
+            html += `</div>`;
+            continue;
+        }
+
+        const e = row.entry;
+        if (!e) continue;
         const tl = e.title.toLowerCase();
         const pbKey = `${e.vaultSource || ''}:${tl}`;
         const isPinned = pinSet.has(pbKey);
         const isBlocked = blockSet.has(pbKey);
         const isInjected = injectedSet.has(tl);
+        const trk = trackerKey(e);
+        const isSelected = selectedSet.has(trk);
 
         const classes = ['dle-browse-entry'];
         if (isInjected) classes.push('dle-browse-injected');
+        if (isSelected) classes.push('dle-browse-selected');
 
         const keysStr = e.constant ? '(constant)' : (e.keys ? e.keys.slice(0, 4).join(', ') : '');
         const prioLabel = e.constant ? 'CONST' : `P${e.priority || 50}`;
@@ -662,17 +744,16 @@ export function renderBrowseWindow() {
         if (e.constant) statusParts.push('constant');
         const browseAriaLabel = `${escapeHtml(e.title)}, ${prioLabel}${statusParts.length ? ', ' + statusParts.join(', ') : ''}`;
 
-        let top = i * BROWSE_ROW_HEIGHT;
-        if (ds.browseExpandedIdx !== null && i > ds.browseExpandedIdx) {
-            top += ds.browseExpandedExtraHeight;
-        }
-        const tempKey = trackerKey(e);
+        const tempKey = trk;
         const temp = tempMap.get(tempKey);
         const tempStyle = temp && temp.hue !== 'neutral' ? `--dle-temp:${temp.tempScore.toFixed(2)};--dle-temp-hue:${temp.hue};` : '';
         const tempClass = temp && temp.hue !== 'neutral' ? ` dle-temp-${temp.hue}` : '';
 
-        const previewId = `dle-preview-${CSS.escape(trackerKey(e))}`;
-        html += `<div class="${classes.join(' ')}${tempClass}" data-title="${escapeHtml(e.title)}" data-idx="${i}" role="listitem" aria-label="${browseAriaLabel}" aria-controls="${previewId}" aria-setsize="${entries.length}" aria-posinset="${i + 1}" style="position:absolute;top:${top}px;left:0;right:0;height:${BROWSE_ROW_HEIGHT}px;${tempStyle}">`;
+        const previewId = `dle-preview-${CSS.escape(trk)}`;
+        html += `<div class="${classes.join(' ')}${tempClass}" data-title="${escapeHtml(e.title)}" data-vault="${escapeHtml(e.vaultSource || '')}" data-tracker="${escapeHtml(trk)}" data-idx="${i}" role="listitem" aria-label="${browseAriaLabel}" aria-controls="${previewId}" aria-setsize="${rowModel.length}" aria-posinset="${i + 1}" style="position:absolute;top:${top}px;left:0;right:0;height:${BROWSE_ROW_HEIGHT}px;${tempStyle}">`;
+        if (selectMode) {
+            html += `<input type="checkbox" class="dle-browse-row-select" data-tracker="${escapeHtml(trk)}"${isSelected ? ' checked' : ''} aria-label="Select ${escapeHtml(e.title)} for batch action" />`;
+        }
         const _hoverParts = [];
         if (e.summary) _hoverParts.push(escapeHtml(e.summary));
         if (e.keys && e.keys.length) _hoverParts.push(`Keys: ${escapeHtml(e.keys.join(', '))}`);
@@ -687,7 +768,7 @@ export function renderBrowseWindow() {
         if (rejection) {
             html += `<span class="dle-browse-why-not" title="${escapeHtml(rejection.label)}: ${escapeHtml(rejection.reason)}" aria-label="${escapeHtml(rejection.label)}"><i class="fa-solid ${escapeHtml(rejection.icon)}" aria-hidden="true"></i></span>`;
         }
-        const browseCount = chatInjectionCounts.get(trackerKey(e)) || 0;
+        const browseCount = chatInjectionCounts.get(trk) || 0;
         if (browseCount > 0) html += `<span class="dle-inject-count" title="Injected ${browseCount} times this chat" aria-label="Injected ${browseCount} times this chat">${browseCount}×</span>`;
         html += `<span class="dle-browse-priority${prioClass}" title="${e.constant ? 'Constant — always injected. Set via #lorebook-always tag.' : `Priority ${e.priority || 50} (lower = more important)`}" aria-label="${e.constant ? 'Constant entry, always injected' : `Priority ${e.priority || 50}`}">${prioLabel}</span>`;
         html += `<button class="dle-browse-pin${isPinned ? ' dle-pin-active' : ''}" data-entry="${escapeHtml(e.title)}" data-vault="${escapeHtml(e.vaultSource || '')}" aria-label="${isPinned ? 'Unpin' : 'Pin'}" title="${isPinned ? 'Pinned — always inject' : 'Click to pin'}"><i class="fa-solid fa-thumbtack" aria-hidden="true"></i></button>`;
@@ -698,6 +779,9 @@ export function renderBrowseWindow() {
     }
 
     $list.html(html);
+
+    // Folder-selector indeterminate state has to be set in JS (HTML attribute is not honored by checkbox).
+    $list.find('.dle-browse-folder-select[data-indeterminate="true"]').each(function () { this.indeterminate = true; });
 
     // Re-expand previously-expanded entry across re-renders, reusing cached preview HTML.
     if (ds.browseExpandedEntry) {

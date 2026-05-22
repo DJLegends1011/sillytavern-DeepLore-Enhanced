@@ -1790,6 +1790,107 @@ test('fuzzyTitleMatchAll: handles non-string input safely', () => {
     assertEqual(fuzzyTitleMatchAll(undefined, ['x']).length, 0, 'undefined query');
 });
 
+// --- #13 + #26: Browse row-model + folder grouping helpers ---
+
+import { buildBrowseRowModel, topFolderOf, listTopFolders, entryKeysInFolder } from '../src/drawer/drawer-browse-pure.js';
+
+test('topFolderOf: returns (root) for missing folderPath', () => {
+    assertEqual(topFolderOf({}), '(root)', 'undefined folderPath');
+    assertEqual(topFolderOf({ folderPath: '' }), '(root)', 'empty folderPath');
+    assertEqual(topFolderOf(null), '(root)', 'null entry');
+});
+
+test('topFolderOf: takes first segment of multi-segment path', () => {
+    assertEqual(topFolderOf({ folderPath: 'Locations/Cities/Vire' }), 'Locations', 'multi-segment');
+    assertEqual(topFolderOf({ folderPath: 'Characters' }), 'Characters', 'single segment');
+});
+
+test('buildBrowseRowModel: grouping OFF returns flat entry rows in original order', () => {
+    const entries = [
+        { title: 'A', folderPath: 'Z' },
+        { title: 'B', folderPath: 'A' },
+        { title: 'C', folderPath: 'A' },
+    ];
+    const rows = buildBrowseRowModel(entries, { grouping: false });
+    assertEqual(rows.length, 3, 'flat list length');
+    assert(rows.every(r => r.type === 'entry'), 'no headers in flat mode');
+    assertEqual(rows[0].entry.title, 'A', 'order preserved');
+});
+
+test('buildBrowseRowModel: grouping ON inserts headers + groups in first-appearance order', () => {
+    const entries = [
+        { title: 'A1', folderPath: 'A' },
+        { title: 'B1', folderPath: 'B' },
+        { title: 'A2', folderPath: 'A' },
+    ];
+    const rows = buildBrowseRowModel(entries, { grouping: true, expandedFolders: new Set(['A', 'B']) });
+    // Headers preserve first-appearance order: A header → A1, A2 → B header → B1.
+    assertEqual(rows[0].type, 'header', 'first row is header');
+    assertEqual(rows[0].folder, 'A', 'first folder by appearance');
+    assertEqual(rows[0].count, 2, 'A has 2 entries');
+    assertEqual(rows[1].entry.title, 'A1', 'A1 second');
+    assertEqual(rows[2].entry.title, 'A2', 'A2 third');
+    assertEqual(rows[3].type, 'header', 'B header fourth');
+    assertEqual(rows[3].folder, 'B', 'B folder');
+});
+
+test('buildBrowseRowModel: collapsed folders omit child entry rows', () => {
+    const entries = [
+        { title: 'A1', folderPath: 'A' },
+        { title: 'A2', folderPath: 'A' },
+        { title: 'B1', folderPath: 'B' },
+    ];
+    // Only B is in the expanded set.
+    const rows = buildBrowseRowModel(entries, { grouping: true, expandedFolders: new Set(['B']) });
+    const headers = rows.filter(r => r.type === 'header');
+    assertEqual(headers.length, 2, 'both headers present');
+    const aHeader = headers.find(h => h.folder === 'A');
+    assertEqual(aHeader.expanded, false, 'A header marked collapsed');
+    const aEntries = rows.filter(r => r.type === 'entry' && r.folder === 'A');
+    assertEqual(aEntries.length, 0, 'collapsed folder yields no entry rows');
+    const bEntries = rows.filter(r => r.type === 'entry' && r.folder === 'B');
+    assertEqual(bEntries.length, 1, 'expanded folder yields entry rows');
+});
+
+test('buildBrowseRowModel: null expandedFolders defaults to all-expanded', () => {
+    const entries = [
+        { title: 'A1', folderPath: 'A' },
+        { title: 'B1', folderPath: 'B' },
+    ];
+    const rows = buildBrowseRowModel(entries, { grouping: true, expandedFolders: null });
+    const entryRows = rows.filter(r => r.type === 'entry');
+    assertEqual(entryRows.length, 2, 'all entries rendered when no set passed');
+});
+
+test('buildBrowseRowModel: empty entries returns empty array regardless of opts', () => {
+    assertEqual(buildBrowseRowModel([]).length, 0, 'empty');
+    assertEqual(buildBrowseRowModel(null, { grouping: true }).length, 0, 'null');
+});
+
+test('listTopFolders: returns sorted unique top folders, (root) for missing', () => {
+    const entries = [
+        { folderPath: 'B/sub' },
+        { folderPath: 'A' },
+        { folderPath: 'A/x' },
+        {},
+    ];
+    const folders = listTopFolders(entries);
+    assertEqual(folders.length, 3, 'three buckets');
+    assertEqual(folders[0], '(root)', 'sorted ascii');
+});
+
+test('entryKeysInFolder: collects keyFn results only for matching folder', () => {
+    const entries = [
+        { title: 'A1', vaultSource: 'V', folderPath: 'A' },
+        { title: 'B1', vaultSource: 'V', folderPath: 'B' },
+        { title: 'A2', vaultSource: 'V', folderPath: 'A' },
+    ];
+    const keyFn = e => `${e.vaultSource}:${e.title}`;
+    const keys = entryKeysInFolder(entries, 'A', keyFn);
+    assertEqual(keys.length, 2, 'two A entries');
+    assert(keys.includes('V:A1') && keys.includes('V:A2'), 'A entries collected');
+});
+
 // --- Agent C audit regression guards ---
 
 test('updateFrontmatterFields: CRLF-authored file updates in place, no duplicate keys', () => {

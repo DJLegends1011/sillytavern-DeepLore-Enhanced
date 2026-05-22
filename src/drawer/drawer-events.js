@@ -556,7 +556,7 @@ export function wireBrowseTab($drawer) {
             ds.browseExpandedEntry = null;
             ds.browseExpandedIdx = null;
             ds.browseExpandedExtraHeight = 0;
-            const totalHeight = ds.browseFilteredEntries.length * BROWSE_ROW_HEIGHT;
+            const totalHeight = (ds.browseRowModel?.length || ds.browseFilteredEntries.length) * BROWSE_ROW_HEIGHT;
             $list.css({ 'min-height': totalHeight + 'px' });
             ds.browseLastRangeStart = -1;
             ds._browseLastScrollTop = undefined;
@@ -609,11 +609,132 @@ export function wireBrowseTab($drawer) {
         ds.browseExpandedIdx = entryIdx;
         ds.browseExpandedExtraHeight = extraHeight;
 
-        const totalHeight = ds.browseFilteredEntries.length * BROWSE_ROW_HEIGHT + extraHeight;
+        const totalHeight = (ds.browseRowModel?.length || ds.browseFilteredEntries.length) * BROWSE_ROW_HEIGHT + extraHeight;
         $list.css({ 'min-height': totalHeight + 'px' });
         ds.browseLastRangeStart = -1;
         ds._browseLastScrollTop = undefined;
         renderBrowseWindow();
+    });
+
+    // ─── #13 — folder grouping toggle ───
+    $drawer.find('.dle-browse-group-toggle').on('click', function () {
+        ds.browseFolderGrouping = !ds.browseFolderGrouping;
+        // When turning grouping ON for the first time, expand every top-folder so the
+        // user sees their entries — collapsing on demand is opt-in.
+        if (ds.browseFolderGrouping) {
+            if (!(ds.browseExpandedFolders instanceof Set)) ds.browseExpandedFolders = new Set();
+            const folders = new Set();
+            for (const e of ds.browseFilteredEntries || []) {
+                folders.add(e.folderPath ? e.folderPath.split('/')[0] : '(root)');
+            }
+            ds.browseExpandedFolders = folders;
+        }
+        // Expansion of a single entry is folder-scoped — collapsing/regrouping invalidates it.
+        ds.browseExpandedEntry = null;
+        ds.browseExpandedIdx = null;
+        ds.browseExpandedExtraHeight = 0;
+        scheduleRender(renderBrowseTab);
+        announceToScreenReader(ds.browseFolderGrouping ? 'Grouping by folder' : 'Flat list');
+    });
+
+    // ─── #13 — folder header expand/collapse ───
+    $drawer.on('click', '.dle-browse-folder-header', function (e) {
+        // Don't toggle when the user is interacting with the select-all checkbox.
+        if (e.target && (e.target.tagName === 'INPUT' || e.target.closest('.dle-browse-folder-select'))) return;
+        const folder = $(this).data('folder');
+        if (!folder) return;
+        if (!(ds.browseExpandedFolders instanceof Set)) ds.browseExpandedFolders = new Set();
+        if (ds.browseExpandedFolders.has(folder)) {
+            ds.browseExpandedFolders.delete(folder);
+        } else {
+            ds.browseExpandedFolders.add(folder);
+        }
+        // Collapsing a folder that contains the expanded preview invalidates it.
+        ds.browseExpandedEntry = null;
+        ds.browseExpandedIdx = null;
+        ds.browseExpandedExtraHeight = 0;
+        scheduleRender(renderBrowseTab);
+    });
+    $drawer.on('keydown', '.dle-browse-folder-header', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $(this).trigger('click'); }
+    });
+
+    // ─── #26 — select mode toggle ───
+    $drawer.find('.dle-browse-select-toggle').on('click', function () {
+        ds.browseSelectMode = !ds.browseSelectMode;
+        if (!ds.browseSelectMode) {
+            // Leaving select mode clears the selection so a stale set can't surprise the user later.
+            if (ds.browseSelected instanceof Set) ds.browseSelected.clear();
+        }
+        scheduleRender(renderBrowseTab);
+        announceToScreenReader(ds.browseSelectMode ? 'Select mode on' : 'Select mode off');
+    });
+
+    // ─── #26 — row checkbox ───
+    $drawer.find('.dle-browse-list').on('click', '.dle-browse-row-select', function (e) {
+        // Stop the click from bubbling into the row's expand handler.
+        e.stopPropagation();
+        const trk = $(this).data('tracker');
+        if (!trk) return;
+        if (!(ds.browseSelected instanceof Set)) ds.browseSelected = new Set();
+        if (this.checked) ds.browseSelected.add(trk);
+        else ds.browseSelected.delete(trk);
+        // Cheap re-render to update toolbar count + row highlight + folder-header tri-state.
+        ds.browseLastRangeStart = -1;
+        scheduleRender(renderBrowseTab);
+    });
+
+    // ─── #26 — folder header select-all ───
+    $drawer.find('.dle-browse-list').on('click', '.dle-browse-folder-select', function (e) {
+        e.stopPropagation();
+        const folder = $(this).data('folder');
+        if (!folder) return;
+        if (!(ds.browseSelected instanceof Set)) ds.browseSelected = new Set();
+        // Live computation of which entries live under this folder.
+        const inFolder = [];
+        for (const ent of ds.browseFilteredEntries || []) {
+            const top = ent.folderPath ? ent.folderPath.split('/')[0] : '(root)';
+            if (top === folder) {
+                const trk = `${ent.vaultSource || ''}:${ent.title}`;
+                inFolder.push(trk);
+            }
+        }
+        const allSelected = inFolder.length > 0 && inFolder.every(k => ds.browseSelected.has(k));
+        if (allSelected) {
+            for (const k of inFolder) ds.browseSelected.delete(k);
+        } else {
+            for (const k of inFolder) ds.browseSelected.add(k);
+        }
+        ds.browseLastRangeStart = -1;
+        scheduleRender(renderBrowseTab);
+    });
+
+    // ─── #26 — clear selection ───
+    $drawer.find('.dle-browse-clear-selection').on('click', function () {
+        if (ds.browseSelected instanceof Set) ds.browseSelected.clear();
+        scheduleRender(renderBrowseTab);
+        announceToScreenReader('Selection cleared');
+    });
+
+    // ─── #26 — Optimize Selected (handler in popups.js to avoid circular import) ───
+    $drawer.find('.dle-browse-optimize-selected').on('click', async function () {
+        const trks = ds.browseSelected instanceof Set ? [...ds.browseSelected] : [];
+        if (!trks.length) return;
+        try {
+            const mod = await import('../ui/popups.js');
+            if (typeof mod.runBatchOptimize !== 'function') {
+                toastr.error('Batch optimize unavailable.', 'DeepLore Enhanced');
+                return;
+            }
+            await mod.runBatchOptimize(trks);
+            // Clear selection after the run completes regardless of accept/reject choices —
+            // the toolbar should not keep an "Optimize Selected (N)" button after the run is done.
+            if (ds.browseSelected instanceof Set) ds.browseSelected.clear();
+            scheduleRender(renderBrowseTab);
+        } catch (err) {
+            console.error('[DLE] runBatchOptimize failed:', err);
+            toastr.error('Batch optimize failed: ' + (err?.message || err), 'DeepLore Enhanced');
+        }
     });
 }
 

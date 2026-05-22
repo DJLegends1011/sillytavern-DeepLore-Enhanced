@@ -101,6 +101,11 @@ No getter functions exist — other modules `import { vaultIndex } from './state
 | `lastHealthResult` | `{errors, warnings}\|null` | Session | /dle-health command | settings badge |
 | `claudeAutoEffortBad` | `boolean` | Session | init pre-flight | drawer chip, settings banner |
 | `claudeAutoEffortDetail` | `object\|null` | Session | init pre-flight | toast message |
+| `ds.browseRowModel` | `Array<{type:'header'\|'entry'...}>` | Chat (→[]) | `renderBrowseTab()` | `renderBrowseWindow()` virtual scroll |
+| `ds.browseFolderGrouping` | `boolean` | Session (NOT reset on CHAT_CHANGED — UI pref) | group-toggle button | `renderBrowseTab()` row-model builder |
+| `ds.browseExpandedFolders` | `Set<string>` | Session (NOT reset on CHAT_CHANGED) | group toggle (seed), folder-header click | `buildBrowseRowModel()` |
+| `ds.browseSelectMode` | `boolean` | Chat (→false) | select-toggle button, CHAT_CHANGED | renderer (shows row checkboxes) |
+| `ds.browseSelected` | `Set<string>` (trackerKey-keyed) | Chat (→clear) | row checkbox, folder select-all, CHAT_CHANGED | toolbar count, `runBatchOptimize()` |
 
 ### AI Circuit Breaker State
 | Variable | Type | Scope |

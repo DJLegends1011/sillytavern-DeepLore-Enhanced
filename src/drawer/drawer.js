@@ -53,6 +53,7 @@ export function resetDrawerState() {
     ds.browseTagFilter = '';
     // browseSort / librarianSort / browseSort [data-sort] are user UI prefs — accountStorage-persisted, intentionally not reset.
     ds.browseFilteredEntries = [];
+    ds.browseRowModel = [];
     ds.browseLastRangeStart = -1;
     ds.browseLastRangeEnd = -1;
     ds.browseExpandedEntry = null;
@@ -62,6 +63,10 @@ export function resetDrawerState() {
     ds.browseNavigateTarget = null;
     ds.browseCustomFieldFilters = {}; // BUG-AUDIT-11
     ds.browseFolderFilter = '';
+    // #26: selection is chat-specific (trackerKeys can collide across vault sets); selectMode follows.
+    if (ds.browseSelected instanceof Set) ds.browseSelected.clear();
+    ds.browseSelectMode = false;
+    // ds.browseFolderGrouping + ds.browseExpandedFolders are UI prefs like browseSort — kept across chat changes.
     ds.contextTokens = 0;
     // ds.stGenerating tracks ST's generation state across chat switches — GENERATION_ENDED clears it.
     ds.librarianFilter = 'flag';

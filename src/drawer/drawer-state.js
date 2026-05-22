@@ -102,15 +102,26 @@ export const ds = {
 
     // Virtual scroll state
     browseFilteredEntries: [],
+    /** Row models built from browseFilteredEntries: header + entry slots (drawer-browse-pure). */
+    browseRowModel: [],
     browseLastRangeStart: -1,
     browseLastRangeEnd: -1,
     browseScrollRAF: null,
     browseExpandedEntry: null,
-    /** Index of expanded entry in browseFilteredEntries (drives virtual-scroll offset math). */
+    /** Index in browseRowModel of the expanded entry (drives virtual-scroll offset math). */
     browseExpandedIdx: null,
     browseExpandedExtraHeight: 0,
     /** Set by navigateToBrowseEntry(), consumed and cleared by renderBrowseTab(). */
     browseNavigateTarget: null,
+
+    // #13 — folder grouping (session-only state; BUG-042 may migrate to accountStorage later)
+    browseFolderGrouping: false,
+    /** Top-folder names currently expanded (null/empty Set means all-expanded fallback in pure helper). */
+    browseExpandedFolders: new Set(),
+    // #26 — batch selection
+    browseSelectMode: false,
+    /** trackerKey-keyed entry selection set (vaultSource:title). */
+    browseSelected: new Set(),
 
     contextTokens: 0,
     promptManagerRef: null,

@@ -208,6 +208,23 @@
                 <option value="injections_desc">Injections &#x2193;</option>
             </select>
         </div>
+        <div class="dle-browse-batch-toolbar" role="toolbar" aria-label="View &amp; batch actions">
+            <button type="button" class="menu_button menu_button_icon dle-browse-group-toggle" data-pressed="false" aria-pressed="false" title="Group entries by top-level folder">
+                <i class="fa-solid fa-folder-tree" aria-hidden="true"></i>
+                <span class="dle-toolbar-label">Group</span>
+            </button>
+            <button type="button" class="menu_button menu_button_icon dle-browse-select-toggle" data-pressed="false" aria-pressed="false" title="Show row checkboxes for multi-select">
+                <i class="fa-solid fa-square-check" aria-hidden="true"></i>
+                <span class="dle-toolbar-label">Select</span>
+            </button>
+            <button type="button" class="menu_button dle-browse-optimize-selected" hidden title="Run AI keyword optimization on every selected entry (one popup per entry)">
+                <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i>
+                <span class="dle-browse-optimize-count">Optimize Selected (0)</span>
+            </button>
+            <button type="button" class="menu_button menu_button_icon dle-browse-clear-selection" hidden title="Clear selection">
+                <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+            </button>
+        </div>
         <div class="dle-browse-quick-filters" role="toolbar" aria-label="Quick filters"></div>
         <div class="dle-browse-summary dle-text-sm dle-muted" aria-live="polite"></div>
         <div class="dle-browse-list" role="list" aria-label="Vault entries"></div>
