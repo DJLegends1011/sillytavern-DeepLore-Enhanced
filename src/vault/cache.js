@@ -12,8 +12,11 @@ import { validateCachedEntry } from './cache-validate.js';
 export { validateCachedEntry };
 
 const DB_NAME = 'DeepLoreEnhanced';
-const DB_VERSION = 1;
+// v2 (2026-05-22): added `verdicts` object store for VerdictStore. Both modules must
+// use the same version so neither throws VersionError when the other has upgraded.
+const DB_VERSION = 2;
 const STORE_NAME = 'vaultCache';
+const VERDICT_STORE_NAME = 'verdicts'; // owned by src/verdict/verdict-store.js, created here too for coexistence on upgrade.
 const CACHE_SCHEMA_VERSION = 4; // H-06: key includes lorebookTag + conflictResolution
 
 /**
@@ -55,6 +58,11 @@ function openDBOnce() {
             const db = request.result;
             if (!db.objectStoreNames.contains(STORE_NAME)) {
                 db.createObjectStore(STORE_NAME);
+            }
+            // VerdictStore co-creates this from src/verdict/verdict-store.js; create here too so
+            // whichever module opens the DB first triggers a complete upgrade.
+            if (!db.objectStoreNames.contains(VERDICT_STORE_NAME)) {
+                db.createObjectStore(VERDICT_STORE_NAME);
             }
         };
         request.onsuccess = () => resolve(request.result);
