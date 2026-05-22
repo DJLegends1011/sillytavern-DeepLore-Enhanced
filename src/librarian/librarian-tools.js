@@ -348,7 +348,11 @@ export async function searchLoreAction(args) {
                 console.debug('[DLE] searchLore: epoch guard — skipped gap persist (index not ready)');
             }
         }
-        return 'Lore vault index is still loading. This search counted against your limit; vault should be ready on next message.';
+        // Audit Q13 (S5-1): refund counter when nothing was delivered. Increment-first
+        // is still the race guard for concurrent search_lore calls; decrement-on-fail
+        // keeps the counter aligned with searches that actually returned value.
+        setLoreGapSearchCount(Math.max(0, loreGapSearchCount - 1));
+        return 'Lore vault index is still loading. This search did not count against your limit; vault should be ready on next message.';
     }
 
     const injectedTitles = new Set();
@@ -468,7 +472,11 @@ export async function searchLoreAction(args) {
     incrementStats('searchCalls', estimatedTokens);
 
     if (allResultTitles.length === 0) {
-        return `No entries found for ${queries.map(q => `"${q}"`).join(', ')}. If this information is important to the scene, use flag_lore to record the gap.`;
+        // Audit Q13 (S5-1): all queries returned zero hits — search delivered no value,
+        // refund the counter so the AI can keep working without the no-result hit
+        // eating its budget. Race guard preserved by the increment-first pattern above.
+        setLoreGapSearchCount(Math.max(0, loreGapSearchCount - 1));
+        return `No entries found for ${queries.map(q => `"${q}"`).join(', ')}. This search did not count against your limit. If this information is important to the scene, use flag_lore to record the gap.`;
     }
     return resultText;
 }

@@ -251,7 +251,11 @@ export function registerAdminCommands() {
         callback: async () => {
             const settings = getSettings();
             const analytics = settings.analyticsData || {};
-            const titles = Object.keys(analytics).sort((a, b) => (analytics[b].injected || 0) - (analytics[a].injected || 0));
+            // Audit DIAG-03: `_librarian` (and any future `_`-prefixed meta bucket)
+            // is internal state, not an entry — skip it in the user-facing table.
+            const titles = Object.keys(analytics)
+                .filter(k => !k.startsWith('_'))
+                .sort((a, b) => (analytics[b].injected || 0) - (analytics[a].injected || 0));
 
             const plainLines = ['Entry Analytics', '', 'Entry\tMatched\tInjected\tLast Used'];
             for (const title of titles) {

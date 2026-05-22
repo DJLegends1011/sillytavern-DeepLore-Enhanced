@@ -390,7 +390,9 @@ export function applyStripDedup(entries, policy, injectionLog, lookbackDepth, de
             if (debugMode) console.debug(`[DLE][DIAG] strip-dedup-entry-check EXEMPT "${e.title}" (forceInject)`);
             return true;
         }
-        const key = `${e.title}|${e.injectionPosition ?? defaultSettings.injectionPosition}|${e.injectionDepth ?? defaultSettings.injectionDepth}|${e.injectionRole ?? defaultSettings.injectionRole}|${e._contentHash || ''}`;
+        // Audit S3-3: defaultSettings is optional — null-guard the fallback reads.
+        const ds = defaultSettings || {};
+        const key = `${e.title}|${e.injectionPosition ?? ds.injectionPosition}|${e.injectionDepth ?? ds.injectionDepth}|${e.injectionRole ?? ds.injectionRole}|${e._contentHash || ''}`;
         const matched = recentEntries.has(key);
         if (debugMode) {
             console.debug(`[DLE][DIAG] strip-dedup-entry-check "${e.title}" — ${matched ? 'STRIPPED' : 'KEPT'}`, { key });

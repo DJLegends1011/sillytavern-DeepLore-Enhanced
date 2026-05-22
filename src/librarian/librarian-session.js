@@ -95,10 +95,12 @@ function getMaxAgenticIterations() {
     return getMaxToolCallsPerTurn() + 5;
 }
 // Configurable via settings; these are fallback defaults.
-function getManifestMaxChars() { return getSettings().librarianManifestMaxChars || 8000; }
-function getRelatedMaxChars() { return getSettings().librarianRelatedEntriesMaxChars || 4000; }
-function getDraftMaxChars() { return getSettings().librarianDraftMaxChars || 4000; }
-function getChatContextMaxChars() { return getSettings().librarianChatContextMaxChars || 4000; }
+// Audit S1-13: use ?? not || so a user-set 0 (valid per the min:0 constraint) isn't
+// silently rewritten to the default.
+function getManifestMaxChars() { return getSettings().librarianManifestMaxChars ?? 8000; }
+function getRelatedMaxChars() { return getSettings().librarianRelatedEntriesMaxChars ?? 4000; }
+function getDraftMaxChars() { return getSettings().librarianDraftMaxChars ?? 4000; }
+function getChatContextMaxChars() { return getSettings().librarianChatContextMaxChars ?? 4000; }
 
 // ════════════════════════════════════════════════════════════════════════════
 // Session Factory

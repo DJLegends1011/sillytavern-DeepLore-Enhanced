@@ -862,6 +862,10 @@ export function wireGatingTab($drawer) {
         $chip.one('transitionend', apply);
         setTimeout(apply, 200);
     });
+    // Audit S6-1: a11y parity with sibling .dle-chip-x — Enter/Space activates the chip-X.
+    $drawer.find('#dle-panel-gating').on('keydown', '.dle-folder-chip-x', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $(this).trigger('click'); }
+    });
 
     $drawer.find('#dle-panel-gating').on('keydown', '.dle-gating-set', function (e) {
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $(this).trigger('click'); }

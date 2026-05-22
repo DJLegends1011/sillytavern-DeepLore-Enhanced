@@ -420,7 +420,9 @@ export async function summarizeEntries(entries) {
                 maxTokens: 300,
                 timeout: settings.aiSearchTimeout,
             });
-            const responseText = result.text;
+            // Audit DIAG-09: result.text may be undefined when the AI call fails or returns
+            // an unexpected shape. Bare .trim() would throw and crash the per-entry loop.
+            const responseText = (result && typeof result.text === 'string') ? result.text : '';
 
             const summary = responseText.trim().substring(0, 600);
             if (!summary) {

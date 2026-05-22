@@ -1790,7 +1790,8 @@ function bindPopupEvents($container) {
     $c('#dle-sp-graph-gravity').on('input', function () { const v = parseFloat($(this).val()); settings.graphGravity = isNaN(v) ? 11.0 : v; saveSettingsDebounced(); });
     $c('#dle-sp-graph-damping').on('input', function () { const v = parseFloat($(this).val()); settings.graphDamping = isNaN(v) ? 0.50 : v; saveSettingsDebounced(); });
     // BUG-AUDIT-14: isNaN check instead of || so 0 is valid.
-    $c('#dle-sp-graph-hover-falloff').on('input', function () { const v = parseFloat($(this).val()); settings.graphHoverFalloff = isNaN(v) ? 0.9 : v; saveSettingsDebounced(); });
+    // Audit S1-04: previous fallback 0.9 exceeded the constraint max 0.85 — use the actual default.
+    $c('#dle-sp-graph-hover-falloff').on('input', function () { const v = parseFloat($(this).val()); settings.graphHoverFalloff = isNaN(v) ? 0.55 : v; saveSettingsDebounced(); });
     $c('#dle-sp-graph-edge-filter-alpha').on('input', function () { settings.graphEdgeFilterAlpha = parseFloat($(this).val()) || 0.05; saveSettingsDebounced(); });
 
     // ── Librarian settings ──

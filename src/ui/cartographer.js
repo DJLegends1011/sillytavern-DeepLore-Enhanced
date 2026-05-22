@@ -207,7 +207,9 @@ export function showSourcesPopup(sources, opts = {}) {
                     html += `<div class="dle-carto-entry-row">`;
                     html += `<span class="dle-text-sm">${escapeHtml(e.title)} <button class="dle-carto-browse-btn" data-browse-title="${escapeHtml(e.title)}" title="Show in Browse"><i class="fa-solid fa-arrow-right-to-bracket" aria-hidden="true"></i></button></span>`;
                     if (entry && !entry.constant) {
-                        html += ` <button class="menu_button dle-carto-whynot-btn dle-text-xs" data-title="${escapeHtml(e.title)}" data-container="dle-whynot-carto-${whynotId}">Why?</button>`;
+                        // Audit Q27 (S9-3): carry data-vault through to the whynot handler so
+                        // multi-vault same-title entries resolve to the correct entry (gotcha #4).
+                        html += ` <button class="menu_button dle-carto-whynot-btn dle-text-xs" data-title="${escapeHtml(e.title)}" data-vault="${escapeHtml(e.vaultSource || '')}" data-container="dle-whynot-carto-${whynotId}">Why?</button>`;
                         html += `<div id="dle-whynot-carto-${whynotId}"></div>`;
                     }
                     const rejKey = entry ? trackerKey(entry) : `${e.vaultSource || ''}:${e.title}`;
@@ -268,8 +270,12 @@ export function showSourcesPopup(sources, opts = {}) {
         if (!btn) return;
         e.stopPropagation();
         const title = btn.dataset.title;
+        const vault = btn.dataset.vault || null;
         const containerId = btn.dataset.container;
-        const entry = vaultIndex.find(en => en.title === title);
+        // Audit Q27 (S9-3): resolve via trackerKey when vaultSource is known, fall back
+        // to first title match for legacy trace entries that don't carry vaultSource.
+        const entry = (vault && entryByTrackerKey.get(`${vault}:${title}`))
+            || vaultIndex.find(en => en.title === title);
         if (!entry || !chat || chat.length === 0) return;
         const result = diagnoseEntry(entry, chat);
         const color = STAGE_COLORS[result.stage] || 'var(--dle-text-muted)';

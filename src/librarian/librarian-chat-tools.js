@@ -411,6 +411,9 @@ function toolFlagEntryUpdate(args) {
         query: entry.title,
         reason: fullReason,
         timestamp: Date.now(),
+        // Audit S5-2: include createdAt so the gap-eviction sort (which falls back to
+        // `createdAt || 0`) doesn't land every Emma flag at index 0 and drop it first.
+        createdAt: Date.now(),
         generation: 0, // Emma session, not pipeline generation
         status: 'pending',
         frequency: 1,
