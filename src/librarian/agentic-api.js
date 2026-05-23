@@ -242,9 +242,16 @@ async function callWithToolsViaProxy(connConfig, messages, tools, toolChoice, ma
             if (response.status === 404 && text.includes('CORS proxy is disabled')) {
                 throw new Error('SillyTavern CORS proxy is not enabled. Set enableCorsProxy: true in config.yaml, or use a Connection Profile instead of Custom Proxy mode.');
             }
-            const safeText = text.substring(0, 200)
+            // HIGH-LIB-2 (2026-05-22): scrub BEFORE truncating. If a token starts in
+            // the last ~15 chars of the 200-char window, slicing first cuts the token
+            // below the regex's {10,} minimum so it never matches — and a partial
+            // token leaks into Error.message. Real Anthropic 401/403 bodies do quote
+            // the offending header. Always scrub-then-slice for error shaping.
+            // See gotchas.md #56.
+            const safeText = text
                 .replace(/sk-[a-zA-Z0-9_-]{10,}/g, 'sk-***')
-                .replace(/Bearer\s+[A-Za-z0-9_\-./]{10,}/g, 'Bearer ***');
+                .replace(/Bearer\s+[A-Za-z0-9_\-./]{10,}/g, 'Bearer ***')
+                .substring(0, 200);
             throw new Error(`Proxy returned HTTP ${response.status}: ${safeText}`);
         }
 
@@ -401,6 +408,54 @@ function safeParseArgs(args, fallbackInput) {
     return args || fallbackInput || {};
 }
 
+// HIGH-LIB-3 (2026-05-22): synthetic-id storage for Google Gemini function-call
+// parts. The previous implementation stamped `p._dleSyntheticId` directly onto
+// the raw provider response, which (a) made `parseToolCalls` non-pure despite
+// its name, (b) would crash under strict mode if ST ever froze responses, and
+// (c) leaked stamped ids into any diagnostic re-serialization of the response.
+// The WeakMap keeps the same lookup contract (parseToolCalls writes,
+// buildAssistantMessage reads) without mutating raw data. Keyed by part object
+// reference — parts only need to be GC'd when the whole response is, so weak
+// references are correct here. Cleared in tests via `_resetSyntheticIdsForTests`.
+// See gotchas.md #56.
+const _syntheticIds = new WeakMap();
+
+/**
+ * Read-only accessor — returns an id only if one was previously assigned.
+ * `buildAssistantMessage` uses this without forcing assignment so cases where
+ * `parseToolCalls` was never called still produce a fresh id at the call site.
+ */
+export function _getSyntheticId(part) {
+    return _syntheticIds.get(part);
+}
+
+/**
+ * Lifts id stamping out of `parseToolCalls`. Walks Gemini parts, assigns each
+ * functionCall part a stable synthetic id (existing one if already assigned),
+ * and returns a Map<part, id> for the caller. Does NOT mutate `data` or parts.
+ */
+export function _ensureSyntheticIds(data) {
+    const out = new Map();
+    if (!data?.responseContent?.parts) return out;
+    for (const p of data.responseContent.parts) {
+        if (!p?.functionCall) continue;
+        let id = _syntheticIds.get(p);
+        if (!id) {
+            id = `gemini-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+            _syntheticIds.set(p, id);
+        }
+        out.set(p, id);
+    }
+    return out;
+}
+
+/** Test-only — clears the WeakMap by re-instantiating its closure semantics is impossible,
+ *  but tests can verify isolation by always passing fresh part objects. Exposed here
+ *  so HIGH-LIB-3 regression tests can assert mutation-freeness without touching prod state. */
+export function _isWeakMapBacked() {
+    return _syntheticIds instanceof WeakMap;
+}
+
 /**
  * Normalizes 4 provider formats to [{id, name, input}].
  */
@@ -420,18 +475,21 @@ export function parseToolCalls(data) {
     }
 
     // 2. Google Gemini/Vertex: responseContent.parts[].functionCall
-    // Stamp synthetic ID onto the raw part so buildAssistantMessage can reuse it
-    // for OpenAI-shape `tool_calls[].id`. Closes the round-trip: buildToolResults
-    // emits tool_call_id matching that id, and ST's convertGooglePrompt.toolNameMap
-    // resolves the function name from the id on the next turn.
+    // Synthetic id is assigned via the module-level WeakMap (see
+    // `_ensureSyntheticIds`) so `buildAssistantMessage` can reuse it for
+    // OpenAI-shape `tool_calls[].id` WITHOUT mutating the raw provider
+    // response. Closes the round-trip: buildToolResults emits tool_call_id
+    // matching that id, and ST's convertGooglePrompt.toolNameMap resolves the
+    // function name from the id on the next turn. HIGH-LIB-3 fix (2026-05-22).
     if (data.responseContent?.parts) {
         const functionCalls = data.responseContent.parts.filter(p => p.functionCall);
         if (functionCalls.length > 0) {
-            return functionCalls.map(p => {
-                const id = p._dleSyntheticId || `gemini-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-                p._dleSyntheticId = id;
-                return { id, name: p.functionCall.name, input: p.functionCall.args || {} };
-            });
+            const idMap = _ensureSyntheticIds(data);
+            return functionCalls.map(p => ({
+                id: idMap.get(p),
+                name: p.functionCall.name,
+                input: p.functionCall.args || {},
+            }));
         }
     }
 
@@ -532,10 +590,13 @@ export function buildAssistantMessage(data) {
         const result = { role: 'assistant' };
         if (textParts.length > 0) result.content = textParts.map(p => p.text).join('\n\n');
         if (fnParts.length > 0) {
+            // Reuse parseToolCalls's synthetic id (stored in module WeakMap, not
+            // on the part) so buildToolResults's tool_call_id matches on the next
+            // turn. If parseToolCalls was somehow not called first (defensive),
+            // fall back to a deterministic-per-call id so the message still
+            // round-trips. HIGH-LIB-3 fix (2026-05-22).
             result.tool_calls = fnParts.map((p, i) => {
-                // Reuse parseToolCalls's synthetic id so buildToolResults's
-                // tool_call_id matches on the next turn.
-                const id = p._dleSyntheticId || `gemini-${Date.now()}-${i}`;
+                const id = _getSyntheticId(p) || `gemini-${Date.now()}-${i}`;
                 return {
                     id,
                     type: 'function',

@@ -13,7 +13,7 @@ import { callGenericPopup, POPUP_TYPE } from '../../../../../popup.js';
 import { getSettings, resolveConnectionConfig, resolveWriteVault } from '../../settings.js';
 import { writeNote } from '../vault/obsidian-api.js';
 import { buildAiChatContext, yamlEscape, classifyError } from '../../core/utils.js';
-import { callAI } from './ai.js';
+import { callAI, isExcludedFromBreaker } from './ai.js';
 import { extractAiResponseClient, stripObsidianSyntax } from '../helpers.js';
 import { getWriterVisibleEntries, chatEpoch, tryAcquireHalfOpenProbe, recordAiSuccess, recordAiFailure } from '../state.js';
 import { ensureIndexFresh, buildIndex } from '../vault/vault.js';
@@ -80,8 +80,9 @@ export async function callAutoSuggest(systemPrompt, userMessage, toolKey = 'auto
             recordAiSuccess();
             return { text: response, usage: null };
         } catch (err) {
-            // BUG-252: user aborts and timeouts must not trip the breaker.
-            if (!err.throttled && !err.userAborted && !err.timedOut) recordAiFailure();
+            // BUG-252 + Wave-B contract: shared classifier covers throttled / userAborted /
+            // timedOut PLUS HTTP 401/403 (auth) and 429 (rate-limit). See scribe.js.
+            if (!isExcludedFromBreaker(err)) recordAiFailure();
             throw err;
         } finally {
             if (onStop) { try { eventSource.removeListener(event_types.GENERATION_STOPPED, onStop); } catch { /* noop */ } }
@@ -94,7 +95,8 @@ export async function callAutoSuggest(systemPrompt, userMessage, toolKey = 'auto
             recordAiSuccess();
             return result;
         } catch (err) {
-            if (!err.throttled && !err.userAborted && !err.timedOut) recordAiFailure();
+            // Wave-B contract: shared classifier — see scribe.js.
+            if (!isExcludedFromBreaker(err)) recordAiFailure();
             throw err;
         }
     }

@@ -11,8 +11,8 @@ import { SlashCommand } from '../../../../../slash-commands/SlashCommand.js';
 import { SlashCommandArgument, ARGUMENT_TYPE } from '../../../../../slash-commands/SlashCommandArgument.js';
 import { SlashCommandEnumValue } from '../../../../../slash-commands/SlashCommandEnumValue.js';
 import { classifyError, NO_ENTRIES_MSG, yamlEscape } from '../../core/utils.js';
-import { getSettings, getPrimaryVault } from '../../settings.js';
-import { vaultIndex, scribeInProgress, setIndexTimestamp, setSkipNextPipeline, loreGaps } from '../state.js';
+import { getSettings, getPrimaryVault, resolveConnectionConfig } from '../../settings.js';
+import { vaultIndex, scribeInProgress, setIndexTimestamp, setSkipNextPipeline, loreGaps, tryAcquireHalfOpenProbe, recordAiSuccess, recordAiFailure } from '../state.js';
 import { buildIndex, ensureIndexFresh, getMaxResponseTokens } from '../vault/vault.js';
 import { runScribe } from '../ai/scribe.js';
 import { runAutoSuggest, showSuggestionPopup } from '../ai/auto-suggest.js';
@@ -393,10 +393,17 @@ export function registerAiCommands() {
  * @returns {{ generated: number, skipped: number, failed: number, aborted: number }}
  */
 export async function summarizeEntries(entries) {
-    const { callAI } = await import('../ai/ai.js');
+    const { callAI, isExcludedFromBreaker } = await import('../ai/ai.js');
     const { writeNote, obsidianFetch, encodeVaultPath } = await import('../vault/obsidian-api.js');
     const settings = getSettings();
     const vault = getPrimaryVault(settings);
+    // Wave-B contract: the batch summary path was bypassing BOTH resolveConnectionConfig
+    // AND the breaker. Without breaker integration a bad API key here used to bake every
+    // per-entry call without ever shedding load; without resolveConnectionConfig the loop
+    // ignored settings.optimizeKeys / inheritance and reached straight into aiSearch.* .
+    // Mirror callScribe / callAutoSuggest: resolve a tool config, gate every call with
+    // tryAcquireHalfOpenProbe, route the trip decision through isExcludedFromBreaker.
+    const resolved = resolveConnectionConfig('optimizeKeys');
 
     let generated = 0;
     let skipped = 0;
@@ -411,15 +418,26 @@ export async function summarizeEntries(entries) {
             const systemPrompt = 'You are a lore librarian. Write a concise AI search summary (max 600 chars) for the following lorebook entry. The summary should answer: What is this? When should it be selected? Key relationships? Do NOT include physical descriptions or atmospheric prose. Write for an AI that needs to decide whether to inject this entry.';
             const userMsg = `Entry: ${entry.title}\n\nContent:\n${entry.content.substring(0, 3000)}`;
 
-            const result = await callAI(systemPrompt, userMsg, {
-                caller: 'summaryGen',
-                mode: settings.aiSearchConnectionMode || 'profile',
-                profileId: settings.aiSearchProfileId,
-                proxyUrl: settings.aiSearchProxyUrl,
-                model: settings.aiSearchModel,
-                maxTokens: 300,
-                timeout: settings.aiSearchTimeout,
-            });
+            // Breaker probe per call. If open (or probe taken), skip this entry but keep
+            // looping — `failed++` (not aborted), so the toast at the end still reports
+            // a useful count.
+            if (!tryAcquireHalfOpenProbe()) {
+                console.warn('[DLE] summarizeEntries: circuit breaker open — skipping entry', entry.title);
+                failed++;
+                continue;
+            }
+            let result;
+            try {
+                result = await callAI(systemPrompt, userMsg, {
+                    ...resolved,
+                    caller: 'summaryGen',
+                    maxTokens: 300,
+                });
+                recordAiSuccess();
+            } catch (callErr) {
+                if (!isExcludedFromBreaker(callErr)) recordAiFailure();
+                throw callErr;
+            }
             // Audit DIAG-09: result.text may be undefined when the AI call fails or returns
             // an unexpected shape. Bare .trim() would throw and crash the per-entry loop.
             const responseText = (result && typeof result.text === 'string') ? result.text : '';

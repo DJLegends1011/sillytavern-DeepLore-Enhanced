@@ -2,6 +2,7 @@
  * DeepLore Enhanced — Librarian tool action implementations.
  * search_lore and flag_lore — called by the agentic loop during generation.
  */
+import { getCurrentChatId } from '../../../../../../script.js';
 import { getContext, saveMetadataDebounced } from '../../../../../extensions.js';
 import { truncateToSentence, escapeXml } from '../../core/utils.js';
 import { queryBM25, tokenize } from '../vault/bm25.js';
@@ -18,7 +19,16 @@ import {
     notifyLoreGapsChanged,
     notifyAiStatsUpdated,
 } from '../state.js';
-import { getCurrent as getCurrentVerdict } from '../verdict/verdict-store.js';
+import { getCurrentForChat as getCurrentVerdictForChat } from '../verdict/verdict-store.js';
+
+// Local helper — must read the CURRENT CHAT's verdict, not the ring-global
+// newest. The agentic loop always runs against the active chat. See
+// docs/gotchas.md #46 ("UI consumer rule").
+function _currentVerdictForChat() {
+    let cid = null;
+    try { cid = getCurrentChatId() ?? null; } catch { cid = null; }
+    return getCurrentVerdictForChat(cid);
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // Session Activity Log
@@ -250,6 +260,25 @@ function incrementStats(field, extraTokens = 0) {
 // ════════════════════════════════════════════════════════════════════════════
 
 /**
+ * Build the structured `searchLoreAction` return value. Object carries `text`
+ * (Markdown for the LLM) + `titles` (authoritative matched-entry list) and
+ * coerces to `text` under string operations so legacy string-consuming call
+ * sites don't break.
+ *
+ * Defined here (not inline) so every return path in `searchLoreAction` uses
+ * the same shape — no chance of a no-result branch returning a bare string.
+ */
+function _searchResult(text, titles = []) {
+    const t = typeof text === 'string' ? text : '';
+    return {
+        text: t,
+        titles: Array.isArray(titles) ? titles : [],
+        toString() { return t; },
+        [Symbol.toPrimitive]() { return t; },
+    };
+}
+
+/**
  * XML <entry>-block manifest. Simpler than the sidecar manifest — no decay
  * hints, no budget headers.
  */
@@ -288,6 +317,24 @@ function resolveLinkedEntries(entry, excludeTitles, max = 10, titleMap = null) {
 /**
  * search_lore: search the vault index for entries the pipeline missed.
  * Returns full content for the top BM25 hit per query + linked-entries manifest.
+ *
+ * **Return contract:** `{ text: string, titles: string[] }`.
+ * - `text` is the rendered Markdown the LLM consumes (best hit `### Title\n…`,
+ *   linked-entry manifest, other-match counts, or no-result lines).
+ * - `titles` is the authoritative list of matched entry titles (best hit +
+ *   linked entries). Consumers (agentic-loop activity dropdown, callers that
+ *   need to know "which entries did this search surface") MUST read `titles`
+ *   directly — NEVER regex-parse `text` for `### ...` headings. Vault content
+ *   is freeform Markdown and entries routinely have their own `### Section`
+ *   headings; regex-extraction inflates counts and pollutes the Activity feed
+ *   with section names (CRIT-LIB-2 fix).
+ *
+ * Error/empty-result paths return `{ text: '<message>', titles: [] }`.
+ *
+ * For LLM-side consumers that historically treated this as a plain string,
+ * the object overrides `toString()` (and `Symbol.toPrimitive`) to yield `text`
+ * — keeps string-coercion call sites working without breaking the structured
+ * contract.
  */
 export async function searchLoreAction(args) {
     const settings = getSettings();
@@ -297,14 +344,14 @@ export async function searchLoreAction(args) {
     // Accept legacy { query: "..." } in addition to { queries: [...] }.
     let queries = args?.queries;
     if (!queries && args?.query) queries = [args.query];
-    if (!Array.isArray(queries)) return 'No queries provided.';
+    if (!Array.isArray(queries)) return _searchResult('No queries provided.');
     queries = queries.map(q => (q || '').trim()).filter(Boolean).slice(0, 4);
-    if (queries.length === 0) return 'No queries provided.';
+    if (queries.length === 0) return _searchResult('No queries provided.');
 
     if (debug) console.debug('[DLE] searchLore: %d queries received', queries.length);
 
     if (loreGapSearchCount >= settings.librarianMaxSearches) {
-        return `Search limit reached (${settings.librarianMaxSearches} per generation). Work with the lore already provided.`;
+        return _searchResult(`Search limit reached (${settings.librarianMaxSearches} per generation). Work with the lore already provided.`);
     }
     // Increment IMMEDIATELY after guard, before any await: if the AI emits two
     // search_lore calls in one response they start concurrently and both would
@@ -352,14 +399,17 @@ export async function searchLoreAction(args) {
         // is still the race guard for concurrent search_lore calls; decrement-on-fail
         // keeps the counter aligned with searches that actually returned value.
         setLoreGapSearchCount(Math.max(0, loreGapSearchCount - 1));
-        return 'Lore vault index is still loading. This search did not count against your limit; vault should be ready on next message.';
+        return _searchResult('Lore vault index is still loading. This search did not count against your limit; vault should be ready on next message.');
     }
 
+    // BUG-AUDIT v2.5: dedup keyed by trackerKey (vaultSource:title.toLowerCase()) so
+    // a "Alice" injected from vault-a doesn't suppress an unrelated "Alice" from vault-b
+    // (or vice versa). The Librarian must still be able to surface the other vault's hit.
     const injectedTitles = new Set();
-    const _libVerdictSources = getCurrentVerdict()?.injectedSources;
+    const _libVerdictSources = _currentVerdictForChat()?.injectedSources;
     if (_libVerdictSources && Array.isArray(_libVerdictSources)) {
         for (const src of _libVerdictSources) {
-            if (src.title) injectedTitles.add(src.title.toLowerCase());
+            if (src.title) injectedTitles.add(`${src.vaultSource || ''}:${src.title.toLowerCase()}`);
         }
     }
 
@@ -381,7 +431,7 @@ export async function searchLoreAction(args) {
             settings.librarianMaxResults,
             settings.fuzzySearchMinScore || 0.5,
         );
-        const filtered = hits.filter(h => !shownTitles.has(h.entry.title.toLowerCase()) && !h.entry.guide);
+        const filtered = hits.filter(h => !shownTitles.has(`${h.entry.vaultSource || ''}:${h.entry.title.toLowerCase()}`) && !h.entry.guide);
 
         if (debug) console.debug('[DLE] searchLore: query="%s" — %d BM25 hits after filter', query, filtered.length);
 
@@ -477,9 +527,11 @@ export async function searchLoreAction(args) {
         // refund the counter so the AI can keep working without the no-result hit
         // eating its budget. Race guard preserved by the increment-first pattern above.
         setLoreGapSearchCount(Math.max(0, loreGapSearchCount - 1));
-        return `No entries found for ${queries.map(q => `"${q}"`).join(', ')}. This search did not count against your limit. If this information is important to the scene, use flag_lore to record the gap.`;
+        return _searchResult(`No entries found for ${queries.map(q => `"${q}"`).join(', ')}. This search did not count against your limit. If this information is important to the scene, use flag_lore to record the gap.`);
     }
-    return resultText;
+    // CRIT-LIB-2: caller (agentic-loop) consumes `titles` directly. NEVER regex
+    // `text` for `### ...` headings — vault content has its own subheadings.
+    return _searchResult(resultText, allResultTitles);
 }
 
 /**

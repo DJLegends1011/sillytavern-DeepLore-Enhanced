@@ -117,13 +117,18 @@ export async function callProxyViaCorsBridge(proxyUrl, model, systemPrompt, user
             if (response.status === 404 && text.includes('CORS proxy is disabled')) {
                 throw new Error('SillyTavern CORS proxy is not enabled. Set enableCorsProxy: true in config.yaml, or use a Connection Profile instead of Custom Proxy mode.');
             }
-            // Truncate + scrub provider-specific keys before surfacing.
-            const safeText = text.substring(0, 150)
+            // M5 / HIGH-LIB-2 (2026-05-22): scrub BEFORE truncating. If a token
+            // starts in the last ~15 chars of the 150-char window, slicing first
+            // cuts the token below the regex's {10,} minimum so it never matches
+            // — and a partial token leaks into Error.message. Mirror the
+            // scrub-then-slice pattern from agentic-api.js. See gotchas.md #56.
+            const safeText = text
+                .replace(/sk-proj-[a-zA-Z0-9_-]{10,}/g, 'sk-proj-***') // OpenAI (matched first; superset of sk-)
                 .replace(/sk-[a-zA-Z0-9_-]{10,}/g, 'sk-***')          // Anthropic
-                .replace(/sk-proj-[a-zA-Z0-9_-]{10,}/g, 'sk-proj-***') // OpenAI
                 .replace(/AIza[a-zA-Z0-9_-]{10,}/g, 'AIza***')         // Google
                 .replace(/gsk_[a-zA-Z0-9_-]{10,}/g, 'gsk_***')         // Groq
-                .replace(/Bearer\s+[A-Za-z0-9_\-./]{10,}/g, 'Bearer ***');
+                .replace(/Bearer\s+[A-Za-z0-9_\-./]{10,}/g, 'Bearer ***')
+                .substring(0, 150);
             throw new Error(`Proxy returned HTTP ${response.status}: ${safeText}`);
         }
 
@@ -169,8 +174,17 @@ export async function callProxyViaCorsBridge(proxyUrl, model, systemPrompt, user
     }
 }
 
-/** Test connection to the AI proxy through the ST CORS proxy. */
-export async function testProxyConnection(proxyUrl, model) {
+/**
+ * Test connection to the AI proxy through the ST CORS proxy.
+ * @param {string} proxyUrl
+ * @param {string} model
+ * @param {AbortSignal} [externalSignal] M6 (2026-05-22): optional cancel hook.
+ *     Settings UI "Test Connection" button can now be aborted mid-flight (e.g.
+ *     popup close, second click). Propagates through to the underlying fetch.
+ *     Aborted-by-user errors are returned as `{ok: false, error: ..., aborted: true}`
+ *     so callers can distinguish from real proxy failures.
+ */
+export async function testProxyConnection(proxyUrl, model, externalSignal) {
     try {
         const result = await callProxyViaCorsBridge(
             proxyUrl,
@@ -179,9 +193,12 @@ export async function testProxyConnection(proxyUrl, model) {
             'ping',
             8,
             15000,
+            undefined,
+            externalSignal,
         );
         return { ok: true, response: result.text.substring(0, 100) };
     } catch (err) {
-        return { ok: false, error: err.message };
+        const aborted = !!(err && (err.userAborted || externalSignal?.aborted));
+        return { ok: false, error: err.message, aborted };
     }
 }

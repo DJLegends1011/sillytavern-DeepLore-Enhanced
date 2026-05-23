@@ -189,7 +189,7 @@ export async function runAgenticLoop(options) {
         if (phase === PHASE_FLAG) {
             setPipelinePhase('flagging');
             try {
-                flagCount += await _runFlagIteration(messages, tools, toolChoice, maxTokens, signal, toolActivity, settings, debug, flagCount);
+                flagCount += await _runFlagIteration(messages, tools, toolChoice, maxTokens, signal, toolActivity, settings, debug, flagCount, epoch, lockEpoch);
             } catch (flagErr) {
                 if (flagErr?.name === 'AbortError') throw flagErr;
                 console.warn('[DLE] Flag phase error (prose already delivered):', flagErr?.message || flagErr);
@@ -242,16 +242,24 @@ export async function runAgenticLoop(options) {
                     searchCount++;
                     onStatus?.(`Searching\u2026 (${searchCount}/${maxSearches})`);
 
+                    // CRIT-LIB-2: searchLoreAction returns `{ text, titles }` (see its
+                    // doc comment). `titles` is the authoritative matched-entry list;
+                    // `text` is the Markdown payload for the LLM. Older code regex-parsed
+                    // `### ...` headings out of the text \u2014 vault content has its own
+                    // `### Section` subheadings, which inflated counts and polluted the
+                    // Activity dropdown with section names that aren't entries. Also kills
+                    // MED-LIB-1 (`!== 'Related entries:'` string filter that broke under
+                    // localization \u2014 structured return makes it unnecessary).
                     // Reuses BM25, gap tracking, analytics from the legacy action.
                     const searchResult = await searchLoreAction({ queries: tc.input.queries || [] });
-                    results.push({ id: tc.id, name: tc.name, result: searchResult });
+                    const resultText = typeof searchResult === 'string'
+                        ? searchResult
+                        : (searchResult?.text ?? '');
+                    const titleMatches = Array.isArray(searchResult?.titles)
+                        ? searchResult.titles
+                        : [];
+                    results.push({ id: tc.id, name: tc.name, result: resultText });
 
-                    // librarian-ui.js dropdown needs resultTitles. Best hit format:
-                    // `### title`; linked entries: `<entry name="title">`.
-                    const headingTitles = [...(searchResult.matchAll(/^### (.+)$/gm) || [])]
-                        .map(m => m[1]).filter(t => t !== 'Related entries:');
-                    const entryTitles = [...(searchResult.matchAll(/name="([^"]+)"/g) || [])].map(m => m[1]);
-                    const titleMatches = [...headingTitles, ...entryTitles];
                     // Contract (per CLAUDE.md): only successful-search results create dropdown
                     // records; no-result searches create gap records only (handled by
                     // searchLoreAction). An empty resultTitles dropdown is misleading UI.
@@ -292,7 +300,48 @@ export async function runAgenticLoop(options) {
                     // H7: prose shown immediately — flagging is a silent wrap-up.
                     // onProse clears status (calls _removePipelineStatus) and is awaited
                     // so saveReply + saveChatConditional finish before FLAG phase.
-                    await onProse?.(prose);
+                    //
+                    // CRIT-LIB-3: wrap in try/catch. Without this, a throw from
+                    // `await saveReply` or `await saveChatConditional` inside onProse
+                    // propagates all the way to index.js's outer catch — the LLM
+                    // produced valid prose, the user paid the tokens, and the message
+                    // is silently lost behind a generic "Generation failed" toast.
+                    //
+                    // On failure: keep `prose` set + `writeDone = true` so we return
+                    // it from the loop. The caller in index.js takes one of two paths:
+                    //  - if onProse partially succeeded (saveReply ran, proseMsg was
+                    //    captured, only saveChatConditional threw) → index.js's
+                    //    `if (proseMsg)` branch runs and re-tries saveChatConditional
+                    //    (its post-await epoch guard from F6 still applies).
+                    //  - if onProse fully failed (saveReply threw, proseMsg still
+                    //    null) → index.js's `else if (result.prose)` fallback branch
+                    //    runs (F3-hardened) and does the full saveReply pipeline.
+                    // Either way the prose is preserved instead of silently lost.
+                    //
+                    // Also short-circuits FLAG: a broken persistence path means the
+                    // chat is already in a degraded state, no point asking the model
+                    // for flag tool calls that will also try to persist.
+                    if (onProse) {
+                        try {
+                            await onProse(prose);
+                        } catch (onProseErr) {
+                            console.warn('[DLE] onProse threw — preserving prose for caller-side fallback:', onProseErr?.message || onProseErr);
+                            try {
+                                pushEvent('librarian', {
+                                    surface: 'loop', action: 'onProse_error',
+                                    iteration, phase,
+                                    error: (onProseErr?.message || String(onProseErr)).slice(0, 200),
+                                    proseLen: (prose || '').length,
+                                });
+                            } catch { /* never throw from diag */ }
+                            exitReason = 'onProse_error';
+                            // Bail out of the per-iteration tool processing + the main
+                            // loop. `prose` and `writeDone` already set above, so the
+                            // outer `return { prose, ... }` carries the LLM's output
+                            // back to index.js for the fallback save path.
+                            return { prose: prose || '', toolActivity, usage };
+                        }
+                    }
 
                     const flagInstructions = buildFlaggingInstructions(settings);
                     results.push({ id: tc.id, name: tc.name, result: flagInstructions });
@@ -362,9 +411,41 @@ export async function runAgenticLoop(options) {
  * Single FLAG-phase iteration. Best-effort — caller catches errors.
  * Handles multiple flag calls from one response, but does not loop.
  * Mutates `messages` and `toolActivity`.
+ *
+ * Epoch/abort guards mirror the main loop's iteration-top guard (gotcha #21).
+ * Without them, `flagLoreAction` would still skip the chat_metadata persist
+ * (its own epoch check at L544), but `sessionActivityLog.push` and
+ * `incrementStats` fire unconditionally — old-chat flags would pollute the
+ * NEW chat's Activity feed and double-count session/chat stats. AbortError
+ * is re-thrown so the main loop can surface it.
  */
-async function _runFlagIteration(messages, tools, toolChoice, maxTokens, signal, toolActivity, settings, debug, outerFlagCount = 0) {
+async function _runFlagIteration(messages, tools, toolChoice, maxTokens, signal, toolActivity, settings, debug, outerFlagCount = 0, epoch, lockEpoch) {
+    // Pre-call guard. The main loop checked at iteration top, but we await
+    // here before any flag-side mutation — re-check before the API call too.
+    if (signal?.aborted) {
+        const err = new Error('Agentic loop aborted');
+        err.name = 'AbortError';
+        throw err;
+    }
+    if (epoch !== undefined && (epoch !== chatEpoch || lockEpoch !== generationLockEpoch)) {
+        if (debug) console.debug('[DLE] _runFlagIteration: epoch mismatch before API call, bail');
+        return 0;
+    }
+
     const response = await callWithTools(messages, tools, toolChoice, maxTokens, signal);
+
+    // Post-API guard. callWithTools can take many seconds; CHAT_CHANGED during
+    // the wait must NOT lead to flagLoreAction writes against the new chat.
+    if (signal?.aborted) {
+        const err = new Error('Agentic loop aborted');
+        err.name = 'AbortError';
+        throw err;
+    }
+    if (epoch !== undefined && (epoch !== chatEpoch || lockEpoch !== generationLockEpoch)) {
+        if (debug) console.debug('[DLE] _runFlagIteration: epoch mismatch after API call, bail');
+        return 0;
+    }
+
     const toolCalls = parseToolCalls(response);
     if (toolCalls.length === 0) return 0;
 
@@ -380,8 +461,29 @@ async function _runFlagIteration(messages, tools, toolChoice, maxTokens, signal,
             results.push({ id: tc.id, name: tc.name, result: 'End your turn now.' });
             continue;
         }
+        // Re-check before each await — a CHAT_CHANGED between flag calls must
+        // stop the remaining flags from polluting the new chat's activity log.
+        if (signal?.aborted) {
+            const err = new Error('Agentic loop aborted');
+            err.name = 'AbortError';
+            throw err;
+        }
+        if (epoch !== undefined && (epoch !== chatEpoch || lockEpoch !== generationLockEpoch)) {
+            if (debug) console.debug('[DLE] _runFlagIteration: epoch mismatch mid-loop, bail');
+            break;
+        }
         flagCount++;
         const flagResult = await flagLoreAction(tc.input || {});
+        // Post-await: flagLoreAction itself awaits internally and mutates
+        // sessionActivityLog + librarianSessionStats + librarianChatStats.
+        // If epoch shifted DURING the call, we already wrote to the wrong
+        // chat — can't undo. But we can prevent toolActivity (drawer dropdown)
+        // from leaking by checking here.
+        if (epoch !== undefined && (epoch !== chatEpoch || lockEpoch !== generationLockEpoch)) {
+            if (debug) console.debug('[DLE] _runFlagIteration: epoch mismatch after flagLoreAction, skip toolActivity push');
+            results.push({ id: tc.id, name: tc.name, result: flagResult || 'Flag recorded.' });
+            break;
+        }
         results.push({ id: tc.id, name: tc.name, result: flagResult || 'Flag recorded.' });
         toolActivity.push({
             type: 'flag',

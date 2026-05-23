@@ -359,10 +359,19 @@ export function recordAiSuccess() {
 }
 /** Release the half-open probe without recording success or failure.
  *  Used by hierarchicalPreFilter: its outcome shouldn't affect the circuit breaker
- *  since the main aiSearch() call handles its own probing independently. */
+ *  since the main aiSearch() call handles its own probing independently.
+ *
+ *  L2 fix (v2.5): notify circuit observers so UI surfaces (drawer status
+ *  indicator, settings-ui chip) refresh while a cooldown-expired probe is
+ *  in flight and then released. Without this, the chip can show stale
+ *  "probing" state until the next record* call mutates the breaker. The
+ *  underlying open/closed flags are unchanged here (this is a release, not
+ *  a transition), so observers see the same `isAiCircuitOpen()` value —
+ *  but the probe-in-flight aspect (exposed via subsystem getters) shifts. */
 export function releaseHalfOpenProbe() {
     aiCircuitHalfOpenProbe = false;
     aiCircuitProbeTimestamp = 0;
+    notifyCircuitStateChanged();
 }
 /**
  * PR #28.1 — Operator-initiated reset of the AI circuit breaker.

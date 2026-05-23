@@ -15,7 +15,8 @@
 import { chat, chat_metadata, saveChatConditional, reloadCurrentChat, saveMetadata } from '../../../../../../script.js';
 import { saveMetadataDebounced } from '../../../../../extensions.js';
 import { getSettings, resolveConnectionConfig } from '../../settings.js';
-import { callAI } from './ai.js';
+import { tryAcquireHalfOpenProbe, recordAiSuccess, recordAiFailure } from '../state.js';
+import { callAI, isExcludedFromBreaker } from './ai.js';
 import { classifyError } from '../../core/utils.js';
 import { parseRange, buildSummaryUserMessage, applyHideAndPrepend, rollbackById } from './summarize-pure.js';
 
@@ -49,14 +50,25 @@ async function callSummaryAI(userMessage, signal) {
     const settings = getSettings();
     const conn = resolveConnectionConfig('scribe');
     const systemPrompt = settings.summarySystemPrompt?.trim() || DEFAULT_PROMPT;
-    const result = await callAI(systemPrompt, userMessage, {
-        ...conn,
-        caller: 'summarize',
-        maxTokens: settings.summaryMaxTokens || 400,
-        timeout: settings.summaryTimeout || 30000,
-        signal,
-    });
-    return (result.text || '').trim();
+    // Wave-B contract: summarize was bypassing the breaker entirely. Match the
+    // scribe/auto-suggest pattern — gate via tryAcquireHalfOpenProbe (the mutation
+    // gate, not isAiCircuitOpen) and route the trip decision through the shared
+    // isExcludedFromBreaker classifier so 401/403/429 don't count as failures.
+    if (!tryAcquireHalfOpenProbe()) throw new Error('AI circuit breaker is open — skipping summarize');
+    try {
+        const result = await callAI(systemPrompt, userMessage, {
+            ...conn,
+            caller: 'summarize',
+            maxTokens: settings.summaryMaxTokens || 400,
+            timeout: settings.summaryTimeout || 30000,
+            signal,
+        });
+        recordAiSuccess();
+        return (result.text || '').trim();
+    } catch (err) {
+        if (!isExcludedFromBreaker(err)) recordAiFailure();
+        throw err;
+    }
 }
 
 /**
