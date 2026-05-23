@@ -1,4 +1,5 @@
 /** DeepLore Enhanced — Self-Healing Diagnostics & Why Not? */
+import { getCurrentChatId } from '../../../../../../script.js';
 import { getSettings } from '../../settings.js';
 import { buildScanText } from '../../core/utils.js';
 import { testEntryMatch, countKeywordOccurrences } from '../../core/matching.js';
@@ -6,7 +7,15 @@ import {
     vaultIndex, indexTimestamp, cooldownTracker, injectionHistory,
     generationCount, trackerKey,
 } from '../state.js';
-import { getCurrent as getCurrentVerdict } from '../verdict/verdict-store.js';
+import { getCurrentForChat as getCurrentVerdictForChat } from '../verdict/verdict-store.js';
+
+// Local helper — UI consumers must read the CURRENT CHAT's verdict, not the
+// ring-global newest. See docs/gotchas.md #46 ("UI consumer rule").
+function _currentVerdictForChat() {
+    let cid = null;
+    try { cid = getCurrentChatId() ?? null; } catch { cid = null; }
+    return getCurrentVerdictForChat(cid);
+}
 
 /**
  * @returns {{ issues: Array<{type: string, severity: 'error'|'warning'|'info', entry: string, detail: string}>, errors: number, warnings: number }}
@@ -275,7 +284,7 @@ export function diagnoseEntry(entry, chatMsgs) {
     const settings = getSettings();
     const result = { stage: 'unknown', detail: '', suggestions: [] };
     // Verdict store carries the trace; replaces the old lastPipelineTrace global.
-    const _diagTrace = getCurrentVerdict()?.trace ?? null;
+    const _diagTrace = _currentVerdictForChat()?.trace ?? null;
 
     if (entry.keys.length === 0 && !entry.constant) {
         result.stage = 'no_keywords';

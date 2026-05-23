@@ -2,22 +2,28 @@
 import { escapeHtml } from '../../../../../utils.js';
 import { callGenericPopup, POPUP_TYPE } from '../../../../../popup.js';
 import { buildCopyButton, attachCopyHandler } from './popups.js';
-import { chat } from '../../../../../../script.js';
+import { chat, getCurrentChatId } from '../../../../../../script.js';
 import { simpleHash } from '../../core/utils.js';
 import { getSettings } from '../../settings.js';
 import { vaultIndex, vaultAvgTokens, chatInjectionCounts, trackerKey } from '../state.js';
-import { getCurrent as getCurrentVerdict, getPrevious as getPreviousVerdict } from '../verdict/verdict-store.js';
+import {
+    getCurrentForChat as getCurrentVerdictForChat,
+    getByMessageSync as getVerdictByMessageSync,
+    getPreviousForMessage as getVerdictPreviousForMessage,
+} from '../verdict/verdict-store.js';
 import { diffVerdicts } from '../verdict/verdict-pure.js';
 import { diagnoseEntry } from './diagnostics.js';
 import { STAGE_COLORS, categorizeRejections, resolveEntryVault, parseMatchReason, tokenBarColor, formatRelativeTime, comparePriority } from '../helpers.js';
 import { navigateToBrowseEntry } from '../drawer/drawer.js';
 /**
  * No-op kept for backward compatibility with CHAT_CHANGED handler. Verdict store
- * already wipes per-chat state on chat switch via clearVerdictChat — no separate
- * cartographer-local state to reset.
+ * already wipes per-chat in-memory state on chat switch via clearVerdictRing
+ * (with per-chat IDB rows separately reachable via clearVerdictChatIdb) — no
+ * separate cartographer-local state to reset.
  */
 export function resetCartographer() {
-    // Intentionally empty: previousSources global is gone; getPreviousVerdict() reads ring buffer.
+    // Intentionally empty: previousSources global is gone; verdict-store ring buffer
+    // is the single source of truth (resolved per-msgIdx by showSourcesPopup).
 }
 
 export function injectSourcesButton(messageId) {
@@ -40,7 +46,15 @@ function formatMatchReason(matchedBy) {
     return labels[type] || '';
 }
 
-/** @param {Array<{title: string, filename: string, matchedBy: string, priority: number, tokens: number}>} sources */
+/**
+ * @param {Array<{title: string, filename: string, matchedBy: string, priority: number, tokens: number}>} sources
+ * @param {{ aiNotes?: string, msgIdx?: number }} [opts]
+ *   `msgIdx`: when the popup is opened for a specific message (e.g. the per-message "Why?"
+ *   button), pass `chat.length`-style index for that message. The popup resolves the matching
+ *   verdict (and its predecessor) via the verdict store so the "added/removed" diff stays
+ *   correct for historical messages — not just the live newest one. Omit for previews where
+ *   `sources` is synthesized outside the pipeline.
+ */
 export function showSourcesPopup(sources, opts = {}) {
     const settings = getSettings();
     const totalTokens = sources.reduce((sum, s) => sum + s.tokens, 0);
@@ -64,14 +78,26 @@ export function showSourcesPopup(sources, opts = {}) {
         groups.get(posKey).push({ ...src, entry });
     }
 
-    // Diff "current vs previous turn" from the verdict ring buffer. The popup's `sources`
-    // param may come from a fallback path (msg.extra.deeplore_sources after reload) — diff
-    // anchors on the verdict that produced those sources where possible.
-    const _currentVerdict = getCurrentVerdict();
-    const _previousVerdict = getPreviousVerdict();
-    const diff = (_currentVerdict && Array.isArray(_currentVerdict.injectedSources) && _currentVerdict.injectedSources === sources)
-        ? diffVerdicts(_currentVerdict, _previousVerdict)
-        : diffVerdicts({ injectedSources: sources }, _currentVerdict);
+    // Diff "current vs previous turn" from the verdict ring buffer. When the caller passes
+    // `opts.msgIdx` (per-message "Why?" button on a specific message), we resolve the verdict
+    // for THAT message + its predecessor so the diff stays correct for historical messages.
+    // Without msgIdx (preview / generic drawer expand), fall back to the chat-scoped newest
+    // verdict and its predecessor.
+    //
+    // Bug history: an earlier fallback path passed `{ injectedSources: sources }` as `current`
+    // and the live newest verdict as `previous`, which inverted the diff for any message that
+    // wasn't the live one (e.g. clicking "Why?" on an older message, or after page reload
+    // when `sources` came from `message.extra.deeplore_sources`). Threading msgIdx through
+    // caller + resolving via the verdict-store API restores the correct direction.
+    const _chatId = (() => { try { return getCurrentChatId() ?? null; } catch { return null; } })();
+    const _resolvedMsgIdx = typeof opts.msgIdx === 'number' ? opts.msgIdx : null;
+    const _currentVerdict = _resolvedMsgIdx != null
+        ? (getVerdictByMessageSync(_resolvedMsgIdx, _chatId) || { injectedSources: sources })
+        : (getCurrentVerdictForChat(_chatId) || { injectedSources: sources });
+    const _previousVerdict = _resolvedMsgIdx != null
+        ? getVerdictPreviousForMessage(_resolvedMsgIdx, _chatId)
+        : getVerdictPreviousForMessage(getCurrentVerdictForChat(_chatId)?.msgIdx ?? Number.MAX_SAFE_INTEGER, _chatId);
+    const diff = diffVerdicts(_currentVerdict, _previousVerdict);
 
     const plainLines = [`Injected Sources (${sources.length} entries, ~${totalTokens} tokens)`, '', 'Entry\tTokens\tMatched By\tFolder\tChat×\tAll-time Inj\tAll-time Match\tLast Used'];
     for (const src of sources) {
@@ -194,10 +220,13 @@ export function showSourcesPopup(sources, opts = {}) {
     }
 
     // ── Rejected Entries (staged breakdown) ──
-    const _cartoTrace = getCurrentVerdict()?.trace ?? null;
+    // Trace comes from the SAME verdict we just diffed — keeps rejected-entries view
+    // consistent with the injected-entries view when inspecting historical messages.
+    const _cartoTrace = _currentVerdict?.trace ?? null;
     if (_cartoTrace && chat && chat.length > 0) {
-        const injectedTitles = new Set(sources.map(s => s.title));
-        const rejectedGroups = categorizeRejections(_cartoTrace, injectedTitles);
+        // BUG-AUDIT v2.5: trackerKey-shape keys so same-titled cross-vault entries don't collide.
+        const injectedKeys = new Set(sources.map(s => `${s.vaultSource || ''}:${(s.title || '').toLowerCase()}`));
+        const rejectedGroups = categorizeRejections(_cartoTrace, injectedKeys);
 
         if (rejectedGroups.length > 0) {
             const totalRejected = rejectedGroups.reduce((sum, g) => sum + g.entries.length, 0);

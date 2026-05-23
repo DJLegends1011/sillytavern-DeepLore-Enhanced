@@ -2,7 +2,7 @@
  * DeepLore Enhanced — VerdictStore (live).
  *
  * Per-Turn Decision Record store. In-memory ring buffer + IndexedDB spill
- * (current chat only, capped, auto-pruned). Single source of truth for
+ * (per-chat, capped, auto-pruned). Single source of truth for
  * "what did DLE decide on message N?"
  *
  * Replaces 4 racing globals:
@@ -12,15 +12,21 @@
  *  - Ring buffer in memory: last RING_CAP verdicts across all chats this session.
  *    Used for fast read of getCurrent() / getPrevious() / getByMessage().
  *  - IDB store `verdicts` (in DB `DeepLoreEnhanced`, schema v2): per-chat persisted
- *    verdicts for the current chat only. Other chats' IDB records are dropped on
- *    CHAT_CHANGED. NEVER written to chat_metadata (chat files stay clean).
+ *    verdicts. Each chat's rows survive chat switches so resume-after-reload of
+ *    any prior chat works. Per-chat cap (IDB_PER_CHAT_CAP) is enforced after each
+ *    write via pruneCurrentChat(). NEVER written to chat_metadata (chat files
+ *    stay clean).
  *
  * Lifecycle:
  *  - writeVerdict(v): pushes to ring; spills async to IDB; fires observers.
  *  - getCurrent(): newest verdict (any chat in ring).
  *  - getPrevious(): second-newest verdict for the current chat (for cartographer diff).
  *  - getByMessage(msgIdx): looks up by chat.length at gen start.
- *  - clearChat(chatId): wipes ring entries + IDB records for chatId. Called on CHAT_CHANGED.
+ *  - clearRing(): drops in-memory ring only, leaves all IDB rows intact. Used on
+ *    CHAT_CHANGED so resume-after-reload of the destination chat works.
+ *  - clearChatIdb(chatId): drops IDB rows for one chat (e.g. user deletes chat).
+ *  - clearChat(chatId): wipes ring entries + IDB records for chatId. `null` wipes
+ *    everything (only safe at full teardown / nuke from orbit).
  *  - hydrateChat(chatId): loads recent IDB records for chatId into ring. Called on CHAT_CHANGED.
  */
 
@@ -29,7 +35,8 @@ import {
     buildVerdict,
     diffVerdicts,
     evictRing,
-    selectPruneVictims,
+    selectPruneVictimsFromOrderedKeys,
+    shouldRunPruneScan,
     validateVerdict,
 } from './verdict-pure.js';
 import { pushEvent } from '../diagnostics/interceptors.js';
@@ -45,6 +52,18 @@ const VERDICT_STORE = 'verdicts';
 const RING_CAP = 50;
 /** Per-chat IDB record cap. Auto-pruned on write. */
 const IDB_PER_CHAT_CAP = 200;
+/**
+ * Counter-based sampling rate for `pruneCurrentChat`. Every Nth writeVerdict
+ * actually runs the prune scan; the rest no-op. With N=10 the chat may
+ * temporarily exceed `IDB_PER_CHAT_CAP` by up to N-1 verdicts between scans,
+ * which is acceptable (cap is a soft limit; the upper bound is bounded by N).
+ * This eliminates ~90% of the per-generation IDB getAll cost.
+ *
+ * P1 perf fix (Wave C, 2026-05-22). See docs/gotchas.md #52.
+ */
+let PRUNE_SAMPLE_RATE = 10;
+let pruneCallCount = 0;
+let pruneScanCount = 0; // test-only counter: how many calls actually scanned.
 
 /** @type {import('./verdict-pure.js').Verdict[]} */
 let ring = [];
@@ -110,8 +129,9 @@ function openDB() {
 }
 
 function buildIdbKey(v) {
-    // Sortable lex key: chatId | msgIdx (zero-padded) | ts. Ensures range scans work and
-    // selectPruneVictims sees a stable ordering even if msgIdx ties (shouldn't but defensive).
+    // Sortable lex key: chatId | msgIdx (zero-padded) | ts. Enables IDBKeyRange-bound
+    // cursor scans scoped to a single chatId (see pruneCurrentChat) and gives
+    // selectPruneVictims a stable ordering even if msgIdx ties (shouldn't, but defensive).
     const padded = String(v.msgIdx ?? 0).padStart(6, '0');
     return `${v.chatId ?? ''}:${padded}:${v.ts}`;
 }
@@ -206,6 +226,50 @@ export function getPrevious() {
 }
 
 /**
+ * Sync ring-only lookup for a specific msgIdx in a specific chat. Returns null
+ * if not in ring (no IDB fallback — use async getByMessage for that).
+ *
+ * Used by sync UI consumers (cartographer popup) that need msgIdx-anchored
+ * lookups without going async. Recent messages are almost always in the ring.
+ *
+ * @param {number} msgIdx
+ * @param {string|null} [chatId]   If null/omitted, uses `currentChatId`.
+ * @returns {import('./verdict-pure.js').Verdict|null}
+ */
+export function getByMessageSync(msgIdx, chatId) {
+    const cid = chatId ?? currentChatId;
+    for (let i = ring.length - 1; i >= 0; i--) {
+        if (ring[i].msgIdx === msgIdx && (cid == null || ring[i].chatId === cid)) return ring[i];
+    }
+    return null;
+}
+
+/**
+ * Return the verdict in the ring that immediately precedes `msgIdx` for the
+ * given chat — i.e. the verdict with the largest `msgIdx' < msgIdx`. Used by
+ * the cartographer popup to compute "what changed since the previous turn"
+ * when inspecting an OLDER message (not just the live newest one).
+ *
+ * Pure in-ring scan, sync. Returns null if no prior verdict is in the ring
+ * (caller should treat as "no diff available").
+ *
+ * @param {number} msgIdx
+ * @param {string|null} [chatId]   If null/omitted, uses `currentChatId`.
+ * @returns {import('./verdict-pure.js').Verdict|null}
+ */
+export function getPreviousForMessage(msgIdx, chatId) {
+    const cid = chatId ?? currentChatId;
+    let best = null;
+    for (let i = 0; i < ring.length; i++) {
+        const v = ring[i];
+        if (cid != null && v.chatId !== cid) continue;
+        if (typeof v.msgIdx !== 'number' || v.msgIdx >= msgIdx) continue;
+        if (best == null || v.msgIdx > best.msgIdx) best = v;
+    }
+    return best;
+}
+
+/**
  * Look up the verdict for a specific message index. Fast in-ring scan; falls
  * back to IDB query if absent.
  *
@@ -241,8 +305,47 @@ export function setCurrentChatId(chatId) {
 }
 
 /**
- * Drop ring entries + IDB records for a given chat. Called on CHAT_CHANGED so
- * other chats' IDB rows do not accumulate beyond a single chat's lifetime.
+ * Drop the in-memory ring buffer only. Leaves all IDB rows intact (any chat).
+ * Use this on CHAT_CHANGED — the destination chat's persisted verdicts must
+ * survive so hydrateChat(newId) can rebuild the ring from IDB on resume.
+ *
+ * Synchronous. No IDB I/O.
+ */
+export function clearRing() {
+    ring = [];
+    notify();
+}
+
+/**
+ * Drop IDB rows for one chat only. Use when the user permanently removes a
+ * chat (delete) or wants to forget that chat's verdict history. Does NOT touch
+ * the in-memory ring (call clearRing separately if needed).
+ *
+ * @param {string} chatId
+ * @returns {Promise<void>}
+ */
+export async function clearChatIdb(chatId) {
+    if (!chatId) return;
+    try {
+        const keys = (await listIdbForChat(chatId)).map(buildIdbKey);
+        if (keys.length === 0) return;
+        const db = await openDB();
+        try {
+            const tx = db.transaction(VERDICT_STORE, 'readwrite');
+            const store = tx.objectStore(VERDICT_STORE);
+            for (const k of keys) store.delete(k);
+            await txDone(tx);
+        } finally { db.close(); }
+    } catch (err) {
+        console.warn('[DLE] Verdict clearChatIdb failed:', err?.message);
+    }
+}
+
+/**
+ * Drop ring entries + IDB records for a given chat. `null` wipes EVERYTHING
+ * (in-memory + every chat's IDB rows) — only safe at full teardown / nuke
+ * from orbit. For CHAT_CHANGED use clearRing() instead so resume-after-reload
+ * still works for the destination chat.
  *
  * @param {string|null} chatId  If null, wipes everything (in-memory + all IDB rows).
  * @returns {Promise<void>}
@@ -284,6 +387,21 @@ export async function clearChat(chatId) {
  * Hydrate the ring buffer with recent verdicts for the given chat. Called on
  * CHAT_CHANGED after setCurrentChatId so resume-after-reload reads the right data.
  *
+ * F2 race fix (2026-05-22, see docs/gotchas.md #46): the old logic
+ * `ring = ring.filter(v => v.chatId !== chatId); ring.push(...slice)` raced
+ * with synchronous writeVerdict calls. Sequence that bit:
+ *   1. CHAT_CHANGED fires → clearRing() + hydrateChat(newId) (async).
+ *   2. User fires Generate immediately; onGenerate writeVerdict pushes a fresh
+ *      verdict for newId into the ring.
+ *   3. hydrateChat resolves; the .filter() above wiped the just-written verdict
+ *      and replaced it with stale IDB slices, so getCurrent / getCurrentForChat
+ *      / getByMessageSync all lost the live verdict for that turn.
+ * Fix (Option A — merge instead of replace): preserve any ring entry for this
+ * chat whose `ts` is newer than the freshest hydrated `ts`. Those are the
+ * mid-hydration writes that must survive. Ordering: other chats unchanged, then
+ * chronological hydrated slice, then preserved-fresh at the tail so backward
+ * scans in getCurrent / getCurrentForChat find the live verdict first.
+ *
  * @param {string} chatId
  * @returns {Promise<number>}  Number of verdicts hydrated.
  */
@@ -295,12 +413,16 @@ export async function hydrateChat(chatId) {
         // Newest-first by msgIdx, take RING_CAP (or fewer).
         const sorted = [...records].sort((a, b) => (b.msgIdx - a.msgIdx) || (b.ts - a.ts));
         const slice = sorted.slice(0, RING_CAP).reverse(); // chronological order in ring.
-        // Drop any existing ring rows for this chat first to avoid dupes.
-        ring = ring.filter(v => v.chatId !== chatId);
-        ring.push(...slice);
+        // F2: preserve mid-hydration writes (ts newer than freshest hydrated row).
+        const incomingMaxTs = slice.length ? Math.max(...slice.map(v => v.ts || 0)) : 0;
+        const preservedFresh = ring
+            .filter(v => v.chatId === chatId && (v.ts || 0) > incomingMaxTs)
+            .sort((a, b) => (a.ts || 0) - (b.ts || 0)); // chronological so newest stays at tail
+        const otherChats = ring.filter(v => v.chatId !== chatId);
+        ring = [...otherChats, ...slice, ...preservedFresh];
         ring = evictRing(ring, RING_CAP);
         notify();
-        pushEvent('verdict_hydrate', { chatId, count: slice.length });
+        pushEvent('verdict_hydrate', { chatId, count: slice.length, preservedFresh: preservedFresh.length });
         return slice.length;
     } catch (err) {
         console.warn('[DLE] Verdict hydrateChat failed:', err?.message);
@@ -334,17 +456,65 @@ async function listIdbForChat(chatId) {
 
 /**
  * Prune the current chat's IDB store down to IDB_PER_CHAT_CAP records.
- * Called after each writeVerdict.
  *
- * @returns {Promise<number>}  Number of records deleted.
+ * Called after each writeVerdict. Two perf optimizations (Wave C P1, 2026-05-22):
+ *
+ *  1. Counter-based sampling: only actually scan every PRUNE_SAMPLE_RATE'th
+ *     call. Between scans the cap may temporarily exceed by up to N-1 records
+ *     — acceptable, the cap is a soft limit. Skips ~90% of scans.
+ *
+ *  2. Bounded key-only cursor: instead of `getAll()` (full deserialization of
+ *     every verdict across every chat in the store), open an `openKeyCursor`
+ *     scoped to the current chat's key prefix via `IDBKeyRange.bound`. Walks
+ *     oldest-first (default direction) collecting keys only — no value
+ *     deserialization. Victims are the leading slice.
+ *
+ * Key shape (from buildIdbKey): `${chatId}:${paddedMsgIdx}:${ts}`. Range
+ * `[chatId+':', chatId+':￿']` scopes to that chat (U+FFFF is the highest
+ * BMP code unit — every real key for this chat sorts strictly less). Assumes
+ * ST chat IDs don't themselves contain `':'` (they're file basenames in
+ * practice, no embedded colons). We never read values, so validateVerdict
+ * isn't needed here.
+ *
+ * @returns {Promise<number>}  Number of records deleted (0 if sampling skipped this call).
  */
 async function pruneCurrentChat() {
     if (!currentChatId) return 0;
-    const records = await listIdbForChat(currentChatId);
-    const catalog = records.map(v => ({ msgIdx: v.msgIdx, ts: v.ts, key: buildIdbKey(v) }));
-    const victims = selectPruneVictims(catalog, IDB_PER_CHAT_CAP);
-    if (victims.length === 0) return 0;
+    pruneCallCount++;
+    if (!shouldRunPruneScan(pruneCallCount, PRUNE_SAMPLE_RATE)) return 0;
+    pruneScanCount++;
+
     const db = await openDB();
+    let victims;
+    try {
+        // Phase 1: oldest-first cursor walk, key-only (no value deserialization).
+        const tx = db.transaction(VERDICT_STORE, 'readonly');
+        const store = tx.objectStore(VERDICT_STORE);
+        const lower = `${currentChatId}:`;
+        const upper = `${currentChatId}:￿`;
+        const range = IDBKeyRange.bound(lower, upper);
+        const orderedKeys = await new Promise((resolve, reject) => {
+            const keys = [];
+            const req = store.openKeyCursor(range, 'next'); // oldest-first
+            req.onsuccess = () => {
+                const cursor = req.result;
+                if (cursor) {
+                    keys.push(cursor.key);
+                    cursor.continue();
+                } else {
+                    resolve(keys);
+                }
+            };
+            req.onerror = () => reject(req.error);
+        });
+        victims = selectPruneVictimsFromOrderedKeys(orderedKeys, IDB_PER_CHAT_CAP);
+        if (victims.length === 0) return 0;
+    } catch (err) {
+        db.close();
+        throw err;
+    }
+
+    // Phase 2: delete victims in a separate readwrite tx (cursor tx is readonly).
     try {
         const tx = db.transaction(VERDICT_STORE, 'readwrite');
         const store = tx.objectStore(VERDICT_STORE);
@@ -364,6 +534,38 @@ export function resetForTests() {
     ring = [];
     currentChatId = null;
     observers.clear();
+    pruneCallCount = 0;
+    pruneScanCount = 0;
+    PRUNE_SAMPLE_RATE = 10;
+}
+
+/**
+ * Test-only: override the prune sample rate so regression tests can exercise
+ * the gating without writing 10 verdicts to trigger a single scan. Production
+ * code MUST NOT call this — production rate is fixed at 10.
+ *
+ * @param {number} rate
+ */
+export function _setPruneSampleRateForTests(rate) {
+    if (Number.isFinite(rate) && rate >= 1) PRUNE_SAMPLE_RATE = rate;
+}
+
+/**
+ * Test-only: introspect the prune counter telemetry.
+ * @returns {{ calls: number, scans: number, rate: number }}
+ */
+export function _getPruneStatsForTests() {
+    return { calls: pruneCallCount, scans: pruneScanCount, rate: PRUNE_SAMPLE_RATE };
+}
+
+/**
+ * Test-only: invoke the (otherwise module-private) pruneCurrentChat directly so
+ * regression tests can assert sampling/cursor behavior without needing to
+ * round-trip through writeVerdict (which requires IDB).
+ * @returns {Promise<number>}
+ */
+export async function _invokePruneForTests() {
+    return pruneCurrentChat();
 }
 
 /**

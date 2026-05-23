@@ -1,11 +1,19 @@
-import { amount_gen } from '../../../../../../script.js';
+import { amount_gen, getCurrentChatId } from '../../../../../../script.js';
 import { getSettings } from '../../settings.js';
 import {
     vaultIndex, librarianChatStats,
     aiSearchStats, isAiCircuitOpen, aiCircuitOpenedAt, resetAiCircuitBreaker,
     indexEverLoaded, indexTimestamp, lastHealthResult,
 } from '../state.js';
-import { getCurrent as getCurrentVerdict } from '../verdict/verdict-store.js';
+import { getCurrentForChat as getCurrentVerdictForChat } from '../verdict/verdict-store.js';
+
+// Local helper — UI consumers must read the CURRENT CHAT's verdict, not the
+// ring-global newest. See docs/gotchas.md #46 ("UI consumer rule").
+function _currentVerdictForChat() {
+    let cid = null;
+    try { cid = getCurrentChatId() ?? null; } catch { cid = null; }
+    return getCurrentVerdictForChat(cid);
+}
 import { getCircuitState } from '../vault/obsidian-api.js';
 import { ds, formatTokensCompact, activityLog, announceToScreenReader } from './drawer-state.js';
 import { callGenericPopup, POPUP_TYPE } from '../../../../../popup.js';
@@ -148,7 +156,7 @@ export function renderFooter() {
     }
 
     const $pipe = $footer.find('[data-health="pipeline"]');
-    const _footerTrace = getCurrentVerdict()?.trace ?? null;
+    const _footerTrace = _currentVerdictForChat()?.trace ?? null;
     if (_footerTrace) {
         const entryCount = _footerTrace.injected?.length || 0;
         const hasResults = entryCount > 0 || _footerTrace.totalTokens > 0;

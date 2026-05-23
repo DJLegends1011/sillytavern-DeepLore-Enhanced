@@ -1,4 +1,4 @@
-import { chat_metadata } from '../../../../../../script.js';
+import { chat_metadata, getCurrentChatId } from '../../../../../../script.js';
 import { escapeHtml } from '../../../../../utils.js';
 import { getSettings } from '../../settings.js';
 import {
@@ -8,7 +8,15 @@ import {
     pipelinePhase,
     suppressNextAgenticLoop,
 } from '../state.js';
-import { getCurrent as getCurrentVerdict } from '../verdict/verdict-store.js';
+import { getCurrentForChat as getCurrentVerdictForChat } from '../verdict/verdict-store.js';
+
+// Local helper — UI consumers must read the CURRENT CHAT's verdict, not the
+// ring-global newest. See docs/gotchas.md #46 ("UI consumer rule").
+function _currentVerdictForChat() {
+    let cid = null;
+    try { cid = getCurrentChatId() ?? null; } catch { cid = null; }
+    return getCurrentVerdictForChat(cid);
+}
 import { getCircuitState } from '../vault/obsidian-api.js';
 import { ds, MODE_LABELS, MODE_DESCRIPTIONS, STATUS_CLASSES, STATUS_DESCRIPTIONS, announceToScreenReader, formatTokensCompact } from './drawer-state.js';
 
@@ -115,7 +123,7 @@ export function renderStatusZone() {
 
     // Stat values get a flash animation on change. Verdict store holds the authoritative
     // trace + injected sources together — no fallback needed.
-    const _statusVerdict = getCurrentVerdict();
+    const _statusVerdict = _currentVerdictForChat();
     const entryCount = indexing ? '…' : vaultIndex.length;
     const $entries = $drawer.find('[data-stat="entries"]');
     if ($entries.text() !== String(entryCount)) {
@@ -264,7 +272,7 @@ export function updateTabBadges() {
     if (!$drawer) return;
 
     // Verdict store holds injectedSources + trace together; either path resolves count.
-    const _badgeVerdict = getCurrentVerdict();
+    const _badgeVerdict = _currentVerdictForChat();
     const injCount = _badgeVerdict?.injectedSources?.length ?? _badgeVerdict?.trace?.injected?.length ?? 0;
     $drawer.find('[data-badge="injection"]').text(injCount || '');
 

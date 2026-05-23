@@ -1,4 +1,4 @@
-import { chat_metadata } from '../../../../../../script.js';
+import { chat_metadata, getCurrentChatId } from '../../../../../../script.js';
 import { escapeHtml } from '../../../../../utils.js';
 import { getSettings } from '../../settings.js';
 import {
@@ -7,7 +7,15 @@ import {
     cooldownTracker, decayTracker, chatInjectionCounts, trackerKey,
     fieldDefinitions,
 } from '../state.js';
-import { getCurrent as getCurrentVerdict, getPrevious as getPreviousVerdict } from '../verdict/verdict-store.js';
+import { getCurrentForChat as getCurrentVerdictForChat, getPrevious as getPreviousVerdict } from '../verdict/verdict-store.js';
+
+// Local helper — UI consumers must read the CURRENT CHAT's verdict, not the
+// ring-global newest. See docs/gotchas.md #46 ("UI consumer rule").
+function _currentVerdictForChat() {
+    let cid = null;
+    try { cid = getCurrentChatId() ?? null; } catch { cid = null; }
+    return getCurrentVerdictForChat(cid);
+}
 import { diffVerdicts } from '../verdict/verdict-pure.js';
 import { DEFAULT_FIELD_DEFINITIONS } from '../fields.js';
 import { buildObsidianURI, categorizeRejections, resolveEntryVault, normalizePinBlock, comparePriority } from '../helpers.js';
@@ -36,7 +44,9 @@ export function renderInjectionTab() {
     if (!$drawer) return;
     // Verdict store is the single source of truth for "what did DLE decide this turn."
     // Empty verdict (injectedSources=[]) is a valid result; null means no verdict written yet.
-    const currentVerdict = getCurrentVerdict();
+    // UI consumers must read the CURRENT CHAT's verdict (not ring-global newest) so a
+    // stale verdict from another chat in the ring can't flicker through on chat-switch.
+    const currentVerdict = _currentVerdictForChat();
     const previousVerdict = getPreviousVerdict();
     const sources = currentVerdict?.injectedSources?.length ? currentVerdict.injectedSources : null;
     const prev = previousVerdict?.injectedSources?.length ? previousVerdict.injectedSources : null;
@@ -180,8 +190,9 @@ export function renderInjectionTab() {
     if (!showFiltered) {
         $whyNotSection.removeClass('dle-visible');
     } else if (trace) {
-        const injectedTitles = new Set(sources.map(s => s.title));
-        const rejectedGroups = categorizeRejections(trace, injectedTitles);
+        // BUG-AUDIT v2.5: trackerKey-shape keys so same-titled cross-vault entries don't collide.
+        const injectedKeys = new Set(sources.map(s => `${s.vaultSource || ''}:${(s.title || '').toLowerCase()}`));
+        const rejectedGroups = categorizeRejections(trace, injectedKeys);
         const nonEmpty = rejectedGroups.filter(g => g.entries.length > 0);
 
         if (nonEmpty.length > 0) {
@@ -382,13 +393,15 @@ export function renderBrowseTab() {
     const blockSet = new Set(blocks.map(b => { const n = normalizePinBlock(b); return `${n.vaultSource || ''}:${n.title.toLowerCase()}`; }));
 
     // Verdict carries both injectedSources and trace together; no post-render clear semantics.
-    const _browseVerdict = getCurrentVerdict();
+    // BUG-AUDIT v2.5: key injectedSet by trackerKey (vaultSource:title) to honor the
+    // multi-vault invariant. Bare title collapses Alice@vault-a + Alice@vault-b.
+    const _browseVerdict = _currentVerdictForChat();
     const injectedSet = new Set();
     const injSources = _browseVerdict?.injectedSources?.length
         ? _browseVerdict.injectedSources
         : _browseVerdict?.trace?.injected;
     if (injSources) {
-        for (const s of injSources) injectedSet.add(s.title.toLowerCase());
+        for (const s of injSources) injectedSet.add(`${s.vaultSource || ''}:${s.title.toLowerCase()}`);
     }
 
     // Search syntax: bare tokens AND substring-match title+keys; prefixes (tag:/folder:/key:/summary:/field:name=val) are field-qualified.
@@ -665,14 +678,15 @@ export function renderBrowseWindow() {
     const pinSet = new Set(pins.map(p => { const n = normalizePinBlock(p); return `${n.vaultSource || ''}:${n.title.toLowerCase()}`; }));
     const blockSet = new Set(blocks.map(b => { const n = normalizePinBlock(b); return `${n.vaultSource || ''}:${n.title.toLowerCase()}`; }));
     // Verdict carries injectedSources + trace together; one read covers both.
-    const _windowVerdict = getCurrentVerdict();
+    // BUG-AUDIT v2.5: key injectedSet by trackerKey to honor multi-vault invariant.
+    const _windowVerdict = _currentVerdictForChat();
     const _windowTrace = _windowVerdict?.trace ?? null;
     const injectedSet = new Set();
     const injSources = _windowVerdict?.injectedSources?.length
         ? _windowVerdict.injectedSources
         : _windowTrace?.injected;
     if (injSources) {
-        for (const s of injSources) injectedSet.add(s.title.toLowerCase());
+        for (const s of injSources) injectedSet.add(`${s.vaultSource || ''}:${s.title.toLowerCase()}`);
     }
 
     const tempMap = computeEntryTemperatures();
@@ -685,8 +699,10 @@ export function renderBrowseWindow() {
             const rejGroups = categorizeRejections(_windowTrace, injectedSet);
             for (const group of rejGroups) {
                 for (const entry of group.entries) {
-                    if (!_cachedRejectionMap.has(entry.title.toLowerCase())) {
-                        _cachedRejectionMap.set(entry.title.toLowerCase(), { label: group.label, icon: group.icon, reason: entry.reason });
+                    // BUG-AUDIT v2.5: trackerKey-shape lookup so cross-vault same-titles don't collide.
+                    const rkey = `${entry.vaultSource || ''}:${(entry.title || '').toLowerCase()}`;
+                    if (!_cachedRejectionMap.has(rkey)) {
+                        _cachedRejectionMap.set(rkey, { label: group.label, icon: group.icon, reason: entry.reason });
                     }
                 }
             }
@@ -738,7 +754,8 @@ export function renderBrowseWindow() {
         const pbKey = `${e.vaultSource || ''}:${tl}`;
         const isPinned = pinSet.has(pbKey);
         const isBlocked = blockSet.has(pbKey);
-        const isInjected = injectedSet.has(tl);
+        // BUG-AUDIT v2.5: injectedSet + rejectionMap keyed by trackerKey (vaultSource:title.toLowerCase()).
+        const isInjected = injectedSet.has(pbKey);
         const trk = trackerKey(e);
         const isSelected = selectedSet.has(trk);
 
@@ -777,7 +794,7 @@ export function renderBrowseWindow() {
         html += `<span class="dle-browse-keys" aria-label="Keywords: ${escapeHtml(keysStr || 'none')}">${escapeHtml(keysStr)}</span>`;
         html += `</div>`;
         html += `<div class="dle-browse-controls">`;
-        const rejection = !isInjected ? rejectionMap.get(tl) : null;
+        const rejection = !isInjected ? rejectionMap.get(pbKey) : null;
         if (rejection) {
             html += `<span class="dle-browse-why-not" title="${escapeHtml(rejection.label)}: ${escapeHtml(rejection.reason)}" aria-label="${escapeHtml(rejection.label)}"><i class="fa-solid ${escapeHtml(rejection.icon)}" aria-hidden="true"></i></span>`;
         }

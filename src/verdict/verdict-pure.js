@@ -219,6 +219,42 @@ export function selectPruneVictims(catalog, cap) {
 }
 
 /**
+ * Cursor-walk variant of selectPruneVictims. The live IDB store walks the
+ * per-chat key range in oldest-first order (default cursor direction) and
+ * collects keys WITHOUT deserializing values. Given that ordered list of keys,
+ * the oldest `keys.length - cap` are the victims.
+ *
+ * Pure helper so the bounded-cursor branch in verdict-store.js can be exercised
+ * without IDB. Live caller is `pruneCurrentChat` (verdict-store.js).
+ *
+ * @param {string[]} orderedKeys  IDB keys in oldest-first order for ONE chat.
+ * @param {number}   cap
+ * @returns {string[]}            Keys to delete (always the leading slice).
+ */
+export function selectPruneVictimsFromOrderedKeys(orderedKeys, cap) {
+    if (!Array.isArray(orderedKeys) || orderedKeys.length <= cap) return [];
+    return orderedKeys.slice(0, orderedKeys.length - cap);
+}
+
+/**
+ * Counter-based sampling decision for prune scans. Pure.
+ *
+ * Returns true if the current call should actually scan IDB; false if it should
+ * no-op. `count` is the (post-increment) call counter, `rate` is N — every Nth
+ * call scans. Worst-case the chat temporarily exceeds the IDB cap by `rate-1`
+ * verdicts between scans, which is acceptable: cap is a soft limit, not a hard
+ * ceiling.
+ *
+ * @param {number} count  Post-increment counter value (1-based).
+ * @param {number} rate   Sample rate (scan every Nth call).
+ * @returns {boolean}
+ */
+export function shouldRunPruneScan(count, rate) {
+    if (!Number.isFinite(rate) || rate < 1) return true;
+    return (count % rate) === 0;
+}
+
+/**
  * Validate a candidate verdict object loaded from IDB. Used to discard corrupt
  * records on hydrate. Mirrors the cache-validate pattern in `src/vault/cache.js`.
  *

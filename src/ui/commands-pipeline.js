@@ -1,5 +1,5 @@
 /** DeepLore Enhanced — Slash Commands: Pipeline Inspection */
-import { chat, chat_metadata } from '../../../../../../script.js';
+import { chat, chat_metadata, getCurrentChatId } from '../../../../../../script.js';
 import { escapeHtml } from '../../../../../utils.js';
 import { callGenericPopup, POPUP_TYPE } from '../../../../../popup.js';
 import { SlashCommandParser } from '../../../../../slash-commands/SlashCommandParser.js';
@@ -13,7 +13,15 @@ import {
     vaultIndex, getWriterVisibleEntries, injectionHistory, generationCount,
     generationLock, trackerKey, buildPromise, fieldDefinitions,
 } from '../state.js';
-import { getCurrent as getCurrentVerdict } from '../verdict/verdict-store.js';
+import { getCurrentForChat as getCurrentVerdictForChat } from '../verdict/verdict-store.js';
+
+// Local helper — UI consumers must read the CURRENT CHAT's verdict, not the
+// ring-global newest. See docs/gotchas.md #46 ("UI consumer rule").
+function _currentVerdictForChat() {
+    let cid = null;
+    try { cid = getCurrentChatId() ?? null; } catch { cid = null; }
+    return getCurrentVerdictForChat(cid);
+}
 import { DEFAULT_FIELD_DEFINITIONS } from '../fields.js';
 import { ensureIndexFresh } from '../vault/vault.js';
 import { runPipeline } from '../pipeline/pipeline.js';
@@ -100,13 +108,16 @@ export function registerPipelineCommands() {
                 });
             }
 
+            // /dle-why is a diagnostic preview — bootstrapActive=false intentionally.
+            // Showing the user "what would inject right now if bootstrap is OFF" is
+            // the conservative (and accurate, post-bootstrap) view. Gotcha #60.
             if (gatingContext && Object.keys(gatingContext).length > 0) {
                 const fieldDefs = fieldDefinitions.length > 0 ? fieldDefinitions : DEFAULT_FIELD_DEFINITIONS;
-                const cmdPolicy = buildExemptionPolicy(vaultIndex, cmdPins, cmdBlocks);
+                const cmdPolicy = buildExemptionPolicy(vaultIndex, cmdPins, cmdBlocks, false);
                 filtered = applyContextualGating(filtered, gatingContext, cmdPolicy, settings.debugMode, settings, fieldDefs);
             }
 
-            const cmdPolicy2 = buildExemptionPolicy(vaultIndex, cmdPins, cmdBlocks);
+            const cmdPolicy2 = buildExemptionPolicy(vaultIndex, cmdPins, cmdBlocks, false);
             const { result: gated } = applyRequiresExcludesGating(filtered, cmdPolicy2, settings.debugMode, settings.priorityReversed);
             const { count: injectedCount, acceptedEntries } = formatAndGroup(gated, settings, PROMPT_TAG_PREFIX);
             const injected = acceptedEntries || gated.slice(0, injectedCount);
@@ -119,9 +130,11 @@ export function registerPipelineCommands() {
             const sources = injected.map(e => ({
                 title: e.title,
                 filename: e.filename,
-                matchedBy: matchedKeys.get(e.title) || '?',
+                // BUG-AUDIT v2.5: matchedKeys keyed by trackerKey (vaultSource:title).
+                matchedBy: matchedKeys.get(trackerKey(e)) || '?',
                 priority: e.priority,
                 tokens: e.tokenEstimate,
+                vaultSource: e.vaultSource || '',
             }));
             showSourcesPopup(sources);
             return '';
@@ -134,7 +147,7 @@ export function registerPipelineCommands() {
         name: 'dle-inspect',
         aliases: ['dle-i'],
         callback: async () => {
-            const _inspectTrace = getCurrentVerdict()?.trace ?? null;
+            const _inspectTrace = _currentVerdictForChat()?.trace ?? null;
             if (!_inspectTrace) {
                 toastr.info('No inspection data available yet. Send a chat message first so DeepLore can process entries.', 'DeepLore Enhanced');
                 return '';
