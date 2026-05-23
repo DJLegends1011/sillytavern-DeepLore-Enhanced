@@ -140,6 +140,20 @@ under `multiVaultConflictResolution='all'` (CLAUDE.md trackerKey invariant).
 | `aiCircuitHalfOpenProbe` | `boolean` (private) | Session |
 | `aiCircuitProbeTimestamp` | `number` (private) | Session |
 
+### i18n State (`src/i18n/i18n.js`, 2026-05-22)
+| Variable | Type | Scope | Writers | Readers |
+|---|---|---|---|---|
+| `_dleDict` | `object\|null` | Session | `initDleI18n()` | `tr()` lookups |
+| `_enFallbackDict` | `object\|null` | Session | `initDleI18n()` | `tr()` fallback |
+| `_dleLocale` | `string\|null` | Session | `initDleI18n()` | `getI18nStats()` |
+| `_initPromise` | `Promise\|null` | Session | `initDleI18n()` (dedupe) | concurrent init |
+| `_aiPromptLocale` | `string\|null` | Session | `setAiPromptLocale()` (test/debug) | `getEffectiveAiPromptLocale()` |
+| **Setting** `aiPromptLocale` | `string` (locale code or `''`) | Settings (persisted) | Settings UI / `/dle` cmds | `getEffectiveAiPromptLocale(settingValue)` |
+
+Init order matters: `initDleI18n()` runs in `index.js` jQuery handler **before** any HTML template render, so ST's MutationObserver picks up `data-i18n` attrs on first insertion. Concurrent callers get the same `_initPromise` — no duplicate fetches.
+
+Pure helpers (`src/i18n/i18n-pure.js`) carry no state — they're imported by `i18n.js` and tested independently in `test/i18n.test.mjs`.
+
 **`pushEventSafe()`** (state.js): Lazy-loaded wrapper for `pushEvent()` from `src/diagnostics/interceptors.js`. Used by the circuit breaker state machine so that open/close transitions push to the `eventBuffer` without creating a hard import dependency from state.js on the diagnostics module. Called from `recordAiFailure()` (on CLOSED -> OPEN) and `recordAiSuccess()` (on OPEN -> CLOSED).
 
 ---

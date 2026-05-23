@@ -95,6 +95,11 @@ export const defaultSettings = {
     cacheTTL: 300,
     reviewResponseTokens: 0,
     debugMode: false,
+    // i18n: AI prompt locale (separate from UI locale). Empty = follow ST UI locale.
+    // Values: '' (follow UI), 'en', 'es-es', 'fr-fr', 'de-de', 'ja-jp', 'zh-cn'.
+    // Affects which translated default prompts the AI features use; user-overridden
+    // prompt text (settings.aiSystemPrompt, scribePrompt, etc.) is unaffected.
+    aiPromptLocale: '',
     // Author's Notebook (user-written)
     notebookEnabled: false,
     notebookPosition: 1,

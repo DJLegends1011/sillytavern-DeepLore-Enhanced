@@ -517,3 +517,28 @@ if (lockEpoch === generationLockEpoch) setGenerationLock(false);
 **CHARACTER_MESSAGE_RENDERED attachment:** The handler in `index.js` reads the current verdict and attaches `message.extra.deeplore_sources` only when `verdict.msgIdx === messageId && verdict.epoch === chatEpoch`. The `message.extra._deeplore_sources_tag` flag prevents double-attach on swipe.
 
 **Where:** `src/verdict/verdict-store.js` (live), `src/verdict/verdict-pure.js` (testable helpers), `src/vault/cache.js` (shared IDB `DeepLoreEnhanced` schema v2). Consumer call sites: drawer (`drawer-render-tabs.js` / `-status.js` / `-footer.js` / `drawer.js` / `drawer-events.js`), `src/ui/cartographer.js`, `src/ui/commands-pipeline.js` (`/dle-inspect`), `src/ui/diagnostics.js`, `src/librarian/librarian-tools.js`, `src/diagnostics/flight-recorder.js`, `src/diagnostics/state-snapshot.js`. Tests: `test/verdict.test.mjs` (70 pure-helper), regression VRD-1..VRD-7.
+
+---
+
+## 47. i18n Hooks Into ST's Built-in System — Do Not Roll Your Own
+
+**Rule:** All UI translation goes through `src/i18n/i18n.js` which wraps ST's `addLocaleData()` / `t``\` / `translate()` / `getCurrentLocale()` from `public/scripts/i18n.js`. Locale dicts live at `locales/dle.{lang}.json` (UI) and `src/i18n/prompts/{lang}.js` (AI-facing). English is canonical; the five translations (es-es, fr-fr, de-de, ja-jp, zh-cn) are machine-translated and refined by the community.
+
+**Why (v2.5 i18n rollout, 2026-05-22):** ST already has a `data-i18n="key"` MutationObserver that auto-translates injected DOM as soon as a key matches its locale dict. Rolling our own observer would (1) double-fire on every node ST already handles, (2) miss the ST-shipped UI chrome around our extension, and (3) force a second locale-switcher UI. Hooking ST's system means a user who switches ST to Spanish gets DLE in Spanish "for free" — no separate setting, no second reload.
+
+**Boot order (matters):** `initDleI18n()` runs in `index.js` jQuery handler **before** `renderExtensionTemplateAsync('settings')` and before `createDrawerPanel()`. If we registered locale data AFTER inserting `data-i18n` attrs, ST's MutationObserver would fire once with no dict and never re-run for those nodes. Register first; insert HTML second.
+
+**Fallback chain:**
+- Requested locale (ST current locale, or override) → base lang (`es` → `es-es`) → `en`.
+- Per-key: target dict → EN dict → `translate(key)` (ST's missing-key tracker) → key itself.
+- Result: a partially-translated locale never shows raw `dle_xxx_key` strings to users.
+
+**AI prompts are a separate axis:** Setting `aiPromptLocale` (default `''` = follow UI locale) overrides which `src/i18n/prompts/{lang}.js` ships to the LLM. Users on UI=ja-jp can keep `aiPromptLocale='en'` if they don't trust machine-translated prompts to preserve LLM behavior. `resolveAiPromptLocale()` in `i18n-pure.js` codifies precedence: setting → override → UI → 'en'.
+
+**Placeholders:** ST's `t``\` requires `${0}`, `${1}` indexed placeholders — not named, not bare `{0}`. Recon-to-JSON pipeline normalized all 348 interpolations; Pass 3 audit caught 44 cart-diag.json violations and Pass 4 fixed them. Translation pipeline must preserve placeholder count + index per string. `placeholderMismatch()` in `i18n-pure.js` validates source-vs-translation.
+
+**Plurals split into key pairs:** ST's `t``\` doesn't do CLDR plural rules. The recon pass captured 10 strings with embedded JS ternaries (e.g. `"${0} entr${0 === 1 ? 'y' : 'ies'}"`). Nine became simple `_one` / `_other` pairs; one nested ternary (`dle_entries_stat_title`) split into 4 keys (`_lore_one/_other` + `_vault_one/_other` — call site concatenates). Net +10 keys vs source, total 2097 in `locales/dle.en.json`. Consumers must select the right key at runtime: `const k = count === 1 ? 'dle_x_one' : 'dle_x_other'; tr(k)`.
+
+**Machine-translation coverage:** Wave 5 (Haiku) hit 0.5-4.8% UI coverage due to output-token cap. Wave 5b (Opus, 2 chunks per Romance lang to respect 64K output cap) hit **95.8-97.3% real-translation coverage** per locale (es-es 95.8%, fr-fr 95.9%, de-de 95.8%, ja-jp 97.0%, zh-cn 97.3%). Remaining 2.7-4.2% are intentional pass-throughs: brand names ("DeepLore Enhanced", "Emma", "SillyTavern", "Obsidian", "Claude"), config identifiers (`lorebook-guide`, `update_draft`, file paths), tech loanwords valid in target lang (JSON, PNG, HTTPS, AI), pure-markup label fragments (`<b>${0}</b>: ${1}`), and URLs. AI prompt files (`src/i18n/prompts/{lang}.js`, 30 exports + `__meta`) are 100% translated per locale. All tagged `machine_translated: true` + `translator_model: 'claude-opus'` in `__meta`. Untranslated keys still fall back to English via `mergeLocaleDicts()`.
+
+**Where:** `src/i18n/i18n.js` (live ST integration), `src/i18n/i18n-pure.js` (pure helpers + tests), `src/i18n/prompts/{lang}.js` (AI prompt dicts), `locales/dle.{lang}.json` (UI dicts). Init call: `index.js` jQuery handler. Setting: `aiPromptLocale` in `settings.js`. Tests: `test/i18n.test.mjs` (88 assertions, includes canonical-file sanity checks for bare `{N}` and ternary leakage). Community process: wiki page `Contributing-Translations.md`, issue template `.github/ISSUE_TEMPLATE/translation_feedback.md`.

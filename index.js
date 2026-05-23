@@ -1355,6 +1355,16 @@ jQuery(async function () {
         }
         _dleInitialized = true;
 
+        // i18n must register BEFORE any HTML/popup renders so ST's MutationObserver
+        // sees data-i18n attrs from the start. Failures here are non-fatal — UI just
+        // falls back to English.
+        try {
+            const { initDleI18n } = await import('./src/i18n/i18n.js');
+            await initDleI18n();
+        } catch (err) {
+            console.warn('[DLE] i18n init failed (falling back to English):', err?.message);
+        }
+
         const settingsHtml = await renderExtensionTemplateAsync(
             'third-party/sillytavern-DeepLore-Enhanced',
             'settings',
