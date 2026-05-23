@@ -197,32 +197,55 @@ export function assertInstanceOf(value, constructor, message) {
 
 // ============================================================================
 // Test Runner — test/testAsync/section/summary
+//
+// Tests and section markers are enqueued in registration order and drained by
+// summary() so async test bodies are properly awaited. Without this queue, a
+// test('name', async () => { ... }) would return its Promise to test(), get
+// discarded, and summary() would print counts BEFORE the async assertions ran
+// — producing false-pass counts and (worst case) crashing the process AFTER
+// the summary printed. See fix dispatch 2026-05-22.
 // ============================================================================
 
+const _queue = [];
+
 export function test(name, fn) {
-    console.log(`\n${name}`);
-    fn();
+    _queue.push(async () => {
+        console.log(`\n${name}`);
+        await fn();
+    });
 }
 
-export async function testAsync(name, fn) {
-    console.log(`\n${name}`);
-    await fn();
-}
+// Back-compat alias: callers that historically used testAsync still work.
+// Internally identical to test() now that test() awaits.
+export const testAsync = test;
 
 /**
- * Print a section header (visual separator between test groups).
+ * Print a section header (visual separator between test groups). Enqueued so
+ * section order is preserved relative to surrounding tests at drain time.
  */
 export function section(name) {
-    console.log(`\n${'='.repeat(76)}`);
-    console.log(`  ${name}`);
-    console.log(`${'='.repeat(76)}`);
+    _queue.push(async () => {
+        console.log(`\n${'='.repeat(76)}`);
+        console.log(`  ${name}`);
+        console.log(`${'='.repeat(76)}`);
+    });
 }
 
 /**
- * Print the results summary and exit with code 1 if any failures.
+ * Drain the queued tests/sections IN ORDER, then print the results summary and
+ * exit with code 1 if any failures. Must be awaited at module top-level.
  * @param {string} [label] Optional label prefix (e.g. "Integration Tests")
  */
-export function summary(label) {
+export async function summary(label) {
+    while (_queue.length > 0) {
+        const fn = _queue.shift();
+        try {
+            await fn();
+        } catch (err) {
+            failed++;
+            console.error(`  UNCAUGHT in test: ${err?.stack || err}`);
+        }
+    }
     const total = passed + failed;
     console.log(`\n${'='.repeat(60)}`);
     if (label) {

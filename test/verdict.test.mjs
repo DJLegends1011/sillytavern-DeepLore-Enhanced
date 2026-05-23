@@ -15,6 +15,8 @@ import {
     diffVerdicts,
     evictRing,
     selectPruneVictims,
+    selectPruneVictimsFromOrderedKeys,
+    shouldRunPruneScan,
     validateVerdict,
 } from '../src/verdict/verdict-pure.js';
 
@@ -228,6 +230,74 @@ test('selectPruneVictims: ts tiebreak on equal msgIdx', () => {
     assertArrayEquals(victims, ['old'], 'older ts evicted on msgIdx tie');
 });
 
+// ============================================================================
+// Wave C P1 perf fix: pruneCurrentChat sampling + bounded cursor (2026-05-22)
+// ============================================================================
+
+section('Verdict — shouldRunPruneScan (sampling gate)');
+
+test('shouldRunPruneScan: rate=10 only true on every 10th call', () => {
+    const hits = [];
+    for (let i = 1; i <= 30; i++) {
+        if (shouldRunPruneScan(i, 10)) hits.push(i);
+    }
+    assertArrayEquals(hits, [10, 20, 30], 'scans on calls 10, 20, 30 only');
+});
+
+test('shouldRunPruneScan: rate=1 always scans (degenerate / disabled sampling)', () => {
+    for (let i = 1; i <= 5; i++) {
+        assert(shouldRunPruneScan(i, 1), `call ${i} scans when rate=1`);
+    }
+});
+
+test('shouldRunPruneScan: rate=0 or negative or NaN → always scan (safe default)', () => {
+    assert(shouldRunPruneScan(1, 0), 'rate=0 safe default scans');
+    assert(shouldRunPruneScan(1, -5), 'negative rate safe default scans');
+    assert(shouldRunPruneScan(1, NaN), 'NaN rate safe default scans');
+});
+
+test('shouldRunPruneScan: cuts ~90% of work at rate=10 (perf invariant)', () => {
+    let scans = 0;
+    const total = 1000;
+    for (let i = 1; i <= total; i++) if (shouldRunPruneScan(i, 10)) scans++;
+    assertEqual(scans, 100, '100 scans for 1000 calls at rate=10');
+    // 90% reduction — matches gotcha #52 documented behaviour.
+});
+
+section('Verdict — selectPruneVictimsFromOrderedKeys (bounded-cursor variant)');
+
+test('selectPruneVictimsFromOrderedKeys: under cap returns []', () => {
+    assertArrayEquals(selectPruneVictimsFromOrderedKeys([], 10), [], 'empty');
+    assertArrayEquals(selectPruneVictimsFromOrderedKeys(['a', 'b'], 10), [], 'under cap');
+});
+
+test('selectPruneVictimsFromOrderedKeys: at cap returns []', () => {
+    assertArrayEquals(selectPruneVictimsFromOrderedKeys(['a', 'b', 'c'], 3), [], 'at cap');
+});
+
+test('selectPruneVictimsFromOrderedKeys: drops leading slice when over cap', () => {
+    // Keys are oldest-first from the cursor — leading slice is oldest.
+    const keys = ['k0', 'k1', 'k2', 'k3', 'k4'];
+    const victims = selectPruneVictimsFromOrderedKeys(keys, 3);
+    assertArrayEquals(victims, ['k0', 'k1'], 'two oldest evicted, newest three survive');
+});
+
+test('selectPruneVictimsFromOrderedKeys: matches selectPruneVictims for ordered input', () => {
+    // Cross-check: when the cursor walk produces a properly-ordered key list,
+    // the new bounded helper should select the same victims as the legacy
+    // catalog-based helper. Both must agree to preserve VRD-6 semantics.
+    const catalog = [];
+    const orderedKeys = [];
+    for (let i = 0; i < 250; i++) {
+        const key = `chat-A:${String(i).padStart(6, '0')}:${1000 + i}`;
+        catalog.push({ msgIdx: i, ts: 1000 + i, key });
+        orderedKeys.push(key);
+    }
+    const fromCatalog = selectPruneVictims(catalog, 200).sort();
+    const fromKeys = selectPruneVictimsFromOrderedKeys(orderedKeys, 200).sort();
+    assertArrayEquals(fromKeys, fromCatalog, 'both helpers agree on victim set');
+});
+
 section('Verdict — validateVerdict');
 
 test('validateVerdict: rejects null / non-object', () => {
@@ -254,4 +324,4 @@ test('validateVerdict: accepts valid record', () => {
     assert(validateVerdict(built), 'buildVerdict() valid');
 });
 
-summary('Verdict Tests');
+await summary('Verdict Tests');

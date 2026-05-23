@@ -476,4 +476,4 @@ for (const loc of ['en', ...TRANSLATION_LOCALES]) {
     });
 }
 
-summary('i18n pure helpers');
+await summary('i18n pure helpers');

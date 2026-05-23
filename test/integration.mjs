@@ -986,7 +986,7 @@ test('Stage: applyPinBlock adds pinned entries and removes blocked', () => {
     assert(result.some(e => e.title === 'PinnedB'), 'pinned entry should be added');
     assert(!result.some(e => e.title === 'Blocked1'), 'blocked entry should be removed');
     assert(result.some(e => e.title === 'MatchedA'), 'matched entry should remain');
-    assertEqual(matchedKeys.get('PinnedB'), '(pinned)', 'pinned entry should have match key');
+    assertEqual(matchedKeys.get(':PinnedB'), '(pinned)', 'pinned entry should have match key (trackerKey ":title" for empty vault)');
 });
 
 test('Stage: applyContextualGating removes entries not matching context', () => {
@@ -1842,4 +1842,4 @@ test('Sync Integration: key changes detected separately', () => {
 // Summary
 // ============================================================================
 
-summary('Integration Tests');
+await summary('Integration Tests');

@@ -7,7 +7,7 @@ Core stage functions live in `src/stages.js`. **Stages 1–5 and the Tracking Fu
 ## ExemptionPolicy
 
 ```javascript
-buildExemptionPolicy(vaultSnapshot, pins, blocks)
+buildExemptionPolicy(vaultSnapshot, pins, blocks, bootstrapActive = false)
   → { forceInject: Set<string>, pins: Array<{title, vaultSource}>, blocks: Array<{title, vaultSource}> }
 ```
 **Location:** `src/stages.js:buildExemptionPolicy()`
@@ -24,12 +24,24 @@ buildExemptionPolicy(vaultSnapshot, pins, blocks)
 Entries added to `forceInject`:
 - All `constant` entries (lorebook-always) → `trackerKey(entry)`
 - All `seed` entries (lorebook-seed) → `trackerKey(entry)`
-- All `bootstrap` entries (lorebook-bootstrap) → `trackerKey(entry)`
+- All `bootstrap` entries (lorebook-bootstrap), **only when `bootstrapActive === true`** → `trackerKey(entry)`. See gotcha #60: bootstrap exemption is gen-scoped. The canonical truth-source is `helpers.js:isForceInjected`; this function mirrors it. When bootstrap is logically off (later in a chat), a bootstrap-tagged entry that reaches the post-pipeline stages via cascade-link / AI selection / pin is gated like any other entry.
 - All pinned entries (from `chat_metadata.deeplore_pins`) — see pin walk below
+
+**`bootstrapActive` arg.** Computed at the runPipeline top as `chat.length <= settings.newChatThreshold` and threaded into the single cached-policy call. `index.js`'s post-pipeline policy reads `trace?.bootstrapActive === true` from the trace runPipeline emits. `/dle-why` and `matchTextForExternal` pass `false` (or rely on the default) intentionally — diagnostic / external paths show the conservative "post-bootstrap" view.
 
 **Pin walk (BUG-399 / Fix 2).** A normalized pin can have `vaultSource: null` (legacy bare-string pin) or a concrete `vaultSource`. The build walks `vaultSnapshot` and adds `trackerKey(entry)` for every entry where `matchesPinBlock(pin, entry)` returns true — so one legacy pin can fan out to N keys (matching the same title across multiple vaults), while a vault-scoped structured pin produces exactly one key. Multi-vault duplicates with different exemption status (e.g. vault-A's constant "Castle" vs vault-B's non-constant "Castle") no longer collapse — vault-B's copy is gated normally.
 
 Pin/block normalization: `normalizePinBlock()` (called at top of `buildExemptionPolicy()`) converts bare title strings to `{title, vaultSource: null}` for backward compatibility.
+
+**Run-scoped caching (Wave C PERF-P2).** `runPipeline()` builds the policy **exactly once** at the top of the function using the full `vaultSnapshot`, then threads that same `exemptionPolicy` reference through every internal stage call (contextual gating, folder filter, re-application after each search-mode branch). Previously, six inner sites rebuilt it with identical pins/blocks but progressively-narrower candidate snapshots — wasted O(N) + O(P×N) work per generation. The optimization is safe because:
+
+1. `vaultSnapshot`, `pins`, and `blocks` are immutable within a pipeline run.
+2. `forceInject` is a `Set` checked via `.has(trackerKey(e))` from each stage's iterated entries; trackerKeys for entries not in a stage's input list are never accessed and therefore inert.
+3. A policy built from the full vaultSnapshot is a strict superset of any narrower-candidate policy for the same pins/blocks, and behaves identically inside every downstream filter.
+
+`index.js` still calls `buildExemptionPolicy(vaultSnapshot, pins, blocks)` once after `runPipeline()` returns — that policy is used for the post-pipeline stages (pin/block, contextual gating, re-injection cooldown, requires/excludes, strip-dedup) and is also called exactly once. `src/pipeline/pipeline.js:matchTextForExternal()` and `src/ui/commands-pipeline.js` build their own policies; those are out-of-pipeline external/inspection paths and are not on the hot path.
+
+Regression guard: `test/regression.test.mjs` PERF-P2-4 statically asserts `runPipeline`'s body contains exactly one `buildExemptionPolicy(` call, and that the argument is `vaultSnapshot`.
 
 ---
 

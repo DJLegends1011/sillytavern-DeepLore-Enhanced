@@ -1073,4 +1073,4 @@ test('VALID_OPERATORS contains all 8 operators', () => {
 //  Summary
 // ============================================================================
 
-summary('Fields Tests');
+await summary('Fields Tests');

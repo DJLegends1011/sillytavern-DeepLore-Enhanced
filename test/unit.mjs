@@ -207,6 +207,94 @@ test('parseFrontmatter: block scalar with multiple indented colon lines', () => 
 });
 
 // ============================================================================
+// V-H3 (2026-05-22): prototype pollution guard for parseFrontmatter
+// ============================================================================
+//
+// Hostile YAML frontmatter MUST NOT mutate Object.prototype. parseFrontmatter
+// builds via Object.create(null) so direct `frontmatter[__proto__] = value`
+// assignments land as own properties on the prototype-less object instead of
+// invoking the inherited __proto__ setter (which would replace the prototype).
+// Vault content is user-controlled and Cartographer/import flows can pull from
+// third-party sources — a polluted Object.prototype would affect unrelated code
+// across the entire process. See gotchas.md #57.
+
+test('V-H3: parseFrontmatter does NOT pollute Object.prototype via __proto__', () => {
+    // Probe: a fresh, unrelated object MUST NOT see the polluted property after
+    // parsing. Use a unique probe key so other tests can't accidentally satisfy
+    // the assertion via pre-existing pollution.
+    const probe = {};
+    assert(!('vh3_pwned' in probe), 'baseline: probe property absent before parse');
+
+    parseFrontmatter('---\n__proto__: vh3_pwned\n---\nbody');
+
+    // The critical assertion. Before V-H3 fix, `Object.prototype.vh3_pwned` was
+    // unset because the parsed value is the string "vh3_pwned", not an object —
+    // but the canonical attack form sets a sub-key. Try the sub-key form too.
+    assert(!('vh3_pwned' in probe), 'V-H3: scalar __proto__ assignment did NOT pollute Object.prototype');
+});
+
+test('V-H3: nested __proto__ key assignment does NOT pollute Object.prototype', () => {
+    // The classic prototype-pollution form: a key under __proto__ leaks onto
+    // Object.prototype via the inherited setter on a normal object. With
+    // Object.create(null) there is no inherited setter, so the assignment is
+    // an own property on the prototype-less frontmatter object.
+    const probe = {};
+    assert(!('vh3_leaked' in probe), 'baseline clean');
+
+    // Simulates an attacker setting a property visible across all objects.
+    parseFrontmatter('---\n__proto__:\n  - vh3_leaked\n---\nbody');
+
+    assert(!('vh3_leaked' in probe), 'V-H3: nested __proto__ did NOT pollute Object.prototype');
+    // Object.prototype.toString must still work normally — confirm the
+    // prototype chain is intact for normal objects.
+    assertEqual(typeof probe.toString, 'function', 'Object.prototype.toString still callable');
+});
+
+test('V-H3: constructor key does NOT pollute Object.prototype.constructor', () => {
+    // `constructor` is the second classic pollution vector. With Object.create(null)
+    // we never traverse the inherited setter — the assignment lands as an own
+    // property on the prototype-less object.
+    const originalCtor = Object.prototype.constructor;
+    parseFrontmatter('---\nconstructor: vh3_evil_ctor\n---\nbody');
+    assertEqual(Object.prototype.constructor, originalCtor,
+        'V-H3: Object.prototype.constructor unchanged after malicious YAML');
+
+    // A fresh object's .constructor still references Object.
+    const probe = {};
+    assertEqual(probe.constructor, Object, 'fresh object still inherits Object as constructor');
+});
+
+test('V-H3: prototype key does NOT pollute Object.prototype', () => {
+    // Third classic vector — `prototype` as a key name. Object.create(null)
+    // means this is just a regular own property, no chain mutation.
+    const probe = {};
+    assert(!('vh3_proto_leak' in probe), 'baseline clean');
+    parseFrontmatter('---\nprototype: vh3_proto_leak\n---\nbody');
+    assert(!('vh3_proto_leak' in probe), 'V-H3: `prototype` key did NOT leak');
+});
+
+test('V-H3: frontmatter object has no inherited prototype (defense in depth)', () => {
+    // Pin the implementation contract — Object.create(null) is what makes the
+    // above tests pass. If a future refactor switches back to `{}`, this test
+    // catches it.
+    const result = parseFrontmatter('---\ntitle: Test\n---\nbody');
+    assertEqual(Object.getPrototypeOf(result.frontmatter), null,
+        'V-H3: frontmatter object has null prototype');
+    // Sanity — still serializable and has the parsed data.
+    assertEqual(result.frontmatter.title, 'Test', 'normal parsing still works');
+    assertEqual(JSON.stringify(result.frontmatter), '{"title":"Test"}',
+        'JSON.stringify works on prototype-less object');
+});
+
+test('V-H3: legitimate frontmatter with keys containing "proto" still parses', () => {
+    // Make sure the fix didn't accidentally over-restrict — keys CONTAINING
+    // "proto" or "constructor" as substrings should still work normally.
+    const result = parseFrontmatter('---\nprotocol: https\nconstruction: ongoing\n---\nbody');
+    assertEqual(result.frontmatter.protocol, 'https', 'protocol key parses normally');
+    assertEqual(result.frontmatter.construction, 'ongoing', 'construction key parses normally');
+});
+
+// ============================================================================
 // Tests: cleanContent
 // ============================================================================
 
@@ -2400,12 +2488,24 @@ test('buildExemptionPolicy: pins are in forceInject', () => {
     assert(!policy.forceInject.has(':B'), 'non-pinned B should NOT be in forceInject');
 });
 
-test('buildExemptionPolicy: bootstrap and seed entries ARE in forceInject (exempt from contextual gating)', () => {
+test('buildExemptionPolicy: seed always in forceInject; bootstrap gen-scoped to bootstrapActive', () => {
+    // Stages H-3 / gotcha #60: bootstrap exemption is gen-scoped. Mirrors
+    // helpers.js:isForceInjected. Default bootstrapActive=false is conservative.
     const vault = [makeEntry('Boot', { bootstrap: true }), makeEntry('Seed', { seed: true }), makeEntry('Normal')];
-    const policy = buildExemptionPolicy(vault, [], []);
-    assert(policy.forceInject.has(':Boot'), 'bootstrap should be in forceInject (exempt from gating)');
-    assert(policy.forceInject.has(':Seed'), 'seed should be in forceInject (exempt from gating)');
-    assert(!policy.forceInject.has(':Normal'), 'normal should NOT be in forceInject');
+
+    const policyDefault = buildExemptionPolicy(vault, [], []);
+    assert(!policyDefault.forceInject.has(':Boot'), 'default: bootstrap NOT in forceInject (bootstrapActive defaults to false)');
+    assert(policyDefault.forceInject.has(':Seed'), 'seed always in forceInject');
+    assert(!policyDefault.forceInject.has(':Normal'), 'normal never in forceInject');
+
+    const policyActive = buildExemptionPolicy(vault, [], [], true);
+    assert(policyActive.forceInject.has(':Boot'), 'bootstrap IS in forceInject when bootstrapActive=true');
+    assert(policyActive.forceInject.has(':Seed'), 'seed still in forceInject');
+    assert(!policyActive.forceInject.has(':Normal'), 'normal still NOT in forceInject');
+
+    const policyInactive = buildExemptionPolicy(vault, [], [], false);
+    assert(!policyInactive.forceInject.has(':Boot'), 'bootstrap NOT in forceInject when bootstrapActive=false');
+    assert(policyInactive.forceInject.has(':Seed'), 'seed still in forceInject');
 });
 
 test('buildExemptionPolicy: blocks stored lowercase in policy', () => {
@@ -2440,7 +2540,7 @@ test('applyPinBlock: pinned entries added with constant=true and priority=10', (
     const pinned = result.find(e => e.title === 'B');
     assert(pinned.constant === true, 'pinned entry should have constant=true');
     assertEqual(pinned.priority, 10, 'pinned entry should have priority=10');
-    assertEqual(matchedKeys.get('B'), '(pinned)', 'matchedKeys should record pin');
+    assertEqual(matchedKeys.get(':B'), '(pinned)', 'matchedKeys should record pin (trackerKey ":B" for empty vault)');
 });
 
 test('applyPinBlock: pinned entry already in results gets constant+priority override', () => {
@@ -3761,11 +3861,12 @@ test('categorizeRejections: warmupFailed', () => {
 });
 
 test('categorizeRejections: excludes injected titles from all groups', () => {
+    // BUG-AUDIT v2.5: injectedKeys is now a Set of trackerKey-shape strings (':title' when no vault).
     const trace = {
         gatedOut: [{ title: 'A', requires: [], excludes: [] }],
         cooldownRemoved: [{ title: 'B', reason: 'Cooldown active' }],
     };
-    const groups = categorizeRejections(trace, new Set(['A', 'B']));
+    const groups = categorizeRejections(trace, new Set([':a', ':b']));
     assertEqual(groups.length, 0);
 });
 
@@ -5879,7 +5980,7 @@ test('matchEntries: constants always matched regardless of keywords', () => {
     const settings = makeSettings({ scanDepth: 5 });
     const { matched, matchedKeys } = matchEntriesPure(chat, entries, { settings });
     assert(matched.some(e => e.title === 'ConstantLore'), 'constant always matched');
-    assertEqual(matchedKeys.get('ConstantLore'), '(constant)', 'reason is (constant)');
+    assertEqual(matchedKeys.get(':ConstantLore'), '(constant)', 'reason is (constant) — keyed by trackerKey (:title for no-vault)');
 });
 
 test('matchEntries: bootstrap entries matched when chat is short', () => {
@@ -5970,7 +6071,7 @@ test('matchEntries: cascade links pull in linked entries', () => {
     const { matched, matchedKeys } = matchEntriesPure(chat, entries, { settings });
     assert(matched.some(e => e.title === 'Dragon'), 'primary match');
     assert(matched.some(e => e.title === 'Sword'), 'cascade linked');
-    assert(matchedKeys.get('Sword').includes('cascade from'), 'reason shows cascade');
+    assert(matchedKeys.get(':Sword').includes('cascade from'), 'reason shows cascade');
 });
 
 test('matchEntries: BUG-035 cascade links skip warmup', () => {
@@ -6012,7 +6113,7 @@ test('matchEntries: recursive scanning finds entries in matched content', () => 
     const { matched, matchedKeys } = matchEntriesPure(chat, entries, { settings });
     assert(matched.some(e => e.title === 'Dragon'), 'primary match');
     assert(matched.some(e => e.title === 'Sword'), 'found via recursion');
-    assert(matchedKeys.get('Sword').includes('recursion'), 'reason shows recursion');
+    assert(matchedKeys.get(':Sword').includes('recursion'), 'reason shows recursion');
 });
 
 test('matchEntries: excludeRecursion flag respected', () => {
@@ -6035,7 +6136,7 @@ test('matchEntries: character context scan', () => {
     const settings = makeSettings({ scanDepth: 5, characterContextScan: true });
     const { matched, matchedKeys } = matchEntriesPure(chat, entries, { settings, characterName: 'Eris' });
     assert(matched.some(e => e.title === 'Eris'), 'active character matched');
-    assertEqual(matchedKeys.get('Eris'), '(active character)', 'reason shows active character');
+    assertEqual(matchedKeys.get(':Eris'), '(active character)', 'reason shows active character');
 });
 
 test('matchEntries: sorted by priority', () => {
@@ -6505,4 +6606,4 @@ test('uiCascadeState: every entry has a reason field', () => {
 // Results
 // ============================================================================
 
-summary();
+await summary();

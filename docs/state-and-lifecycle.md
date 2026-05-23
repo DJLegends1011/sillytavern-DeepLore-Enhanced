@@ -60,7 +60,11 @@ No getter functions exist — other modules `import { vaultIndex } from './state
 A verdict is one authoritative per-turn record carrying `injectedSources`, full pipeline
 `trace`, `perEntry` aggregation, `chatId` + `msgIdx` for cross-chat staleness detection,
 and `epoch`/`lockEpoch` tags. Storage: in-memory ring buffer (cap 50) + IndexedDB spill
-(per-chat, cap 200, auto-pruned). Never written to `chat_metadata` — chat files stay clean.
+(per-chat, **soft cap 200 — actually 200+9** worst-case between sampled prune scans;
+Wave C P1 perf fix 2026-05-22). Never written to `chat_metadata` — chat files stay clean.
+`pruneCurrentChat` runs the actual IDB scan every 10th `writeVerdict` (counter-gated +
+bounded `openKeyCursor` scoped to the current chatId, key-only walk, no value
+deserialization). 90% of generations no-op the scan. See `docs/gotchas.md` #52.
 
 **Verdict APIs (verdict-store.js):**
 | API | Use |
@@ -71,7 +75,9 @@ and `epoch`/`lockEpoch` tags. Storage: in-memory ring buffer (cap 50) + IndexedD
 | `getPrevious()` | Second-newest for the current chat (replaces `previousSources` diff anchor). |
 | `getByMessage(msgIdx, chatId?)` | Verdict-by-message lookup; falls back to IDB. |
 | `setCurrentChatId(chatId)` | Rebind scope on CHAT_CHANGED. |
-| `clearChat(chatId)` | Drop ring + IDB records for a chat. `null` = wipe everything. |
+| `clearRing()` | Drop in-memory ring only (sync, no IDB touch). **Use on CHAT_CHANGED** so the destination chat's IDB rows survive for hydrate. |
+| `clearChatIdb(chatId)` | Drop IDB rows for one chat (e.g. user deletes chat). Ring untouched. |
+| `clearChat(chatId)` | Drop ring + IDB records for a chat. `null` = wipe everything (nuke-from-orbit only; **never** call on CHAT_CHANGED — it deletes every chat's persisted verdicts). |
 | `hydrateChat(chatId)` | Pull recent IDB records for resume-after-reload. |
 | `onVerdictChanged(cb)` | Observer; fires on every write / clear / hydrate. |
 
@@ -291,8 +297,16 @@ All registered via `_registerEs()` in `init()`. Full list:
 | `CONNECTION_PROFILE_UPDATED` | `_onProfileUpdated` — invalidate settings cache |
 | `SETTINGS_UPDATED` | Invalidate settings cache (inline in `init()`) |
 | `MESSAGE_EDITED` | Remove AI notes from edited message (inline in `init()`) |
-| `CHAT_CHANGED` | Full reset sequence (see above — inline in `init()`) |
+| `CHAT_CHANGED` | Full reset sequence (see above — inline in `init()`). **Early-registered stub** at top of `_doInit()` (`_earlyChatChangedStub`) captures events that fire before the real `_realCcHandler` registers; `_installRealChatChangedHandler` drains the queued chatId once. See gotchas #59 (BOOT-MED-3). |
 | `APP_READY` | `_wizardOnce` (first-run wizard) + `_autoConnectOnce` (auto-connect), both `{ once: true }` |
+
+**Boot-time module-scope vars (`index.js`, Boot-MED-1/3, 2026-05-22):**
+| Variable | Purpose |
+|---|---|
+| `_dleInitialized` | True only AFTER `_doInit()` resolves all awaits. Guards true re-init (BUG-063). |
+| `_dleInitInProgress` | Promise sentinel during `_doInit()` execution. Second jQuery dispatch awaits this instead of tearing down the still-initializing first instance. Cleared in `finally`. |
+| `_realChatChangedHandler` | Set by `_installRealChatChangedHandler`. While `null`, the early stub queues events; once set, the stub becomes a trampoline that forwards directly. |
+| `_pendingChatChanged` / `_pendingChatChangedFired` | Single-slot queue for CHAT_CHANGED events that fire during init's awaits. Drained exactly once at `_installRealChatChangedHandler`. |
 
 ---
 

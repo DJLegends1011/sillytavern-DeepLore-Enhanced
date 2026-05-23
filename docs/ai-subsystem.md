@@ -69,6 +69,8 @@ callAI(systemPrompt, userMessage, connectionConfig) -> {text, usage}
 
 Dispatches to `callViaProfile()` when `mode === 'profile'`, or `callProxyViaCorsBridge()` when `mode === 'proxy'`. Proxy mode defaults model to `'claude-haiku-4-5-20251001'` if none specified (in `callAI()`).
 
+**Dispatch is an explicit whitelist** (AI-M3, 2026-05-22): the dispatch is `if (mode === 'profile') ... else if (mode === 'proxy') ... else throw`. `'inherit'` MUST be resolved by `resolveConnectionConfig` upstream — `callAI` throws loudly if it ever sees `'inherit'` or any other unknown value rather than silently falling through to the proxy branch with an empty `proxyUrl` (which would trip the circuit breaker on the second call). If you add a new mode, extend the whitelist explicitly — never widen the `else` branch.
+
 **`caller` label**: All callers now pass a `caller` string (e.g. `'aiSearch'`, `'scribe'`, `'autoSuggest'`, `'hierarchicalPreFilter'`, `'aiNotepad'`, `'optimizeKeys'`). This label is recorded in the `aiCallBuffer` for per-call diagnostics.
 
 **`aiCallBuffer` recording**: `callAI()` wraps the actual dispatch in a recording layer that pushes to the `aiCallBuffer` (RingBuffer 40 in `src/diagnostics/interceptors.js`). Each entry captures: `caller`, `mode`, `model`, `systemLen` (system prompt length), `userLen` (user message length), `timeoutMs`, `durationMs`, `status` (success/error/timeout/abort), `responseLen`, `tokens` (usage object), `error` (truncated error message on failure), `abortReason` (string|null — populated when call ended via abort; identifies source, e.g. `'ai:timeout'`, `'popup_closing'`, `'controller_replace'`).
@@ -124,10 +126,28 @@ aiSearch(chat, candidateManifest, candidateHeader, snapshot, candidateEntries, s
 
 ### Sliding Window Cache -- ai.js (inside `aiSearch()`)
 
-Cache key components:
+Cache key components (concatenated into `settingsKey`, then hashed with the manifest to form `manifestHash`):
+
+| Component | Source | Why it's in the key |
+|---|---|---|
+| `CACHE_SHAPE_VERSION` | const `'v2'` in `aiSearch()` | Bump invalidates old caches on shape changes |
+| `aiSearchMode` | settings | Two-stage vs ai-only vs keywords-only |
+| `aiSearchScanDepth` | settings | Chat window size feeding the AI |
+| `maxEntries` | settings | Target selection count |
+| `unlimitedEntries` | settings | Disables fill-to-N |
+| `promptHash` | `simpleHash(aiSearchSystemPrompt)` | BUG-020: prompt content edits |
+| `aiSearchConnectionMode` | settings | profile vs proxy routing |
+| `aiSearchProfileId` | settings | Profile mode endpoint |
+| `aiSearchModel` | settings | Model selection |
+| `aiSearchProxyUrl` | settings | AI M2: proxy endpoint URL (proxy mode) — without it, switching endpoint serves the prior endpoint's results |
+| `aiSearchMaxTokens` | settings | AI M2: response cap — lower cap can truncate ranking; without it, a tighter cap silently reuses the looser-cap call |
+| `aiConfidenceThreshold` | settings, default `'low'` | BUG-019: filter threshold |
+| `manifestSummaryMode` | settings, default `'prefer_summary'` | BUG-021 |
+| `aiSearchManifestSummaryLength` | settings, default `600` | BUG-021 |
+
 ```js
 // in aiSearch()
-const settingsKey = `${aiSearchMode}|${scanDepth}|${maxEntries}|${unlimitedEntries}|${promptHash}|${connectionMode}|${profileId}|${model}|${confidenceThreshold}|${manifestSummaryMode}|${summaryLength}`;
+const settingsKey = `${CACHE_SHAPE_VERSION}|${aiSearchMode}|${scanDepth}|${maxEntries}|${unlimitedEntries}|${promptHash}|${connectionMode}|${profileId}|${model}|${proxyUrl}|${maxTokens}|${confidenceThreshold}|${manifestSummaryMode}|${summaryLength}`;
 const manifestHash = simpleHash(settingsKey + candidateManifest);
 ```
 
@@ -331,28 +351,34 @@ Returns `false` if:
 
 Clears probe flag and timestamp without recording success or failure. Used by `hierarchicalPreFilter` so its outcome doesn't cascade to the main search's circuit state.
 
-### What does NOT trip the breaker (in `aiSearch()` catch block):
+**L2 (v2.5):** Fires `notifyCircuitStateChanged()` on release. Without this, UI surfaces (drawer status indicator, settings-ui chip) that subscribe to circuit-state changes can show stale "probing" state until the next `recordAi*` call mutates the breaker. The notify is a pure UI-refresh hint — the raw `aiCircuitOpen` flag is unchanged (release is not a transition). Locked by regression test L2-1..L2-4.
+
+### What does NOT trip the breaker
+
+The exclusion list is shared across ALL wrappers via `isExcludedFromBreaker(err)` — implemented in `src/ai/breaker-pure.js` (intentionally ST-free so it can be unit-tested) and re-exported from `src/ai/ai.js` so callers keep importing from there. Every caller in the table below routes its trip decision through this single helper — copy-pasting the four conditions per wrapper is how drift creeps back in (see Wave-B audit, 2026-05-22).
 
 - Throttle failures (`err.throttled`)
 - Timeouts (`err.timedOut` or `AbortError`)
-- User aborts (`err.userAborted`)
-- Rate limits (HTTP 429)
-- Auth errors (HTTP 401/403)
+- User aborts (`err.userAborted`, or `AbortError` whose message contains "aborted by user")
+- Rate limits (HTTP 429, or message matching `rate.?limit|too many requests`)
+- Auth errors (HTTP 401/403, or message matching `unauthoriz|forbidden|invalid api key|auth`)
 
 Only unclassified errors (typically 5xx, network failures, or persistent format drift) call `recordAiFailure()`.
 
 ### All Circuit Breaker Callers
 
-All three AI-calling functions use the same circuit breaker probe pattern:
+All AI-calling functions use the same circuit breaker probe pattern and the same exclusion classifier (`isExcludedFromBreaker()`):
 
 | Function | File | Modes | Notes |
 |---|---|---|---|
 | `aiSearch()` | `src/ai/ai.js` | profile, proxy, st | Main caller; `recordAiSuccess/Failure()` |
-| `hierarchicalPreFilter()` | `src/ai/ai.js` | profile, proxy | `releaseHalfOpenProbe()` only — never records success/failure |
+| `hierarchicalPreFilter()` | `src/ai/ai.js` | profile, proxy | `releaseHalfOpenProbe()` only — never records success/failure. Every non-error early-return MUST release the probe (try/finally guard via `_releaseProbeOnce`); otherwise HALF-OPEN slot leaks for 60s and blocks recovery (AI-audit H1). |
 | `callAutoSuggest()` | `src/ai/auto-suggest.js` | st, profile, proxy | `recordAiSuccess/Failure()` |
-| `callScribe()` (internal) | `src/ai/scribe.js` | st, profile | `recordAiSuccess/Failure()` |
+| `callScribe()` (internal) | `src/ai/scribe.js` | st, profile, proxy | `recordAiSuccess/Failure()` |
+| `callSummaryAI()` (internal to `summarizeRange`) | `src/ai/summarize.js` | inherits scribe config | `recordAiSuccess/Failure()`. Was bypassing the breaker entirely pre-Wave-B. |
+| Per-entry call in `summarizeEntries()` batch | `src/ui/commands-ai.js` | resolves `optimizeKeys` tool config | `recordAiSuccess/Failure()` per entry. Was bypassing both `resolveConnectionConfig` and the breaker pre-Wave-B. Skipped entries on open breaker count toward `failed`, not aborted — loop continues. |
 
-When adding a new AI caller, it must follow this pattern. When touching the circuit breaker, update this table.
+When adding a new AI caller, it must follow this pattern AND route its trip decision through `isExcludedFromBreaker()`. When touching the circuit breaker, update this table.
 
 ### Error Classification -- core/utils.js `classifyError()`
 
@@ -451,7 +477,7 @@ The target URL is `encodeURIComponent`-encoded to prevent Express from collapsin
 - External signal wired to internal controller
 - On abort, distinguishes user abort (`externalSignal.aborted` -> `err.userAborted = true`) from timeout (`err.timedOut = true`). Both set `err.name = 'AbortError'`.
 
-**Error response scrubbing** (in `callProxyViaCorsBridge()` non-ok branch): Truncates to 150 chars and redacts API keys matching patterns for Anthropic, OpenAI, Google, Groq, and generic Bearer tokens.
+**Error response scrubbing** (in `callProxyViaCorsBridge()` non-ok branch): **Redacts first, then truncates to 150 chars** (AI-M5, 2026-05-22). Pre-fix the truncate-then-redact order let any token starting in the last ~15 chars of the 150-char window slip through truncated mid-key (below the `{10,}` regex minimum). Patterns cover Anthropic (`sk-`), OpenAI (`sk-proj-` matched first as the superset), Google (`AIza`), Groq (`gsk_`), and generic Bearer tokens. Same pattern as `agentic-api.js` (HIGH-LIB-2). When extending the scrubber, never reorder these two operations.
 
 **JSON parse safety** (in `callProxyViaCorsBridge()` — BUG-041): Separate `response.text()` and `JSON.parse()` calls for distinct error messages.
 
@@ -468,9 +494,11 @@ SSRF validation. Called at the start of `callProxyViaCorsBridge()` and in `fetch
 
 **Allows:** `127.0.0.1` only (local proxies).
 
-### `testProxyConnection(proxyUrl, model)` -- proxy-api.js
+### `testProxyConnection(proxyUrl, model, externalSignal?)` -- proxy-api.js
 
-Sends a minimal probe (`'Reply OK.'` system, `'ping'` user, max 8 tokens, 15s timeout). Returns `{ok: boolean, response?, error?}`.
+Sends a minimal probe (`'Reply OK.'` system, `'ping'` user, max 8 tokens, 15s timeout). Returns `{ok: boolean, response?, error?, aborted?: boolean}`.
+
+**Cancellable** (AI-M6, 2026-05-22): optional `externalSignal` (`AbortSignal`) propagates user-cancel from the Settings UI Test button. Second click during in-flight probe aborts via the same controller; popup close should call `.abort()` on the controller too. When `externalSignal` triggers, the returned object has `aborted: true` so callers can distinguish user-cancel from real proxy failures and show "Cancelled" instead of "Failed".
 
 ---
 

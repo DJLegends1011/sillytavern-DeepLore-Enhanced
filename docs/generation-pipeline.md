@@ -146,10 +146,10 @@ These run in `index.js`, not in `runPipeline()`. Each has its own trace recordin
 
 ### Stage 1: Pin/Block (in `onGenerate()`)
 ```javascript
-const policy = buildExemptionPolicy(vaultSnapshot, pins, blocks);
+const policy = buildExemptionPolicy(vaultSnapshot, pins, blocks, trace?.bootstrapActive === true);
 let finalEntries = applyPinBlock(pipelineEntries, vaultSnapshot, policy, matchedKeys);
 ```
-Adds pinned entries (as `constant=true, priority=10`). Removes blocked entries. See `stages-and-gating.md`.
+Adds pinned entries (as `constant=true, priority=10`). Removes blocked entries. `bootstrapActive` is threaded from the trace so post-pipeline gating matches the pre-pipeline filter (gotcha #60). See `stages-and-gating.md`.
 
 ### Stage 2: Contextual Gating (in `onGenerate()`)
 ```javascript
@@ -269,7 +269,9 @@ After pipeline commit and `_updatePipelineStatus('Generating...')`, DLE fires `n
 
 **Runtime warning**: After the agentic dispatch block, a `dedupWarning` fires when `librarianEnabled && !isToolCallingSupported()`. This warns the user that the Librarian requires function calling support, which the current provider/model does not offer.
 
-The agentic loop runs the state machine (SEARCH -> FLAG -> DONE), calling `searchLoreAction` and `flagLoreAction` directly. `onProse` is async and awaited — it calls `saveReply({ type })` + `saveChatConditional()` so the message is fully created, events processed, and saved to disk before the FLAG phase begins. `type` from `onGenerate` is forwarded to `saveReply` for correct swipe/regen behavior. Tool activity is stored directly on `message.extra.deeplore_tool_calls`.
+The agentic loop runs the state machine (SEARCH -> FLAG -> DONE), calling `searchLoreAction` and `flagLoreAction` directly. `searchLoreAction` returns a structured `{ text, titles }` record — the loop passes `text` to the LLM as the tool result and reads `titles` directly for the Activity-dropdown record. NEVER regex-extract `### ...` from `text` (vault content has its own subheadings; see `docs/gotchas.md` #66).
+
+`onProse` is async and awaited inside a try/catch — it calls `saveReply({ type })` + `saveChatConditional()` so the message is fully created, events processed, and saved to disk before the FLAG phase begins. `type` from `onGenerate` is forwarded to `saveReply` for correct swipe/regen behavior. Tool activity is stored directly on `message.extra.deeplore_tool_calls`. If `onProse` throws (saveReply / saveChatConditional failure), the loop returns the generated prose anyway so index.js's primary (`if (proseMsg)`) or fallback (`else if (result.prose)`) save branch can recover it — paid-for prose is never silently lost. See `docs/gotchas.md` #54.
 
 **C9 keepalive:** The agentic loop calls `setGenerationLockTimestamp(Date.now())` before every API call and before tool processing. Without this, the 30s stale-lock detector in Phase 2 would force-release the lock mid-loop, causing epoch mismatch on the next iteration.
 
@@ -358,7 +360,7 @@ onGenerate(chatMessages, contextSize, abort, type)             [index.js]
   │   ├─ hierarchicalPreFilter(entries, chatMessages, signal)   [optional, ai-only + two-stage modes]
   │   ├─ buildCandidateManifest(entries)                       [src/ai/ai.js → manifest.js]
   │   └─ aiSearch(chat, manifest, header, snapshot, cands, signal) [src/ai/ai.js]
-  ├─ buildExemptionPolicy(vaultSnapshot, pins, blocks)         [src/stages.js]
+  ├─ buildExemptionPolicy(vaultSnapshot, pins, blocks, bootstrapActive) [src/stages.js — gen-scoped bootstrap, gotcha #60]
   ├─ applyPinBlock(entries, vaultSnapshot, policy, matchedKeys)[src/stages.js]
   ├─ applyContextualGating(entries, ctx, policy, ...)          [src/stages.js]
   ├─ applyReinjectionCooldown(entries, policy, ...)            [src/stages.js]

@@ -9,6 +9,7 @@ Code-level reference for Claude Code. Covers the full lifecycle from Obsidian fe
 - `src/vault/obsidian-api.js` — HTTP fetch layer, circuit breaker, connection diagnostics
 - `src/vault/bm25.js` — BM25 fuzzy search index (pure functions)
 - `src/vault/vault-pure.js` — pure derived-state helpers (computeEntityDerivedState, deduplicateMultiVault, detectCrossVaultDuplicates)
+- `src/vault/vault-incremental.js` — P3 incremental derived-state helpers (incrementalMentionWeights, incrementalBM25Update, incrementalEntityRegexes, diffEntries, shouldUseIncremental). Pure (no ST imports).
 - `src/vault/sync.js` — sync polling loop (setupSyncPolling, showChangesToast)
 - `src/vault/import.js` — World Info import bridge
 - `core/pipeline.js` — parseVaultFile (frontmatter parsing, tag classification)
@@ -209,9 +210,17 @@ Pipeline.js extracts these frontmatter fields (with type coercion):
 ### Token estimation
 
 `tokenEstimate` is initially set to `0` in `parseVaultFile()`. Actual estimation happens later:
-- **buildIndex():** `await getTokenCountAsync(entry.content)` with fallback `Math.ceil(content.length / 4.0)`. When the tokenizer is unavailable and the fallback is used, a warning is logged.
-- **buildIndexWithReuse():** Same for newly-parsed entries; reused entries keep their existing estimate.
+- **buildIndex():** `await getTokenCountAsync(entry.content)` with fallback `Math.ceil(content.length / 4.0)` — wrapped in `Promise.all(entries.map(async ...))` so tokenization runs in parallel. When the tokenizer is unavailable and the fallback is used, a warning is logged.
+- **buildIndexWithReuse():** Same for newly-parsed entries; reused entries keep their existing estimate. **The reuse-path tokenization is intentionally serial inside the for-loop** (one `await getTokenCountAsync` per file). This is acceptable in the steady state because reuse-sync only re-tokenizes the small set of *modified* files (cache hits skip the await). It is NOT acceptable when every file needs re-parsing — see V-H4 below.
 - **Merge dedup:** `Math.ceil(mergedContent.length / 4.0)` (rough estimate, not tokenizer).
+
+### V-H4: fieldDefsChanged delegates to buildIndex (2026-05-22)
+
+When `parseFieldDefinitionYaml` returns a different definition set than what's currently committed (`fieldDefsChanged === true`), the reuse-sync cache check (`existing._contentHash === fileHash && !fieldDefsChanged`) fails for every file. Every entry then goes down the re-parse + serial `await getTokenCountAsync` path, blocking the UI for several seconds on a 500-entry vault.
+
+`buildIndex()` does the same work but tokenizes in parallel via `Promise.all`. So when `fieldDefsChanged === true`, `buildIndexWithReuse()` now returns early with `_reuseResult = false` — the caller's standard fallback (`ensureIndexFresh` and `setupSyncPolling` both check the reuse-path result and invoke `buildIndex` when it's false) takes over and gets the parallel tokenization for free. The `finally` block clears the build lock so `buildIndex` can acquire it cleanly.
+
+Regression guards: `test/vault.test.mjs` section M (M1-M6) — source-code assertions on the early-return position, structure, and fallback contract.
 
 ---
 
@@ -257,11 +266,13 @@ Strips `requires[]`, `excludes[]`, and `cascadeLinks[]` references that don't ma
 
 **Gotcha:** The `_original*` fields are included in the IndexedDB cache save (cache.js:saveIndexToCache(), explicit `_original*` allowlist in the private-field filter). This means cached entries retain the broken-ref information across reloads.
 
-### `computeDerivedIndexFields(entries, settings)` (vault.js:computeDerivedIndexFields())
+### `computeDerivedIndexFields(entries, settings, previousEntries?)` (vault.js:computeDerivedIndexFields())
 
-Shared between `finalizeIndex()` and `hydrateFromCache()` (BUG-370).
+Shared between `finalizeIndex()` and `hydrateFromCache()` (BUG-370). Optional third arg `previousEntries` enables the incremental path (P3).
 
 **mentionWeights** (vault.js: mentionWeights block inside computeDerivedIndexFields()): Cross-entry mention frequency table. Key format: `"sourceName\0targetTitle"`, value: match count. Uses precompiled combined regexes per target entry for O(N x total_content) instead of O(N x M x content) (BUG-374). Short names (<=3 chars) use `\b` word boundaries.
+
+**P3 incremental path (2026-05-22):** When `previousEntries` is supplied AND `shouldUseIncremental(changed, total) === true` (default threshold: 50% of total), `incrementalMentionWeights()` from `src/vault/vault-incremental.js` updates the prior Map by purging dirty rows/columns and recomputing only the affected source×target pairs. Output is byte-equivalent to the full path — pinned by `test/vault.test.mjs` section L (L1-L3, L11). The same `previousEntries` triggers incremental BM25 (`incrementalBM25Update`) and incremental entity regexes (`incrementalEntityRegexes`) in `finalizeIndex` itself.
 
 **folderList** (vault.js: folderList block inside computeDerivedIndexFields()): Array of `{path, entryCount}` sorted by count descending. Includes all ancestor folders (e.g. entry in `A/B/C` counts toward `A`, `A/B`, and `A/B/C`).
 
@@ -484,6 +495,8 @@ Writes entries to the primary vault one at a time.
 - Cap exhausted (>20 dedup attempts) → skip entry.
 - Returns `{imported, failed, renamed, errors}`.
 
+**V-C2 (2026-05-22):** `_findUniquePath` previously returned the candidate path "assume free" when the existence-check `obsidianFetch` threw a non-Abort error. If the file actually existed, the caller's `writeNote` then silently overwrote real vault content. The helper now delegates to `classifyDedupProbe(fetchResult, err)` in `src/vault/vault-pure.js` — any error (Abort or otherwise) yields `{accept:false, taken:false}`, so the helper returns `null` and the caller skips with a "dedup check failed" error message. See gotchas.md #49.
+
 **`options.compress`** (#18) — forwarded into `convertWiEntry`. Defaults to `settings.importCompressByDefault`.
 
 **State read:** `getSettings()`, `getPrimaryVault(settings)`.
@@ -538,9 +551,9 @@ Surgical frontmatter-field update. Reads the file via REST, hands the content to
 
 4. **Field definitions are loaded independently by both build paths** (`buildIndex()` and `buildIndexWithReuse()` — each has its own field-definitions load block). Both defer publishing to state until parsing is complete.
 
-5. **`skipCacheSave`** is set to `true` when any vault fetch partially failed (in `buildIndex()`, passed into `finalizeIndex()` as `vaultFetchFailed`). This prevents caching a truncated index over a previously-good one.
+5. **`skipCacheSave`** is set to `true` when any vault fetch partially failed (in `buildIndex()`, passed into `finalizeIndex()` as `vaultFetchFailed`). This prevents caching a truncated index over a previously-good one. **V-C1 (2026-05-22):** `buildIndexWithReuse()` now mirrors this — `anyVaultFailed` is sticky across the vault loop and passed as `skipCacheSave: anyVaultFailed` to `finalizeIndex()`. Earlier code passed no `skipCacheSave` at all on the reuse path, so a partial listing or high per-file failure rate silently truncated IDB on next save (which then dropped trackers on next hydrate via analytics-prune). The shared classifier `classifyReuseFetch(data)` in `src/vault/vault-pure.js` codifies the contract (see gotchas.md #48).
 
-6. **BUG-366/367 carry-forward guards** in both `buildIndex()` and `buildIndexWithReuse()`: if a vault returns partial results or zero files but previously had entries, the prior entries for that vault are carried forward instead of being silently dropped.
+6. **BUG-366/367 carry-forward guards** in both `buildIndex()` and `buildIndexWithReuse()`: if a vault returns partial results or zero files but previously had entries, the prior entries for that vault are carried forward instead of being silently dropped. **V-C1 extension:** `buildIndexWithReuse()` also carries forward on `data.partial === true` (previously only `buildIndex()` did this) and flags `anyVaultFailed`/`failedVaultNames` so the snapshot-patch and cache-skip branches downstream both see the failure.
 
 7. **`ensureIndexFresh()` respects three rebuild trigger modes** (vault.js:ensureIndexFresh()): `ttl` (default, time-based), `generation` (every N generations), `manual` (only if index empty). The `generation` mode uses `generationCount` / `lastIndexGenerationCount` from state.js.
 

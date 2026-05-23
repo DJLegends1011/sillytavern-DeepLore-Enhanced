@@ -15,13 +15,26 @@ import {
 
 import {
     detectCrossVaultDuplicates, deduplicateMultiVault, computeEntityDerivedState,
+    classifyReuseFetch, classifyDedupProbe, PARTIAL_FETCH_FAILURE_THRESHOLD,
 } from '../src/vault/vault-pure.js';
 
 import { buildBM25Index, queryBM25 } from '../src/vault/bm25.js';
 
 import {
+    diffEntries, shouldUseIncremental,
+    incrementalMentionWeights, incrementalBM25Update, incrementalEntityRegexes,
+    fullMentionWeights, computeEntryBM25TF, bm25DocId,
+} from '../src/vault/vault-incremental.js';
+
+import {
     encodeVaultPath, validateVaultPath, pruneCircuitBreakers,
 } from '../src/vault/obsidian-api.js';
+
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 import {
     trackerKey, setEntityNameSet, entityNameSet,
@@ -1090,7 +1103,821 @@ test('I4: encodeVaultPath: slash-separated segments encoded independently', () =
 });
 
 // ============================================================================
+//  J. V-C1 — classifyReuseFetch (reuse-sync partial-fetch handling)
+// ============================================================================
+//
+// Regression guards for the V-C1 fix (ship-blocker for v2.5). Before the fix,
+// buildIndexWithReuse honored neither `data.partial` nor isPartialFetchFailure:
+// files missing from a truncated listing were treated as deletions, then the
+// dedupedEntries (minus those files) were written to IDB without skipCacheSave.
+// On next hydrate the analytics-prune at finalizeIndex stripped trackers for
+// the "deleted" entries — cooldowns, pins, and blocks silently lost.
+//
+// These tests pin the contract that classifyReuseFetch sets BOTH carryForward
+// (in-memory restoration) AND skipCacheSave (IDB protection) so the bug can't
+// regress.
+
+section('J. V-C1 — classifyReuseFetch');
+
+test('J1: ok path — full fetch with no failures returns {action:ok, no carry, no skip}', () => {
+    const data = { files: [{ filename: 'a.md', content: 'x' }], failed: 0, total: 1 };
+    const result = classifyReuseFetch(data);
+    assertEqual(result.action, 'ok', 'action is ok');
+    assertEqual(result.carryForward, false, 'no carry-forward needed');
+    assertEqual(result.skipCacheSave, false, 'safe to persist to IDB');
+});
+
+test('J2: invalid path — non-array files returns {action:invalid, carry, skip}', () => {
+    const data = { files: null, failed: 0, total: 0 };
+    const result = classifyReuseFetch(data);
+    assertEqual(result.action, 'invalid', 'action is invalid');
+    assertEqual(result.carryForward, true, 'carry-forward prior snapshot entries');
+    assertEqual(result.skipCacheSave, true, 'MUST skip cache to avoid wiping IDB');
+});
+
+test('J3: invalid path — undefined data returns {action:invalid, carry, skip}', () => {
+    const result = classifyReuseFetch(undefined);
+    assertEqual(result.action, 'invalid', 'action is invalid');
+    assertEqual(result.carryForward, true, 'carry-forward');
+    assertEqual(result.skipCacheSave, true, 'skip cache');
+});
+
+test('J4: V-C1 BUG — partial listing returns {action:partial, carry, skip}', () => {
+    // The exact bug: REST returns data.partial:true on transient directory-listing
+    // glitch. Without this classifier, the missing files looked like deletions.
+    const data = { files: [{ filename: 'a.md', content: 'x' }], partial: true, failed: 0, total: 1 };
+    const result = classifyReuseFetch(data);
+    assertEqual(result.action, 'partial', 'action is partial');
+    assertEqual(result.carryForward, true, 'MUST carry-forward prior entries — missing files are not deletions');
+    assertEqual(result.skipCacheSave, true, 'MUST skip cache — truncated view would persist as deletions');
+});
+
+test('J5: V-C1 BUG — many-file failure returns {action:partial_failure, no carry, skip}', () => {
+    // Threshold default: 5 absolute OR 10% rate. 5/30 hits absolute threshold.
+    const data = { files: [], failed: 5, total: 30 };
+    const result = classifyReuseFetch(data);
+    assertEqual(result.action, 'partial_failure', 'action is partial_failure');
+    // Notably: process the partial data (no carry) but DON'T persist.
+    assertEqual(result.carryForward, false, 'process whatever fetched OK');
+    assertEqual(result.skipCacheSave, true, 'MUST skip cache to avoid IDB truncation');
+});
+
+test('J6: V-C1 BUG — high failure rate (10%+) triggers partial_failure even below absolute', () => {
+    // 1/10 = 10% — meets rate threshold despite being below absolute (5).
+    const data = { files: [], failed: 1, total: 10 };
+    const result = classifyReuseFetch(data);
+    assertEqual(result.action, 'partial_failure', 'rate threshold triggers');
+    assertEqual(result.skipCacheSave, true, 'MUST skip cache');
+});
+
+test('J7: low failure count below thresholds returns ok (single transient miss is fine)', () => {
+    // 1/100 = 1% — well below both thresholds.
+    const data = { files: [{ filename: 'a.md', content: 'x' }], failed: 1, total: 100 };
+    const result = classifyReuseFetch(data);
+    assertEqual(result.action, 'ok', 'below thresholds');
+    assertEqual(result.skipCacheSave, false, 'safe to cache');
+});
+
+test('J8: data.partial wins over a small failure count', () => {
+    // Partial listing is a stronger signal than per-file failure rate.
+    const data = { files: [{ filename: 'a.md' }], partial: true, failed: 0, total: 1 };
+    const result = classifyReuseFetch(data);
+    assertEqual(result.action, 'partial', 'partial takes precedence');
+    assertEqual(result.carryForward, true, 'full carry-forward when listing truncated');
+});
+
+test('J9: zero files with no failures returns ok (empty vault is a valid state)', () => {
+    // A genuinely empty vault should NOT trigger carry-forward — the caller has
+    // its own preserve guard for "0 files but prior had entries" (see vault.js
+    // BUG-367). classifyReuseFetch only handles the truncation cases.
+    const data = { files: [], failed: 0, total: 0 };
+    const result = classifyReuseFetch(data);
+    assertEqual(result.action, 'ok', 'empty vault is ok');
+    assertEqual(result.skipCacheSave, false, 'cache the empty state');
+});
+
+test('J10: V-C1 contract — every non-ok action sets skipCacheSave=true', () => {
+    // Pin the invariant: ANY action other than 'ok' MUST set skipCacheSave so
+    // IDB never receives a truncated index. If a future contributor adds a new
+    // action without setting skipCacheSave, this test fails loudly.
+    const cases = [
+        classifyReuseFetch(null),
+        classifyReuseFetch({}),
+        classifyReuseFetch({ files: [], partial: true }),
+        classifyReuseFetch({ files: [], failed: 99, total: 100 }),
+    ];
+    for (const r of cases) {
+        if (r.action !== 'ok') {
+            assertEqual(r.skipCacheSave, true, `skipCacheSave must be true for action=${r.action}`);
+        }
+    }
+});
+
+test('J11: PARTIAL_FETCH_FAILURE_THRESHOLD exported and matches vault.js constant', () => {
+    // The same constant must drive both the warning toast AND the cache-skip
+    // flag in vault.js. Drift would re-introduce the bug.
+    assertEqual(PARTIAL_FETCH_FAILURE_THRESHOLD.absolute, 5, 'absolute threshold = 5 failures');
+    assertEqual(PARTIAL_FETCH_FAILURE_THRESHOLD.rate, 0.1, 'rate threshold = 10%');
+});
+
+test('J12: custom threshold override respected (test-time injection)', () => {
+    // 2/10 with default thresholds → 20% rate → partial_failure.
+    // Override to absolute=10 rate=0.5 → both miss → ok.
+    const data = { files: [{ filename: 'a.md' }], failed: 2, total: 10 };
+    const tight = classifyReuseFetch(data);
+    assertEqual(tight.action, 'partial_failure', 'default thresholds catch 20%');
+    const loose = classifyReuseFetch(data, { absolute: 10, rate: 0.5 });
+    assertEqual(loose.action, 'ok', 'loosened thresholds pass');
+});
+
+// ============================================================================
+//  K. V-C2 — classifyDedupProbe (import dedup existence check)
+// ============================================================================
+//
+// Regression guards for the V-C2 fix (ship-blocker for v2.5). Before the fix,
+// _findUniquePath's catch block returned the candidate path on any non-Abort
+// exception ("assume free"). If the file ACTUALLY existed but the existence
+// check threw mid-flight (network glitch, timeout, DNS hiccup), the caller
+// would then writeNote over the real file — silent vault content overwrite,
+// the exact opposite of what a dedup helper should do.
+//
+// classifyDedupProbe is now the single source of truth: any error (Abort or
+// otherwise) returns {accept:false, taken:false} → caller fails loud.
+
+section('K. V-C2 — classifyDedupProbe');
+
+test('K1: file does not exist (status != 200) → accept candidate', () => {
+    const verdict = classifyDedupProbe({ status: 404 }, null);
+    assertEqual(verdict.accept, true, 'accept the candidate');
+    assertEqual(verdict.taken, false, 'not taken');
+});
+
+test('K2: file exists (status 200) → reject, try next suffix', () => {
+    const verdict = classifyDedupProbe({ status: 200 }, null);
+    assertEqual(verdict.accept, false, 'do not accept');
+    assertEqual(verdict.taken, true, 'taken — bump suffix');
+});
+
+test('K3: AbortError → inconclusive (no accept, no taken)', () => {
+    const err = new Error('aborted');
+    err.name = 'AbortError';
+    const verdict = classifyDedupProbe(null, err);
+    assertEqual(verdict.accept, false, 'do not accept on abort');
+    assertEqual(verdict.taken, false, 'do not advance suffix on abort');
+});
+
+test('K4: V-C2 BUG — generic network error → inconclusive (NOT accept)', () => {
+    // The exact bug: a non-Abort exception used to return the candidate path
+    // "assume free", causing silent overwrites. classifyDedupProbe MUST refuse.
+    const err = new TypeError('Failed to fetch');
+    const verdict = classifyDedupProbe(null, err);
+    assertEqual(verdict.accept, false, 'V-C2: MUST NOT accept on network error');
+    assertEqual(verdict.taken, false, 'V-C2: MUST NOT advance suffix');
+});
+
+test('K5: V-C2 BUG — DNS error → inconclusive', () => {
+    const err = new Error('ENOTFOUND');
+    err.code = 'ENOTFOUND';
+    const verdict = classifyDedupProbe(null, err);
+    assertEqual(verdict.accept, false, 'inconclusive');
+    assertEqual(verdict.taken, false, 'no advance');
+});
+
+test('K6: V-C2 BUG — timeout error → inconclusive', () => {
+    const err = new Error('Request timed out');
+    err.name = 'AbortError';
+    err.timedOut = true;
+    const verdict = classifyDedupProbe(null, err);
+    assertEqual(verdict.accept, false, 'inconclusive on timeout');
+    assertEqual(verdict.taken, false, 'no advance on timeout');
+});
+
+test('K7: V-C2 contract — any error returns inconclusive, regardless of fetchResult', () => {
+    // Even if fetchResult is somehow populated alongside an error (defensive),
+    // err presence MUST dominate. Otherwise stale partial data could mask the
+    // inconclusive state.
+    const err = new Error('mixed');
+    const verdict = classifyDedupProbe({ status: 200 }, err);
+    assertEqual(verdict.accept, false, 'err dominates fetchResult');
+    assertEqual(verdict.taken, false, 'no false-take on partial state');
+});
+
+test('K8: non-200 success codes treated as "free" (consistent with obsidianFetch semantics)', () => {
+    // obsidianFetch returns {status, data} for all HTTP responses including 404.
+    // Only an actual 200 means the file exists.
+    const cases = [
+        classifyDedupProbe({ status: 404 }, null),
+        classifyDedupProbe({ status: 204 }, null),
+        classifyDedupProbe({ status: 301 }, null),
+    ];
+    for (const verdict of cases) {
+        assertEqual(verdict.accept, true, 'non-200 is free');
+        assertEqual(verdict.taken, false, 'not taken');
+    }
+});
+
+test('K9: null fetchResult with no error → accept (legacy edge case)', () => {
+    // Defensive: if probe somehow resolves to null without an error, treat as
+    // "no file there." This branch shouldn't fire in practice but guards against
+    // future caller refactors that might pass null on success.
+    const verdict = classifyDedupProbe(null, null);
+    assertEqual(verdict.accept, true, 'null result without error is acceptable');
+    assertEqual(verdict.taken, false, 'not taken');
+});
+
+test('K10: V-C2 invariant — inconclusive cases produce {accept:false, taken:false} only', () => {
+    // Pin the invariant: there's no valid state where the helper returns
+    // {accept:true, taken:true} or {accept:false, taken:false, candidate:string}.
+    // The caller's `if (!candidatePath) bail` pattern depends on this.
+    const errors = [
+        Object.assign(new Error('a'), { name: 'AbortError' }),
+        new TypeError('Failed to fetch'),
+        new Error('generic'),
+        Object.assign(new Error('t'), { name: 'AbortError', timedOut: true }),
+    ];
+    for (const err of errors) {
+        const v = classifyDedupProbe(null, err);
+        assert(!v.accept && !v.taken, `err ${err.name}: must be inconclusive`);
+    }
+});
+
+// ============================================================================
+//  L. P3 — Incremental derived-state equivalence (mentionWeights / BM25 / entity regexes)
+// ============================================================================
+//
+// Equivalence guards for the P3 perf fix (Wave C / 2026-05-22). finalizeIndex
+// used to rebuild mentionWeights (O(N²)), BM25 (O(N) tokenize + O(M) IDF), and
+// entityShortNameRegexes (O(N×K)) on EVERY reuse-sync poll regardless of how
+// many entries actually changed. The incremental path skips that work — but
+// only safely if the output is byte-equivalent to a full rebuild. Any drift
+// = silent ranking corruption (BM25) or wrong mention scoring weights that
+// degrade quality invisibly over time.
+//
+// These tests pin: for the same final entry set, full and incremental paths
+// produce the same Maps / Sets / numbers. We also pin the fallback (threshold
+// crossed → full rebuild).
+
+section('L. P3 — Incremental derived-state equivalence');
+
+// Helper: build a deterministic vault of N entries with cross-references so
+// mentionWeights is non-trivial.
+function buildSyntheticVault(N) {
+    const entries = [];
+    const names = ['Dragon', 'Elf', 'Orc', 'Castle', 'Forest', 'Cave', 'Mage', 'Sword', 'Throne', 'Ship'];
+    for (let i = 0; i < N; i++) {
+        const title = `${names[i % names.length]}-${i}`;
+        // Each entry mentions the next 2 entries by their base name.
+        const next1 = names[(i + 1) % names.length];
+        const next2 = names[(i + 2) % names.length];
+        entries.push(makeEntry(title, {
+            filename: `entry-${i}.md`,
+            vaultSource: 'main',
+            keys: [names[i % names.length], `kw${i}`],
+            content: `This is ${title}. It mentions ${next1} and ${next2} and ${next1} again.`,
+            _contentHash: `h${i}`,
+        }));
+    }
+    return entries;
+}
+
+test('L1: mentionWeights — incremental matches full rebuild after modification', () => {
+    const prev = buildSyntheticVault(8);
+    // Mutate one entry's content (must also bump _contentHash so diff picks it up).
+    const next = prev.map(e => ({ ...e }));
+    next[3].content = `Updated content for ${next[3].title} that mentions Dragon and Elf.`;
+    next[3]._contentHash = `h3-new`;
+
+    const fullWeights = fullMentionWeights(next);
+    const diff = diffEntries(prev, next);
+    const incWeights = incrementalMentionWeights(fullMentionWeights(prev), prev, next, diff);
+
+    assertEqual(incWeights.size, fullWeights.size, 'same number of mention pairs');
+    for (const [key, val] of fullWeights) {
+        assertEqual(incWeights.get(key), val, `pair ${key}`);
+    }
+});
+
+test('L2: mentionWeights — incremental matches full rebuild after addition', () => {
+    const prev = buildSyntheticVault(6);
+    const next = prev.map(e => ({ ...e }));
+    next.push(makeEntry('NewEntry', {
+        filename: 'new.md',
+        vaultSource: 'main',
+        keys: ['novel', 'introduced'],
+        content: 'NewEntry mentions Dragon-0 and Elf-1 here.',
+        _contentHash: 'hnew',
+    }));
+
+    const fullWeights = fullMentionWeights(next);
+    const diff = diffEntries(prev, next);
+    const incWeights = incrementalMentionWeights(fullMentionWeights(prev), prev, next, diff);
+
+    assertEqual(incWeights.size, fullWeights.size, 'same pair count after add');
+    for (const [key, val] of fullWeights) {
+        assertEqual(incWeights.get(key), val, `pair ${key}`);
+    }
+});
+
+test('L3: mentionWeights — incremental matches full rebuild after removal', () => {
+    const prev = buildSyntheticVault(6);
+    const next = prev.slice(0, 5); // drop last entry
+
+    const fullWeights = fullMentionWeights(next);
+    const diff = diffEntries(prev, next);
+    const incWeights = incrementalMentionWeights(fullMentionWeights(prev), prev, next, diff);
+
+    assertEqual(incWeights.size, fullWeights.size, 'same pair count after removal');
+    for (const [key, val] of fullWeights) {
+        assertEqual(incWeights.get(key), val, `pair ${key}`);
+    }
+    // No orphan keys pointing to the removed entry's title.
+    for (const key of incWeights.keys()) {
+        assert(!key.includes(prev[5].title), `no orphan key referencing removed entry: ${key}`);
+    }
+});
+
+test('L4: BM25 — incremental matches full rebuild after modification', () => {
+    const prev = buildSyntheticVault(8);
+    const prevIndex = buildBM25Index(prev);
+
+    const next = prev.map(e => ({ ...e }));
+    next[2].content = `Modified content for ${next[2].title}, now mentions phoenix and griffin.`;
+    next[2]._contentHash = 'h2-new';
+
+    const diff = diffEntries(prev, next);
+    const incIndex = incrementalBM25Update(prevIndex, diff);
+    const fullIndex = buildBM25Index(next);
+
+    assertNotNull(incIndex, 'incremental returned an index');
+    assertEqual(incIndex.docs.size, fullIndex.docs.size, 'same doc count');
+    assertEqual(incIndex.idf.size, fullIndex.idf.size, 'same idf term count');
+    assertEqual(incIndex.invertedIndex.size, fullIndex.invertedIndex.size, 'same inverted-index size');
+    // Compare avgDl with float tolerance (Math.log shouldn't introduce error
+    // here, but accept tiny drift).
+    assert(Math.abs(incIndex.avgDl - fullIndex.avgDl) < 1e-9, 'avgDl matches');
+    // Compare IDF values per term.
+    for (const [term, idfVal] of fullIndex.idf) {
+        const incIdf = incIndex.idf.get(term);
+        assertNotNull(incIdf, `incremental has term ${term}`);
+        assert(Math.abs(incIdf - idfVal) < 1e-9, `idf[${term}] matches`);
+    }
+    // Compare invertedIndex per term.
+    for (const [term, posting] of fullIndex.invertedIndex) {
+        const incPosting = incIndex.invertedIndex.get(term);
+        assertNotNull(incPosting, `incremental has posting for ${term}`);
+        assertEqual(incPosting.size, posting.size, `posting count for ${term}`);
+        for (const docId of posting) {
+            assert(incPosting.has(docId), `posting[${term}] includes ${docId}`);
+        }
+    }
+});
+
+test('L5: BM25 — incremental matches full rebuild after addition', () => {
+    const prev = buildSyntheticVault(5);
+    const prevIndex = buildBM25Index(prev);
+
+    const next = prev.map(e => ({ ...e }));
+    next.push(makeEntry('AddedEntry', {
+        filename: 'added.md',
+        vaultSource: 'main',
+        keys: ['shiny', 'novel'],
+        content: 'AddedEntry has unique tokens like quasar and pulsar.',
+        _contentHash: 'hadd',
+    }));
+
+    const diff = diffEntries(prev, next);
+    const incIndex = incrementalBM25Update(prevIndex, diff);
+    const fullIndex = buildBM25Index(next);
+
+    assertEqual(incIndex.docs.size, fullIndex.docs.size, 'doc count matches after add');
+    // The added doc's tokens should appear in both.
+    const addedDoc = incIndex.docs.get(bm25DocId(next[next.length - 1]));
+    assertNotNull(addedDoc, 'added doc indexed');
+    assert(addedDoc.tf.has('quasar'), 'quasar token tracked');
+    // N changed → every IDF value should match full rebuild's IDF.
+    for (const [term, idfVal] of fullIndex.idf) {
+        const incIdf = incIndex.idf.get(term);
+        assert(Math.abs(incIdf - idfVal) < 1e-9, `idf[${term}] matches after N change`);
+    }
+});
+
+test('L6: BM25 — incremental matches full rebuild after removal', () => {
+    const prev = buildSyntheticVault(6);
+    const prevIndex = buildBM25Index(prev);
+
+    const next = prev.slice(0, 5); // remove last entry
+    const removedId = bm25DocId(prev[5]);
+
+    const diff = diffEntries(prev, next);
+    const incIndex = incrementalBM25Update(prevIndex, diff);
+    const fullIndex = buildBM25Index(next);
+
+    assertEqual(incIndex.docs.size, fullIndex.docs.size, 'doc count after removal');
+    assert(!incIndex.docs.has(removedId), 'removed doc gone from docs');
+    // No posting list should reference the removed docId.
+    for (const [term, posting] of incIndex.invertedIndex) {
+        assert(!posting.has(removedId), `posting[${term}] does not reference removed ${removedId}`);
+    }
+    // Every full-rebuild IDF should match.
+    for (const [term, idfVal] of fullIndex.idf) {
+        assert(Math.abs(incIndex.idf.get(term) - idfVal) < 1e-9, `idf[${term}] matches`);
+    }
+});
+
+test('L7: entity regexes — incremental matches full path AND bumps entityRegexVersion contract', () => {
+    // The full path is computeEntityDerivedState (vault-pure.js). Compare name
+    // sets + regex string forms (RegExp identity isn't comparable directly).
+    const prev = buildSyntheticVault(4);
+    const next = prev.map(e => ({ ...e }));
+    next[1].keys = ['Elf', 'newkey', 'addedterm'];
+
+    // Build the "full" expected name set manually (same logic as
+    // vault-pure.js:computeEntityDerivedState).
+    const expectedNames = new Set();
+    for (const e of next) {
+        if (e.title.length >= 1) expectedNames.add(e.title.toLowerCase());
+        for (const k of e.keys) {
+            if (k.length >= 2) expectedNames.add(k.toLowerCase());
+        }
+    }
+
+    // Pre-built regex map from prev (simulates state.entityShortNameRegexes).
+    const prevRegexes = new Map();
+    for (const e of prev) {
+        if (e.title.length >= 1) {
+            const name = e.title.toLowerCase();
+            const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            prevRegexes.set(name, new RegExp(`\\b${escaped}\\b`, 'i'));
+        }
+        for (const k of e.keys) {
+            if (k.length >= 2) {
+                const name = k.toLowerCase();
+                const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                prevRegexes.set(name, new RegExp(`\\b${escaped}\\b`, 'i'));
+            }
+        }
+    }
+
+    const { names, regexes } = incrementalEntityRegexes(next, prevRegexes);
+    assertEqual(names.size, expectedNames.size, 'incremental name set size matches full');
+    for (const n of expectedNames) assert(names.has(n), `name ${n} present`);
+    for (const n of names) assert(expectedNames.has(n), `no extra name ${n}`);
+    // Regex map size should equal the name set size (one regex per name).
+    assertEqual(regexes.size, names.size, 'one regex per name');
+    // Regexes are word-boundary, case-insensitive.
+    for (const [name, rx] of regexes) {
+        assertEqual(rx.flags, 'i', `flags for ${name}`);
+        assert(rx.source.startsWith('\\b'), `${name} has word boundary prefix`);
+    }
+    // Pinned: previously-existing regex objects should be REUSED (same identity)
+    // for names that survived — this is what makes the path actually cheap.
+    const survivingName = prev[0].title.toLowerCase();
+    if (names.has(survivingName) && prevRegexes.has(survivingName)) {
+        assert(regexes.get(survivingName) === prevRegexes.get(survivingName),
+            'surviving regex object reused (identity preserved)');
+    }
+});
+
+test('L8: shouldUseIncremental — fallback when changes exceed threshold', () => {
+    // Default threshold 0.5: anything over 50% of total → full rebuild
+    assert(shouldUseIncremental(1, 100), '1% changed — incremental');
+    assert(shouldUseIncremental(50, 100), '50% changed — still incremental (at threshold)');
+    assert(!shouldUseIncremental(51, 100), '51% changed — full rebuild');
+    assert(!shouldUseIncremental(100, 100), 'all changed — full rebuild');
+    // Edge cases
+    assert(!shouldUseIncremental(0, 0), 'empty vault — full path');
+    assert(shouldUseIncremental(0, 10), 'zero changes — incremental (no-op)');
+    // Custom threshold
+    assert(shouldUseIncremental(1, 10, 0.1), '10% with 0.1 threshold — incremental');
+    assert(!shouldUseIncremental(2, 10, 0.1), '20% with 0.1 threshold — full rebuild');
+});
+
+test('L9: diffEntries — detects rename (title change) as modification', () => {
+    const prev = buildSyntheticVault(3);
+    const next = prev.map(e => ({ ...e }));
+    next[1].title = 'RenamedTitle';
+    next[1]._contentHash = 'h1-renamed';
+
+    const diff = diffEntries(prev, next);
+    assertEqual(diff.added.length, 0, 'no added');
+    assertEqual(diff.removed.length, 0, 'no removed');
+    assertEqual(diff.modified.length, 1, 'one modified');
+    assertEqual(diff.modifiedPrev.length, 1, 'modifiedPrev paired');
+    assertEqual(diff.modified[0].title, 'RenamedTitle', 'new title');
+    assertEqual(diff.modifiedPrev[0].title, prev[1].title, 'prev title preserved for old-row cleanup');
+});
+
+test('L10: incremental BM25 — returns null when prior index lacks invertedIndex (defensive)', () => {
+    // Pre-H-12 indexes had no inverted index. The incremental path needs it
+    // for posting-list maintenance — must signal full-rebuild fallback.
+    const prev = buildSyntheticVault(3);
+    const fakeLegacyIndex = { idf: new Map(), docs: new Map(), avgDl: 0 }; // no invertedIndex
+    const next = prev.map(e => ({ ...e }));
+    const diff = diffEntries(prev, next);
+    const result = incrementalBM25Update(fakeLegacyIndex, diff);
+    assertEqual(result, null, 'returns null to signal full-rebuild fallback');
+});
+
+test('L11: incremental mentionWeights — handles entry rename without leaving orphan row/col', () => {
+    // Prior bug class: rename means OLD title still has row/col in weights.
+    // diffEntries detects rename as modification + modifiedPrev keeps old title
+    // so incrementalMentionWeights can purge the old-title row AND col.
+    const prev = buildSyntheticVault(5);
+    const next = prev.map(e => ({ ...e }));
+    const oldTitle = next[2].title;
+    next[2].title = 'CompletelyRenamed';
+    next[2]._contentHash = 'h2-renamed';
+
+    const fullWeights = fullMentionWeights(next);
+    const diff = diffEntries(prev, next);
+    const incWeights = incrementalMentionWeights(fullMentionWeights(prev), prev, next, diff);
+
+    assertEqual(incWeights.size, fullWeights.size, 'same pair count after rename');
+    // No orphan weights referencing the old title (neither as source nor target).
+    for (const key of incWeights.keys()) {
+        assert(!key.startsWith(`${oldTitle}\0`), `no orphan ${oldTitle} as source`);
+        assert(!key.endsWith(`\0${oldTitle}`), `no orphan ${oldTitle} as target`);
+    }
+    // And the full rebuild produces the same byte-identical Map.
+    for (const [key, val] of fullWeights) {
+        assertEqual(incWeights.get(key), val, `pair ${key}`);
+    }
+});
+
+test('L12: computeEntryBM25TF — matches buildBM25Index per-doc TF', () => {
+    const entry = makeEntry('TestEntry', {
+        keys: ['fire', 'magic'],
+        content: 'A short test entry about fire and magic.',
+        filename: 'test.md',
+        vaultSource: 'v1',
+    });
+    const fullIndex = buildBM25Index([entry]);
+    const { tf, len } = computeEntryBM25TF(entry);
+    const fullDoc = fullIndex.docs.get(bm25DocId(entry));
+    assertEqual(len, fullDoc.len, 'token length matches');
+    assertEqual(tf.size, fullDoc.tf.size, 'TF map size matches');
+    for (const [term, count] of fullDoc.tf) {
+        assertEqual(tf.get(term), count, `tf[${term}]`);
+    }
+});
+
+test('L13: incrementalEntityRegexes — name removed when only entry using it is dropped', () => {
+    const prev = [
+        makeEntry('Solo', { keys: ['uniquekey'], filename: 's.md', vaultSource: 'v1' }),
+        makeEntry('Other', { keys: ['sharedkey'], filename: 'o.md', vaultSource: 'v1' }),
+    ];
+    const next = [prev[1]]; // drop Solo, keep Other
+
+    const prevRegexes = new Map();
+    prevRegexes.set('solo', /\bsolo\b/i);
+    prevRegexes.set('uniquekey', /\buniquekey\b/i);
+    prevRegexes.set('other', /\bother\b/i);
+    prevRegexes.set('sharedkey', /\bsharedkey\b/i);
+
+    const { names, regexes } = incrementalEntityRegexes(next, prevRegexes);
+    assert(!names.has('solo'), 'solo name removed');
+    assert(!names.has('uniquekey'), 'uniquekey name removed (only Solo had it)');
+    assert(names.has('other'), 'other name preserved');
+    assert(names.has('sharedkey'), 'sharedkey name preserved');
+    assertEqual(regexes.size, 2, 'only 2 regexes left');
+});
+
+// ============================================================================
+//  M. V-H4 — fieldDefsChanged delegates to buildIndex (perf fix)
+// ============================================================================
+//
+// Regression guards for the V-H4 fix (ship-blocker for v2.5). Before the fix,
+// when `fieldDefsChanged` was true, buildIndexWithReuse re-parsed every entry
+// inside its sequential for-loop with `await getTokenCountAsync` per file —
+// blocking the UI for seconds on a 500-entry vault. buildIndex() does the same
+// work but parallelizes tokenization via `Promise.all`.
+//
+// The fix: bail early from buildIndexWithReuse when fieldDefsChanged so the
+// caller's standard `usedReuse === false → buildIndex()` fallback (see
+// ensureIndexFresh + setupSyncPolling) takes over.
+//
+// vault.js can't be imported in tests (ST module imports), so we assert via
+// source-code regex: the early-return block exists AND the cache hit check
+// no longer needs the !fieldDefsChanged guard to be load-bearing.
+
+section('M. V-H4 — fieldDefsChanged delegates to buildIndex');
+
+test('M1: vault.js has V-H4 early-return when fieldDefsChanged is true', () => {
+    const src = readFileSync(join(REPO_ROOT, 'src/vault/vault.js'), 'utf8');
+
+    // The early-return block must:
+    //   1. Reference the V-H4 fix label (so future code-readers find context).
+    //   2. Live inside buildIndexWithReuse (not buildIndex — which already
+    //      tokenizes in parallel).
+    //   3. Set _reuseResult to false so the caller falls through to buildIndex.
+    //   4. Use a bare `return` so the IIFE's finally block runs (clears
+    //      indexing/buildPromise so buildIndex can acquire the lock).
+    assert(src.includes('V-H4'), 'V-H4 marker present in vault.js');
+
+    // Match the structural early-return: `if (fieldDefsChanged) { ... _reuseResult = false; ... return;` (multi-line)
+    const earlyReturnPattern = /if\s*\(\s*fieldDefsChanged\s*\)\s*\{[\s\S]*?_reuseResult\s*=\s*false\s*;[\s\S]*?return\s*;[\s\S]*?\}/;
+    assert(earlyReturnPattern.test(src),
+        'V-H4 early-return present: `if (fieldDefsChanged) { ... _reuseResult = false; ... return; }`');
+});
+
+test('M2: vault.js V-H4 early-return is INSIDE buildIndexWithReuse, not buildIndex', () => {
+    // The bail-out is only valid for the reuse path. buildIndex() is the
+    // fallback target and must NOT itself return false on fieldDefsChanged.
+    const src = readFileSync(join(REPO_ROOT, 'src/vault/vault.js'), 'utf8');
+
+    // Find the V-H4 marker location.
+    const vh4Idx = src.indexOf('V-H4');
+    assert(vh4Idx > 0, 'V-H4 marker found');
+
+    // Find buildIndexWithReuse and buildIndex declaration positions.
+    const reuseIdx = src.indexOf('export async function buildIndexWithReuse');
+    const buildIdx = src.indexOf('export async function buildIndex');
+    assert(reuseIdx > 0, 'buildIndexWithReuse found');
+    assert(buildIdx > 0, 'buildIndex found');
+
+    // V-H4 must be after buildIndexWithReuse start.
+    assert(vh4Idx > reuseIdx, 'V-H4 fix is inside buildIndexWithReuse');
+});
+
+test('M3: vault.js does NOT call getTokenCountAsync serially inside a for-loop after V-H4 fix', () => {
+    // This pins the perf intent: when fieldDefsChanged triggers full re-parse,
+    // tokenization should NOT be serial. Either Promise.all (buildIndex path)
+    // OR the bail-out (V-H4 path) is acceptable — both avoid the serial-await
+    // bug. We assert that buildIndex still has the parallel pattern; the V-H4
+    // bail-out is asserted by M1+M2.
+    const src = readFileSync(join(REPO_ROOT, 'src/vault/vault.js'), 'utf8');
+
+    // buildIndex must use Promise.all for tokenization.
+    assert(/Promise\.all\(entries\.map\(async/.test(src),
+        'buildIndex still uses Promise.all for parallel tokenization');
+});
+
+test('M4: vault.js V-H4 early-return precedes the per-file serial tokenize loop', () => {
+    // Pin the order: the early-return must happen BEFORE the reuse-path
+    // for-loop that contains the serial `await getTokenCountAsync` — otherwise
+    // the bail is useless (we'd already have done the slow work).
+    //
+    // Find the SECOND `entry.tokenEstimate = await getTokenCountAsync` occurrence
+    // (the first is inside buildIndex's Promise.all). The reuse-path one is
+    // distinguished by the adjacent `_reuseTokenizerFailCount++` line.
+    const src = readFileSync(join(REPO_ROOT, 'src/vault/vault.js'), 'utf8');
+
+    const vh4Idx = src.indexOf('V-H4');
+    assert(vh4Idx > 0, 'V-H4 marker found');
+
+    // The reuse path's serial tokenize is the one near _reuseTokenizerFailCount.
+    const reuseFailCounterIdx = src.indexOf('_reuseTokenizerFailCount++');
+    assert(reuseFailCounterIdx > 0, 'reuse-path token fallback counter found');
+
+    // Walk backwards from the fail counter to find the nearest preceding
+    // `entry.tokenEstimate = await getTokenCountAsync` — that's the serial site.
+    const serialTokenSig = 'entry.tokenEstimate = await getTokenCountAsync';
+    const reuseSerialIdx = src.lastIndexOf(serialTokenSig, reuseFailCounterIdx);
+    assert(reuseSerialIdx > 0, 'reuse-path serial tokenize site located');
+
+    assert(vh4Idx < reuseSerialIdx,
+        'V-H4 early-return is positioned BEFORE the reuse-path serial tokenize loop');
+});
+
+test('M5: vault.js fallback chain documented — caller falls through to buildIndex', () => {
+    // The bail-out is only safe because the caller has a fallback. Pin the
+    // fallback contract in both ensureIndexFresh and the V-H4 comment.
+    const src = readFileSync(join(REPO_ROOT, 'src/vault/vault.js'), 'utf8');
+
+    // ensureIndexFresh: `const usedReuse = await buildIndexWithReuse(); if (usedReuse) ...; await buildIndex();`
+    assert(/const usedReuse = await buildIndexWithReuse/.test(src),
+        'ensureIndexFresh awaits buildIndexWithReuse and checks usedReuse');
+    assert(/if\s*\(\s*usedReuse\s*\)[\s\S]*?return[\s\S]*?await buildIndex\(\)/.test(src),
+        'ensureIndexFresh falls through to buildIndex when usedReuse is false');
+});
+
+test('M6: vault.js sync.js fallback chain unchanged — buildIndexWithReuseFn → buildIndexFn', () => {
+    // sync.js has the same fallback. If V-H4 returns false, sync polling MUST
+    // call buildIndexFn next. This pins that contract so the V-H4 fix can't
+    // be undermined by a sync.js refactor.
+    const syncSrc = readFileSync(join(REPO_ROOT, 'src/vault/sync.js'), 'utf8');
+    assert(/const deltaOk = await buildIndexWithReuseFn\(\)/.test(syncSrc),
+        'sync.js awaits buildIndexWithReuseFn delta result');
+    // The fallback to buildIndexFn must execute when deltaOk is false.
+    assert(/if\s*\(\s*deltaOk\s*\)\s*\{\s*scheduleNext\(\)[\s\S]*?return[\s\S]*?\}\s*[\s\S]*?await buildIndexFn\(\)/.test(syncSrc),
+        'sync.js falls through to buildIndexFn() when deltaOk is false');
+});
+
+// ============================================================================
+//  N. V-M3 — clearIndexCache onabort handler
+// ============================================================================
+//
+// Runtime test would require a fake-indexeddb stub + a settings.js shim
+// (cache.js → settings.js → ST extensions.js, which is unresolvable in node).
+// Until that test infra lands, we pin V-M3 at the source level — three guards
+// catch any refactor that drops the handler:
+//   N1: structural pattern (function body wires `tx.onabort`)
+//   N2: rejection pattern (onabort handler actually rejects, not just bound to noop)
+//   N3: cross-function consistency (matches the saveIndexToCache / pruneOrphanedCacheKeys pattern)
+// The runtime path is exercised end-to-end whenever a user hits "Clear cache"
+// in Settings → About → Danger Zone in a browser with quota pressure or a
+// version-change abort — pre-fix that hung the UI indefinitely.
+
+section('N. V-M3 — clearIndexCache onabort handler');
+
+test('N1: clearIndexCache wires tx.onabort to reject', () => {
+    const src = readFileSync(join(REPO_ROOT, 'src/vault/cache.js'), 'utf8');
+    const clearStart = src.indexOf('export async function clearIndexCache');
+    assert(clearStart > 0, 'clearIndexCache function present');
+    // Function body ends at the next top-level `}` followed by EOF or another export.
+    const restOfFile = src.slice(clearStart);
+    const nextExportIdx = restOfFile.indexOf('\nexport ', 1);
+    const clearBody = nextExportIdx > 0 ? restOfFile.slice(0, nextExportIdx) : restOfFile;
+    assert(clearBody.includes('tx.onabort'), 'clearIndexCache wires tx.onabort');
+    assert(/V-M3/.test(clearBody), 'V-M3 marker comment present near the fix');
+});
+
+test('N2: clearIndexCache onabort rejects (does not silently swallow)', () => {
+    const src = readFileSync(join(REPO_ROOT, 'src/vault/cache.js'), 'utf8');
+    const clearStart = src.indexOf('export async function clearIndexCache');
+    const restOfFile = src.slice(clearStart);
+    const nextExportIdx = restOfFile.indexOf('\nexport ', 1);
+    const clearBody = nextExportIdx > 0 ? restOfFile.slice(0, nextExportIdx) : restOfFile;
+    // The onabort must call reject (otherwise the await would still hang).
+    // Same shape as saveIndexToCache / pruneOrphanedCacheKeys post-BUG-380.
+    assert(/tx\.onabort\s*=\s*\(\)\s*=>\s*reject\(/.test(clearBody),
+        'tx.onabort handler invokes reject(...)');
+    assert(/Transaction aborted/.test(clearBody),
+        'fallback error message matches sibling DB ops');
+});
+
+test('N3: clearIndexCache onabort pattern matches sibling DB ops (consistency)', () => {
+    // Same handler shape as saveIndexToCache (post-BUG-380) and
+    // pruneOrphanedCacheKeys (post-BUG-380). If those drift, clearIndexCache
+    // should drift with them — pin the shared pattern.
+    const src = readFileSync(join(REPO_ROOT, 'src/vault/cache.js'), 'utf8');
+    const onabortMatches = src.match(/tx\.onabort\s*=\s*\(\)\s*=>\s*reject\(tx\.error\s*\|\|\s*new Error\(['"]Transaction aborted['"]\)\)/g) || [];
+    // Three DB ops with transactions: saveIndexToCache, pruneOrphanedCacheKeys, clearIndexCache.
+    assertGreaterThan(onabortMatches.length, 2,
+        'all 3 transactional DB ops in cache.js share the same onabort pattern (≥3 occurrences)');
+});
+
+// ============================================================================
+//  O. V-M5 — Vault rename UX (Option B: destructive-confirmation toast)
+// ============================================================================
+
+section('O. V-M5 — Vault rename UX');
+
+test('O1: settings-ui captures original vault name on focus (V-M5 baseline)', () => {
+    const src = readFileSync(join(REPO_ROOT, 'src/ui/settings-ui.js'), 'utf8');
+    assert(/focus\.dleVault.*\.dle-vault-name/.test(src) || /focus\.dleVault['"]\s*,\s*['"]\.dle-vault-name/.test(src),
+        'focus.dleVault handler bound to .dle-vault-name');
+    assert(/dleOriginalName/.test(src), 'original name stored via $.data(\'dleOriginalName\', …)');
+});
+
+test('O2: settings-ui surfaces rename confirmation on .dle-vault-name change (V-M5)', () => {
+    const src = readFileSync(join(REPO_ROOT, 'src/ui/settings-ui.js'), 'utf8');
+    // change handler must exist for the name input (separate from input handler).
+    assert(/container\.on\(\s*['"]change\.dleVault['"]\s*,\s*['"]\.dle-vault-name['"]/.test(src),
+        'change.dleVault handler bound to .dle-vault-name');
+    // The popup must be a CONFIRM (so user can cancel) and reference the destructive copy.
+    const renameIdx = src.indexOf('change.dleVault\', \'.dle-vault-name');
+    assert(renameIdx > 0, 'rename change handler located');
+    const handlerBody = src.slice(renameIdx, renameIdx + 2400);
+    assert(/callGenericPopup/.test(handlerBody), 'rename handler calls callGenericPopup');
+    assert(/POPUP_TYPE\.CONFIRM/.test(handlerBody), 'popup is CONFIRM type (cancel preserves name)');
+    assert(/destructive/i.test(handlerBody), 'copy warns user the action is destructive');
+    assert(/cooldown/i.test(handlerBody) && /(pin|block|analytics)/i.test(handlerBody),
+        'copy enumerates affected tracker categories');
+});
+
+test('O3: cancel branch reverts settings.vaults[idx].name AND input value (V-M5)', () => {
+    const src = readFileSync(join(REPO_ROOT, 'src/ui/settings-ui.js'), 'utf8');
+    const renameIdx = src.indexOf('change.dleVault\', \'.dle-vault-name');
+    const handlerBody = src.slice(renameIdx, renameIdx + 2400);
+    // The cancel branch must revert both settings and the input value back to originalName.
+    assert(/settings\.vaults\[idx\]\.name\s*=\s*originalName/.test(handlerBody),
+        'cancel branch restores settings.vaults[idx].name = originalName');
+    assert(/\$input\.val\(\s*originalName\s*\)/.test(handlerBody),
+        'cancel branch restores input value to originalName');
+});
+
+test('O4: rename handler is no-op when originalName === newName (no spurious prompts)', () => {
+    const src = readFileSync(join(REPO_ROOT, 'src/ui/settings-ui.js'), 'utf8');
+    const renameIdx = src.indexOf('change.dleVault\', \'.dle-vault-name');
+    const handlerBody = src.slice(renameIdx, renameIdx + 2400);
+    assert(/originalName\s*===\s*newName/.test(handlerBody)
+        || /originalName\s*==\s*null/.test(handlerBody),
+        'handler short-circuits when there is no actual rename');
+});
+
+test('O5: V-M5 documents Option B trade-off — trackers are not re-keyed', () => {
+    // Pin the documentation so a future refactor that switches to Option A
+    // (or to silent re-key) still has to update the comment + this test.
+    const src = readFileSync(join(REPO_ROOT, 'src/ui/settings-ui.js'), 'utf8');
+    assert(/V-M5/.test(src), 'V-M5 marker comment present in settings-ui.js');
+    // Either explicitly mentions trackerKey or the per-entry state classes.
+    assert(/trackerKey|cooldown|pin|block|analytics/i.test(src),
+        'V-M5 comment ties the warning to per-entry tracker state');
+});
+
+// ============================================================================
 // Summary
 // ============================================================================
 
-summary('Vault & Multi-Vault Tests');
+await summary('Vault & Multi-Vault Tests');

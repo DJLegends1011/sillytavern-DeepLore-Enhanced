@@ -162,18 +162,25 @@ test('A11: Pinned entry survives strip dedup', () => {
 
 section('B. Exemption Policy Completeness');
 
-test('B1: Constants, seeds, bootstraps all in forceInject', () => {
+test('B1: Constants, seeds always in forceInject; bootstrap gated by bootstrapActive', () => {
     const c = makeEntry('Constant', { constant: true });
     const s = makeEntry('Seed', { seed: true });
     const b = makeEntry('Bootstrap', { bootstrap: true });
     const n = makeEntry('Normal');
-    const policy = buildExemptionPolicy([c, s, b, n], [], []);
 
+    // Stages H-3 / gotcha #60: bootstrap exemption is gen-scoped.
+    const policyActive = buildExemptionPolicy([c, s, b, n], [], [], true);
     // BUG-399 (Fix 2): forceInject is keyed by trackerKey(entry), not lowercased title.
-    assert(policy.forceInject.has(trackerKey(c)), 'B1: constant should be in forceInject');
-    assert(policy.forceInject.has(trackerKey(s)), 'B1: seed should be in forceInject');
-    assert(policy.forceInject.has(trackerKey(b)), 'B1: bootstrap should be in forceInject');
-    assert(!policy.forceInject.has(trackerKey(n)), 'B1: normal entry should NOT be in forceInject');
+    assert(policyActive.forceInject.has(trackerKey(c)), 'B1: constant always in forceInject');
+    assert(policyActive.forceInject.has(trackerKey(s)), 'B1: seed always in forceInject');
+    assert(policyActive.forceInject.has(trackerKey(b)), 'B1: bootstrap in forceInject when bootstrapActive=true');
+    assert(!policyActive.forceInject.has(trackerKey(n)), 'B1: normal entry NEVER in forceInject');
+
+    const policyInactive = buildExemptionPolicy([c, s, b, n], [], [], false);
+    assert(policyInactive.forceInject.has(trackerKey(c)), 'B1: constant in forceInject regardless of bootstrapActive');
+    assert(policyInactive.forceInject.has(trackerKey(s)), 'B1: seed in forceInject regardless of bootstrapActive');
+    assert(!policyInactive.forceInject.has(trackerKey(b)), 'B1: bootstrap NOT in forceInject when bootstrapActive=false');
+    assert(!policyInactive.forceInject.has(trackerKey(n)), 'B1: normal entry NEVER in forceInject');
 });
 
 test('B2: forceInject preserves title case via trackerKey', () => {
@@ -747,7 +754,12 @@ test('F4: Empty injection log → no-op', () => {
     assertEqual(result.length, 1, 'F4: empty injection log should not strip anything');
 });
 
-test('F5: Lookback depth 0 → checks entire log (slice(-0) === slice(0))', () => {
+test('F5: Lookback depth 0 → dedup disabled (M-4 fix, 2026-05-22)', () => {
+    // M-4 (2026-05-22): previously `lookbackDepth=0` was a footgun — `arr.slice(-0)`
+    // returns the entire array, so callers asking for "no lookback" silently got
+    // "lookback against ALL history." Now `<= 0` is an explicit no-op that matches
+    // the semantic the parameter name implies. UI still clamps to min 1; this
+    // guards external callers (`/dle-why`, future programmatic call sites).
     const entry = makeEntry('Any Entry', { injectionPosition: 1, injectionDepth: 4, injectionRole: 'system' });
     entry._contentHash = 'abc123';
     const policy = buildExemptionPolicy([], [], []);
@@ -756,9 +768,21 @@ test('F5: Lookback depth 0 → checks entire log (slice(-0) === slice(0))', () =
     const injectionLog = [{
         entries: [{ title: 'Any Entry', pos: 1, depth: 4, role: 'system', contentHash: 'abc123' }],
     }];
-    // Note: slice(-0) === slice(0) in JS, so lookback 0 actually checks the ENTIRE log
     const result = applyStripDedup([entry], policy, injectionLog, 0, settings, false);
-    assertEqual(result.length, 0, 'F5: lookback 0 checks entire log due to slice(-0) semantics');
+    assertEqual(result.length, 1, 'F5: lookbackDepth=0 should be a no-op (no dedup applied)');
+});
+
+test('F5b: Negative lookback depth → dedup disabled (M-4 defense-in-depth)', () => {
+    const entry = makeEntry('Negative Entry', { injectionPosition: 1, injectionDepth: 4, injectionRole: 'system' });
+    entry._contentHash = 'abc123';
+    const policy = buildExemptionPolicy([], [], []);
+    const settings = makeSettings({ injectionPosition: 1, injectionDepth: 4, injectionRole: 'system' });
+
+    const injectionLog = [{
+        entries: [{ title: 'Negative Entry', pos: 1, depth: 4, role: 'system', contentHash: 'abc123' }],
+    }];
+    const result = applyStripDedup([entry], policy, injectionLog, -5, settings, false);
+    assertEqual(result.length, 1, 'F5b: negative lookback should be a no-op');
 });
 
 test('F6: Entry with no contentHash vs log with contentHash → not stripped (hash mismatch)', () => {
@@ -1185,7 +1209,7 @@ test('I5: Pin adds entry to matchedKeys map', () => {
 
     applyPinBlock([], vault, policy, matchedKeys);
 
-    assertEqual(matchedKeys.get('Pinned Target'), '(pinned)', 'I5: pinned entry should be in matchedKeys with (pinned)');
+    assertEqual(matchedKeys.get(':Pinned Target'), '(pinned)', 'I5: pinned entry should be in matchedKeys with (pinned) — trackerKey ":title"');
 });
 
 test('I6: Cooldown entry with null cooldown not tracked', () => {
@@ -1231,7 +1255,16 @@ test('I8: Reinjection cooldown respects generation distance', () => {
     assertEqual(result.length, 1, 'I8: gen 8 should pass (distance 3 is not < cooldown 3)');
 });
 
-test('I9: Bootstrap entry in forceInject and survives all stages', () => {
+test('I9: Bootstrap exemption is gen-scoped to bootstrapActive (Stages H-3 / gotcha #60)', () => {
+    // BEHAVIOR CHANGE 2026-05-22 (Stages H-3): bootstrap entries are force-injected
+    // ONLY when bootstrapActive=true. Pre-fix, buildExemptionPolicy ignored the flag
+    // entirely and bootstrap entries silently bypassed every post-pipeline stage
+    // (contextual gating, requires/excludes, cooldown, strip-dedup, folder filter),
+    // even late in a chat when bootstrap was logically off.
+    //
+    // This test verifies BOTH halves of the contract:
+    //   (a) bootstrapActive=true  → bootstrap is in forceInject and survives all stages
+    //   (b) bootstrapActive=false → bootstrap is NOT in forceInject and is gated normally
     const bootstrap = makeEntry('Intro', {
         bootstrap: true, vaultSource: 'TestVault',
         customFields: { era: ['future'] },
@@ -1242,21 +1275,80 @@ test('I9: Bootstrap entry in forceInject and survives all stages', () => {
     const fieldDefs = [
         { name: 'era', label: 'Era', type: 'string', multi: true, gating: { enabled: true, operator: 'match_any', tolerance: 'strict' }, values: [], contextKey: 'era' },
     ];
-    const policy = buildExemptionPolicy(vault, [], []);
 
-    assert(policy.forceInject.has(trackerKey(bootstrap)), 'I9: bootstrap should be in forceInject');
+    // ── (a) bootstrapActive=true: bootstrap survives every stage ──
+    const policyActive = buildExemptionPolicy(vault, [], [], true);
+    assert(policyActive.forceInject.has(trackerKey(bootstrap)), 'I9a: bootstrap in forceInject when bootstrapActive=true');
 
     let entries = [bootstrap];
-    entries = applyContextualGating(entries, { era: ['ancient'] }, policy, false, settings, fieldDefs);
-    assert(entries.length === 1, 'I9: bootstrap should survive gating');
+    entries = applyContextualGating(entries, { era: ['ancient'] }, policyActive, false, settings, fieldDefs);
+    assertEqual(entries.length, 1, 'I9a: bootstrap survives contextual gating (active)');
 
     const injectionHistory = new Map();
     injectionHistory.set(trackerKey(bootstrap), 10);
-    entries = applyReinjectionCooldown(entries, policy, injectionHistory, 11, 5, false);
-    assert(entries.length === 1, 'I9: bootstrap should survive cooldown');
+    entries = applyReinjectionCooldown(entries, policyActive, injectionHistory, 11, 5, false);
+    assertEqual(entries.length, 1, 'I9a: bootstrap survives cooldown (active)');
 
-    const { result } = applyRequiresExcludesGating(entries, policy, false);
-    assert(result.some(e => e.title === 'Intro'), 'I9: bootstrap should survive requires/excludes');
+    const { result: resultActive } = applyRequiresExcludesGating(entries, policyActive, false);
+    assert(resultActive.some(e => e.title === 'Intro'), 'I9a: bootstrap survives requires/excludes (active)');
+
+    // ── (b) bootstrapActive=false: bootstrap is gated like any other entry ──
+    const policyInactive = buildExemptionPolicy(vault, [], [], false);
+    assert(!policyInactive.forceInject.has(trackerKey(bootstrap)), 'I9b: bootstrap NOT in forceInject when bootstrapActive=false');
+
+    let entriesInactive = [bootstrap];
+    entriesInactive = applyContextualGating(entriesInactive, { era: ['ancient'] }, policyInactive, false, settings, fieldDefs);
+    assertEqual(entriesInactive.length, 0, 'I9b: bootstrap dropped by contextual gating when bootstrapActive=false');
+
+    // Even bypassing contextual gating, requires/excludes should still apply.
+    const { result: resultInactive } = applyRequiresExcludesGating([bootstrap], policyInactive, false);
+    assert(!resultInactive.some(e => e.title === 'Intro'), 'I9b: bootstrap dropped by requires gating when bootstrapActive=false');
+
+    // And cooldown should still apply.
+    const cooled = applyReinjectionCooldown([bootstrap], policyInactive, injectionHistory, 11, 5, false);
+    assertEqual(cooled.length, 0, 'I9b: bootstrap subject to cooldown when bootstrapActive=false');
+
+    // Default-arg behavior matches explicit false (conservative default).
+    const policyDefault = buildExemptionPolicy(vault, [], []);
+    assert(!policyDefault.forceInject.has(trackerKey(bootstrap)), 'I9b: default bootstrapActive=false (conservative)');
+});
+
+test('I9b: Cascade-pulled bootstrap is gated when bootstrapActive=false', () => {
+    // Reproduces the original bug scenario: a bootstrap-tagged entry reaches the
+    // post-pipeline stages via cascade-link / AI selection / pin late in a chat.
+    // With bootstrapActive=false, it must be subject to contextual gating, not
+    // exempt. Pre-fix this entry would silently survive every gate.
+    const bootstrap = makeEntry('Lore Seed', {
+        bootstrap: true,
+        customFields: { era: ['ancient'] },
+    });
+    const vault = [bootstrap];
+    const settings = makeSettings();
+    const fieldDefs = [
+        { name: 'era', label: 'Era', type: 'string', multi: true, gating: { enabled: true, operator: 'match_any', tolerance: 'strict' }, values: [], contextKey: 'era' },
+    ];
+    // Simulate: chat is long enough that bootstrapActive is false, but the entry
+    // got pulled in by cascade-link. The policy reflects the gen state.
+    const policy = buildExemptionPolicy(vault, [], [], false);
+    const result = applyContextualGating([bootstrap], { era: ['modern'] }, policy, false, settings, fieldDefs);
+    assertEqual(result.length, 0, 'I9b cascade: bootstrap entry is gated when era mismatches and bootstrapActive=false');
+});
+
+test('I9c: AI-selected bootstrap survives gating when bootstrapActive=true', () => {
+    // Mirror case: AI selected a bootstrap entry while bootstrap is logically
+    // active. It must still bypass gating like a normal force-inject entry.
+    const bootstrap = makeEntry('Intro Snippet', {
+        bootstrap: true,
+        customFields: { era: ['ancient'] },
+    });
+    const vault = [bootstrap];
+    const settings = makeSettings();
+    const fieldDefs = [
+        { name: 'era', label: 'Era', type: 'string', multi: true, gating: { enabled: true, operator: 'match_any', tolerance: 'strict' }, values: [], contextKey: 'era' },
+    ];
+    const policy = buildExemptionPolicy(vault, [], [], true);
+    const result = applyContextualGating([bootstrap], { era: ['modern'] }, policy, false, settings, fieldDefs);
+    assertEqual(result.length, 1, 'I9c: AI-selected bootstrap survives gating when bootstrapActive=true');
 });
 
 test('I10: Multiple pins from different vaults — both injected', () => {
@@ -1276,4 +1368,4 @@ test('I10: Multiple pins from different vaults — both injected', () => {
 // Summary
 // ============================================================================
 
-summary('Stage Interaction Tests');
+await summary('Stage Interaction Tests');

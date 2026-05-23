@@ -118,7 +118,7 @@ Google Gemini `tool_choice` normalization (G6): string values mapped to `{ mode:
 
 **File:** `src/librarian/librarian-tools.js: searchLoreAction()`
 
-### `searchLoreAction(args) -> Promise<string>`
+### `searchLoreAction(args) -> Promise<{ text: string, titles: string[] }>`
 
 **Input shape:**
 ```js
@@ -138,7 +138,16 @@ Queries are trimmed, filtered, capped to 4 (in `searchLoreAction()` input normal
 7. Resolve up to 3 linked entries from best hit's `resolvedLinks` -- manifest/summary format only.
 8. Report other match counts across remaining queries.
 
-**Return format:** Markdown sections separated by `---`. Best hit gets full `### Title\n{content}`, linked entries get XML `<entry>` manifest, no-result queries get plain text.
+**Return shape (CRIT-LIB-2, 2026-05-22):**
+```js
+{
+  text:   string,    // Markdown payload for the LLM (### Title\n{content} + manifest + counts)
+  titles: string[],  // Authoritative matched entry titles (best hit + linked)
+  toString():    string,  // Returns .text — keeps string-coercion call sites working
+  [Symbol.toPrimitive](): string,  // Same
+}
+```
+**Consumer contract:** callers that need the matched-entry list (e.g. `agentic-loop.js` Activity dropdown) MUST read `.titles` directly. NEVER regex `### (.+)` headings out of `.text` — vault content is freeform Markdown and entries routinely have their own `### Section` subheadings; regex-extraction inflates counts and pollutes the dropdown with section names that aren't entries. The string-coercion overrides exist for backward compatibility with legacy call sites that template-interpolated the result. Error/empty-result paths return `{ text: '<message>', titles: [] }`. See `docs/gotchas.md` #66.
 
 **Side effects:**
 
