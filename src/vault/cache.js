@@ -259,9 +259,15 @@ export async function clearIndexCache() {
         db = await openDB();
         const tx = db.transaction(STORE_NAME, 'readwrite');
         tx.objectStore(STORE_NAME).clear();
+        // V-M3 (2026-05-22): include `tx.onabort` so an aborted transaction (quota,
+        // browser interruption, version-change abort) rejects the await instead of
+        // hanging it indefinitely. Without this, the `finally` block's `db.close()`
+        // never runs and the DB connection leaks. Mirrors the post-BUG-380 pattern
+        // in saveIndexToCache / pruneOrphanedCacheKeys.
         await new Promise((resolve, reject) => {
             tx.oncomplete = resolve;
             tx.onerror = () => reject(tx.error);
+            tx.onabort = () => reject(tx.error || new Error('Transaction aborted'));
         });
     } catch (err) {
         console.warn('[DLE] Failed to clear IndexedDB cache:', err.message);

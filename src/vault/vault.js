@@ -13,7 +13,10 @@ import {
     setVaultIndex, setIndexTimestamp, setIndexing, setBuildPromise,
     setIndexEverLoaded, resetAiSearchCache, setPreviousIndexSnapshot,
     setVaultAvgTokens,
-    setFuzzySearchIndex, setMentionWeights, setFolderList,
+    setFuzzySearchIndex, fuzzySearchIndex,
+    setMentionWeights, mentionWeights,
+    setFolderList,
+    setEntityNameSet, setEntityShortNameRegexes, entityShortNameRegexes,
     setLastVaultFailureCount, setLastVaultAttemptCount,
     notifyIndexUpdated,
     generationCount, lastIndexGenerationCount, setLastIndexGenerationCount,
@@ -32,16 +35,26 @@ import { dedupError, dedupWarning } from '../toast-dedup.js';
 import { pushEvent } from '../diagnostics/interceptors.js';
 import { buildBM25Index, setDebugMode as setBm25DebugMode } from './bm25.js';
 
-import { computeEntityDerivedState, deduplicateMultiVault, detectCrossVaultDuplicates } from './vault-pure.js';
+import { computeEntityDerivedState, deduplicateMultiVault, detectCrossVaultDuplicates, PARTIAL_FETCH_FAILURE_THRESHOLD } from './vault-pure.js';
 export { computeEntityDerivedState, deduplicateMultiVault, detectCrossVaultDuplicates };
+
+// P3 (2026-05-22): incremental derived-state updates for reuse-sync.
+// finalizeIndex's full-rebuild path is O(N²) for mentionWeights and O(N) for
+// BM25 tokenization. Reuse-sync ticks typically touch <5% of entries — see
+// vault-incremental.js for the algorithms and shouldUseIncremental threshold.
+import {
+    diffEntries, shouldUseIncremental,
+    incrementalMentionWeights, incrementalBM25Update, incrementalEntityRegexes,
+} from './vault-incremental.js';
 
 // BUG-381: this is a toastr display duration, not a fetch/abort timeout.
 const OBSIDIAN_TOAST_TIMEOUT = 15000;
 const CACHE_FALLBACK_TOAST_TIMEOUT = 10000;
 
-// Both the warning toast and the cache-skip flag must share this threshold —
-// drift re-introduces the bug where a partial vault gets cached as a deletion.
-const PARTIAL_FETCH_FAILURE_THRESHOLD = { absolute: 5, rate: 0.1 };
+// V-C1: PARTIAL_FETCH_FAILURE_THRESHOLD lives in vault-pure.js so the warning
+// toast (here), the cache-skip flag (here), and the classifyReuseFetch helper
+// (used by tests) all share one source — drift used to re-introduce the bug
+// where a partial vault got cached as a deletion.
 function isPartialFetchFailure(failed, total) {
     const rate = total > 0 ? failed / total : 0;
     return failed >= PARTIAL_FETCH_FAILURE_THRESHOLD.absolute || rate >= PARTIAL_FETCH_FAILURE_THRESHOLD.rate;
@@ -54,17 +67,34 @@ let _parserLedgerToastShown = false;
  * BUG-370: Compute derived fields (mentionWeights, folderList, vaultAvgTokens).
  * Shared with hydrateFromCache so cold-start sessions don't run with degraded
  * scoring until a full rebuild completes.
+ *
+ * P3 (2026-05-22): When `previousEntries` is supplied AND the changed-fraction
+ * stays below the threshold, mentionWeights is updated incrementally via
+ * `incrementalMentionWeights()`. Output is byte-equivalent to the full path —
+ * pinned by test/vault.test.mjs section L (L1).
  */
-function computeDerivedIndexFields(entries, settings) {
+function computeDerivedIndexFields(entries, settings, previousEntries) {
     setBm25DebugMode(settings?.debugMode);
 
     const totalTokens = entries.reduce((sum, e) => sum + (e.tokenEstimate || 0), 0);
     setVaultAvgTokens(entries.length > 0 ? totalTokens / entries.length : 0);
 
-    // BUG-374: One combined regex per target entry + pre-lowercased content once
-    // → O(N × total_content) instead of O(N × M_names × content).
-    {
-        const weights = new Map();
+    // mentionWeights — try incremental path when prev entries available.
+    let weights = null;
+    if (previousEntries && previousEntries.length > 0 && entries.length > 0) {
+        const diff = diffEntries(previousEntries, entries);
+        const changed = diff.added.length + diff.removed.length + diff.modified.length;
+        if (shouldUseIncremental(changed, entries.length)) {
+            weights = incrementalMentionWeights(mentionWeights, previousEntries, entries, diff);
+            if (settings?.debugMode) {
+                console.debug(`[DLE] mentionWeights incremental: ${diff.added.length}+, ${diff.removed.length}-, ${diff.modified.length}~ → ${weights.size} pairs`);
+            }
+        }
+    }
+    if (weights === null) {
+        // Full rebuild — BUG-374 algorithm. One combined regex per target +
+        // pre-lowercased content once → O(N × total_content), NOT O(N × M × content).
+        weights = new Map();
         const targetNames = new Map(); // targetTitle → string[]
         for (const entry of entries) {
             const names = [entry.title.toLowerCase()];
@@ -100,11 +130,11 @@ function computeDerivedIndexFields(entries, settings) {
                 }
             }
         }
-        setMentionWeights(weights);
         if (settings?.debugMode) {
-            console.debug(`[DLE] Built mention weights: ${weights.size} pairs`);
+            console.debug(`[DLE] Built mention weights: ${weights.size} pairs (full)`);
         }
     }
+    setMentionWeights(weights);
 
     {
         const folderCounts = new Map();
@@ -124,7 +154,7 @@ function computeDerivedIndexFields(entries, settings) {
     }
 }
 
-async function finalizeIndex({ entries, settings, skipCacheSave = false }) {
+async function finalizeIndex({ entries, settings, skipCacheSave = false, previousEntries = null }) {
     resolveLinks(vaultIndex);
 
     // Strip dangling requires/excludes/cascade_links so the pipeline doesn't trip on them
@@ -158,17 +188,56 @@ async function finalizeIndex({ entries, settings, skipCacheSave = false }) {
         }
     }
 
-    computeDerivedIndexFields(entries, settings);
+    computeDerivedIndexFields(entries, settings, previousEntries);
 
     // Capture pre-rebuild state for cache-invalidation diagnostic.
     const _preRegexVersion = entityRegexVersion;
     const _preCacheResultCount = aiSearchCache?.results?.length ?? 0;
     const _preCacheHadHash = !!aiSearchCache?.hash;
 
-    computeEntityDerivedState(entries);
+    // P3: Try incremental entity-regex update when prev entries available + diff small.
+    // Otherwise fall back to the full path in vault-pure.js.
+    //
+    // Correctness: incrementalEntityRegexes still calls setEntityShortNameRegexes,
+    // which bumps entityRegexVersion. BUG-394 / AI cache invalidation invariant
+    // preserved — pinned by test L7.
+    let entityIncremental = false;
+    if (previousEntries && previousEntries.length > 0 && entries.length > 0) {
+        const diff = diffEntries(previousEntries, entries);
+        const changed = diff.added.length + diff.removed.length + diff.modified.length;
+        if (shouldUseIncremental(changed, entries.length)) {
+            const { names, regexes } = incrementalEntityRegexes(entries, entityShortNameRegexes);
+            setEntityNameSet(names);
+            setEntityShortNameRegexes(regexes);
+            entityIncremental = true;
+            if (settings?.debugMode) {
+                console.debug(`[DLE] entity regexes incremental: ${names.size} names, ${regexes.size} regexes`);
+            }
+        }
+    }
+    if (!entityIncremental) {
+        computeEntityDerivedState(entries);
+    }
 
+    // P3: BM25 incremental update when fuzzy/librarian search is on AND prev
+    // entries available AND diff is small. The math is delicate — see
+    // vault-incremental.js. Equivalence is pinned by test L4.
     if (settings.fuzzySearchEnabled || settings.librarianSearchEnabled) {
-        setFuzzySearchIndex(buildBM25Index(entries));
+        let newBm25 = null;
+        if (previousEntries && previousEntries.length > 0 && entries.length > 0 && fuzzySearchIndex) {
+            const diff = diffEntries(previousEntries, entries);
+            const changed = diff.added.length + diff.removed.length + diff.modified.length;
+            if (shouldUseIncremental(changed, entries.length)) {
+                newBm25 = incrementalBM25Update(fuzzySearchIndex, diff);
+                if (newBm25 && settings?.debugMode) {
+                    console.debug(`[DLE] BM25 incremental: ${diff.added.length}+, ${diff.removed.length}-, ${diff.modified.length}~ → ${newBm25.docs.size} docs`);
+                }
+            }
+        }
+        // Fall back to full build when incremental path declined (no prev index,
+        // too many changes, or pre-H-12 index without invertedIndex).
+        if (!newBm25) newBm25 = buildBM25Index(entries);
+        setFuzzySearchIndex(newBm25);
     } else {
         setFuzzySearchIndex(null);
     }
@@ -703,7 +772,30 @@ export async function buildIndexWithReuse() {
         // Field defs changed → force all entries to re-parse so customFields update.
         const newFieldDefsHash = simpleHash(JSON.stringify(newFieldDefs.map(f => f.name + f.type + (f.multi || ''))));
         const fieldDefsChanged = oldFieldDefsHash !== newFieldDefsHash;
-        let hasChanges = fieldDefsChanged;
+
+        // V-H4 (2026-05-22): when field defs change, EVERY entry has to re-parse
+        // (the `!fieldDefsChanged` cache check at L883 fails for every file), so
+        // reuse-sync provides no benefit — it just serializes per-file
+        // `await getTokenCountAsync` inside the for-loop, blocking the UI for
+        // seconds on a 500-entry vault. `buildIndex()` does the same work but
+        // tokenizes in parallel via `Promise.all`. Bail early so the caller's
+        // standard `buildIndexWithReuse → false → buildIndex` fallback (see
+        // `ensureIndexFresh` and `setupSyncPolling`) takes over.
+        //
+        // The finally block clears `indexing` + `buildPromise` so `buildIndex`
+        // can acquire the lock cleanly. Caller fall-through is bounded —
+        // `ensureIndexFresh` and `setupSyncPolling` both check the reuse result
+        // and invoke `buildIndex` only when it's false.
+        if (fieldDefsChanged) {
+            if (settings.debugMode) {
+                console.debug('[DLE] Reuse sync: field definitions changed — delegating to buildIndex for parallel tokenization');
+            }
+            _reuseResult = false;
+            return;
+        }
+
+        // After the V-H4 early-return above, fieldDefsChanged is always false here.
+        let hasChanges = false;
         let anyVaultFailed = false;
         let vaultFailCount = 0;
         let newCount = 0, modifiedCount = 0, removedCount = 0;
@@ -750,6 +842,51 @@ export async function buildIndexWithReuse() {
                         }
                     }
                     continue;
+                }
+
+                // V-C1: Partial directory listing — mirror buildIndex's BUG-366 carry-forward.
+                // Without this, files missing from data.files get counted as "removed" below
+                // (hasChanges + removedCount++), then setVaultIndex(deduped) commits the
+                // truncated index AND finalizeIndex saves it to IDB (no skipCacheSave). On
+                // next hydrate, analytics-prune strips trackers for the "deleted" entries.
+                if (data.partial) {
+                    console.warn(`[DLE] Reuse sync: vault "${vault.name}" returned a partial directory listing — preserving previous entries for this vault`);
+                    anyVaultFailed = true;
+                    vaultFailCount++;
+                    failedVaultNames.add(vault.name);
+                    dedupWarning(
+                        `Some folders in "${vault.name}" couldn't be listed — keeping the previously indexed entries for this vault.`,
+                        'vault_fetch_partial',
+                    );
+                    for (const entry of indexSnapshot) {
+                        if (entry.vaultSource === vault.name) {
+                            allEntries.push(entry);
+                            if (entry._parserWarnings && entry._parserWarnings.length > 0) {
+                                buildReport.warnCount++;
+                                buildReport.entriesWithWarnings.push({
+                                    filename: entry.filename,
+                                    title: entry.title,
+                                    warnings: entry._parserWarnings,
+                                });
+                            } else {
+                                buildReport.okCount++;
+                            }
+                        }
+                    }
+                    continue;
+                }
+
+                // V-C1: Many-file fetch failures — mirror buildIndex's skipCacheSave gate.
+                // We still process the partial result (it's the freshest view we have),
+                // but flag anyVaultFailed so finalizeIndex skips persisting to IDB. Without
+                // this, the cache gets the truncated vault, missing entries look like
+                // deletions on next hydration, and trackers/dedup-logs evaporate.
+                if (data.failed > 0 && isPartialFetchFailure(data.failed, data.total)) {
+                    anyVaultFailed = true;
+                    dedupWarning(
+                        `Some entries in "${vault.name}" couldn't be loaded (${data.failed} of ${data.total}). They'll be included on the next refresh — cache not updated.`,
+                        'vault_fetch_partial',
+                    );
                 }
 
                 const fetchedFilenames = new Set(data.files.map(f => f.filename));
@@ -898,11 +1035,27 @@ export async function buildIndexWithReuse() {
         setIndexTimestamp(Date.now());
 
         setIndexBuildReport(buildReport);
-        // Intentional asymmetry with buildIndex: no skipCacheSave. The reuse path
-        // carries forward last-known entries for failed vaults, so dedupedEntries
-        // is the best known state and safe to persist. (buildIndex must skip on
-        // failure because a full rebuild could write an empty/partial cache.)
-        await finalizeIndex({ entries: dedupedEntries, settings });
+        // V-C1: skipCacheSave when ANY vault returned partial data this cycle.
+        //
+        // The carry-forward branches above ensure dedupedEntries contains the best
+        // *in-memory* state (prior snapshot for fully-failed vaults, partial-data
+        // entries for the rest). But persisting that to IDB is dangerous: a vault
+        // that returned `data.partial: true` or hit isPartialFetchFailure has a
+        // truncated view, and if we cache the carried-forward + partial mix, the
+        // next hydrate analytics-prune (finalizeIndex L218-227) strips trackers
+        // for any entry that didn't make it back into the cached set. Mirror the
+        // buildIndex behavior: when in doubt, keep the prior cache.
+        //
+        // P3: pass `previousEntries: indexSnapshot` so finalizeIndex can apply
+        // incremental updates to mentionWeights / BM25 / entityShortNameRegexes
+        // instead of unconditionally rebuilding them O(N²)+O(N) on every poll.
+        // See vault-incremental.js for the algorithms.
+        await finalizeIndex({
+            entries: dedupedEntries,
+            settings,
+            skipCacheSave: anyVaultFailed,
+            previousEntries: indexSnapshot,
+        });
 
         if (!_parserLedgerToastShown && (buildReport.warnCount > 0 || buildReport.skipCount > 0)) {
             const parts = [`DLE indexed ${dedupedEntries.length} entries.`];

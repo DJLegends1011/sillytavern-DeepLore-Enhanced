@@ -57,6 +57,83 @@ export function detectCrossVaultDuplicates(entries) {
 }
 
 /**
+ * V-C1 pure classifier — decides how reuse-sync should treat a single vault's
+ * fetch result. Mirrors buildIndex()'s partial-fetch handling so buildIndexWithReuse
+ * doesn't silently truncate cached entries when Obsidian returns a partial listing
+ * or a high failure rate.
+ *
+ * Three failure modes the reuse-sync path used to ignore:
+ *   1. `data.partial === true` — directory listing truncated by transient REST
+ *      glitch. Files missing from data.files MUST NOT be treated as deletions.
+ *      Action: carry-forward this vault's prior entries; flag skipCacheSave.
+ *   2. `isPartialFetchFailure(failed, total)` — many per-file fetches failed.
+ *      Action: process the partial data but flag skipCacheSave so IDB doesn't
+ *      get a truncated view.
+ *   3. `!data.files || !Array.isArray(data.files)` — invalid response.
+ *      Action: carry-forward; flag skipCacheSave.
+ *
+ * `partial` and `invalid` produce identical caller behavior (full carry-forward);
+ * they're distinguished only for diagnostics / toast text.
+ *
+ * @param {object} data - Fetch result from fetchAllMdFiles: {files?, partial?, failed?, total?}
+ * @param {object} [thresholds] - Override threshold for tests; defaults to module constant.
+ * @returns {{action: 'invalid'|'partial'|'partial_failure'|'ok', carryForward: boolean, skipCacheSave: boolean}}
+ */
+export const PARTIAL_FETCH_FAILURE_THRESHOLD = { absolute: 5, rate: 0.1 };
+export function classifyReuseFetch(data, thresholds = PARTIAL_FETCH_FAILURE_THRESHOLD) {
+    if (!data || !Array.isArray(data.files)) {
+        return { action: 'invalid', carryForward: true, skipCacheSave: true };
+    }
+    if (data.partial === true) {
+        return { action: 'partial', carryForward: true, skipCacheSave: true };
+    }
+    const failed = data.failed || 0;
+    const total = data.total || 0;
+    const rate = total > 0 ? failed / total : 0;
+    if (failed > 0 && (failed >= thresholds.absolute || rate >= thresholds.rate)) {
+        // Process the partial data (carryForward:false), but flag the cache skip.
+        return { action: 'partial_failure', carryForward: false, skipCacheSave: true };
+    }
+    return { action: 'ok', carryForward: false, skipCacheSave: false };
+}
+
+/**
+ * V-C2 pure classifier — given a dedup existence-check outcome, decide whether
+ * to accept the candidate path. Replaces the previous "assume free on network
+ * glitch" behavior which silently overwrote real files when an existence check
+ * failed mid-flight.
+ *
+ * Inputs:
+ *   - `fetchResult` is the resolved obsidianFetch return ({status, data}) OR null
+ *     when the call threw.
+ *   - `err` is the caught error (or null on a clean resolve). AbortError and
+ *     any other thrown error both produce `accept:false`.
+ *
+ * Outputs:
+ *   - `{accept: true, taken: false}` → file does not exist (or non-200), candidate
+ *     is safe to use.
+ *   - `{accept: false, taken: true}` → file exists, try next suffix.
+ *   - `{accept: false, taken: false}` → check inconclusive (abort or network
+ *     error); caller MUST NOT use the candidate or it risks silent overwrite.
+ *
+ * @param {{status: number}|null} fetchResult
+ * @param {Error|null} err
+ * @returns {{accept: boolean, taken: boolean}}
+ */
+export function classifyDedupProbe(fetchResult, err) {
+    if (err) {
+        // V-C2: AbortError AND non-Abort errors both return inconclusive. Previous
+        // code returned the candidate on non-Abort exceptions ("assume free"),
+        // causing silent overwrites of existing files when the network glitched.
+        return { accept: false, taken: false };
+    }
+    if (fetchResult && fetchResult.status === 200) {
+        return { accept: false, taken: true };
+    }
+    return { accept: true, taken: false };
+}
+
+/**
  * Multi-vault conflict resolution dedup pass (BUG-007).
  * When entries with the same title exist in different vaults, this resolves them:
  *   'all'   — Keep every copy (no dedup). Entries from each vault appear independently.

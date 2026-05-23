@@ -5,14 +5,21 @@
 import { writeNote, obsidianFetch, encodeVaultPath } from './obsidian-api.js';
 import { getSettings, getPrimaryVault, resolveWriteVault } from '../../settings.js';
 import { convertWiEntry } from '../helpers.js';
+import { classifyDedupProbe } from './vault-pure.js';
 
 const MAX_DEDUP_ATTEMPTS = 20;
 
 /**
  * Resolve a target path that doesn't collide with an existing vault file by
  * appending `_imported`, `_imported_2`, … until a 404 is found (or attempts
- * run out). Returns the unique path or null when the dedup check times out /
- * the cap is reached.
+ * run out). Returns the unique path or null when the dedup check times out,
+ * the cap is reached, or a network error makes the check unverifiable.
+ *
+ * V-C2: A network error during an existence check used to return the
+ * candidate path "assume free" — but if the file ACTUALLY existed, the
+ * caller would then writeNote over it, silently overwriting vault content.
+ * That's the exact opposite of what the dedup helper is supposed to do.
+ * Return null so callers fail loud and skip the file.
  *
  * @param {object} vault - {host, port, apiKey, https}
  * @param {string} filename - desired base filename (e.g. "Foo.md")
@@ -26,8 +33,10 @@ async function _findUniquePath(vault, filename, folder) {
     while (attempt <= MAX_DEDUP_ATTEMPTS) {
         const candidateFilename = `${base}${suffix}.md`;
         const candidatePath = folder ? `${folder}/${candidateFilename}` : candidateFilename;
+        let probe = null;
+        let probeErr = null;
         try {
-            const dup = await obsidianFetch({
+            probe = await obsidianFetch({
                 host: vault.host,
                 port: vault.port,
                 apiKey: vault.apiKey,
@@ -35,16 +44,27 @@ async function _findUniquePath(vault, filename, folder) {
                 path: `/vault/${encodeVaultPath(candidatePath)}`,
                 accept: 'text/markdown',
             });
-            if (dup.status === 200) {
-                attempt++;
-                suffix = `_imported_${attempt}`;
-                continue;
-            }
-            return candidatePath;
         } catch (err) {
-            if (err.name === 'AbortError') return null;
-            return candidatePath; // network glitch — assume free
+            probeErr = err;
         }
+        // V-C2: classifyDedupProbe is the single source of truth for accept/taken/
+        // inconclusive. Non-Abort errors used to return the candidate "assume free"
+        // here, causing silent overwrites when a real file existed but the check
+        // glitched. The classifier returns {accept:false, taken:false} for any
+        // error (Abort or otherwise) — caller fails loud.
+        const verdict = classifyDedupProbe(probe, probeErr);
+        if (verdict.taken) {
+            attempt++;
+            suffix = `_imported_${attempt}`;
+            continue;
+        }
+        if (!verdict.accept) {
+            if (probeErr) {
+                console.warn(`[DLE Import] _findUniquePath: existence check for "${candidatePath}" failed (${probeErr.name || 'Error'}): ${probeErr.message}`);
+            }
+            return null;
+        }
+        return candidatePath;
     }
     return null;
 }
@@ -88,7 +108,8 @@ export async function importEntries(entries, folder, onProgress, options = {}) {
                 if (checkResult.status === 200) {
                     const candidatePath = await _findUniquePath(vault, filename, folder);
                     if (!candidatePath) {
-                        errors.push(`${filename}: skipped — dedup check timed out or exceeded ${MAX_DEDUP_ATTEMPTS} attempts`);
+                        // V-C2: covers abort, network error, AND cap exhausted.
+                        errors.push(`${filename}: skipped — dedup check failed (network error, aborted, or exceeded ${MAX_DEDUP_ATTEMPTS} attempts)`);
                         failed++;
                         continue;
                     }
@@ -178,7 +199,8 @@ export async function upsertConvertedEntry(wiEntry, folder, options = {}) {
         if (policy === 'rename') {
             const candidatePath = await _findUniquePath(targetVault, filename, folder);
             if (!candidatePath) {
-                return { ok: false, action: null, path: fullPath, error: `dedup check exhausted (>${MAX_DEDUP_ATTEMPTS} attempts) or timed out` };
+                // V-C2: covers abort, network error, AND cap exhausted.
+                return { ok: false, action: null, path: fullPath, error: `dedup check failed (network error, aborted, or exceeded ${MAX_DEDUP_ATTEMPTS} attempts)` };
             }
             fullPath = candidatePath;
         }

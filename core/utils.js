@@ -18,7 +18,18 @@ export function parseFrontmatter(content) {
 
     const yamlText = match[1];
     const body = match[2];
-    const frontmatter = {};
+    // V-H3 (2026-05-22): prototype-less object — prevents prototype pollution via
+    // hostile YAML keys like `__proto__`, `constructor`, or `prototype`. Vault
+    // content is user-controlled and Cartographer/import flows can pull from
+    // third-party sources, so a `__proto__: pwned` line MUST NOT mutate
+    // Object.prototype globally. Downstream readers (`core/pipeline.js`,
+    // `src/ui/popups.js`, `src/ui/commands-admin.js`) only use `Object.keys`,
+    // `Object.entries`, explicit `typeof`/`===` checks, and
+    // `Object.prototype.hasOwnProperty.call` — all safe on prototype-less
+    // objects. JSON.stringify also handles Object.create(null) correctly so the
+    // test runner's deep-equality (`JSON.stringify(a) === JSON.stringify(b)`)
+    // still works. See gotchas.md #57.
+    const frontmatter = Object.create(null);
     let currentKey = null;
     let currentArray = null;
     let blockScalar = null; // { key, style: '|'|'>', lines: [] }
