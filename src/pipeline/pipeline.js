@@ -8,6 +8,7 @@ import {
     vaultIndex, generationCount,
     fieldDefinitions,
     getWriterVisibleEntries,
+    trackerKey,
 } from '../state.js';
 import { DEFAULT_FIELD_DEFINITIONS } from '../fields.js';
 import { buildCandidateManifest, aiSearch, hierarchicalPreFilter } from '../ai/ai.js';
@@ -38,6 +39,18 @@ export async function runPipeline(chat, externalSnapshot, contextualGatingContex
     // Otherwise filter out lorebook-guide here — Librarian-only, must never reach the writing AI.
     const vaultSnapshot = externalSnapshot || getWriterVisibleEntries();
     const bootstrapActive = chat.length <= settings.newChatThreshold;
+
+    // BUG-AUDIT-P2 (Wave C): build the exemption policy ONCE per pipeline run.
+    // Previously, six inner sites rebuilt it with identical pins/blocks — only the
+    // first arg (candidate set) differed. forceInject is a Set keyed by trackerKey
+    // checked via `.has(trackerKey(e))` from each stage's iterated entries, so a
+    // policy built from the full vaultSnapshot is a strict superset and behaves
+    // identically inside every downstream filter. vaultSnapshot/pins/blocks are
+    // immutable for the run — that invariant is what makes this cache valid.
+    // Stages H-3 / gotcha #60: bootstrapActive is gen-scoped and must be threaded
+    // here so post-keyword stages match the pre-pipeline `alwaysInject` filter
+    // (mirrors `helpers.js:isForceInjected`).
+    const exemptionPolicy = buildExemptionPolicy(vaultSnapshot, pins, blocks, bootstrapActive);
 
     const trace = {
         genId,
@@ -107,30 +120,31 @@ export async function runPipeline(chat, externalSnapshot, contextualGatingContex
         }
 
         // Pre-filter by contextual gating so AI doesn't waste selections on gated entries.
+        // P2: reuse the run-scoped exemptionPolicy (built at top of runPipeline) instead of rebuilding.
         if (contextualGatingContext) {
             const beforeGating = aiOnlyCandidates.length;
-            const prePolicy = buildExemptionPolicy(aiOnlyCandidates, pins, blocks);
             const fieldDefs = fieldDefinitions.length > 0 ? fieldDefinitions : DEFAULT_FIELD_DEFINITIONS;
-            aiOnlyCandidates = applyContextualGating(aiOnlyCandidates, contextualGatingContext, prePolicy, settings.debugMode, settings, fieldDefs);
+            aiOnlyCandidates = applyContextualGating(aiOnlyCandidates, contextualGatingContext, exemptionPolicy, settings.debugMode, settings, fieldDefs);
             trace.aiPreFilter = { before: beforeGating, after: aiOnlyCandidates.length, removed: beforeGating - aiOnlyCandidates.length };
         }
 
         // Pre-filter by folder so AI doesn't see entries from excluded folders.
         if (folderFilter && folderFilter.length > 0) {
-            const prePolicy = buildExemptionPolicy(aiOnlyCandidates, pins, blocks);
-            aiOnlyCandidates = applyFolderFilter(aiOnlyCandidates, folderFilter, prePolicy, settings.debugMode);
+            aiOnlyCandidates = applyFolderFilter(aiOnlyCandidates, folderFilter, exemptionPolicy, settings.debugMode);
         }
 
         const { manifest: candidateManifest, header: candidateHeader } = buildCandidateManifest(aiOnlyCandidates, bootstrapActive);
         const alwaysInject = vaultSnapshot.filter(e => e.constant || (bootstrapActive && e.bootstrap));
 
+        // BUG-AUDIT v2.5: matchedKeys keyed by trackerKey(entry) (vaultSource:title)
+        // so same-titled cross-vault entries don't collide.
         if (bootstrapActive) {
             for (const e of alwaysInject) {
-                if (e.bootstrap && !e.constant) matchedKeys.set(e.title, '(bootstrap)');
+                if (e.bootstrap && !e.constant) matchedKeys.set(trackerKey(e), '(bootstrap)');
             }
         }
         for (const e of alwaysInject) {
-            if (e.constant && !matchedKeys.has(e.title)) matchedKeys.set(e.title, '(constant)');
+            if (e.constant && !matchedKeys.has(trackerKey(e))) matchedKeys.set(trackerKey(e), '(constant)');
         }
 
         if (candidateManifest) {
@@ -148,7 +162,7 @@ export async function runPipeline(chat, externalSnapshot, contextualGatingContex
                     const kwResult = matchEntries(chat, vaultSnapshot);
                     finalEntries = kwResult.matched;
                     matchedKeys = kwResult.matchedKeys;
-                    trace.keywordMatched = kwResult.matched.map(e => ({ title: e.title, vaultSource: e.vaultSource || '', matchedBy: kwResult.matchedKeys.get(e.title) || '?' }));
+                    trace.keywordMatched = kwResult.matched.map(e => ({ title: e.title, vaultSource: e.vaultSource || '', matchedBy: kwResult.matchedKeys.get(trackerKey(e)) || '?' }));
                     trace.probabilitySkipped = kwResult.probabilitySkipped;
                     trace.warmupFailed = kwResult.warmupFailed;
                     trace.fuzzyStats = kwResult.fuzzyStats;
@@ -181,7 +195,7 @@ export async function runPipeline(chat, externalSnapshot, contextualGatingContex
             } else {
                 finalEntries = [...alwaysInject, ...aiResult.results.map(r => r.entry).filter(e => !isForceInjected(e, { bootstrapActive }))];
                 for (const r of aiResult.results) {
-                    matchedKeys.set(r.entry.title, `AI: ${r.reason} (${r.confidence})`);
+                    matchedKeys.set(trackerKey(r.entry), `AI: ${r.reason} (${r.confidence})`);
                     trace.aiSelected.push({ title: r.entry.title, vaultSource: r.entry.vaultSource || '', reason: r.reason, confidence: r.confidence });
                 }
             }
@@ -194,13 +208,17 @@ export async function runPipeline(chat, externalSnapshot, contextualGatingContex
         const keywordResult = matchEntries(chat, vaultSnapshot);
         trace.keywordMatchMs = Math.round(performance.now() - _kwStart);
         matchedKeys = keywordResult.matchedKeys;
-        trace.keywordMatched = keywordResult.matched.map(e => ({ title: e.title, vaultSource: e.vaultSource || '', matchedBy: matchedKeys.get(e.title) || '?' }));
+        trace.keywordMatched = keywordResult.matched.map(e => ({ title: e.title, vaultSource: e.vaultSource || '', matchedBy: matchedKeys.get(trackerKey(e)) || '?' }));
         trace.probabilitySkipped = keywordResult.probabilitySkipped;
         trace.warmupFailed = keywordResult.warmupFailed;
         trace.fuzzyStats = keywordResult.fuzzyStats;
         trace.refineKeyBlocked = keywordResult.refineKeyBlocked;
 
         // Wiki-link expansion: add entries referenced by matched entries as AI candidates.
+        // BUG-AUDIT v2.5: titleLookup keyed by title (no vault prefix) since
+        // resolvedLinks is a bare-title array from frontmatter. Same-title cross-vault
+        // collision is rare here (wiki links are author-controlled) and the matchedKeys
+        // write below uses trackerKey on the resolved entry so the downstream Map stays clean.
         const matchedTitles = new Set(keywordResult.matched.map(e => e.title));
         const titleLookup = new Map(vaultSnapshot.map(e => [e.title, e]));
         const linkedCandidates = [];
@@ -211,14 +229,14 @@ export async function runPipeline(chat, externalSnapshot, contextualGatingContex
                     if (linked && !linked.constant) {
                         matchedTitles.add(linkTitle);
                         linkedCandidates.push(linked);
-                        matchedKeys.set(linkTitle, `(wiki-linked from: ${entry.title})`);
+                        matchedKeys.set(trackerKey(linked), `(wiki-linked from: ${entry.title})`);
                     }
                 }
             }
         }
         const expandedMatched = [...keywordResult.matched, ...linkedCandidates];
         if (linkedCandidates.length > 0) {
-            trace.keywordMatched.push(...linkedCandidates.map(e => ({ title: e.title, vaultSource: e.vaultSource || '', matchedBy: matchedKeys.get(e.title) || '?' })));
+            trace.keywordMatched.push(...linkedCandidates.map(e => ({ title: e.title, vaultSource: e.vaultSource || '', matchedBy: matchedKeys.get(trackerKey(e)) || '?' })));
             if (settings.debugMode) {
                 console.log(`[DLE] Wiki-link expansion: +${linkedCandidates.length} candidates (${linkedCandidates.map(e => e.title).join(', ')})`);
             }
@@ -236,17 +254,16 @@ export async function runPipeline(chat, externalSnapshot, contextualGatingContex
             }
         }
 
+        // P2: reuse run-scoped exemptionPolicy.
         if (contextualGatingContext) {
             const beforeGating = twoStageCandidates.length;
-            const prePolicy = buildExemptionPolicy(twoStageCandidates, pins, blocks);
             const fieldDefs2 = fieldDefinitions.length > 0 ? fieldDefinitions : DEFAULT_FIELD_DEFINITIONS;
-            twoStageCandidates = applyContextualGating(twoStageCandidates, contextualGatingContext, prePolicy, settings.debugMode, settings, fieldDefs2);
+            twoStageCandidates = applyContextualGating(twoStageCandidates, contextualGatingContext, exemptionPolicy, settings.debugMode, settings, fieldDefs2);
             trace.aiPreFilter = { before: beforeGating, after: twoStageCandidates.length, removed: beforeGating - twoStageCandidates.length };
         }
 
         if (folderFilter && folderFilter.length > 0) {
-            const prePolicy = buildExemptionPolicy(twoStageCandidates, pins, blocks);
-            twoStageCandidates = applyFolderFilter(twoStageCandidates, folderFilter, prePolicy, settings.debugMode);
+            twoStageCandidates = applyFolderFilter(twoStageCandidates, folderFilter, exemptionPolicy, settings.debugMode);
         }
 
         const { manifest: candidateManifest, header: candidateHeader } = buildCandidateManifest(twoStageCandidates, bootstrapActive);
@@ -290,8 +307,9 @@ export async function runPipeline(chat, externalSnapshot, contextualGatingContex
                 const alwaysInject = keywordResult.matched.filter(e => isForceInjected(e, ctx));
                 finalEntries = [...alwaysInject, ...aiResult.results.map(r => r.entry).filter(e => !isForceInjected(e, ctx))];
                 for (const r of aiResult.results) {
-                    const existing = matchedKeys.get(r.entry.title);
-                    matchedKeys.set(r.entry.title, existing
+                    const tk = trackerKey(r.entry);
+                    const existing = matchedKeys.get(tk);
+                    matchedKeys.set(tk, existing
                         ? `${existing} → AI: ${r.reason} (${r.confidence})`
                         : `AI: ${r.reason} (${r.confidence})`);
                     trace.aiSelected.push({ title: r.entry.title, vaultSource: r.entry.vaultSource || '', reason: r.reason, confidence: r.confidence });
@@ -305,24 +323,23 @@ export async function runPipeline(chat, externalSnapshot, contextualGatingContex
         trace.keywordMatchMs = Math.round(performance.now() - _kwStart2);
         finalEntries = keywordResult.matched;
         matchedKeys = keywordResult.matchedKeys;
-        trace.keywordMatched = keywordResult.matched.map(e => ({ title: e.title, vaultSource: e.vaultSource || '', matchedBy: matchedKeys.get(e.title) || '?' }));
+        trace.keywordMatched = keywordResult.matched.map(e => ({ title: e.title, vaultSource: e.vaultSource || '', matchedBy: matchedKeys.get(trackerKey(e)) || '?' }));
         trace.probabilitySkipped = keywordResult.probabilitySkipped;
         trace.warmupFailed = keywordResult.warmupFailed;
         trace.fuzzyStats = keywordResult.fuzzyStats;
         trace.refineKeyBlocked = keywordResult.refineKeyBlocked;
 
         // BUG-F1: contextual gating must run in keywords-only mode (previously skipped).
+        // P2: reuse run-scoped exemptionPolicy.
         if (contextualGatingContext) {
-            const prePolicy = buildExemptionPolicy(finalEntries, pins, blocks);
             const fieldDefs = fieldDefinitions.length > 0 ? fieldDefinitions : DEFAULT_FIELD_DEFINITIONS;
-            finalEntries = applyContextualGating(finalEntries, contextualGatingContext, prePolicy, settings.debugMode, settings, fieldDefs);
+            finalEntries = applyContextualGating(finalEntries, contextualGatingContext, exemptionPolicy, settings.debugMode, settings, fieldDefs);
         }
     }
 
     if (folderFilter && folderFilter.length > 0) {
         const beforeFolder = finalEntries.length;
-        const folderPolicy = buildExemptionPolicy(finalEntries, pins, blocks);
-        finalEntries = applyFolderFilter(finalEntries, folderFilter, folderPolicy, settings.debugMode);
+        finalEntries = applyFolderFilter(finalEntries, folderFilter, exemptionPolicy, settings.debugMode);
         trace.folderFilter = { folders: folderFilter, before: beforeFolder, after: finalEntries.length, removed: beforeFolder - finalEntries.length };
     }
 

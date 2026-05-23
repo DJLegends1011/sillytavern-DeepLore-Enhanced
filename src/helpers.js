@@ -228,7 +228,23 @@ export function cmrsResultToText(result) {
     // `usageMetadata.{promptTokenCount, candidatesTokenCount}` instead of OAI-style
     // `usage.{prompt_tokens, completion_tokens}`. Without these aliases, all Gemini
     // calls show 0/0 in DLE stats. Credit Ryah (PR #28). See PR-28.3-VERDICT.md.
-    const usage = result?.usage || result?.usageMetadata || {};
+    //
+    // L1 fix (v2.5): defensive cascade for nested usage shapes. CMRS occasionally
+    // un-flattens (or future custom-proxy paths may surface) Gemini envelopes
+    // where the usage block sits one level deeper, or where the SDK surfaces a
+    // candidates[] array carrying its own usageMetadata. Cascade order (return
+    // first non-null match), most-flat-to-most-nested:
+    //   1. result.usage                       — OAI standard, already-normalized
+    //   2. result.usageMetadata               — Gemini flat (current CMRS shape)
+    //   3. result.response.usage              — wrapped OAI (SDK passthrough)
+    //   4. result.response.usageMetadata      — wrapped Gemini
+    //   5. result.candidates[0].usageMetadata — Gemini per-candidate fallback
+    const usage = result?.usage
+        || result?.usageMetadata
+        || result?.response?.usage
+        || result?.response?.usageMetadata
+        || result?.candidates?.[0]?.usageMetadata
+        || {};
     return {
         text,
         usage: {
@@ -399,7 +415,17 @@ export function clusterEntries(entries) {
 export function buildCategoryManifest(clusters) {
     const lines = [];
     for (const [category, entries] of clusters) {
-        const samples = entries.slice(0, 5).map(e => e.title).join(', ');
+        // BUG-AUDIT v2.5: when two entries in the same sample slice share a title,
+        // suffix the second occurrence with @vaultSource so the AI sees them as
+        // distinct. Bare title appears for the first/only occurrence (backward
+        // compatible — single-vault setups never trigger the suffix).
+        const seen = new Map();
+        const samples = entries.slice(0, 5).map(e => {
+            const lower = e.title.toLowerCase();
+            const count = (seen.get(lower) || 0) + 1;
+            seen.set(lower, count);
+            return count > 1 && e.vaultSource ? `${e.title}@${e.vaultSource}` : e.title;
+        }).join(', ');
         const more = entries.length > 5 ? ` (+${entries.length - 5} more)` : '';
         lines.push(`[${category}] (${entries.length} entries): ${samples}${more}`);
     }
@@ -652,91 +678,97 @@ export function computeSourcesDiff(currentSources, previousSources) {
 /**
  * Parse a pipeline trace and categorize rejected entries by stage.
  * Handles mixed trace field shapes (string arrays, object arrays).
- * @param {object|null} trace - lastPipelineTrace
- * @param {Set<string>} injectedTitles - actually-injected titles
- * @returns {Array<{ stage: string, label: string, icon: string, entries: Array<{title: string, reason: string}> }>}
+ *
+ * BUG-AUDIT v2.5: `injectedKeys` is a Set of trackerKey-shape strings
+ * (`vaultSource:title.toLowerCase()`) so same-titled entries from different
+ * vaults don't collide. Output entries carry `vaultSource` for the same reason.
+ *
+ * @param {object|null} trace - pipeline trace (entries carry vaultSource per #46 contract)
+ * @param {Set<string>} injectedKeys - trackerKey-shape Set of currently-injected entries
+ * @returns {Array<{ stage: string, label: string, icon: string, entries: Array<{title: string, vaultSource: string, reason: string}> }>}
  */
-export function categorizeRejections(trace, injectedTitles) {
+export function categorizeRejections(trace, injectedKeys) {
     if (!trace) return [];
     const groups = [];
+    const k = (e) => `${e.vaultSource || ''}:${(e.title || '').toLowerCase()}`;
 
     if (trace.gatedOut?.length > 0) {
         const entries = trace.gatedOut
-            .filter(e => !injectedTitles.has(e.title))
+            .filter(e => !injectedKeys.has(k(e)))
             .map(e => {
                 const parts = [];
                 if (e.requires?.length) parts.push(`needs: ${e.requires.join(', ')}`);
                 if (e.excludes?.length) parts.push(`blocked by: ${e.excludes.join(', ')}`);
-                return { title: e.title, reason: parts.join('; ') || 'requires/excludes' };
+                return { title: e.title, vaultSource: e.vaultSource || '', reason: parts.join('; ') || 'requires/excludes' };
             });
         if (entries.length > 0) groups.push({ stage: 'gated_out', label: 'Blocked by dependencies', icon: 'fa-lock', entries });
     }
 
     if (trace.contextualGatingRemoved?.length > 0) {
         const entries = trace.contextualGatingRemoved
-            .filter(e => !injectedTitles.has(e.title))
-            .map(e => ({ title: e.title, reason: e.reason || 'Filtered by era/location/scene/character' }));
+            .filter(e => !injectedKeys.has(k(e)))
+            .map(e => ({ title: e.title, vaultSource: e.vaultSource || '', reason: e.reason || 'Filtered by era/location/scene/character' }));
         if (entries.length > 0) groups.push({ stage: 'contextual_gating', label: 'Filtered by context', icon: 'fa-filter', entries });
     }
 
     // Candidates that made it to manifest but AI didn't pick.
     if (trace.keywordMatched?.length > 0 && trace.aiSelected) {
-        const aiSelectedTitles = new Set(trace.aiSelected.map(m => m.title));
+        const aiSelectedKeys = new Set(trace.aiSelected.map(k));
         // Entries already attributed to another stage shouldn't double-count here.
-        const accountedTitles = new Set([
-            ...(trace.gatedOut || []).map(e => e.title),
-            ...(trace.contextualGatingRemoved || []).map(e => e.title),
-            ...(trace.cooldownRemoved || []).map(e => e.title),
-            ...(trace.stripDedupRemoved || []).map(e => e.title),
-            ...(trace.probabilitySkipped || []).map(e => e.title),
-            ...(trace.warmupFailed || []).map(e => e.title),
-            ...(trace.budgetCut || []).map(e => e.title),
+        const accountedKeys = new Set([
+            ...(trace.gatedOut || []).map(k),
+            ...(trace.contextualGatingRemoved || []).map(k),
+            ...(trace.cooldownRemoved || []).map(k),
+            ...(trace.stripDedupRemoved || []).map(k),
+            ...(trace.probabilitySkipped || []).map(k),
+            ...(trace.warmupFailed || []).map(k),
+            ...(trace.budgetCut || []).map(k),
         ]);
         const entries = trace.keywordMatched
-            .filter(m => !aiSelectedTitles.has(m.title) && !injectedTitles.has(m.title) && !accountedTitles.has(m.title))
-            .map(m => ({ title: m.title, reason: 'AI did not select' }));
+            .filter(m => !aiSelectedKeys.has(k(m)) && !injectedKeys.has(k(m)) && !accountedKeys.has(k(m)))
+            .map(m => ({ title: m.title, vaultSource: m.vaultSource || '', reason: 'AI did not select' }));
         if (entries.length > 0) groups.push({ stage: 'ai_rejected', label: 'AI Rejected', icon: 'fa-robot', entries });
     }
 
     if (trace.cooldownRemoved?.length > 0) {
         const entries = trace.cooldownRemoved
-            .filter(e => !injectedTitles.has(e.title))
-            .map(e => ({ title: e.title, reason: e.reason || 'Cooldown active' }));
+            .filter(e => !injectedKeys.has(k(e)))
+            .map(e => ({ title: e.title, vaultSource: e.vaultSource || '', reason: e.reason || 'Cooldown active' }));
         if (entries.length > 0) groups.push({ stage: 'cooldown', label: 'Cooldown Active', icon: 'fa-clock', entries });
     }
 
     if (trace.budgetCut?.length > 0) {
         const entries = trace.budgetCut
-            .filter(e => !injectedTitles.has(e.title))
-            .map(e => ({ title: e.title, reason: `Over budget${e.tokens ? ` (${e.tokens} tok)` : ''}` }));
+            .filter(e => !injectedKeys.has(k(e)))
+            .map(e => ({ title: e.title, vaultSource: e.vaultSource || '', reason: `Over budget${e.tokens ? ` (${e.tokens} tok)` : ''}` }));
         if (entries.length > 0) groups.push({ stage: 'budget_cut', label: 'Over budget', icon: 'fa-scissors', entries });
     }
 
     if (trace.stripDedupRemoved?.length > 0) {
         const entries = trace.stripDedupRemoved
-            .filter(e => !injectedTitles.has(e.title))
-            .map(e => ({ title: e.title, reason: e.reason || 'Already in context' }));
+            .filter(e => !injectedKeys.has(k(e)))
+            .map(e => ({ title: e.title, vaultSource: e.vaultSource || '', reason: e.reason || 'Already in context' }));
         if (entries.length > 0) groups.push({ stage: 'strip_dedup', label: 'Already Injected', icon: 'fa-copy', entries });
     }
 
     if (trace.probabilitySkipped?.length > 0) {
         const entries = trace.probabilitySkipped
-            .filter(e => !injectedTitles.has(e.title))
-            .map(e => ({ title: e.title, reason: 'Probability skipped' }));
+            .filter(e => !injectedKeys.has(k(e)))
+            .map(e => ({ title: e.title, vaultSource: e.vaultSource || '', reason: 'Probability skipped' }));
         if (entries.length > 0) groups.push({ stage: 'probability_skipped', label: 'Probability Skipped', icon: 'fa-dice', entries });
     }
 
     if (trace.warmupFailed?.length > 0) {
         const entries = trace.warmupFailed
-            .filter(e => !injectedTitles.has(e.title))
-            .map(e => ({ title: e.title, reason: 'Warmup not met' }));
+            .filter(e => !injectedKeys.has(k(e)))
+            .map(e => ({ title: e.title, vaultSource: e.vaultSource || '', reason: 'Warmup not met' }));
         if (entries.length > 0) groups.push({ stage: 'warmup_failed', label: 'Warmup Not Met', icon: 'fa-temperature-low', entries });
     }
 
     if (trace.refineKeyBlocked?.length > 0) {
         const entries = trace.refineKeyBlocked
-            .filter(e => !injectedTitles.has(e.title))
-            .map(e => ({ title: e.title, reason: `Matched "${e.primaryKey}" but refine keys [${e.refineKeys.join(', ')}] not found` }));
+            .filter(e => !injectedKeys.has(k(e)))
+            .map(e => ({ title: e.title, vaultSource: e.vaultSource || '', reason: `Matched "${e.primaryKey}" but refine keys [${e.refineKeys.join(', ')}] not found` }));
         if (entries.length > 0) groups.push({ stage: 'refine_key_blocked', label: 'Refine Key Blocked', icon: 'fa-filter-circle-xmark', entries });
     }
 
@@ -863,6 +895,31 @@ export function normalizeLoreGap(gap) {
  */
 export function isForceInjected(entry, context = {}) {
     return entry.constant || (context.bootstrapActive && entry.bootstrap);
+}
+
+/**
+ * M-6 (2026-05-22): canonical predicate for "this entry has an active warmup
+ * gate." All three match paths in `src/pipeline/match.js` (primary keyword
+ * scan, recursive scan, BM25 fuzzy supplement) MUST use this helper rather
+ * than ad-hoc shape checks. Before this consolidation, the primary + recursion
+ * paths used `entry.warmup !== null` while the BM25 path used
+ * `entry.warmup && entry.warmup >= 1` — those diverge on NaN, on accidental
+ * `0`, on `''`, on `false`, on negative numbers, and on undefined. The
+ * frontmatter parser only ever emits `null` or a positive integer for
+ * `warmup`, but vault cache hydration, manual `chat_metadata` edits, and
+ * future field-definitions changes can all surface other shapes — pinning
+ * one predicate prevents the three paths from drifting.
+ *
+ * Contract: returns true iff `entry.warmup` is a positive finite number.
+ * Everything else (null, undefined, 0, negative, NaN, Infinity, non-number)
+ * is treated as "no warmup gate."
+ *
+ * @param {{ warmup?: any }} entry
+ * @returns {boolean}
+ */
+export function hasWarmup(entry) {
+    const w = entry?.warmup;
+    return typeof w === 'number' && Number.isFinite(w) && w > 0;
 }
 
 /**
