@@ -1,4 +1,4 @@
-import { chat_metadata, saveSettingsDebounced } from '../../../../../../script.js';
+import { chat_metadata, saveSettingsDebounced, getCurrentChatId } from '../../../../../../script.js';
 import { saveMetadataDebounced } from '../../../../../extensions.js';
 import { accountStorage } from '../../../../../util/AccountStorage.js';
 import { escapeHtml } from '../../../../../utils.js';
@@ -14,8 +14,17 @@ import {
     aiSearchCache, lastGenerationTrackerSnapshot,
     generationCount, chatEpoch,
     suppressNextAgenticLoop, setSuppressNextAgenticLoop,
+    getWriterVisibleEntries,
 } from '../state.js';
-import { getCurrent as getCurrentVerdict } from '../verdict/verdict-store.js';
+import { getCurrentForChat as getCurrentVerdictForChat } from '../verdict/verdict-store.js';
+
+// Local helper — UI consumers must read the CURRENT CHAT's verdict, not the
+// ring-global newest. See docs/gotchas.md #46 ("UI consumer rule").
+function _currentVerdictForChat() {
+    let cid = null;
+    try { cid = getCurrentChatId() ?? null; } catch { cid = null; }
+    return getCurrentVerdictForChat(cid);
+}
 import { DEFAULT_FIELD_DEFINITIONS } from '../fields.js';
 import { normalizePinBlock, buildObsidianURI } from '../helpers.js';
 import { buildIndex } from '../vault/vault.js';
@@ -27,7 +36,7 @@ import {
 import { renderInjectionTab, renderBrowseTab, renderBrowseWindow, renderStatusZone } from './drawer-render.js';
 import { renderLibrarianTab } from './drawer-render-librarian.js';
 import { hideGap, dismissGap, getHiddenGapIds, persistGaps } from '../librarian/librarian-tools.js';
-import { dedupError } from '../toast-dedup.js';
+import { dedupError, dedupWarning } from '../toast-dedup.js';
 
 // ════════════════════════════════════════════════════════════════════════════
 // Helpers
@@ -159,8 +168,9 @@ export function wireTabExpand($drawer) {
             const target = $(this).data('expand');
             // Why tab "Full View" → Context Cartographer popup (no API call).
             if (target === 'injection') {
-                const currentVerdict = getCurrentVerdict();
+                const currentVerdict = _currentVerdictForChat();
                 let sources = currentVerdict?.injectedSources?.length ? currentVerdict.injectedSources : null;
+                let msgIdx = currentVerdict?.injectedSources?.length ? currentVerdict.msgIdx : null;
                 // Verdict ring buffer can miss a turn after reload before hydrate finishes —
                 // fall back to deeplore_sources on the last AI message for resume continuity.
                 if (!sources || sources.length === 0) {
@@ -169,6 +179,10 @@ export function wireTabExpand($drawer) {
                         for (let i = chat.length - 1; i >= 0; i--) {
                             if (!chat[i].is_user && chat[i].extra?.deeplore_sources?.length > 0) {
                                 sources = chat[i].extra.deeplore_sources;
+                                // messageId of the AI message === chat.length at gen start
+                                // (see verdictMsgIdx in index.js onGenerate). Thread it so
+                                // cartographer's diff anchors on the right verdict.
+                                msgIdx = i;
                                 break;
                             }
                         }
@@ -176,7 +190,9 @@ export function wireTabExpand($drawer) {
                 }
                 if (sources && sources.length > 0) {
                     const { showSourcesPopup } = await import('../ui/cartographer.js');
-                    showSourcesPopup(sources);
+                    const _opts = {};
+                    if (typeof msgIdx === 'number' && Number.isFinite(msgIdx)) _opts.msgIdx = msgIdx;
+                    showSourcesPopup(sources, _opts);
                 } else {
                     toastr.info('No lore sources from the last generation. Send a message first.', 'DeepLore Enhanced', { timeOut: 3000 });
                 }
@@ -194,6 +210,14 @@ export function wireTabExpand($drawer) {
 export function wireStatusActions($drawer) {
     $drawer.on('click', '.dle-action-btn[data-action]', function () {
         const action = $(this).data('action');
+        // V-M2 (2026-05-22): mirror wireToolsTab's indexing gate (L140-148).
+        // 'refresh' itself triggers buildIndex and has its own ds.refreshing latch,
+        // so let it through; everything else races the in-flight build commit (BUG-016
+        // zombie-build territory) when indexing is true.
+        if (action !== 'refresh' && indexing) {
+            dedupWarning('Indexing in progress — try again in a moment.', 'index_busy');
+            return;
+        }
         switch (action) {
             case 'refresh': {
                 if (ds.refreshing) return;
@@ -262,7 +286,7 @@ export function wireStatusActions($drawer) {
                             consecutiveSize: snap.consecutive?.size ?? 0,
                             historySize: snap.injectionHistory?.size ?? 0,
                         } : null,
-                        verdictInjected: getCurrentVerdict()?.injectedSources?.length ?? 0,
+                        verdictInjected: _currentVerdictForChat()?.injectedSources?.length ?? 0,
                         generationCount,
                         chatEpoch,
                     });
@@ -353,7 +377,7 @@ export function wireInjectionTab($drawer) {
 
     $drawer.on('click', '.dle-copy-titles-btn', function () {
         const $btn = $(this);
-        const sources = getCurrentVerdict()?.injectedSources ?? null;
+        const sources = _currentVerdictForChat()?.injectedSources ?? null;
         if (!sources || sources.length === 0) {
             toastr.warning('No injected entries to copy.', 'DeepLore Enhanced', { timeOut: 2000 });
             return;
@@ -625,11 +649,14 @@ export function wireBrowseTab($drawer) {
         if (ds.browseFolderGrouping) {
             if (!(ds.browseExpandedFolders instanceof Set)) ds.browseExpandedFolders = new Set();
             // Audit M7: on first toggle, browseFilteredEntries may still be []
-            // (drawer just opened, no filter pass yet). Fall through to vaultIndex so the
-            // expanded set isn't empty — empty Set means "all collapsed" in the pure helper.
+            // (drawer just opened, no filter pass yet). Fall through to writer-visible
+            // entries (excludes lorebook-guide) so the expanded set matches the entries
+            // the Browse tab will actually show — empty Set means "all collapsed" in the
+            // pure helper. V-M1 (2026-05-22): was `vaultIndex` (raw), which pulled in
+            // guide entries and folders the user's filter would have excluded.
             const source = (ds.browseFilteredEntries && ds.browseFilteredEntries.length)
                 ? ds.browseFilteredEntries
-                : vaultIndex;
+                : getWriterVisibleEntries();
             const folders = new Set();
             for (const e of source || []) {
                 folders.add(e.folderPath ? e.folderPath.split('/')[0] : '(root)');

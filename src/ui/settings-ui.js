@@ -105,6 +105,17 @@ function bindVaultListEvents(settings, $scope = null, $addBtn = null) {
     container.off('.dleVault');
     if ($addBtn) $addBtn.off('.dleVault');
 
+    // V-M5 (2026-05-22): capture the vault name at focus time so the rename
+    // confirmation (below) can revert on cancel. Documented as a destructive
+    // operation: renaming a vault changes the trackerKey prefix (`vaultSource:title`)
+    // for every entry under it, so per-entry cooldowns, decay state, pins, blocks,
+    // chat counts, and analytics for the old name no longer match anything — they
+    // are effectively cleared. Option A (re-key all trackers on rename) was
+    // considered and deferred as future work; this UI guard documents the trade.
+    container.on('focus.dleVault', '.dle-vault-name', function () {
+        $(this).data('dleOriginalName', String($(this).val()).trim());
+    });
+
     container.on('input.dleVault', '.dle-vault-name, .dle-vault-host, .dle-vault-port, .dle-vault-key', function () {
         const row = $(this).closest('.dle-vault-row');
         const idx = parseInt(row.data('index'), 10);
@@ -141,6 +152,49 @@ function bindVaultListEvents(settings, $scope = null, $addBtn = null) {
         settings.obsidianPort = primary.port;
         settings.obsidianApiKey = primary.apiKey;
         saveSettingsDebounced();
+    });
+
+    // V-M5 (2026-05-22): when the user finishes editing a vault name (blur),
+    // surface a confirmation popup explaining that rename is destructive — per-
+    // entry cooldowns, decay, pins, blocks, chat counts, and analytics keyed on
+    // the old `vaultSource:title` no longer match anything and are effectively
+    // cleared. If the user cancels, revert the name in both the input and
+    // settings. The input-time validator above has already enforced uniqueness,
+    // so by the time we hit this handler `settings.vaults[idx].name` is the
+    // final new name and `dleOriginalName` (captured on focus) is the prior name.
+    container.on('change.dleVault', '.dle-vault-name', async function () {
+        const $input = $(this);
+        const row = $input.closest('.dle-vault-row');
+        const idx = parseInt(row.data('index'), 10);
+        if (isNaN(idx) || !settings.vaults[idx]) return;
+        const originalName = $input.data('dleOriginalName');
+        const newName = settings.vaults[idx].name;
+        // First-edit or no-op cases — nothing to confirm.
+        if (originalName == null || originalName === '' || originalName === newName) {
+            $input.data('dleOriginalName', newName);
+            return;
+        }
+        const confirmed = await callGenericPopup(
+            `<div class="dle-popup"><p>Rename vault from <strong>${escapeHtml(originalName)}</strong> to <strong>${escapeHtml(newName)}</strong>?</p>`
+                + '<p style="margin-top: 8px;"><strong>This is destructive.</strong> Renaming a vault clears per-entry cooldowns, pin/block lists, chat counts, and analytics for that vault. Entries under the new name start with fresh state.</p>'
+                + '<p style="margin-top: 8px; opacity: 0.8;">Entries themselves are not deleted — only the per-entry tracking data tied to the old vault name.</p></div>',
+            POPUP_TYPE.CONFIRM,
+            '',
+            { okButton: 'Rename', cancelButton: 'Cancel' },
+        );
+        if (!confirmed) {
+            // Revert both the input value and the settings field. Other tracker
+            // state was never re-keyed (Option B accepts that loss only when the
+            // user confirms), so there's nothing else to roll back.
+            settings.vaults[idx].name = originalName;
+            $input.val(originalName);
+            $input.data('dleOriginalName', originalName);
+            saveSettingsDebounced();
+            return;
+        }
+        // Confirmed — record the new baseline so subsequent edits prompt again
+        // (a second rename in the same session should still confirm).
+        $input.data('dleOriginalName', newName);
     });
 
     container.on('change.dleVault', '.dle-vault-enabled', function () {
@@ -231,10 +285,20 @@ function bindVaultListEvents(settings, $scope = null, $addBtn = null) {
             return;
         }
         const vaultName = settings.vaults[idx].name || `Vault ${idx + 1}`;
-        const confirmed = await callGenericPopup(
-            `Remove vault "${escapeHtml(vaultName)}"? This cannot be undone.`,
-            POPUP_TYPE.CONFIRM, '', { okButton: 'Remove', cancelButton: 'Cancel' },
-        );
+        // V-M5 (2026-05-22): wrap the confirm in try/catch — if callGenericPopup
+        // throws (popup util unavailable mid-teardown, popup root detached, etc.),
+        // we must NOT fall through and silently remove the vault. Treat any throw
+        // as "user did not confirm" and bail out.
+        let confirmed;
+        try {
+            confirmed = await callGenericPopup(
+                `Remove vault "${escapeHtml(vaultName)}"? This cannot be undone.`,
+                POPUP_TYPE.CONFIRM, '', { okButton: 'Remove', cancelButton: 'Cancel' },
+            );
+        } catch (err) {
+            console.warn('[DLE] vault-remove confirm popup failed:', err?.message);
+            return;
+        }
         if (!confirmed) return;
         settings.vaults.splice(idx, 1);
         const primary = getPrimaryVault(settings);
@@ -878,8 +942,8 @@ export async function openSettingsPopup(navigateTo = null) {
 
     function switchFeaturesSubtab($subtab) {
         const subtab = $subtab.data('features-subtab');
-        $container.find('.dle-features-subtab').removeClass('active');
-        $subtab.addClass('active');
+        $container.find('.dle-features-subtab').removeClass('active').attr('aria-selected', 'false');
+        $subtab.addClass('active').attr('aria-selected', 'true');
         $container.find('.dle-features-subpanel').removeClass('active').attr('hidden', '');
         $container.find(`[data-features-subpanel="${subtab}"]`).addClass('active').removeAttr('hidden');
         accountStorage.setItem('dle-last-features-subtab', subtab);
@@ -896,8 +960,8 @@ export async function openSettingsPopup(navigateTo = null) {
 
     function switchConnectionSubtab($subtab) {
         const subtab = $subtab.data('connection-subtab');
-        $container.find('.dle-connection-subtab').removeClass('active');
-        $subtab.addClass('active');
+        $container.find('.dle-connection-subtab').removeClass('active').attr('aria-selected', 'false');
+        $subtab.addClass('active').attr('aria-selected', 'true');
         $container.find('.dle-connection-subpanel').removeClass('active').attr('hidden', '');
         $container.find(`[data-connection-subpanel="${subtab}"]`).addClass('active').removeAttr('hidden');
         accountStorage.setItem('dle-last-connection-subtab', subtab);
@@ -907,7 +971,9 @@ export async function openSettingsPopup(navigateTo = null) {
     }
 
     // BUG-225: headers aren't interactive — remove from tab order.
-    $container.find('.dle-settings-tab--header').attr('tabindex', '-1').attr('aria-hidden', 'true');
+    // role="presentation" (in HTML) keeps them out of the accessibility tree as a "tab",
+    // while subtab children carry role="tab"/aria-selected/aria-controls themselves.
+    $container.find('.dle-settings-tab--header').attr('tabindex', '-1');
 
     $container.on('click', '.dle-settings-tab:not(.dle-settings-tab--header)', function () {
         switchSettingsTab($(this));
@@ -1911,12 +1977,22 @@ function bindPopupEvents($container) {
     });
     $c('#dle-sp-librarian-custom-prompt').on('input', function () { settings.librarianCustomSystemPrompt = $(this).val(); saveSettingsDebounced(); });
 
+    // M6 (2026-05-22): per-popup AbortController for the Test Connection button.
+    // Second click while a probe is in flight CANCELS instead of being ignored.
+    let _testAiAbortCtrl = null;
     $c('#dle-sp-test-ai').on('click', async function () {
         const $btn = $(this);
-        if ($btn.prop('disabled')) return;
-        $btn.prop('disabled', true).addClass('disabled');
+        // Second click while in-flight = cancel.
+        if (_testAiAbortCtrl) {
+            try { _testAiAbortCtrl.abort(); } catch { /* noop */ }
+            _testAiAbortCtrl = null;
+            return;
+        }
+        _testAiAbortCtrl = new AbortController();
+        const ctrl = _testAiAbortCtrl;
+        $btn.addClass('dle-testing');
         const statusEl = $c('#dle-sp-ai-status');
-        statusEl.text('Testing...').removeClass('success failure');
+        statusEl.text('Testing... (click again to cancel)').removeClass('success failure');
         try {
             if (settings.aiSearchConnectionMode === 'profile') {
                 if (!settings.aiSearchProfileId) throw new Error('No connection profile selected');
@@ -1924,11 +2000,15 @@ function bindPopupEvents($container) {
                 const m = getProfileModelHint(); statusEl.text(`Connected${m ? ' (' + m + ')' : ''}`).addClass('success').removeClass('failure');
             } else {
                 if (!settings.aiSearchModel) throw new Error('Proxy mode requires a model name');
-                const data = await testProxyConnection(settings.aiSearchProxyUrl, settings.aiSearchModel);
-                statusEl.text(data.ok ? 'Connected' : `Failed: ${data.error}`).toggleClass('success', data.ok).toggleClass('failure', !data.ok);
+                const data = await testProxyConnection(settings.aiSearchProxyUrl, settings.aiSearchModel, ctrl.signal);
+                if (data.aborted) { statusEl.text('Cancelled').removeClass('success failure'); }
+                else { statusEl.text(data.ok ? 'Connected' : `Failed: ${data.error}`).toggleClass('success', data.ok).toggleClass('failure', !data.ok); }
             }
-        } catch (err) { statusEl.text(`Error: ${err.message}`).addClass('failure').removeClass('success'); }
-        finally { $btn.prop('disabled', false).removeClass('disabled'); }
+        } catch (err) {
+            if (ctrl.signal.aborted || err?.userAborted) { statusEl.text('Cancelled').removeClass('success failure'); }
+            else { statusEl.text(`Error: ${err.message}`).addClass('failure').removeClass('success'); }
+        }
+        finally { if (_testAiAbortCtrl === ctrl) _testAiAbortCtrl = null; $btn.removeClass('dle-testing'); }
     });
 
     $c('#dle-sp-preview-ai').on('click', async function () {
