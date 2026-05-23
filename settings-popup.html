@@ -2,71 +2,71 @@
 <div class="dle-settings-popup">
 
     <!-- Sidebar tabs -->
-    <nav class="dle-settings-sidebar" role="tablist" aria-label="Settings sections" aria-orientation="vertical" data-i18n="dle_settings_sidebar_aria">
-        <button class="dle-settings-tab active" id="dle-sp-tab-about" data-settings-tab="about" role="tab"
+    <nav class="dle-settings-sidebar" role="tablist" aria-label="Settings sections" aria-orientation="vertical" data-i18n="[aria-label]dle_settings_sidebar_aria">
+        <button type="button" class="dle-settings-tab active" id="dle-sp-tab-about" data-settings-tab="about" role="tab"
                 aria-selected="true" aria-controls="dle-sp-about">
             <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
             <span data-i18n="dle_tab_about">About</span>
         </button>
         <div class="dle-settings-tab dle-settings-tab--header" id="dle-sp-tab-connection" data-settings-tab="connection"
-             aria-expanded="true">
+             role="presentation" aria-expanded="true">
             <i class="fa-solid fa-plug" aria-hidden="true"></i>
             <span data-i18n="dle_tab_connection">Connection</span>
         </div>
-        <div class="dle-connection-children">
-            <button class="dle-connection-subtab active" data-connection-subtab="obsidian">
+        <div class="dle-connection-children" role="group" aria-label="Connection sub-sections">
+            <button type="button" class="dle-connection-subtab active" data-connection-subtab="obsidian" role="tab" aria-selected="true" aria-controls="dle-sp-conn-obsidian">
                 <i class="fa-solid fa-vault" aria-hidden="true"></i><span data-i18n="dle_subtab_obsidian">Obsidian</span>
             </button>
-            <button class="dle-connection-subtab" data-connection-subtab="ai-connections">
+            <button type="button" class="dle-connection-subtab" data-connection-subtab="ai-connections" role="tab" aria-selected="false" aria-controls="dle-sp-conn-ai-connections">
                 <i class="fa-solid fa-brain" aria-hidden="true"></i><span data-i18n="dle_ai_connections_heading">AI Connections</span>
             </button>
         </div>
-        <button class="dle-settings-tab" id="dle-sp-tab-matching" data-settings-tab="matching" role="tab"
+        <button type="button" class="dle-settings-tab" id="dle-sp-tab-matching" data-settings-tab="matching" role="tab"
                 aria-selected="false" aria-controls="dle-sp-matching">
             <i class="fa-solid fa-crosshairs" aria-hidden="true"></i>
             <span data-i18n="dle_tab_matching">Matching</span>
         </button>
-        <button class="dle-settings-tab" id="dle-sp-tab-ai" data-settings-tab="ai" role="tab"
+        <button type="button" class="dle-settings-tab" id="dle-sp-tab-ai" data-settings-tab="ai" role="tab"
                 aria-selected="false" aria-controls="dle-sp-ai">
             <i class="fa-solid fa-brain" aria-hidden="true"></i>
             <span data-i18n="dle_label_ai_search">AI Search</span>
         </button>
-        <button class="dle-settings-tab" id="dle-sp-tab-injection" data-settings-tab="injection" role="tab"
+        <button type="button" class="dle-settings-tab" id="dle-sp-tab-injection" data-settings-tab="injection" role="tab"
                 aria-selected="false" aria-controls="dle-sp-injection">
             <i class="fa-solid fa-layer-group" aria-hidden="true"></i>
             <span data-i18n="dle_tab_injection">Injection</span>
         </button>
         <div class="dle-settings-tab dle-settings-tab--header" id="dle-sp-tab-features" data-settings-tab="features"
-             aria-expanded="true">
+             role="presentation" aria-expanded="true">
             <i class="fa-solid fa-puzzle-piece" aria-hidden="true"></i>
             <span data-i18n="dle_tab_features">Features</span>
         </div>
-        <div class="dle-features-children">
-            <button class="dle-features-subtab active" data-features-subtab="author-notebook">
+        <div class="dle-features-children" role="group" aria-label="Feature sub-sections">
+            <button type="button" class="dle-features-subtab active" data-features-subtab="author-notebook" role="tab" aria-selected="true" aria-controls="dle-sp-feat-author-notebook">
                 <i class="fa-solid fa-book" aria-hidden="true"></i><span data-i18n="dle_feature_author_notebook_h4">Author Notebook</span>
             </button>
-            <button class="dle-features-subtab" data-features-subtab="ai-notebook">
+            <button type="button" class="dle-features-subtab" data-features-subtab="ai-notebook" role="tab" aria-selected="false" aria-controls="dle-sp-feat-ai-notebook">
                 <i class="fa-solid fa-robot" aria-hidden="true"></i><span data-i18n="dle_feature_ai_notepad_h4">AI Notepad</span>
             </button>
-            <button class="dle-features-subtab" data-features-subtab="session-scribe">
+            <button type="button" class="dle-features-subtab" data-features-subtab="session-scribe" role="tab" aria-selected="false" aria-controls="dle-sp-feat-session-scribe">
                 <i class="fa-solid fa-feather-pointed" aria-hidden="true"></i><span data-i18n="dle_feature_session_scribe_h4">Session Scribe</span>
             </button>
-            <button class="dle-features-subtab" data-features-subtab="auto-lorebook">
+            <button type="button" class="dle-features-subtab" data-features-subtab="auto-lorebook" role="tab" aria-selected="false" aria-controls="dle-sp-feat-auto-lorebook">
                 <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i><span data-i18n="dle_feature_auto_lorebook_h4">Auto Lorebook</span>
             </button>
-            <button class="dle-features-subtab" data-features-subtab="graph">
+            <button type="button" class="dle-features-subtab" data-features-subtab="graph" role="tab" aria-selected="false" aria-controls="dle-sp-feat-graph">
                 <i class="fa-solid fa-diagram-project" aria-hidden="true"></i><span data-i18n="dle_feature_graph_h4">Graph</span>
             </button>
-            <button class="dle-features-subtab" data-features-subtab="librarian">
+            <button type="button" class="dle-features-subtab" data-features-subtab="librarian" role="tab" aria-selected="false" aria-controls="dle-sp-feat-librarian">
                 <i class="fa-solid fa-book-bookmark" aria-hidden="true"></i><span data-i18n="dle_analytics_section_librarian">Librarian</span>
             </button>
         </div>
-        <button class="dle-settings-tab" id="dle-sp-tab-system" data-settings-tab="system" role="tab"
+        <button type="button" class="dle-settings-tab" id="dle-sp-tab-system" data-settings-tab="system" role="tab"
                 aria-selected="false" aria-controls="dle-sp-system">
             <i class="fa-solid fa-sliders" aria-hidden="true"></i>
             <span data-i18n="dle_role_system">System</span>
         </button>
-        <button class="dle-settings-tab" id="dle-sp-tab-reference" data-settings-tab="reference" role="tab"
+        <button type="button" class="dle-settings-tab" id="dle-sp-tab-reference" data-settings-tab="reference" role="tab"
                 aria-selected="false" aria-controls="dle-sp-reference">
             <i class="fa-solid fa-terminal" aria-hidden="true"></i>
             <span data-i18n="dle_tab_reference">Reference</span>
@@ -131,17 +131,17 @@
                 <div class="flex-container">
                     <div class="flex1" title="Tag (without #) that marks an Obsidian note as a lorebook entry." data-i18n="[title]dle_lorebook_tag_tooltip">
                         <label for="dle-sp-tag"><small data-i18n="dle_lorebook_tag_label">Lorebook Tag</small></label>
-                        <input id="dle-sp-tag" type="text" class="text_pole" placeholder="lorebook" / data-i18n="[placeholder]dle_lorebook_tag_placeholder">
+                        <input id="dle-sp-tag" type="text" class="text_pole" placeholder="lorebook" data-i18n="[placeholder]dle_lorebook_tag_placeholder">
                     </div>
                     <div class="flex1" title="Tag (without #) that forces a note to always be included, regardless of keyword matches." data-i18n="[title]dle_always_send_tag_tooltip">
                         <label for="dle-sp-constant-tag"><small data-i18n="dle_always_send_tag_label">Always-Send Tag</small></label>
-                        <input id="dle-sp-constant-tag" type="text" class="text_pole" placeholder="lorebook-always" / data-i18n="[placeholder]dle_always_send_tag_placeholder">
+                        <input id="dle-sp-constant-tag" type="text" class="text_pole" placeholder="lorebook-always" data-i18n="[placeholder]dle_always_send_tag_placeholder">
                     </div>
                 </div>
                 <div class="flex-container">
                     <div class="flex1" title="Tag (without #) that prevents a note from ever being included." data-i18n="[title]dle_never_insert_tag_tooltip">
                         <label for="dle-sp-never-insert-tag"><small data-i18n="dle_never_insert_tag_label">Never-Insert Tag</small></label>
-                        <input id="dle-sp-never-insert-tag" type="text" class="text_pole" placeholder="lorebook-never" / data-i18n="[placeholder]dle_never_insert_tag_placeholder">
+                        <input id="dle-sp-never-insert-tag" type="text" class="text_pole" placeholder="lorebook-never" data-i18n="[placeholder]dle_never_insert_tag_placeholder">
                     </div>
                 </div>
                 <div class="dle-advanced-toggle" data-section="sp_vault_tags" tabindex="0" role="button" aria-expanded="false">
@@ -151,17 +151,17 @@
                     <div class="flex-container">
                         <div class="flex1" title="Tag for entries whose content is sent to the AI as background context on new chats." data-i18n="[title]dle_seed_tag_tooltip">
                             <label for="dle-sp-seed-tag"><small data-i18n="dle_seed_tag_label">Seed Tag</small></label>
-                            <input id="dle-sp-seed-tag" type="text" class="text_pole" placeholder="lorebook-seed" / data-i18n="[placeholder]dle_seed_tag_placeholder">
+                            <input id="dle-sp-seed-tag" type="text" class="text_pole" placeholder="lorebook-seed" data-i18n="[placeholder]dle_seed_tag_placeholder">
                         </div>
                         <div class="flex1" title="Tag for starter entries — always included when the chat is short (below the New Chat Threshold)." data-i18n="[title]dle_bootstrap_tag_tooltip">
                             <label for="dle-sp-bootstrap-tag"><small data-i18n="dle_bootstrap_tag_label">Starter Entry Tag</small></label>
-                            <input id="dle-sp-bootstrap-tag" type="text" class="text_pole" placeholder="lorebook-bootstrap" / data-i18n="[placeholder]dle_bootstrap_tag_placeholder">
+                            <input id="dle-sp-bootstrap-tag" type="text" class="text_pole" placeholder="lorebook-bootstrap" data-i18n="[placeholder]dle_bootstrap_tag_placeholder">
                         </div>
                     </div>
                     <div class="flex-container">
                         <div class="flex1" title="Tag for Librarian-only writing/style guides. These entries never reach the writing AI — only the Librarian can fetch them via its chat tool." data-i18n="[title]dle_guide_tag_tooltip">
                             <label for="dle-sp-librarian-guide-tag"><small data-i18n="dle_guide_tag_label">Librarian Guide Tag</small></label>
-                            <input id="dle-sp-librarian-guide-tag" type="text" class="text_pole" placeholder="lorebook-guide" / data-i18n="[placeholder]dle_guide_tag_placeholder">
+                            <input id="dle-sp-librarian-guide-tag" type="text" class="text_pole" placeholder="lorebook-guide" data-i18n="[placeholder]dle_guide_tag_placeholder">
                         </div>
                         <div class="flex1" title="Message count threshold for new chat features. Default: 3." data-i18n="[title]dle_new_chat_threshold_tooltip">
                             <label for="dle-sp-new-chat-threshold"><small data-i18n="dle_new_chat_threshold_label">New Chat Threshold</small></label>
@@ -179,7 +179,7 @@
             <div class="flex-container" style="align-items: flex-end;">
                 <div class="flex1" title="Path to the YAML file in Obsidian that defines custom gating fields. Relative to vault root." data-i18n="[title]dle_field_defs_path_tooltip">
                     <label for="dle-sp-field-definitions-path"><small data-i18n="dle_field_defs_path_label">Field Definitions Path</small></label>
-                    <input id="dle-sp-field-definitions-path" type="text" class="text_pole" placeholder="DeepLore/field-definitions.yaml" / data-i18n="[placeholder]dle_default_field_definitions_path">
+                    <input id="dle-sp-field-definitions-path" type="text" class="text_pole" placeholder="DeepLore/field-definitions.yaml" data-i18n="[placeholder]dle_default_field_definitions_path">
                 </div>
                 <div id="dle-sp-edit-fields-btn" class="menu_button" title="Open the field definition editor" style="height: fit-content; margin-left: 8px; white-space: nowrap;" data-i18n="[title]dle_edit_fields_tooltip">
                     <i class="fa-solid fa-gear"></i> Edit Fields
@@ -868,7 +868,7 @@
                     </div>
                     <div class="flex1" title="Folder in your Obsidian vault where session notes are saved." data-i18n="[title]dle_scribe_folder_tooltip">
                         <label for="dle-sp-scribe-folder"><small data-i18n="dle_scribe_folder_label">Session Folder</small></label>
-                        <input id="dle-sp-scribe-folder" type="text" class="text_pole" placeholder="Sessions" / data-i18n="[placeholder]dle_scribe_folder_placeholder">
+                        <input id="dle-sp-scribe-folder" type="text" class="text_pole" placeholder="Sessions" data-i18n="[placeholder]dle_scribe_folder_placeholder">
                     </div>
                 </div>
                 <div class="flex-container">
@@ -913,7 +913,7 @@
                     </div>
                     <div class="flex1" title="Obsidian folder where new entries are saved." data-i18n="[title]dle_autosuggest_folder_tooltip">
                         <label for="dle-sp-autosuggest-folder"><small data-i18n="dle_autosuggest_folder_label">Target Folder</small></label>
-                        <input id="dle-sp-autosuggest-folder" type="text" class="text_pole" placeholder="Lorebook" / data-i18n="[placeholder]dle_autosuggest_folder_placeholder">
+                        <input id="dle-sp-autosuggest-folder" type="text" class="text_pole" placeholder="Lorebook" data-i18n="[placeholder]dle_autosuggest_folder_placeholder">
                     </div>
                 </div>
                 <div class="flex-container">
@@ -1074,7 +1074,7 @@
                 <div class="flex-container">
                     <div class="flex1" title="Folder path for written entries (relative to vault root). Leave blank for root." data-i18n="[title]dle_librarian_write_folder_tooltip">
                         <label for="dle-sp-librarian-write-folder"><small data-i18n="dle_librarian_write_folder_label">Write Folder</small></label>
-                        <input id="dle-sp-librarian-write-folder" type="text" class="text_pole" placeholder="Root of vault" / data-i18n="[placeholder]dle_librarian_write_folder_placeholder">
+                        <input id="dle-sp-librarian-write-folder" type="text" class="text_pole" placeholder="Root of vault" data-i18n="[placeholder]dle_librarian_write_folder_placeholder">
                     </div>
                     <div class="flex1" title="Default vault the Librarian writes new entries to. Per-write override is available in the entry popup when multiple vaults are enabled." data-i18n="[title]dle_librarian_write_vault_tooltip">
                         <label for="dle-sp-librarian-write-vault"><small data-i18n="dle_librarian_write_vault_label">Default Write Vault</small></label>
@@ -1138,7 +1138,7 @@
                     <div class="flex-container">
                         <div class="flex1" title="Optional session-wide cap on total tool calls (search + flag) across all turns since page load. Empty/0 = unlimited. Useful for runaway-budget protection on long sessions." data-i18n="[title]dle_librarian_session_tool_cap_tooltip">
                             <label for="dle-sp-librarian-session-tool-cap"><small data-i18n="dle_librarian_session_tool_cap_label">Session Tool-Call Cap (empty or 0 = unlimited)</small></label>
-                            <input id="dle-sp-librarian-session-tool-cap" type="number" class="text_pole" min="0" max="1000" placeholder="unlimited" / data-i18n="[placeholder]dle_librarian_session_tool_cap_placeholder">
+                            <input id="dle-sp-librarian-session-tool-cap" type="number" class="text_pole" min="0" max="1000" placeholder="unlimited" data-i18n="[placeholder]dle_librarian_session_tool_cap_placeholder">
                         </div>
                     </div>
 

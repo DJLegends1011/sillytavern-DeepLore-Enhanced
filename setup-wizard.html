@@ -2,48 +2,48 @@
 <div class="dle-wizard">
 
     <!-- Step indicator -->
-    <nav class="dle-wizard-steps" aria-label="Setup progress" data-i18n="[aria-label]dle_wizard_progress_aria">
-        <button class="dle-wizard-step active" data-step="1" aria-current="step">
+    <nav class="dle-wizard-steps" role="tablist" aria-label="Setup progress" data-i18n="[aria-label]dle_wizard_progress_aria">
+        <button type="button" id="dle-wizard-step-1" class="dle-wizard-step active" data-step="1" role="tab" aria-selected="true" aria-controls="dle-wizard-page-1" aria-current="step">
             <span class="dle-wizard-step-dot">1</span>
             <span class="dle-wizard-step-label" data-i18n="dle_wizard_step_1_welcome">Welcome</span>
         </button>
-        <div class="dle-wizard-step-line"></div>
-        <button class="dle-wizard-step" data-step="2">
+        <div class="dle-wizard-step-line" aria-hidden="true"></div>
+        <button type="button" id="dle-wizard-step-2" class="dle-wizard-step" data-step="2" role="tab" aria-selected="false" aria-controls="dle-wizard-page-2">
             <span class="dle-wizard-step-dot">2</span>
             <span class="dle-wizard-step-label" data-i18n="dle_tab_connection">Connection</span>
         </button>
-        <div class="dle-wizard-step-line"></div>
-        <button class="dle-wizard-step" data-step="3">
+        <div class="dle-wizard-step-line" aria-hidden="true"></div>
+        <button type="button" id="dle-wizard-step-3" class="dle-wizard-step" data-step="3" role="tab" aria-selected="false" aria-controls="dle-wizard-page-3">
             <span class="dle-wizard-step-dot">3</span>
             <span class="dle-wizard-step-label" data-i18n="dle_wizard_step_3_tags">Tags</span>
         </button>
-        <div class="dle-wizard-step-line"></div>
-        <button class="dle-wizard-step" data-step="4">
+        <div class="dle-wizard-step-line" aria-hidden="true"></div>
+        <button type="button" id="dle-wizard-step-4" class="dle-wizard-step" data-step="4" role="tab" aria-selected="false" aria-controls="dle-wizard-page-4">
             <span class="dle-wizard-step-dot">4</span>
             <span class="dle-wizard-step-label" data-i18n="dle_tab_matching">Matching</span>
         </button>
-        <div class="dle-wizard-step-line"></div>
-        <button class="dle-wizard-step" data-step="5">
+        <div class="dle-wizard-step-line" aria-hidden="true"></div>
+        <button type="button" id="dle-wizard-step-5" class="dle-wizard-step" data-step="5" role="tab" aria-selected="false" aria-controls="dle-wizard-page-5">
             <span class="dle-wizard-step-dot">5</span>
             <span class="dle-wizard-step-label" data-i18n="dle_wizard_step_5_ai">AI</span>
         </button>
-        <div class="dle-wizard-step-line"></div>
-        <button class="dle-wizard-step" data-step="6">
+        <div class="dle-wizard-step-line" aria-hidden="true"></div>
+        <button type="button" id="dle-wizard-step-6" class="dle-wizard-step" data-step="6" role="tab" aria-selected="false" aria-controls="dle-wizard-page-6">
             <span class="dle-wizard-step-dot">6</span>
             <span class="dle-wizard-step-label" data-i18n="dle_analytics_section_librarian">Librarian</span>
         </button>
-        <div class="dle-wizard-step-line"></div>
-        <button class="dle-wizard-step" data-step="7">
+        <div class="dle-wizard-step-line" aria-hidden="true"></div>
+        <button type="button" id="dle-wizard-step-7" class="dle-wizard-step" data-step="7" role="tab" aria-selected="false" aria-controls="dle-wizard-page-7">
             <span class="dle-wizard-step-dot">7</span>
             <span class="dle-wizard-step-label" data-i18n="dle_wizard_step_7_vault">Vault</span>
         </button>
-        <div class="dle-wizard-step-line"></div>
-        <button class="dle-wizard-step" data-step="8">
+        <div class="dle-wizard-step-line" aria-hidden="true"></div>
+        <button type="button" id="dle-wizard-step-8" class="dle-wizard-step" data-step="8" role="tab" aria-selected="false" aria-controls="dle-wizard-page-8">
             <span class="dle-wizard-step-dot">8</span>
             <span class="dle-wizard-step-label" data-i18n="dle_wizard_step_8_import">Import</span>
         </button>
-        <div class="dle-wizard-step-line"></div>
-        <button class="dle-wizard-step" data-step="9">
+        <div class="dle-wizard-step-line" aria-hidden="true"></div>
+        <button type="button" id="dle-wizard-step-9" class="dle-wizard-step" data-step="9" role="tab" aria-selected="false" aria-controls="dle-wizard-page-9">
             <span class="dle-wizard-step-dot">9</span>
             <span class="dle-wizard-step-label" data-i18n="dle_common_done">Done</span>
         </button>
@@ -53,7 +53,7 @@
     <div class="dle-wizard-body">
 
         <!-- ═══ Page 1: Welcome ═══ -->
-        <div class="dle-wizard-page active" data-wizard-page="1">
+        <div id="dle-wizard-page-1" class="dle-wizard-page active" data-wizard-page="1" role="tabpanel" aria-labelledby="dle-wizard-step-1">
             <h2 data-i18n="dle_wizard_welcome_heading">Welcome to DeepLore</h2>
             <p class="dle-wizard-subtitle" data-i18n="dle_wizard_subtitle">Your Obsidian vault, connected to SillyTavern.</p>
 
@@ -75,13 +75,13 @@
         </div>
 
         <!-- ═══ Page 2: Vault Connection ═══ -->
-        <div class="dle-wizard-page" data-wizard-page="2">
+        <div id="dle-wizard-page-2" class="dle-wizard-page" data-wizard-page="2" role="tabpanel" aria-labelledby="dle-wizard-step-2">
             <h2 data-i18n="dle_wizard_connection_heading">Vault Connection</h2>
             <p class="dle-wizard-subtitle">Connect to your Obsidian vault via the <a href="https://github.com/coddingtonbear/obsidian-local-rest-api" target="_blank">Local REST API</a> plugin.</p>
 
             <div class="dle-wizard-field">
                 <label for="dle-wiz-vault-name" data-i18n="dle_wizard_vault_name_label">Vault Name</label>
-                <input id="dle-wiz-vault-name" class="text_pole" type="text" value="Primary" placeholder="A friendly label for this vault" / data-i18n="[placeholder]dle_wizard_vault_name_placeholder">
+                <input id="dle-wiz-vault-name" class="text_pole" type="text" value="Primary" placeholder="A friendly label for this vault" data-i18n="[placeholder]dle_wizard_vault_name_placeholder">
             </div>
             <div class="dle-wizard-field">
                 <label for="dle-wiz-host" data-i18n="dle_placeholder_host">Host</label>
@@ -94,7 +94,7 @@
                 </div>
                 <div class="dle-wizard-field" style="flex: 2;">
                     <label for="dle-wiz-api-key" data-i18n="dle_placeholder_vault_apikey">API Key</label>
-                    <input id="dle-wiz-api-key" class="text_pole" type="password" placeholder="From Obsidian REST API plugin settings" / data-i18n="[placeholder]dle_wizard_api_key_placeholder">
+                    <input id="dle-wiz-api-key" class="text_pole" type="password" placeholder="From Obsidian REST API plugin settings" data-i18n="[placeholder]dle_wizard_api_key_placeholder">
                 </div>
             </div>
             <div class="dle-wizard-field">
@@ -112,7 +112,7 @@
                 </p>
             </div>
 
-            <button id="dle-wiz-test-conn" class="menu_button dle-wizard-action-btn">
+            <button type="button" id="dle-wiz-test-conn" class="menu_button dle-wizard-action-btn">
                 <i class="fa-solid fa-plug"></i> Test Connection
             </button>
 
@@ -127,7 +127,7 @@
             <div class="dle-wizard-card dle-wizard-demo-callout">
                 <h3><i class="fa-solid fa-flask"></i> New to DeepLore? Try the demo vault</h3>
                 <p>257 pre-built entries — the fantasy city of <strong>Duskfrost</strong>. Characters, locations, lore, factions, species, and more. Perfect for exploring DLE before building your own vault.</p>
-                <button id="dle-wiz-demo-toggle" class="menu_button menu_button_icon">
+                <button type="button" id="dle-wiz-demo-toggle" class="menu_button menu_button_icon">
                     <i class="fa-solid fa-folder-open"></i> Show me how
                 </button>
                 <div id="dle-wiz-demo-instructions" style="display: none;">
@@ -136,7 +136,7 @@
                         <li>Navigate to the <code>test-vault</code> folder inside the DLE extension directory:
                             <div class="dle-wizard-demo-path-row">
                                 <code id="dle-wiz-demo-path" class="dle-wizard-demo-path"></code>
-                                <button id="dle-wiz-demo-copy" class="menu_button menu_button_icon dle-wizard-demo-copy" title="Copy path" data-i18n="[title]dle_wizard_demo_copy_tooltip">
+                                <button type="button" id="dle-wiz-demo-copy" class="menu_button menu_button_icon dle-wizard-demo-copy" title="Copy path" data-i18n="[title]dle_wizard_demo_copy_tooltip">
                                     <i class="fa-solid fa-copy"></i>
                                 </button>
                             </div>
@@ -144,7 +144,7 @@
                         <li>Install &amp; enable the <strong>Local REST API</strong> community plugin in the demo vault</li>
                         <li data-i18n="dle_wizard_demo_step_4">Set an API key in the plugin settings, then come back here</li>
                     </ol>
-                    <button id="dle-wiz-demo-autofill" class="menu_button dle-wizard-action-btn">
+                    <button type="button" id="dle-wiz-demo-autofill" class="menu_button dle-wizard-action-btn">
                         <i class="fa-solid fa-wand-magic-sparkles"></i> Auto-fill connection for demo vault
                     </button>
                 </div>
@@ -152,7 +152,7 @@
         </div>
 
         <!-- ═══ Page 3: Tags & Search Mode ═══ -->
-        <div class="dle-wizard-page" data-wizard-page="3">
+        <div id="dle-wizard-page-3" class="dle-wizard-page" data-wizard-page="3" role="tabpanel" aria-labelledby="dle-wizard-step-3">
             <h2>Tags &amp; Search Mode</h2>
             <p class="dle-wizard-subtitle" data-i18n="dle_wizard_tags_subtitle">Configure which Obsidian notes become lorebook entries and how they're matched.</p>
 
@@ -215,24 +215,24 @@
         </div>
 
         <!-- ═══ Page 4: Matching Configuration ═══ -->
-        <div class="dle-wizard-page" data-wizard-page="4">
+        <div id="dle-wizard-page-4" class="dle-wizard-page" data-wizard-page="4" role="tabpanel" aria-labelledby="dle-wizard-step-4">
             <h2 data-i18n="dle_wizard_matching_heading">Matching Configuration</h2>
             <p class="dle-wizard-subtitle" data-i18n="dle_wizard_matching_subtitle">How many entries to scan and inject. Pick a preset or customize.</p>
 
             <div class="dle-wizard-field">
                 <label data-i18n="dle_wizard_preset_label">Vault Size Preset</label>
                 <div class="dle-wizard-preset-group">
-                    <button class="dle-wizard-preset" data-preset="small">
+                    <button type="button" class="dle-wizard-preset" data-preset="small">
                         <i class="fa-solid fa-seedling"></i>
                         <strong data-i18n="dle_wizard_preset_small_title">Small</strong>
                         <span>&lt; 50 entries</span>
                     </button>
-                    <button class="dle-wizard-preset active" data-preset="medium">
+                    <button type="button" class="dle-wizard-preset active" data-preset="medium">
                         <i class="fa-solid fa-tree"></i>
                         <strong data-i18n="dle_wizard_preset_medium_title">Medium</strong>
                         <span data-i18n="dle_wizard_preset_medium_desc">50–200 entries</span>
                     </button>
-                    <button class="dle-wizard-preset" data-preset="large">
+                    <button type="button" class="dle-wizard-preset" data-preset="large">
                         <i class="fa-solid fa-mountain"></i>
                         <strong data-i18n="dle_wizard_preset_large_title">Large</strong>
                         <span data-i18n="dle_wizard_preset_large_desc">200+ entries</span>
@@ -277,7 +277,7 @@
         </div>
 
         <!-- ═══ Page 5: AI Search Setup ═══ -->
-        <div class="dle-wizard-page" data-wizard-page="5">
+        <div id="dle-wizard-page-5" class="dle-wizard-page" data-wizard-page="5" role="tabpanel" aria-labelledby="dle-wizard-step-5">
             <h2 data-i18n="dle_wizard_ai_heading">AI Search Setup</h2>
             <p class="dle-wizard-subtitle" data-i18n="dle_wizard_ai_subtitle">Configure how DLE connects to an AI for entry selection.</p>
 
@@ -319,11 +319,11 @@
                 </div>
                 <div class="dle-wizard-field">
                     <label for="dle-wiz-ai-model" data-i18n="dle_wizard_ai_model_label">Model</label>
-                    <input id="dle-wiz-ai-model" class="text_pole" type="text" placeholder="e.g. claude-haiku-4-5-20251001" / data-i18n="[placeholder]dle_wizard_ai_model_placeholder">
+                    <input id="dle-wiz-ai-model" class="text_pole" type="text" placeholder="e.g. claude-haiku-4-5-20251001" data-i18n="[placeholder]dle_wizard_ai_model_placeholder">
                 </div>
             </div>
 
-            <button id="dle-wiz-test-ai" class="menu_button dle-wizard-action-btn">
+            <button type="button" id="dle-wiz-test-ai" class="menu_button dle-wizard-action-btn">
                 <i class="fa-solid fa-brain"></i> Test AI Connection
             </button>
 
@@ -331,7 +331,7 @@
         </div>
 
         <!-- ═══ Page 6: Librarian ═══ -->
-        <div class="dle-wizard-page" data-wizard-page="6">
+        <div id="dle-wizard-page-6" class="dle-wizard-page" data-wizard-page="6" role="tabpanel" aria-labelledby="dle-wizard-step-6">
             <h2 data-i18n="dle_analytics_section_librarian">Librarian</h2>
             <p class="dle-wizard-subtitle" data-i18n="dle_wizard_librarian_subtitle">Let the AI search for and flag missing lore during generation.</p>
 
@@ -368,7 +368,7 @@
         </div>
 
         <!-- ═══ Page 7: Prepare Your Vault ═══ -->
-        <div class="dle-wizard-page" data-wizard-page="7">
+        <div id="dle-wizard-page-7" class="dle-wizard-page" data-wizard-page="7" role="tabpanel" aria-labelledby="dle-wizard-step-7">
             <h2 data-i18n="dle_wizard_prepare_heading">Prepare Your Vault</h2>
             <p class="dle-wizard-subtitle" data-i18n="dle_wizard_prepare_subtitle">Optional scaffolding for advanced features.</p>
 
@@ -380,7 +380,7 @@
                 <h3><i class="fa-solid fa-triangle-exclamation"></i> Connection Not Verified</h3>
                 <p data-i18n="dle_wizard_conn_not_verified_desc">You haven't successfully connected to Obsidian yet. Go back and verify your connection before creating helper files.</p>
                 <div class="dle-wizard-action-row">
-                    <button id="dle-wiz-vault-back-conn" class="menu_button">
+                    <button type="button" id="dle-wiz-vault-back-conn" class="menu_button">
                         <i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Back to Connection
                     </button>
                 </div>
@@ -396,7 +396,7 @@
                     </label>
                     <div class="dle-wizard-field">
                         <label data-i18n="dle_wizard_fields_path_label">Path in vault</label>
-                        <input id="dle-wiz-fields-path" type="text" class="text_pole" placeholder="DeepLore/field-definitions.yaml" / data-i18n="[placeholder]dle_default_field_definitions_path">
+                        <input id="dle-wiz-fields-path" type="text" class="text_pole" placeholder="DeepLore/field-definitions.yaml" data-i18n="[placeholder]dle_default_field_definitions_path">
                     </div>
                     <details class="dle-wizard-template-details">
                         <summary data-i18n="dle_wizard_show_template">Show template</summary>
@@ -416,17 +416,17 @@
                         </label>
                         <div class="dle-wizard-field">
                             <label data-i18n="dle_wizard_sessions_path_label">Folder path in vault</label>
-                            <input id="dle-wiz-sessions-path" type="text" class="text_pole" placeholder="Sessions" / data-i18n="[placeholder]dle_scribe_folder_placeholder">
+                            <input id="dle-wiz-sessions-path" type="text" class="text_pole" placeholder="Sessions" data-i18n="[placeholder]dle_scribe_folder_placeholder">
                         </div>
                         <div id="dle-wiz-sessions-status" class="dle-wizard-file-status" style="display: none;"></div>
                     </div>
                 </details>
 
                 <div class="dle-wizard-action-row">
-                    <button id="dle-wiz-create-files" class="menu_button dle-wizard-btn-primary">
+                    <button type="button" id="dle-wiz-create-files" class="menu_button dle-wizard-btn-primary">
                         <i class="fa-solid fa-folder-plus" aria-hidden="true"></i> Create Helpers
                     </button>
-                    <button id="dle-wiz-vault-skip" class="menu_button">
+                    <button type="button" id="dle-wiz-vault-skip" class="menu_button">
                         <i class="fa-solid fa-forward" aria-hidden="true"></i> Skip this step
                     </button>
                 </div>
@@ -436,7 +436,7 @@
         </div>
 
         <!-- ═══ Page 8: Import ═══ -->
-        <div class="dle-wizard-page" data-wizard-page="8">
+        <div id="dle-wizard-page-8" class="dle-wizard-page" data-wizard-page="8" role="tabpanel" aria-labelledby="dle-wizard-step-8">
             <h2 data-i18n="dle_wizard_import_heading">Import Existing Lorebook</h2>
             <p class="dle-wizard-subtitle" data-i18n="dle_wizard_import_subtitle">Already have a SillyTavern lorebook? Import entries into your Obsidian vault.</p>
 
@@ -491,7 +491,7 @@
             <!-- File upload (shown when file method selected) -->
             <div id="dle-wiz-import-file-fields" style="display: none;">
                 <input type="file" id="dle-wiz-import-file" accept=".json" class="dle-hidden" />
-                <button id="dle-wiz-import-browse" class="menu_button menu_button_icon" style="display: inline-flex;">
+                <button type="button" id="dle-wiz-import-browse" class="menu_button menu_button_icon" style="display: inline-flex;">
                     <i class="fa-solid fa-file-import"></i>
                     <span data-i18n="dle_cmd_import_browse_btn">Browse local JSON file...</span>
                 </button>
@@ -511,13 +511,13 @@
                 <div class="dle-wizard-field">
                     <label for="dle-wiz-import-folder" data-i18n="dle_wizard_import_folder_label">Target Folder (optional)</label>
                     <span class="dle-wizard-field-hint" data-i18n="dle_wizard_import_folder_hint">Entries will be created in this folder in your vault. Leave blank for vault root.</span>
-                    <input id="dle-wiz-import-folder" class="text_pole" type="text" placeholder="e.g. Imported" / data-i18n="[placeholder]dle_wizard_import_folder_placeholder">
+                    <input id="dle-wiz-import-folder" class="text_pole" type="text" placeholder="e.g. Imported" data-i18n="[placeholder]dle_wizard_import_folder_placeholder">
                 </div>
             </div>
 
             <!-- Import button + results -->
             <div id="dle-wiz-import-action" style="display: none;">
-                <button id="dle-wiz-import-btn" class="menu_button dle-wizard-action-btn">
+                <button type="button" id="dle-wiz-import-btn" class="menu_button dle-wizard-action-btn">
                     <i class="fa-solid fa-file-import"></i> Import Entries
                 </button>
             </div>
@@ -526,7 +526,7 @@
         </div>
 
         <!-- ═══ Page 9: All Done ═══ -->
-        <div class="dle-wizard-page" data-wizard-page="9">
+        <div id="dle-wizard-page-9" class="dle-wizard-page" data-wizard-page="9" role="tabpanel" aria-labelledby="dle-wizard-step-9">
             <div class="dle-wizard-done-header">
                 <div class="dle-wizard-done-check"><i class="fa-solid fa-circle-check"></i></div>
                 <h2 data-i18n="dle_wizard_done_heading">Setup Complete!</h2>
@@ -535,19 +535,19 @@
             <div id="dle-wiz-summary" class="dle-wizard-summary"></div>
 
             <div class="dle-wizard-actions-grid">
-                <button class="menu_button dle-wizard-done-btn" data-action="health">
+                <button type="button" class="menu_button dle-wizard-done-btn" data-action="health">
                     <i class="fa-solid fa-stethoscope"></i> Run Health Check
                 </button>
-                <button class="menu_button dle-wizard-done-btn" data-action="graph">
+                <button type="button" class="menu_button dle-wizard-done-btn" data-action="graph">
                     <i class="fa-solid fa-project-diagram"></i> Open Graph
                 </button>
-                <button class="menu_button dle-wizard-done-btn" data-action="browse">
+                <button type="button" class="menu_button dle-wizard-done-btn" data-action="browse">
                     <i class="fa-solid fa-book-open"></i> Browse Entries
                 </button>
-                <button class="menu_button dle-wizard-done-btn" data-action="settings">
+                <button type="button" class="menu_button dle-wizard-done-btn" data-action="settings">
                     <i class="fa-solid fa-gear"></i> Open Settings
                 </button>
-                <button class="menu_button dle-wizard-done-btn" data-action="meet-emma" title="Open Emma the Librarian to write your first style/meta guide. Guides are read by Emma only — never by the writing AI." data-i18n="[title]dle_wizard_done_emma_tooltip">
+                <button type="button" class="menu_button dle-wizard-done-btn" data-action="meet-emma" title="Open Emma the Librarian to write your first style/meta guide. Guides are read by Emma only — never by the writing AI." data-i18n="[title]dle_wizard_done_emma_tooltip">
                     <i class="fa-solid fa-book-open-reader"></i> Meet Emma
                 </button>
             </div>
@@ -566,14 +566,14 @@
 
     <!-- Bottom navigation -->
     <div class="dle-wizard-nav">
-        <button id="dle-wiz-prev" class="menu_button" style="display: none;">
+        <button type="button" id="dle-wiz-prev" class="menu_button" style="display: none;">
             <i class="fa-solid fa-arrow-left"></i> Previous
         </button>
         <div class="dle-wizard-nav-spacer"></div>
-        <button id="dle-wiz-next" class="menu_button dle-wizard-btn-primary">
+        <button type="button" id="dle-wiz-next" class="menu_button dle-wizard-btn-primary">
             Next <i class="fa-solid fa-arrow-right"></i>
         </button>
-        <button id="dle-wiz-finish" class="menu_button dle-wizard-btn-primary" style="display: none;">
+        <button type="button" id="dle-wiz-finish" class="menu_button dle-wizard-btn-primary" style="display: none;">
             <i class="fa-solid fa-check"></i> Finish
         </button>
     </div>

@@ -5220,26 +5220,6 @@ button.dle-chip-x:focus-visible { outline: 2px solid var(--dle-accent); outline-
 }
 
 /* ============================================================================
- * Tool Call Messages — Hidden (consolidated into reply dropdown)
- * ST creates separate .toolCall messages for each tool invocation.
- * We hide these entirely and show a single "Consulted lore vault" dropdown
- * on the assistant reply message instead (injected by librarian-ui.js).
- * ============================================================================ */
-
-/* Hide tool-call system messages only when DLE is actively rendering a
-   consulted-vault dropdown in the same chat. The :has() guard scopes the
-   override to chats DLE is participating in, so other extensions that emit
-   .smallSysMes.toolCall messages are not affected. */
-#chat:has(.dle-librarian-details) .mes.smallSysMes.toolCall {
-    display: none;
-}
-
-/* Hide empty intermediate "Thought for some time" messages before tool calls */
-#chat:has(.dle-librarian-details) .mes.reasoning:has(+ .mes.smallSysMes.toolCall) {
-    display: none;
-}
-
-/* ============================================================================
  * Librarian "Consulted Lore Vault" Dropdown
  * Mirrors ST's native .mes_reasoning_details "Thought for X seconds" pattern.
  * ============================================================================ */
