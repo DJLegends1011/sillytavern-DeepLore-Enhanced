@@ -127,7 +127,7 @@
         <div class="dle-why-list" role="list" aria-label="Injected entries — why these were included" data-i18n="[aria-label]dle_why_list_aria"></div>
         <!-- Rejected entries (why not) -->
         <div class="dle-why-not-section">
-            <div class="dle-why-not-header dle-text-sm dle-muted">
+            <div class="dle-why-not-header dle-text-sm dle-muted" data-i18n="dle_why_filtered_out_header">
                 <i class="fa-solid fa-filter-circle-xmark" aria-hidden="true"></i> Filtered Out
             </div>
             <div class="dle-why-not-list" role="list" aria-label="Filtered entries — why these were excluded" data-i18n="[aria-label]dle_why_not_list_aria"></div>
@@ -139,16 +139,16 @@
             <div class="dle-empty-guide">
                 <p data-i18n="dle_empty_guide_intro">To see lore injection in action:</p>
                 <ol>
-                    <li>Connect to an Obsidian vault with <code>#lorebook</code>-tagged entries</li>
+                    <li data-i18n="dle_empty_guide_step_1">Connect to an Obsidian vault with <code>#lorebook</code>-tagged entries</li>
                     <li data-i18n="dle_empty_guide_step_2">Send a message mentioning a keyword from your entries</li>
                     <li data-i18n="dle_empty_guide_step_3">This tab will show which entries were injected and why</li>
                 </ol>
-                <p class="dle-empty-commands"><code>/dle-setup</code> — configure your vault &nbsp; <code>/dle-browse</code> — see indexed entries</p>
+                <p class="dle-empty-commands" data-i18n="dle_empty_guide_commands"><code>/dle-setup</code> — configure your vault &nbsp; <code>/dle-browse</code> — see indexed entries</p>
             </div>
         </div>
         <!-- Entry Timers (cooldown, decay) — collapsible -->
         <details class="dle-why-timers-section">
-            <summary class="dle-why-timers-toggle">
+            <summary class="dle-why-timers-toggle" data-i18n="dle_entry_timers_summary">
                 <i class="fa-solid fa-clock" aria-hidden="true"></i> Entry Timers
             </summary>
             <div class="dle-timer-list" role="list" aria-label="Active entry timers (cooldown, rotation, and minimum trigger count)" data-i18n="[aria-label]dle_timer_list_aria"></div>
@@ -161,10 +161,10 @@
          role="tabpanel" aria-labelledby="dle-tab-browse">
         <div class="dle-panel-toolbar">
             <input type="text" class="text_pole dle-browse-input" placeholder="Search entries... (/)" aria-label="Search vault entries" data-i18n="[aria-label]dle_browse_search_aria">
-            <button type="button" class="menu_button menu_button_icon dle-browse-search-help" title="Search syntax: plain text matches title/keys/content. Prefixed: tag:wizard, folder:Locations, key:apple, summary:&quot;old gods&quot;, field:era=medieval. Combine multiple prefixes with spaces." aria-label="Browse search syntax help">
+            <button type="button" class="menu_button menu_button_icon dle-browse-search-help" title="Search syntax: plain text matches title/keys/content. Prefixed: tag:wizard, folder:Locations, key:apple, summary:&quot;old gods&quot;, field:era=medieval. Combine multiple prefixes with spaces." aria-label="Browse search syntax help" data-i18n="[title]dle_browse_search_syntax_tooltip;[aria-label]dle_browse_search_syntax_aria">
                 <i class="fa-solid fa-circle-question" aria-hidden="true"></i>
             </button>
-            <i class="fa-solid fa-spinner fa-spin dle-browse-refresh-spinner" aria-hidden="true" title="Refreshing vault index..."></i>
+            <i class="fa-solid fa-spinner fa-spin dle-browse-refresh-spinner" aria-hidden="true" title="Refreshing vault index..." data-i18n="[title]dle_browse_refreshing_spinner_tooltip"></i>
             <button type="button" class="dle-tab-expand" data-expand="browse" title="Open full Browse popup" aria-label="Open full Browse popup" data-i18n="[title]dle_browse_full_view_tooltip;[aria-label]dle_browse_full_view_tooltip">
                 Full View <i class="fa-solid fa-up-right-from-square" aria-hidden="true"></i>
             </button>
@@ -172,11 +172,11 @@
         <details class="dle-browse-search-help-popover">
             <summary class="dle-text-xs dle-muted" data-i18n="dle_search_syntax_summary">Search syntax</summary>
             <div class="dle-text-xs dle-muted dle-search-syntax-grid">
-                <div><code>tag:wizard</code> — entries tagged <em>wizard</em></div>
-                <div><code>folder:Locations</code> — entries under <em>Locations/</em></div>
-                <div><code>key:apple</code> — keyword exact-match</div>
-                <div><code>summary:"old gods"</code> — phrase in summary</div>
-                <div><code>field:era=medieval</code> — custom-field match</div>
+                <div data-i18n="dle_search_syntax_tag_example"><code>tag:wizard</code> — entries tagged <em>wizard</em></div>
+                <div data-i18n="dle_search_syntax_folder_example"><code>folder:Locations</code> — entries under <em>Locations/</em></div>
+                <div data-i18n="dle_search_syntax_key_example"><code>key:apple</code> — keyword exact-match</div>
+                <div data-i18n="dle_search_syntax_summary_example"><code>summary:"old gods"</code> — phrase in summary</div>
+                <div data-i18n="dle_search_syntax_field_example"><code>field:era=medieval</code> — custom-field match</div>
                 <div data-i18n="dle_search_syntax_combine">Combine prefixes with spaces. Plain words match title/keys/content.</div>
             </div>
         </details>
@@ -194,18 +194,18 @@
             <select class="text_pole dle-browse-filter-select" data-filter="tag" aria-label="Filter by tag" data-i18n="[aria-label]dle_tag_filter_aria">
                 <option value="" data-i18n="dle_tags_all">Tags (all)</option>
             </select>
-            <select class="text_pole dle-browse-filter-select" data-filter="folder" aria-label="Filter by folder">
-                <option value="">Folder (all)</option>
+            <select class="text_pole dle-browse-filter-select" data-filter="folder" aria-label="Filter by folder" data-i18n="[aria-label]dle_browse_filter_folder_aria">
+                <option value="" data-i18n="dle_browse_filter_folder_all">Folder (all)</option>
             </select>
             <span class="dle-browse-custom-filters"></span>
             <select class="text_pole dle-browse-sort-select" data-sort aria-label="Sort entries by priority, name, or token count" data-i18n="[aria-label]dle_sort_aria">
                 <option value="priority_asc" data-i18n="dle_sort_priority">Default (Priority)</option>
-                <option value="priority_desc">Priority &#x2193;</option>
-                <option value="alpha_asc">A &#x2192; Z</option>
-                <option value="alpha_desc">Z &#x2192; A</option>
-                <option value="tokens_desc">Tokens &#x2193;</option>
-                <option value="tokens_asc">Tokens &#x2191;</option>
-                <option value="injections_desc">Injections &#x2193;</option>
+                <option value="priority_desc" data-i18n="dle_sort_priority_desc">Priority &#x2193;</option>
+                <option value="alpha_asc" data-i18n="dle_sort_alpha_asc">A &#x2192; Z</option>
+                <option value="alpha_desc" data-i18n="dle_sort_alpha_desc">Z &#x2192; A</option>
+                <option value="tokens_desc" data-i18n="dle_sort_tokens_desc">Tokens &#x2193;</option>
+                <option value="tokens_asc" data-i18n="dle_sort_tokens_asc">Tokens &#x2191;</option>
+                <option value="injections_desc" data-i18n="dle_sort_injections_desc">Injections &#x2193;</option>
             </select>
         </div>
         <div class="dle-browse-batch-toolbar" role="toolbar" aria-label="View &amp; batch actions">
@@ -238,12 +238,12 @@
             <i class="fa-solid fa-database" aria-hidden="true"></i>
             <p data-i18n="dle_browse_no_data">No entries indexed.</p>
             <div class="dle-empty-guide">
-                <p>Your vault needs notes tagged with <code>#lorebook</code>. Each entry must include:</p>
+                <p data-i18n="dle_browse_no_data_intro">Your vault needs notes tagged with <code>#lorebook</code>. Each entry must include:</p>
                 <ul>
-                    <li><code>tags: [lorebook]</code> in frontmatter</li>
-                    <li><code>keys: [keyword1, keyword2]</code> for matching</li>
+                    <li data-i18n="dle_browse_no_data_step_tags"><code>tags: [lorebook]</code> in frontmatter</li>
+                    <li data-i18n="dle_browse_no_data_step_keys"><code>keys: [keyword1, keyword2]</code> for matching</li>
                 </ul>
-                <p class="dle-empty-commands"><code>/dle-setup</code> — configure vault &nbsp; <code>/dle-import</code> — import from World Info</p>
+                <p class="dle-empty-commands" data-i18n="dle_browse_no_data_commands"><code>/dle-setup</code> — configure vault &nbsp; <code>/dle-import</code> — import from World Info</p>
             </div>
         </div>
         <!-- Empty state: filters returned no results -->
@@ -294,8 +294,8 @@
          role="tabpanel" aria-labelledby="dle-tab-librarian">
         <div class="dle-panel-toolbar">
             <div class="dle-librarian-sub-tabs" role="radiogroup" aria-label="Librarian view" data-i18n="[aria-label]dle_librarian_view_aria">
-                <button type="button" class="dle-librarian-sub-tab active" data-filter="flag" role="radio" aria-checked="true">Flags <span class="dle-sub-tab-count"></span></button>
-                <button type="button" class="dle-librarian-sub-tab" data-filter="activity" role="radio" aria-checked="false">Activity <span class="dle-sub-tab-count"></span></button>
+                <button type="button" class="dle-librarian-sub-tab active" data-filter="flag" role="radio" aria-checked="true"><span data-i18n="dle_librarian_flags_tab">Flags</span> <span class="dle-sub-tab-count"></span></button>
+                <button type="button" class="dle-librarian-sub-tab" data-filter="activity" role="radio" aria-checked="false"><span data-i18n="dle_librarian_activity_tab">Activity</span> <span class="dle-sub-tab-count"></span></button>
             </div>
             <div class="dle-librarian-toolbar-right">
                 <select class="text_pole dle-librarian-sort" data-sort aria-label="Sort by" data-i18n="[aria-label]dle_librarian_sort_aria">
@@ -318,30 +318,30 @@
             <p class="dle-librarian-empty-text" data-i18n="dle_librarian_empty">No lore gaps recorded yet.</p>
             <div class="dle-librarian-empty-actions">
                 <button type="button" id="dle-librarian-new-entry-btn-empty" class="menu_button dle-tool-btn dle-librarian-new-entry-btn" data-action="librarian-new" title="Create a new vault entry from scratch" data-i18n="[title]dle_new_entry_empty_tooltip">
-                    <i class="fa-solid fa-plus" aria-hidden="true"></i> New Entry
+                    <i class="fa-solid fa-plus" aria-hidden="true"></i> <span data-i18n="dle_librarian_new_entry_label">New Entry</span>
                 </button>
                 <button type="button" class="menu_button dle-tool-btn dle-librarian-vault-review-btn" data-action="librarian-review" title="AI-guided review of your vault" data-i18n="[title]dle_vault_review_tooltip">
-                    <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i> Vault Review
+                    <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i> <span data-i18n="dle_librarian_vault_review_label">Vault Review</span>
                 </button>
             </div>
         </div>
         <div class="dle-librarian-action-row">
             <button type="button" class="menu_button dle-tool-btn dle-librarian-action" data-librarian-action="open" title="Open the selected gap in the Librarian editor" disabled data-i18n="[title]dle_librarian_open_tooltip">
-                <i class="fa-solid fa-pen-to-square" aria-hidden="true"></i> Open
+                <i class="fa-solid fa-pen-to-square" aria-hidden="true"></i> <span data-i18n="dle_librarian_open_label">Open</span>
             </button>
             <button type="button" class="menu_button dle-tool-btn dle-librarian-action" data-librarian-action="done" title="Mark selected as written" disabled data-i18n="[title]dle_librarian_done_tooltip">
-                <i class="fa-solid fa-check" aria-hidden="true"></i> Mark Done
+                <i class="fa-solid fa-check" aria-hidden="true"></i> <span data-i18n="dle_librarian_mark_done_label">Mark Done</span>
             </button>
             <button type="button" class="menu_button dle-tool-btn dle-librarian-action" data-librarian-action="remove" title="Remove (hide on first click, dismiss forever on second)" disabled data-i18n="[title]dle_librarian_remove_tooltip">
-                <i class="fa-solid fa-trash" aria-hidden="true"></i> Remove
+                <i class="fa-solid fa-trash" aria-hidden="true"></i> <span data-i18n="dle_librarian_remove_label">Remove</span>
             </button>
         </div>
         <div class="dle-librarian-toolbar-bottom">
             <button type="button" id="dle-librarian-new-entry-btn-toolbar" class="menu_button dle-tool-btn dle-librarian-new-entry-btn" data-action="librarian-new" title="Create a new vault entry from scratch" data-i18n="[title]dle_new_entry_empty_tooltip">
-                <i class="fa-solid fa-plus" aria-hidden="true"></i> New Entry
+                <i class="fa-solid fa-plus" aria-hidden="true"></i> <span data-i18n="dle_librarian_new_entry_label">New Entry</span>
             </button>
             <button type="button" class="menu_button dle-tool-btn dle-librarian-vault-review-btn" data-action="librarian-review" title="AI-guided review of your vault" data-i18n="[title]dle_vault_review_tooltip">
-                <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i> Vault Review
+                <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i> <span data-i18n="dle_librarian_vault_review_label">Vault Review</span>
             </button>
         </div>
     </div>
@@ -351,34 +351,34 @@
          role="tabpanel" aria-labelledby="dle-tab-tools">
 
         <div class="dle-tools-group">
-            <h3 class="dle-tools-group-label">Inspect</h3>
+            <h3 class="dle-tools-group-label" data-i18n="dle_drawer_tools_inspect_heading">Inspect</h3>
             <div class="dle-tools-grid">
                 <button type="button" class="menu_button dle-tool-btn" data-action="health" title="Run health check on all entries" data-i18n="[title]dle_health_check_tooltip">
-                    <i class="fa-solid fa-heartbeat" aria-hidden="true"></i> Health Check
+                    <i class="fa-solid fa-heartbeat" aria-hidden="true"></i> <span data-i18n="dle_cmd_health_popup_title">Health Check</span>
                 </button>
-                <button type="button" class="menu_button dle-tool-btn" data-action="inspect" title="Inspect last lore selection — see what matched and why">
-                    <i class="fa-solid fa-microscope" aria-hidden="true"></i> Inspect
+                <button type="button" class="menu_button dle-tool-btn" data-action="inspect" title="Inspect last lore selection — see what matched and why" data-i18n="[title]dle_drawer_tool_inspect_tooltip">
+                    <i class="fa-solid fa-microscope" aria-hidden="true"></i> <span data-i18n="dle_drawer_tool_inspect_label">Inspect</span>
                 </button>
                 <button type="button" class="menu_button dle-tool-btn" data-action="status" title="Full system status" data-i18n="[title]dle_status_tooltip">
-                    <i class="fa-solid fa-gauge-high" aria-hidden="true"></i> Status
+                    <i class="fa-solid fa-gauge-high" aria-hidden="true"></i> <span data-i18n="dle_status_button">Status</span>
                 </button>
                 <button type="button" class="menu_button dle-tool-btn" data-action="simulate" title="Simulate what entries would match" data-i18n="[title]dle_simulate_tooltip">
-                    <i class="fa-solid fa-flask" aria-hidden="true"></i> Simulate
+                    <i class="fa-solid fa-flask" aria-hidden="true"></i> <span data-i18n="dle_simulate_button">Simulate</span>
                 </button>
             </div>
         </div>
 
         <div class="dle-tools-group">
-            <h3 class="dle-tools-group-label">Notebooks &amp; History</h3>
+            <h3 class="dle-tools-group-label" data-i18n="dle_drawer_tools_notebooks_heading">Notebooks &amp; History</h3>
             <div class="dle-tools-grid">
-                <button type="button" class="menu_button dle-tool-btn" data-action="notebook" title="Author Notebook — persistent scratchpad for this chat">
-                    <i class="fa-solid fa-book" aria-hidden="true"></i> Author Notebook
+                <button type="button" class="menu_button dle-tool-btn" data-action="notebook" title="Author Notebook — persistent scratchpad for this chat" data-i18n="[title]dle_drawer_tool_notebook_tooltip">
+                    <i class="fa-solid fa-book" aria-hidden="true"></i> <span data-i18n="dle_feature_author_notebook_h4">Author Notebook</span>
                 </button>
-                <button type="button" class="menu_button dle-tool-btn" data-action="ai-notebook" title="AI Notepad — session notes written by the AI via dle-notes tags">
-                    <i class="fa-solid fa-robot" aria-hidden="true"></i> AI Notepad
+                <button type="button" class="menu_button dle-tool-btn" data-action="ai-notebook" title="AI Notepad — session notes written by the AI via dle-notes tags" data-i18n="[title]dle_drawer_tool_ai_notepad_tooltip">
+                    <i class="fa-solid fa-robot" aria-hidden="true"></i> <span data-i18n="dle_feature_ai_notepad_h4">AI Notepad</span>
                 </button>
                 <button type="button" class="menu_button dle-tool-btn" data-action="scribe-history" title="View Scribe history" data-i18n="[title]dle_scribe_history_tooltip">
-                    <i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i> Scribe History
+                    <i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i> <span data-i18n="dle_scribe_history_button">Scribe History</span>
                 </button>
             </div>
         </div>
@@ -387,43 +387,43 @@
             <h3 class="dle-tools-group-label" data-i18n="dle_ai_utilities_label">AI Utilities</h3>
             <div class="dle-tools-grid">
                 <button type="button" class="menu_button dle-tool-btn" data-action="ai-review" title="Review AI search decisions (/dle-review)" data-i18n="[title]dle_ai_review_tooltip">
-                    <i class="fa-solid fa-magnifying-glass-chart" aria-hidden="true"></i> AI Review
+                    <i class="fa-solid fa-magnifying-glass-chart" aria-hidden="true"></i> <span data-i18n="dle_ai_review_button">AI Review</span>
                 </button>
                 <button type="button" class="menu_button dle-tool-btn" data-action="summarize" title="Generate entry summaries via AI" data-i18n="[title]dle_summarize_tooltip">
-                    <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i> Summarize
+                    <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i> <span data-i18n="dle_summarize_button">Summarize</span>
                 </button>
                 <button type="button" class="menu_button dle-tool-btn" data-action="optimize-keys" title="Optimize entry keywords" data-i18n="[title]dle_optimize_keys_tooltip">
-                    <i class="fa-solid fa-key" aria-hidden="true"></i> Optimize Keys
+                    <i class="fa-solid fa-key" aria-hidden="true"></i> <span data-i18n="dle_tool_optimize_keys">Optimize Keys</span>
                 </button>
             </div>
         </div>
 
         <div class="dle-tools-group">
-            <h3 class="dle-tools-group-label">Vault Ops</h3>
+            <h3 class="dle-tools-group-label" data-i18n="dle_drawer_tools_vault_ops_heading">Vault Ops</h3>
             <div class="dle-tools-grid">
                 <button type="button" class="menu_button dle-tool-btn" data-action="import-wi" title="Import World Info (lorebook) entries from SillyTavern to Obsidian" data-i18n="[title]dle_import_wi_tooltip">
-                    <i class="fa-solid fa-file-import" aria-hidden="true"></i> Import World Info
+                    <i class="fa-solid fa-file-import" aria-hidden="true"></i> <span data-i18n="dle_import_wi_button">Import World Info</span>
                 </button>
                 <button type="button" class="menu_button dle-tool-btn" data-action="graph" title="Visualize entry relationships" data-i18n="[title]dle_graph_tool_tooltip">
-                    <i class="fa-solid fa-diagram-project" aria-hidden="true"></i> Graph
+                    <i class="fa-solid fa-diagram-project" aria-hidden="true"></i> <span data-i18n="dle_feature_graph_h4">Graph</span>
                 </button>
                 <button type="button" class="menu_button dle-tool-btn" data-action="refresh" title="Refresh vault index from Obsidian" data-i18n="[title]dle_refresh_tool_tooltip">
-                    <i class="fa-solid fa-rotate" aria-hidden="true"></i> Refresh
+                    <i class="fa-solid fa-rotate" aria-hidden="true"></i> <span data-i18n="dle_common_refresh">Refresh</span>
                 </button>
                 <button type="button" class="menu_button dle-tool-btn" data-action="pins-blocks" title="View pins and blocks for this chat" data-i18n="[title]dle_pins_blocks_tooltip">
-                    <i class="fa-solid fa-thumbtack" aria-hidden="true"></i> Pins/Blocks
+                    <i class="fa-solid fa-thumbtack" aria-hidden="true"></i> <span data-i18n="dle_pins_blocks_button">Pins/Blocks</span>
                 </button>
             </div>
         </div>
 
         <div class="dle-tools-group">
-            <h3 class="dle-tools-group-label">Get Help</h3>
+            <h3 class="dle-tools-group-label" data-i18n="dle_drawer_tools_help_heading">Get Help</h3>
             <div class="dle-tools-grid">
-                <button type="button" class="menu_button dle-tool-btn" data-action="setup" title="Guided setup wizard">
-                    <i class="fa-solid fa-hat-wizard" aria-hidden="true"></i> Setup Wizard
+                <button type="button" class="menu_button dle-tool-btn" data-action="setup" title="Guided setup wizard" data-i18n="[title]dle_drawer_tool_setup_wizard_tooltip">
+                    <i class="fa-solid fa-hat-wizard" aria-hidden="true"></i> <span data-i18n="dle_drawer_tool_setup_wizard_label">Setup Wizard</span>
                 </button>
                 <button type="button" class="menu_button dle-tool-btn" data-action="help" title="Help and documentation" data-i18n="[title]dle_help_tooltip">
-                    <i class="fa-solid fa-circle-info" aria-hidden="true"></i> Help
+                    <i class="fa-solid fa-circle-info" aria-hidden="true"></i> <span data-i18n="dle_common_help">Help</span>
                 </button>
             </div>
         </div>
@@ -475,10 +475,10 @@
                 <i class="fa-solid fa-rotate-right" aria-hidden="true"></i>
             </button>
         </div>
-        <div class="dle-ai-stats" aria-label="AI search session statistics — cumulative for this browser session, not per-chat">
-            <span class="dle-ai-stat" data-ai-stat="calls" title="AI search calls made this browser session — resets when you reload">0 calls</span>
-            <span class="dle-ai-stat" data-ai-stat="cached" title="Times AI search reused previous results instead of calling the API">0 cached</span>
-            <span class="dle-ai-stat" data-ai-stat="tokens" title="Total tokens used by AI search this session">0 tokens</span>
+        <div class="dle-ai-stats" aria-label="AI search session statistics — cumulative for this browser session, not per-chat" data-i18n="[aria-label]dle_drawer_ai_stats_aria">
+            <span class="dle-ai-stat" data-ai-stat="calls" title="AI search calls made this browser session — resets when you reload" data-i18n="[title]dle_drawer_ai_stat_calls_tooltip">0 calls</span>
+            <span class="dle-ai-stat" data-ai-stat="cached" title="Times AI search reused previous results instead of calling the API" data-i18n="[title]dle_drawer_ai_stat_cached_tooltip">0 cached</span>
+            <span class="dle-ai-stat" data-ai-stat="tokens" title="Total tokens used by AI search this session" data-i18n="[title]dle_drawer_ai_stat_tokens_tooltip">0 tokens</span>
         </div>
     </div>
 </div>
