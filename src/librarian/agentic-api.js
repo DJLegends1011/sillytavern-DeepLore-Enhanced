@@ -59,7 +59,11 @@ export function isReasoningOnlyModel(model) {
 export function getResolvedModel() {
     const connConfig = resolveConnectionConfig('librarian');
     if (connConfig.mode === 'proxy') {
-        return connConfig.model || '';
+        // v2.5 dead-head: Custom Proxy removed. Don't claim a proxy model exists —
+        // dispatch (callAI / callWithTools) will refuse before any model is needed.
+        // Returning '' matches the existing "model unknown" fallback for profile mode
+        // with empty settings, so callers that branch on truthiness behave consistently.
+        return '';
     }
     try {
         const profileId = connConfig.profileId;
@@ -89,9 +93,11 @@ export function isToolCallingSupported(model) {
     // when no profile is selected — this gate must return false, not raise.
     const resolved = resolveConnectionConfig('librarian');
     if (resolved.mode === 'proxy') {
-        if (!resolved.proxyUrl || !resolved.model) return false;
-        if (isReasoningOnlyModel(resolved.model)) return false;
-        return true;
+        // v2.5 dead-head: Custom Proxy removed. Report no tool support so the
+        // Librarian falls back to its non-tool path — that path then ALSO refuses
+        // on the actual call via callAI/callWithTools. Either way the error
+        // surfaces clearly; this just avoids a misleading "tools supported" claim.
+        return false;
     }
     if (main_api !== 'openai') return false;
     const source = oai_settings?.chat_completion_source;
@@ -108,7 +114,12 @@ export function isToolCallingSupported(model) {
 
 /** Proxy mode is always Claude format. */
 export function getProviderFormat() {
-    if (getLibrarianMode() === 'proxy') return 'claude';
+    // v2.5 dead-head: Custom Proxy removed. Return null rather than 'claude' so
+    // we don't suggest a working format for a refused-dispatch path. Callers
+    // (buildAssistantMessage / buildToolResults) only run after callWithTools
+    // would have dispatched — in proxy mode the dispatch throws first, so a
+    // null format here is never reached at runtime.
+    if (getLibrarianMode() === 'proxy') return null;
     const source = oai_settings?.chat_completion_source;
     if (source === 'claude') return 'claude';
     if (source === 'makersuite' || source === 'vertexai') return 'google';
@@ -301,7 +312,10 @@ async function callWithToolsViaProxy(connConfig, messages, tools, toolChoice, ma
 export async function callWithTools(messages, tools, toolChoice, maxTokens, signal) {
     const connConfig = resolveConnectionConfig('librarian');
     if (connConfig.mode === 'proxy') {
-        return callWithToolsViaProxy(connConfig, messages, tools, toolChoice, maxTokens, signal);
+        // v2.5 dead-head: Custom Proxy removed. `callWithToolsViaProxy` is kept
+        // for rollback safety but unreachable from runtime dispatch — throw the
+        // same clear error as callAI so users get a consistent migration message.
+        throw new Error('Custom Proxy mode was removed in v2.5. Pick a Connection Profile in DLE Settings → Connection → AI Connections.');
     }
 
     // #27 sym 2: Librarian must use its own configured profile, not ST's globally-active one.

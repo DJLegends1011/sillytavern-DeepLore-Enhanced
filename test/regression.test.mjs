@@ -4222,23 +4222,32 @@ section('AI-M3..M6 — dispatch whitelist, scrub-then-truncate, cancellable test
 // is "the explicit whitelist exists" rather than runtime behavior we can
 // simulate without ST. If anyone collapses the if/else if/else back to a binary
 // if/else, this test fails loudly.
-test('AI-M3-1: callAI dispatch is an explicit if/else if/else whitelist (no fall-through to proxy)', async () => {
+test('AI-M3-1: callAI rejects proxy mode with v2.5 deprecation error (dead-head dispatch)', async () => {
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
     const url = await import('node:url');
     const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
     const src = await fs.readFile(path.resolve(__dirname, '../src/ai/ai.js'), 'utf8');
 
-    // Required shape: profile branch, proxy branch, and a throwing else for unknown modes.
+    // v2.5: dispatch is an explicit whitelist where the proxy branch now THROWS
+    // (Custom Proxy mode removed). Required shape: profile branch present, proxy
+    // branch is explicit else-if (no silent fall-through), proxy throws the
+    // migration error, and the unknown-mode else also throws.
     assertMatch(src, /if \(mode === 'profile'\)/, 'profile branch present');
     assertMatch(src, /else if \(mode === 'proxy'\)/, 'proxy branch is explicit else-if (not bare else)');
+    // Proxy branch must throw the v2.5 deprecation error — not dispatch.
+    const proxyBranch = /else if \(mode === 'proxy'\) \{[\s\S]{0,800}?\}/;
+    const match = src.match(proxyBranch);
+    assertNotNull(match, 'proxy branch block locatable');
+    assertMatch(match[0], /throw new Error/, 'proxy branch throws');
+    assertMatch(match[0], /Custom Proxy/, 'error message mentions "Custom Proxy"');
+    assertMatch(match[0], /removed in v2\.5/, 'error message mentions "removed in v2.5"');
+    // Proxy branch must NOT dispatch to callProxyViaCorsBridge anymore.
+    assertEqual(/callProxyViaCorsBridge\(/.test(match[0]), false,
+        'proxy branch no longer dispatches to callProxyViaCorsBridge');
+    // Unknown-mode else still throws (whitelist integrity).
     assertMatch(src, /else \{[\s\S]{0,400}throw new Error\([^)]*unknown connection mode/i,
         'else branch throws "unknown connection mode" (no silent fall-through)');
-    // Negative guard: the pre-fix shape was `} else {` directly after the profile
-    // branch followed by callProxyViaCorsBridge. That shape must not return.
-    const preFixShape = /'profile'\)[\s\S]{0,500}\}\s*else\s*\{\s*\n[\s\S]{0,200}callProxyViaCorsBridge/;
-    assertEqual(preFixShape.test(src), false,
-        'old binary if/else dispatch is gone (would route inherit→proxy silently)');
 });
 
 test('AI-M3-2: dispatch error message interpolates the bad mode for diagnosability', async () => {
@@ -7107,6 +7116,95 @@ test('AGENTIC-DISPATCH-S3: suppressNextAgenticLoop gates BEFORE the librarianEna
     assertMatch(src,
         /if\s*\(\s*suppressNextAgenticLoop\s*\)\s*\{[\s\S]{0,500}?\}\s*else\s+if\s*\(\s*settings\.librarianEnabled\s*&&\s*isToolCallingSupported/,
         'AGENTIC-DISPATCH-S3: suppressNextAgenticLoop branch must be the if- side, agentic dispatch the else-if side');
+});
+
+// ============================================================================
+// PRX-MIG — v2.5 Custom Proxy → Profile migration (settings.js runMigrations,
+// fromVersion < 4 branch). Sentinel `_proxyMigrationV2_5_notice` drives the
+// boot popup in index.js.
+// ============================================================================
+
+section('PRX-MIG — v2.5 Custom Proxy deprecation migration');
+
+test('PRX-MIG-1: from v3 with aiSearchConnectionMode=proxy flips to profile and sets sentinel', async () => {
+    const { runMigrations, PROXY_DEPRECATION_MODE_KEYS } = await import('../src/settings-migrations-pure.js');
+    const settings = {
+        aiSearchConnectionMode: 'proxy',
+        scribeConnectionMode: 'profile',
+        librarianConnectionMode: 'inherit',
+        aiNotepadConnectionMode: 'proxy',
+        autoSuggestConnectionMode: 'profile',
+        optimizeKeysConnectionMode: 'profile',
+        // ProxyUrl values must survive — kept for rollback.
+        aiSearchProxyUrl: 'http://localhost:42069',
+    };
+    runMigrations(settings, 3, 4);
+    assertEqual(settings.aiSearchConnectionMode, 'profile', 'aiSearchConnectionMode flipped to profile');
+    assertEqual(settings.aiNotepadConnectionMode, 'profile', 'aiNotepadConnectionMode flipped to profile');
+    assertEqual(settings.scribeConnectionMode, 'profile', 'scribeConnectionMode untouched');
+    assertEqual(settings.librarianConnectionMode, 'inherit', 'librarianConnectionMode untouched');
+    assert(Array.isArray(settings._proxyMigrationV2_5_notice), 'PRX-MIG-1: sentinel array set');
+    assertEqual(settings._proxyMigrationV2_5_notice.length, 2, 'PRX-MIG-1: sentinel has 2 entries');
+    assert(settings._proxyMigrationV2_5_notice.includes('aiSearchConnectionMode'), 'PRX-MIG-1: sentinel includes aiSearchConnectionMode');
+    assert(settings._proxyMigrationV2_5_notice.includes('aiNotepadConnectionMode'), 'PRX-MIG-1: sentinel includes aiNotepadConnectionMode');
+    assertEqual(settings.aiSearchProxyUrl, 'http://localhost:42069', 'PRX-MIG-1: proxyUrl preserved for rollback');
+    assert(Array.isArray(PROXY_DEPRECATION_MODE_KEYS), 'PROXY_DEPRECATION_MODE_KEYS exported');
+    assertEqual(PROXY_DEPRECATION_MODE_KEYS.length, 6, 'PROXY_DEPRECATION_MODE_KEYS covers 6 features');
+});
+
+test('PRX-MIG-2: from v4 (already migrated) is no-op — proxy values left alone, no sentinel', async () => {
+    const { runMigrations } = await import('../src/settings-migrations-pure.js');
+    // User edge case: somehow already on v4 but has 'proxy' (e.g. settings-import roundtrip).
+    // The v4 branch must NOT touch values when fromVersion >= 4 — only the
+    // `fromVersion < 4` gate triggers.
+    const settings = {
+        aiSearchConnectionMode: 'proxy',
+        scribeConnectionMode: 'profile',
+    };
+    runMigrations(settings, 4, 4);
+    assertEqual(settings.aiSearchConnectionMode, 'proxy', 'PRX-MIG-2: v4→v4 leaves proxy in place');
+    assert(settings._proxyMigrationV2_5_notice === undefined, 'PRX-MIG-2: no sentinel set');
+});
+
+test('PRX-MIG-3: from v3 with NO proxy keys does NOT set sentinel', async () => {
+    const { runMigrations } = await import('../src/settings-migrations-pure.js');
+    const settings = {
+        aiSearchConnectionMode: 'profile',
+        scribeConnectionMode: 'inherit',
+        librarianConnectionMode: 'inherit',
+        aiNotepadConnectionMode: 'profile',
+        autoSuggestConnectionMode: 'profile',
+        optimizeKeysConnectionMode: 'profile',
+    };
+    runMigrations(settings, 3, 4);
+    assertEqual(settings.aiSearchConnectionMode, 'profile', 'PRX-MIG-3: profile untouched');
+    assert(settings._proxyMigrationV2_5_notice === undefined, 'PRX-MIG-3: no sentinel set when no proxy keys present');
+});
+
+test('PRX-MIG-4: idempotent — running v4 migration twice on already-migrated settings is safe', async () => {
+    const { runMigrations } = await import('../src/settings-migrations-pure.js');
+    const settings = {
+        aiSearchConnectionMode: 'proxy',
+        librarianConnectionMode: 'proxy',
+    };
+    runMigrations(settings, 3, 4);
+    // After first run: both flipped, sentinel set.
+    assertEqual(settings.aiSearchConnectionMode, 'profile', 'PRX-MIG-4: first run flipped aiSearch');
+    assertEqual(settings.librarianConnectionMode, 'profile', 'PRX-MIG-4: first run flipped librarian');
+    const sentinelCopy = settings._proxyMigrationV2_5_notice.slice();
+    // Simulate boot consumer clearing the sentinel after popup.
+    delete settings._proxyMigrationV2_5_notice;
+    // Second run from v4 → v4: must NOT re-set sentinel, must NOT touch values.
+    runMigrations(settings, 4, 4);
+    assertEqual(settings.aiSearchConnectionMode, 'profile', 'PRX-MIG-4: second run leaves profile');
+    assert(settings._proxyMigrationV2_5_notice === undefined, 'PRX-MIG-4: second run does not re-set sentinel');
+    assertEqual(sentinelCopy.length, 2, 'PRX-MIG-4: first-run sentinel captured both keys');
+});
+
+test('PRX-MIG-5: defaultSettings.settingsVersion is 4 (boot triggers migration for v3 users)', async () => {
+    const src = await import('node:fs').then(fs =>
+        fs.promises.readFile('settings.js', 'utf8'));
+    assertMatch(src, /settingsVersion:\s*4\b/, 'PRX-MIG-5: defaultSettings.settingsVersion is 4');
 });
 
 await summary('Regression Tests');

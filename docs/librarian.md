@@ -68,11 +68,13 @@ Three tools in OpenAI function calling format:
 
 ### Provider Format Handling (agentic-api.js)
 
-`callWithTools()` dispatches based on the Librarian's resolved connection mode (`resolveConnectionConfig('librarian')`):
-- **Proxy mode** (`mode === 'proxy'`): calls `callWithToolsViaProxy()` which sends directly to an Anthropic-compatible proxy (e.g. claude-code-proxy) via ST's CORS bridge. Tools are converted from OpenAI to Anthropic format (`toAnthropicTools`). Messages with `role: 'system'` are extracted into the `system` field. Response is raw Anthropic JSON — existing parsers handle it natively.
-- **Profile mode** (default): wraps `ConnectionManagerRequestService.sendRequest()` using the Librarian's configured profile (`connConfig.profileId`, resolved from `librarianProfileId` or the inherited aiSearch profile). Does NOT silently fall back to ST's globally-active profile — if Librarian's profile is unset, `callWithTools()` throws a hard "Librarian needs a profile in AI Connections settings." error so the user fixes it rather than getting silent active-profile inheritance (#27 sym 2).
+> **DEPRECATED v2.5**: Custom Proxy mode dead-headed. Dispatch throws. Connection Profile is canonical. See gotcha #68.
 
-`isToolCallingSupported()` returns `true` in proxy mode (Anthropic API always supports tools). `getProviderFormat()` returns `'claude'` in proxy mode. `getActiveMaxTokens()` uses the Librarian's configured `maxTokens` in proxy mode.
+`callWithTools()` dispatches based on the Librarian's resolved connection mode (`resolveConnectionConfig('librarian')`):
+- **Proxy mode** (`mode === 'proxy'`) **— DEPRECATED v2.5**: previously called `callWithToolsViaProxy()` which sent directly to an Anthropic-compatible proxy (e.g. claude-code-proxy) via ST's CORS bridge. Tools were converted from OpenAI to Anthropic format (`toAnthropicTools`). Messages with `role: 'system'` were extracted into the `system` field. Response was raw Anthropic JSON — existing parsers handle it natively. Code paths preserved for rollback; dispatch now throws in production.
+- **Profile mode** (default and only supported path as of v2.5): wraps `ConnectionManagerRequestService.sendRequest()` using the Librarian's configured profile (`connConfig.profileId`, resolved from `librarianProfileId` or the inherited aiSearch profile). Does NOT silently fall back to ST's globally-active profile — if Librarian's profile is unset, `callWithTools()` throws a hard "Librarian needs a profile in AI Connections settings." error so the user fixes it rather than getting silent active-profile inheritance (#27 sym 2).
+
+`isToolCallingSupported()` returns `true` in proxy mode (Anthropic API always supports tools). `getProviderFormat()` returns `'claude'` in proxy mode. `getActiveMaxTokens()` uses the Librarian's configured `maxTokens` in proxy mode. (All proxy-mode helpers DEPRECATED v2.5 — preserved for rollback only.)
 
 Four provider response formats are handled:
 

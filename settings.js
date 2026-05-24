@@ -3,6 +3,11 @@ import {
 } from '../../../extensions.js';
 import { saveSettingsDebounced } from '../../../../script.js';
 import { validateSettings } from './core/utils.js';
+// Re-export pure migration helpers for call-site compatibility (index.js, tests).
+// `runMigrations` and `PROXY_DEPRECATION_MODE_KEYS` live in the pure module so
+// regression tests can import them without ST globals.
+import { runMigrations, PROXY_DEPRECATION_MODE_KEYS } from './src/settings-migrations-pure.js';
+export { runMigrations, PROXY_DEPRECATION_MODE_KEYS };
 
 export const MODULE_NAME = 'deeplore_enhanced';
 
@@ -292,7 +297,7 @@ export const defaultSettings = {
     analyticsData: {},
     _wizardCompleted: false,
     // Increment to trigger migrations in runMigrations().
-    settingsVersion: 3,
+    settingsVersion: 4,
 };
 
 /** Per-tool settings-key map for resolveConnectionConfig(). */
@@ -346,29 +351,9 @@ export function resolveConnectionConfig(toolKey) {
     };
 }
 
-function runMigrations(settings, fromVersion, _toVersion) {
-    if (fromVersion < 1) {
-        // 0 → 1: initial versioned settings (no-op).
-        if (settings.debugMode) console.log('[DLE] Migrating settings to version 1');
-    }
-    if (fromVersion < 2) {
-        // 1 → 2: AI Connections consolidation. Rename librarianSessionModel → librarianModel.
-        // Other tools' connectionMode is intentionally NOT touched — existing users keep their explicit settings.
-        if (settings.debugMode) console.log('[DLE] Migrating settings to version 2 (AI Connections consolidation)');
-        if (settings.librarianSessionModel) {
-            settings.librarianModel = settings.librarianSessionModel;
-        }
-        delete settings.librarianSessionModel;
-    }
-    if (fromVersion < 3) {
-        // 2 → 3: only unconfigured Librarian (profile mode, no profileId) flips to 'inherit'.
-        // Users who explicitly chose a profile keep that selection.
-        if (settings.debugMode) console.log('[DLE] Migrating settings to version 3 (Librarian inherit default)');
-        if (settings.librarianConnectionMode === 'profile' && !settings.librarianProfileId) {
-            settings.librarianConnectionMode = 'inherit';
-        }
-    }
-}
+// runMigrations + PROXY_DEPRECATION_MODE_KEYS now live in
+// src/settings-migrations-pure.js so they're importable in test envs without
+// pulling in ST globals. Re-exported at the top of this file.
 
 /** Numeric range constraints + enum whitelists for validateSettings(). */
 export const settingsConstraints = {

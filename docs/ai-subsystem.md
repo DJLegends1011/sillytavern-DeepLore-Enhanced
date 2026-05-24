@@ -2,7 +2,9 @@
 
 Code-level reference for the DLE AI subsystem. For pipeline flow see `CLAUDE.md`; for generation ordering see `docs/generation-pipeline.md`.
 
-Source files: `src/ai/ai.js`, `src/ai/manifest.js`, `src/ai/proxy-api.js`, `src/ai/claude-adaptive-check.js`, `src/ai/models.js`, `settings.js` (`resolveConnectionConfig()` + `TOOL_SETTINGS_KEYS`), `src/state.js` (circuit breaker state + `recordAiFailure`/`recordAiSuccess`/`isAiCircuitOpen`/`tryAcquireHalfOpenProbe`/`releaseHalfOpenProbe`), `src/helpers.js` (`extractAiResponseClient`/`normalizeResults`/`clusterEntries`/`buildCategoryManifest`), `src/librarian/agentic-api.js` (agentic loop API layer).
+> **DEPRECATED v2.5 — Custom Proxy connection mode**: Proxy mode (`mode === 'proxy'`, direct Anthropic Messages API via ST's CORS bridge to claude-code-proxy) was dead-headed in v2.5. `callAI()` dispatch throws `"Custom Proxy mode was removed in v2.5..."` when invoked with `'proxy'`. Code paths in this doc (proxy-api.js, `callProxyViaCorsBridge`, proxy branches in the agentic API, proxy-related cache key fields, etc.) are preserved for rollback safety and remain documented below. The UI is hidden. Users with `*ConnectionMode === 'proxy'` are migrated to `'profile'` on boot (settingsVersion 3→4) and shown a one-shot popup. **Connection Profile (CMRS) is the only supported path.** See `docs/gotchas.md` #68 for migration semantics, rollback path, and test coverage.
+
+Source files: `src/ai/ai.js`, `src/ai/manifest.js`, `src/ai/proxy-api.js` (`@deprecated v2.5` — kept for rollback), `src/ai/claude-adaptive-check.js`, `src/ai/models.js`, `settings.js` (`resolveConnectionConfig()` + `TOOL_SETTINGS_KEYS`), `src/state.js` (circuit breaker state + `recordAiFailure`/`recordAiSuccess`/`isAiCircuitOpen`/`tryAcquireHalfOpenProbe`/`releaseHalfOpenProbe`), `src/helpers.js` (`extractAiResponseClient`/`normalizeResults`/`clusterEntries`/`buildCategoryManifest`), `src/librarian/agentic-api.js` (agentic loop API layer).
 
 ---
 
@@ -27,19 +29,21 @@ const TOOL_SETTINGS_KEYS = {
 resolveConnectionConfig(toolKey) -> config
 ```
 
-**Inherit fallback** (in `resolveConnectionConfig()`): When a tool's mode is `'inherit'` and `toolKey !== 'aiSearch'`, mode and profileId resolve from AI Search's settings. Model and proxyUrl cascade: tool's own value if set, else AI Search's. `maxTokens` and `timeout` always come from the tool's own settings (never inherited).
+**Inherit fallback** (in `resolveConnectionConfig()`): When a tool's mode is `'inherit'` and `toolKey !== 'aiSearch'`, mode and profileId resolve from AI Search's settings. Model and proxyUrl cascade: tool's own value if set, else AI Search's. `maxTokens` and `timeout` always come from the tool's own settings (never inherited). **v2.5:** inherit still works as a chain, but the resolved mode can no longer BE `'proxy'` — aiSearch's mode is forced to `'profile'` by migration (gotcha #68), so the inherit chain always lands on profile.
 
 **Gotchas:**
 - AI Search itself cannot inherit (it IS the root). If `aiSearchConnectionMode === 'inherit'`, that value flows through unchanged -- callers treat it as the literal mode string.
-- `librarianConnectionMode` must NOT share with retrieval (per user feedback). Don't collapse them. The `librarian` connection config is used by the agentic loop (in proxy mode) and by Emma's chat session (the review popup).
-- When `mode === 'inherit'` resolves to `'proxy'`, the proxyUrl falls back to `toolProxyUrl || aiSearch.proxyUrl` -- but when mode is NOT inherit, proxyUrl falls back to `toolProxyUrl || defaultSettings[keys.proxyUrl]` (in `resolveConnectionConfig()`). These are different fallback chains.
+- `librarianConnectionMode` must NOT share with retrieval (per user feedback). Don't collapse them. The `librarian` connection config is used by the agentic loop (in proxy mode — DEPRECATED v2.5, see gotcha #68) and by Emma's chat session (the review popup).
+- **DEPRECATED v2.5:** When `mode === 'inherit'` resolves to `'proxy'`, the proxyUrl falls back to `toolProxyUrl || aiSearch.proxyUrl` -- but when mode is NOT inherit, proxyUrl falls back to `toolProxyUrl || defaultSettings[keys.proxyUrl]` (in `resolveConnectionConfig()`). These are different fallback chains. (Both paths now unreachable in production code because proxy mode is dead-headed; preserved for rollback.)
 
 ### Agentic Loop Connection -- agentic-api.js
 
+> **DEPRECATED v2.5**: Custom Proxy mode dead-headed. Dispatch throws `"Custom Proxy mode was removed in v2.5..."`. Code paths preserved for rollback. UI hidden. Users with `librarianConnectionMode: 'proxy'` are migrated to `'profile'` on boot (settingsVersion 3→4) and shown a one-shot popup. See gotcha #68.
+
 The Librarian's agentic generation loop uses a **separate API path** from `callAI()`. `callWithTools()` in `agentic-api.js` dispatches based on the resolved Librarian connection mode:
 
-- **Proxy mode** (`resolveConnectionConfig('librarian').mode === 'proxy'`): calls `callWithToolsViaProxy()`, which sends directly to an Anthropic-compatible proxy via ST's CORS bridge (`/proxy/` endpoint). Tools are converted from OpenAI to Anthropic format. System messages are extracted into the `system` field. `isToolCallingSupported()` returns true, `getProviderFormat()` returns `'claude'`, and `getActiveMaxTokens()` uses the Librarian's configured maxTokens.
-- **Profile mode** (default): calls `ConnectionManagerRequestService.sendRequest()` using the Librarian's own configured profile (`connConfig.profileId`, resolved from `librarianProfileId` or — if mode is `inherit` — the aiSearch profile). NOT the globally-active main-chat profile. Unset profile throws hard error rather than silently inheriting active (#27 sym 2).
+- ~~**Proxy mode** (`resolveConnectionConfig('librarian').mode === 'proxy'`): calls `callWithToolsViaProxy()`, which sends directly to an Anthropic-compatible proxy via ST's CORS bridge (`/proxy/` endpoint). Tools are converted from OpenAI to Anthropic format. System messages are extracted into the `system` field. `isToolCallingSupported()` returns true, `getProviderFormat()` returns `'claude'`, and `getActiveMaxTokens()` uses the Librarian's configured maxTokens.~~ **DEPRECATED v2.5** — dispatch throws. The four call sites in `agentic-api.js` still exist (rollback-safe) but are unreachable in production.
+- **Profile mode** (default and only supported path as of v2.5): calls `ConnectionManagerRequestService.sendRequest()` using the Librarian's own configured profile (`connConfig.profileId`, resolved from `librarianProfileId` or — if mode is `inherit` — the aiSearch profile). NOT the globally-active main-chat profile. Unset profile throws hard error rather than silently inheriting active (#27 sym 2).
 
 The Librarian profile setting (`librarianConnectionMode`, `librarianProfileId`, etc.) is also used by Emma's conversation loop in `librarian-session.js` (the review popup).
 
@@ -67,9 +71,9 @@ callAI(systemPrompt, userMessage, connectionConfig) -> {text, usage}
 // connectionConfig: { mode, profileId, proxyUrl, model, maxTokens, timeout, cacheHints, signal, skipThrottle, caller }
 ```
 
-Dispatches to `callViaProfile()` when `mode === 'profile'`, or `callProxyViaCorsBridge()` when `mode === 'proxy'`. Proxy mode defaults model to `'claude-haiku-4-5-20251001'` if none specified (in `callAI()`).
+Dispatches to `callViaProfile()` when `mode === 'profile'`, or ~~`callProxyViaCorsBridge()` when `mode === 'proxy'`~~ **(DEPRECATED v2.5 — throws `"Custom Proxy mode was removed in v2.5..."`)**. Proxy mode default model `'claude-haiku-4-5-20251001'` is dead code retained for rollback. See gotcha #68.
 
-**Dispatch is an explicit whitelist** (AI-M3, 2026-05-22): the dispatch is `if (mode === 'profile') ... else if (mode === 'proxy') ... else throw`. `'inherit'` MUST be resolved by `resolveConnectionConfig` upstream — `callAI` throws loudly if it ever sees `'inherit'` or any other unknown value rather than silently falling through to the proxy branch with an empty `proxyUrl` (which would trip the circuit breaker on the second call). If you add a new mode, extend the whitelist explicitly — never widen the `else` branch.
+**Dispatch is an explicit whitelist** (AI-M3, 2026-05-22): the dispatch is `if (mode === 'profile') ... else if (mode === 'proxy') throw ... else throw`. `'inherit'` MUST be resolved by `resolveConnectionConfig` upstream — `callAI` throws loudly if it ever sees `'inherit'` or any other unknown value rather than silently falling through to the proxy branch with an empty `proxyUrl` (which would trip the circuit breaker on the second call). If you add a new mode, extend the whitelist explicitly — never widen the `else` branch. **v2.5 update:** the `'proxy'` branch now throws unconditionally (was: call `callProxyViaCorsBridge()`); the rollback path restores the dispatch.
 
 **`caller` label**: All callers now pass a `caller` string (e.g. `'aiSearch'`, `'scribe'`, `'autoSuggest'`, `'hierarchicalPreFilter'`, `'aiNotepad'`, `'optimizeKeys'`). This label is recorded in the `aiCallBuffer` for per-call diagnostics.
 
@@ -451,6 +455,8 @@ Returns true only when the feature's effective mode is `'profile'`. Proxy mode r
 
 ## 7. Proxy Mode
 
+> **DEPRECATED v2.5**: This entire section documents code that is unreachable in production. `callAI()` dispatch throws when `mode === 'proxy'`. UI hidden in settings popup + setup wizard. Files marked `@deprecated v2.5`. Preserved for rollback safety only — un-hide `<option value="proxy">` and revert the callAI dispatch throw to restore. **Profile mode is the only supported path as of v2.5.** See gotcha #68 for migration semantics, rollback path, and `PRX-MIG-1/2/3` test coverage in `test/regression.test.mjs`.
+
 ### `callProxyViaCorsBridge()` -- proxy-api.js
 
 ```js
@@ -458,7 +464,7 @@ callProxyViaCorsBridge(proxyUrl, model, systemPrompt, userMessage, maxTokens, ti
   -> {text: string, usage: {input_tokens, output_tokens}}
 ```
 
-Routes through SillyTavern's built-in CORS proxy at `/proxy/:url`. **Requires `enableCorsProxy: true` in ST's config.yaml** -- without it, the proxy returns 404 with a "CORS proxy is disabled" message, which is caught and surfaced as a descriptive error (in `callProxyViaCorsBridge()`).
+Routes through SillyTavern's built-in CORS proxy at `/proxy/:url`. **DEPRECATED v2.5 — see #68.** ~~Requires `enableCorsProxy: true` in ST's config.yaml~~ -- without it, the proxy returns 404 with a "CORS proxy is disabled" message, which is caught and surfaced as a descriptive error (in `callProxyViaCorsBridge()`). **As of v2.5 DLE AI features no longer require `enableCorsProxy: true`** — Profile mode (CMRS) routes server-side and bypasses the CORS proxy entirely. This callsite is unreachable; documentation retained for the rollback path.
 
 **URL construction** (in `callProxyViaCorsBridge()`):
 ```js

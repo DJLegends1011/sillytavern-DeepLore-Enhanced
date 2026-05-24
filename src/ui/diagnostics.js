@@ -42,16 +42,20 @@ export function runHealthCheck() {
         issues.push({ type: 'Settings', severity: 'error', entry: '—', detail: 'AI-only mode enabled but no connection profile selected' });
     }
 
-    if (settings.aiSearchEnabled && settings.aiSearchConnectionMode === 'proxy' && !settings.aiSearchProxyUrl) {
-        issues.push({ type: 'Settings', severity: 'error', entry: '—', detail: 'AI search enabled in proxy mode but no proxy URL set' });
+    // v2.5 dead-head: Custom Proxy mode removed. Surface a migration-pointing
+    // error if a legacy proxy-mode setting is still saved on an enabled feature
+    // — the old "no proxy URL set" warning is moot since users can no longer
+    // pick proxy mode in the UI; the actionable signal is "switch to a profile".
+    if (settings.aiSearchEnabled && settings.aiSearchConnectionMode === 'proxy') {
+        issues.push({ type: 'Settings', severity: 'error', entry: '—', detail: 'AI search is set to Custom Proxy mode, which was removed in v2.5. Pick a Connection Profile in DLE Settings → Connection → AI Connections.' });
     }
 
     if (settings.scribeEnabled && settings.scribeConnectionMode === 'profile' && !settings.scribeProfileId) {
         issues.push({ type: 'Settings', severity: 'error', entry: '—', detail: 'Scribe enabled in profile mode but no profile selected' });
     }
 
-    if (settings.scribeEnabled && settings.scribeConnectionMode === 'proxy' && !settings.scribeProxyUrl) {
-        issues.push({ type: 'Settings', severity: 'error', entry: '—', detail: 'Scribe enabled in proxy mode but no proxy URL set' });
+    if (settings.scribeEnabled && settings.scribeConnectionMode === 'proxy') {
+        issues.push({ type: 'Settings', severity: 'error', entry: '—', detail: 'Scribe is set to Custom Proxy mode, which was removed in v2.5. Pick a Connection Profile in DLE Settings → Connection → AI Connections.' });
     }
 
     if (!settings.unlimitedBudget && settings.maxTokensBudget < 200) {

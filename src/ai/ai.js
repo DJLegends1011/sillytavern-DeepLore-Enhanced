@@ -331,17 +331,11 @@ export async function callAI(systemPrompt, userMessage, connectionConfig) {
         if (mode === 'profile') {
             result = await callViaProfile(systemPrompt, userMessage, maxTokens, timeout, profileId, model, signal, jsonSchema, disableThinkingOnClaude);
         } else if (mode === 'proxy') {
-            if (!model) throw new Error('Proxy mode requires a model name. Set one in AI Search settings → Model Override.');
-            result = await callProxyViaCorsBridge(
-                proxyUrl,
-                model,
-                systemPrompt,
-                userMessage,
-                maxTokens,
-                timeout,
-                cacheHints,
-                signal,
-            );
+            // v2.5 dead-head: Custom Proxy mode removed. proxy-api.js is retained for
+            // rollback safety, but every dispatch site refuses with a clear error.
+            // `callProxyViaCorsBridge` import is preserved so tests can still exercise
+            // the pure scrubber / validator helpers in that module.
+            throw new Error('Custom Proxy mode was removed in v2.5. Pick a Connection Profile in DLE Settings → Connection → AI Connections.');
         } else {
             throw new Error(`callAI: unknown connection mode "${mode}" (expected 'profile' or 'proxy' — 'inherit' must be resolved by resolveConnectionConfig upstream)`);
         }

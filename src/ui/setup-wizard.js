@@ -417,6 +417,9 @@ function wirePresets() {
 }
 
 function wireAiSetup() {
+    // v2.5: proxy mode deprecated; wiring kept dormant for rollback.
+    // The proxy radio is hidden in setup-wizard.html so this toggle is a no-op
+    // in normal flow; left intact to revive cleanly if proxy mode comes back.
     $wizard.find('input[name="dle-wiz-ai-mode"]').on('change', function () {
         const mode = $(this).val();
         $wizard.find('#dle-wiz-ai-profile-fields').toggle(mode === 'profile');

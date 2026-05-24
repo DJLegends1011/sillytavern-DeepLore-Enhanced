@@ -155,7 +155,7 @@ Keyed by `"host:port"` string (e.g. `"127.0.0.1:27123"`). Each vault gets indepe
 
 ### CORS proxy usage
 
-DLE does NOT use ST's CORS proxy for Obsidian connections. The Obsidian Local REST API plugin has built-in CORS support. The CORS proxy (`enableCorsProxy: true` in ST's config.yaml) is used only for AI search connections in proxy mode, not vault fetching.
+DLE does NOT use ST's CORS proxy for Obsidian connections. The Obsidian Local REST API plugin has built-in CORS support. CORS proxy (`enableCorsProxy: true` in ST's `config.yaml`) is still required for Obsidian vault fetching if you use HTTPS with a self-signed cert (some browser/cert-store combinations route through the bridge to bypass cert errors). **AI features no longer use CORS proxy as of v2.5** (Custom Proxy mode dead-headed; Connection Profile uses CMRS server-side and bypasses the bridge entirely — see `docs/gotchas.md` #68). Pre-v2.5, the CORS proxy was used by AI search and Librarian in proxy mode; that path is now unreachable in production but the code is preserved for rollback.
 
 ### `diagnoseFetchFailure()` (obsidian-api.js:diagnoseFetchFailure())
 

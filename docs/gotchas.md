@@ -926,3 +926,26 @@ Five small pipeline-stage fixes that each shut down a specific footgun. None cha
 **M-8 — Truncation preserves canonical `_contentHash` for strip-dedup symmetry.** `core/matching.js: formatAndGroup()`. Pre-fix, the truncated entry got `_contentHash = entry._contentHash + '_trunc'` so strip-dedup would not match a truncated entry against a prior full-content injection of the same entry. The intent was "don't let a fragment masquerade as the full thing." But the practical effect was: gen 1 injects "Castle" full (hash X), gen 2's tighter budget truncates "Castle" (hash X_trunc), dedup mismatches, same entry re-injects back-to-back even though the author's canonical content is identical. Truncation is a presentation-layer concession to the budget — it must NOT change dedup identity. **New invariant:** the dedup hash always reflects pre-truncation canonical content, so budget changes don't bypass dedup. `_truncated` flag and `_originalTokens` still record that this version was cut, for any UI/analytics that need to display the fact.
 
 **Where:** `src/stages.js: applyStripDedup()` (M-4), `src/stages.js: applyContextualGating()` (M-7), `src/helpers.js: hasWarmup()` (M-6 helper), `src/pipeline/match.js` (M-6 call sites — 3 places), `core/matching.js: formatAndGroup()` truncated-entry branch (M-8). M-3 is audit-only (no code change beyond the pre-existing v2.5 vaultSource prefix in the dedup key). Tests: `M-3-1..3`, `M-4-1..2`, `M-6-1..4`, `M-7-1..3`, `M-8-1..2` in `test/regression.test.mjs` (17 assertions total). Test `F5` / `F5b` in `test/stages.test.mjs` updated to reflect M-4's behavior change.
+
+---
+
+## 68. Custom Proxy connection mode dead-headed in v2.5
+
+**Files:** `src/ai/ai.js` (callAI dispatch), `src/librarian/agentic-api.js` (4 sites), `src/ai/proxy-api.js` (kept for rollback)
+**Date:** 2026-05-23
+**Migration:** `settings.js: runMigrations` v3→v4 flips any `*ConnectionMode === 'proxy'` to `'profile'` and sets `_proxyMigrationV2_5_notice` sentinel. Boot-time popup explains + pulse-glows the migrated mode dropdown.
+**Rollback path:** Un-hide `<option value="proxy">` in `settings-popup.html` + `setup-wizard.html`. Revert `callAI` dispatch throw. `proxy-api.js` + `breaker-pure.js` classifiers still live.
+**Why dead-head not full strip:** Connection Profile may not match every user's pre-v2.5 setup; rollback safety valued. Files marked `@deprecated v2.5`.
+**Test:** `PRX-MIG-1/2/3` in `regression.test.mjs` verify migration semantics.
+
+**Affected settings (all migrated 'proxy' → 'profile' if previously set):**
+- `aiSearchConnectionMode`
+- `scribeConnectionMode`
+- `autoSuggestConnectionMode`
+- `aiNotepadConnectionMode`
+- `librarianConnectionMode`
+- `optimizeKeysConnectionMode`
+
+**Cascading consequence:** `enableCorsProxy: true` in ST's `config.yaml` is **no longer required for DLE AI features** as of v2.5 (Profile mode uses CMRS which routes server-side and bypasses the CORS bridge entirely). It IS still required if you use ST's own raw-URL AI requests outside DLE. Vault fetching via Obsidian Local REST API is unaffected — Obsidian's REST plugin has built-in CORS and DLE has never used the CORS bridge for vault traffic (see `docs/vault-and-indexing.md` §3 "CORS proxy usage").
+
+**Inherit chain:** `'inherit'` mode still works (chains to aiSearch). But aiSearch's mode can no longer BE `'proxy'` post-migration, so the inherit chain always lands on `'profile'`. No special handling needed in `resolveConnectionConfig` — the impossibility is enforced at the migration boundary, not the resolve boundary.

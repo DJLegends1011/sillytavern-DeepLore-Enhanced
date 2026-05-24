@@ -390,7 +390,10 @@ function updatePopupModeVisibility($container, settings) {
     $container.find('#dle-sp-scan-depth').closest('.flex-container').toggle(!isAiOnly);
     $container.find('#dle-sp-optimize-keys-mode').closest('.flex-container').toggleClass('dle-disabled', isAiOnly);
     $container.find('#dle-sp-case-sensitive, #dle-sp-match-whole-words, #dle-sp-recursive-scan').prop('disabled', isAiOnly);
-    $container.find('#dle-sp-ai-claude-prefix').closest('.checkbox_label').toggle(aiEnabled && isProxy);
+    // v2.5: Claude prefix toggle is proxy-only and proxy mode is deprecated.
+    // Force-hide regardless of legacy aiSearchConnectionMode state so users
+    // migrated mid-session never see a stale checkbox flash visible.
+    $container.find('#dle-sp-ai-claude-prefix').closest('.checkbox_label').hide();
     const $aiPanel = $container.find('#dle-sp-ai');
     $container.find('#dle-sp-ai-disabled-notice').toggle(!aiEnabled);
     $aiPanel.find('.dle-ai-content-wrap')
@@ -630,6 +633,10 @@ function buildAccordionHtml($container) {
 
         html += `<div class="radio_group">`;
         for (const mode of config.supportedModes) {
+            // v2.5: proxy mode deprecated; skip rendering the radio so users can't
+            // select it. supportedModes / MODE_LABELS / proxy-row markup kept intact
+            // for rollback and so legacy proxy-mode settings still resolve cleanly.
+            if (mode === 'proxy') continue;
             html += `<label title="${MODE_LABELS[mode]}"><input type="radio" name="${id}-mode" value="${mode}" /> ${MODE_LABELS[mode]}</label>`;
         }
         html += `</div>`;
@@ -697,7 +704,9 @@ function updateAccordionVisibility($container, toolKey) {
     const isSt = mode === 'st';
 
     $container.find(`.${id}-profile-row`).toggle(isProfile);
-    $container.find(`.${id}-proxy-row`).toggle(isProxy);
+    // v2.5: proxy mode deprecated; force-hide proxy URL row regardless of legacy
+    // settings state (migration nukes proxy mode, but defend the UI too).
+    $container.find(`.${id}-proxy-row`).hide();
     $container.find(`.${id}-inherit-note`).toggle(isInherit);
     // Model row: hidden in 'st' mode (override unavailable), shown otherwise.
     $container.find(`.${id}-model-row`).toggle(!isSt);

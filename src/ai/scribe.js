@@ -44,7 +44,9 @@ export async function callScribe(systemPrompt, userMessage, _settings) {
     const resolved = resolveConnectionConfig('scribe');
     const mode = resolved.mode;
 
-    if (mode === 'profile' || mode === 'proxy') {
+    if (mode === 'profile') {
+        // v2.5 dead-head: 'proxy' removed from the dispatch whitelist. callAI's
+        // proxy branch throws a migration error if a legacy 'proxy' value reaches it.
         // S4-1: mutation gate — tryAcquireHalfOpenProbe, not isAiCircuitOpen
         // (returns false in half-open-no-probe → would leak the probe slot).
         if (!tryAcquireHalfOpenProbe()) throw new Error('AI circuit breaker is open — skipping scribe');
@@ -60,6 +62,13 @@ export async function callScribe(systemPrompt, userMessage, _settings) {
             if (!isExcludedFromBreaker(err)) recordAiFailure();
             throw err;
         }
+    }
+
+    // v2.5 dead-head: refuse legacy proxy mode explicitly so it doesn't silently
+    // fall through to ST's active-connection 'st' path below (which would mask
+    // the misconfiguration and use whatever connection ST happens to have).
+    if (mode === 'proxy') {
+        throw new Error('Custom Proxy mode was removed in v2.5. Pick a Connection Profile in DLE Settings → Connection → AI Connections.');
     }
 
     // 'st' mode — ST's active connection via generateQuietPrompt.

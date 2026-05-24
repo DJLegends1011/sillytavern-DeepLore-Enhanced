@@ -223,6 +223,8 @@ See [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) for the complete list.
 
 ## Upgrading
 
+> **v2.5 note**: Custom Proxy connection mode for AI features (claude-code-proxy direct routing via ST's CORS bridge) was removed in v2.5. All AI features now use SillyTavern Connection Profiles. If you were using Custom Proxy, DLE will show a migration popup on first boot of v2.5 and automatically switch each affected feature (AI Search, Scribe, Auto Lorebook, AI Notepad, Librarian, Optimize Keys) to its corresponding Connection Profile. `enableCorsProxy: true` in ST's `config.yaml` is no longer required for DLE AI features (it remains required only for ST's own raw-URL AI requests if you use those, and for Obsidian vault fetching when using HTTPS with a self-signed cert).
+
 If you had **DeepLore Enhanced** (the previous name of this extension), update in place; same repo. No reindex needed; 1.0-beta vaults work as-is.
 
 If you had the older standalone `sillytavern-DeepLore` extension, uninstall it first. Running both at once corrupts prompt injection.

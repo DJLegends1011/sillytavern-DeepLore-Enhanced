@@ -24,6 +24,7 @@ import {
     getCurrentChatId,
 } from '../../../../script.js';
 import { renderExtensionTemplateAsync, saveMetadataDebounced } from '../../../extensions.js';
+import { callGenericPopup, POPUP_TYPE, POPUP_RESULT } from '../../../popup.js';
 import { eventSource, event_types } from '../../../events.js';
 import { promptManager, oai_settings } from '../../../openai.js';
 import { formatAndGroup } from './core/matching.js';
@@ -34,7 +35,7 @@ import {
     applyStripDedup, trackGeneration, decrementTrackers, recordAnalytics,
 } from './src/stages.js';
 import { clearPrompts } from './core/pipeline.js';
-import { getSettings, PROMPT_TAG_PREFIX, PROMPT_TAG, invalidateSettingsCache, resolveConnectionConfig, DEFAULT_AI_NOTEPAD_PROMPT } from './settings.js';
+import { getSettings, PROMPT_TAG_PREFIX, PROMPT_TAG, invalidateSettingsCache, resolveConnectionConfig, DEFAULT_AI_NOTEPAD_PROMPT, PROXY_DEPRECATION_MODE_KEYS } from './settings.js';
 import {
     vaultIndex, getWriterVisibleEntries, indexEverLoaded, indexing,
     lastScribeChatLength, scribeInProgress,
@@ -447,6 +448,137 @@ function _removePipelineStatus() {
     el.addEventListener('animationend', () => el.remove(), { once: true });
     // Fallback removal — animationend won't fire on a detached element.
     setTimeout(() => el?.remove(), 500);
+}
+
+// ============================================================================
+// v2.5 proxy-mode deprecation notice (one-shot, consumed at boot).
+// settings._proxyMigrationV2_5_notice is set by runMigrations (settings.js) when
+// at least one per-feature *ConnectionMode === 'proxy' was flipped to 'profile'.
+// This popup runs ONCE per migration event: regardless of whether the user clicks
+// "Open Settings" or "Dismiss", the sentinel is cleared so subsequent boots don't
+// re-show it. "Open Settings" jumps to Connection → AI Connections and pulses the
+// first migrated feature's accordion (precedence order from PROXY_DEPRECATION_MODE_KEYS).
+// ============================================================================
+
+/** Map mode-key → i18n key for the friendly feature label shown in the popup. */
+const PROXY_MIG_FEATURE_LABEL_I18N = {
+    aiSearchConnectionMode: 'dle_label_ai_search',
+    scribeConnectionMode: 'dle_feature_session_scribe_h4',
+    librarianConnectionMode: 'dle_analytics_section_librarian',
+    aiNotepadConnectionMode: 'dle_feature_ai_notepad_h4',
+    autoSuggestConnectionMode: 'dle_feature_auto_lorebook_h4',
+    optimizeKeysConnectionMode: 'dle_tool_optimize_keys',
+};
+
+/** Map mode-key → toolKey used by openSettingsPopup({ toolKey }) navigation. */
+const PROXY_MIG_TOOL_KEY = {
+    aiSearchConnectionMode: 'aiSearch',
+    scribeConnectionMode: 'scribe',
+    librarianConnectionMode: 'librarian',
+    aiNotepadConnectionMode: 'aiNotepad',
+    autoSuggestConnectionMode: 'autoSuggest',
+    optimizeKeysConnectionMode: 'optimizeKeys',
+};
+
+/**
+ * Resolve an i18n key with English fallback. Uses dynamic import so a missing
+ * i18n module (test envs, init failures) doesn't crash the popup path.
+ */
+async function _t(key, fallback) {
+    try {
+        const { translate } = await import('../../../i18n.js');
+        const out = translate(key, fallback);
+        return out || fallback;
+    } catch {
+        return fallback;
+    }
+}
+
+async function _maybeShowProxyDeprecationNotice() {
+    const settings = getSettings();
+    const migrated = settings._proxyMigrationV2_5_notice;
+    if (!Array.isArray(migrated) || migrated.length === 0) return;
+
+    // Sort migrated keys by PROXY_DEPRECATION_MODE_KEYS precedence so the "first"
+    // pulse target is deterministic regardless of insertion order in the sentinel.
+    const ordered = PROXY_DEPRECATION_MODE_KEYS.filter(k => migrated.includes(k));
+    const firstKey = ordered[0];
+    if (!firstKey) {
+        // Sentinel had unknown keys — clear it and bail to avoid loop on next boot.
+        delete settings._proxyMigrationV2_5_notice;
+        try { saveSettingsDebounced(); } catch { /* noop */ }
+        return;
+    }
+
+    // Resolve labels.
+    const title = await _t('dle_proxy_migration_title', 'Custom Proxy mode removed');
+    const explainer = await _t(
+        'dle_proxy_migration_explainer',
+        "DeepLore v2.5 removed the Custom Proxy connection mode. The Connection Profile path is more reliable and matches SillyTavern's connection system. Your affected features have been switched to Connection Profile, but you may need to set up profiles in SillyTavern's Connection Manager. Click below to jump to the right settings page.",
+    );
+    const affectedHeader = await _t('dle_proxy_migration_affected', 'Affected features:');
+    const okLabel = await _t('dle_proxy_migration_open_settings', 'Open Settings');
+    const cancelLabel = await _t('dle_proxy_migration_dismiss', 'Dismiss');
+
+    const labelLis = [];
+    for (const key of ordered) {
+        const i18nKey = PROXY_MIG_FEATURE_LABEL_I18N[key];
+        // Defensive fallback: key in PROXY_DEPRECATION_MODE_KEYS but missing from
+        // the label map — show the raw setting name rather than crash.
+        const fallback = i18nKey ? i18nKey.replace(/^dle_(label|feature|tool|analytics_section)_/, '') : key;
+        const label = i18nKey ? await _t(i18nKey, fallback) : fallback;
+        labelLis.push(`<li>${label}</li>`);
+    }
+    const html =
+        `<div class="dle-popup">`
+        + `<p>${explainer}</p>`
+        + `<p style="margin-top: 10px;"><strong>${affectedHeader}</strong></p>`
+        + `<ul style="margin: 4px 0 0 18px;">${labelLis.join('')}</ul>`
+        + `</div>`;
+
+    let result;
+    try {
+        result = await callGenericPopup(html, POPUP_TYPE.CONFIRM, title, {
+            okButton: okLabel,
+            cancelButton: cancelLabel,
+            wide: true,
+        });
+    } catch (err) {
+        console.warn('[DLE] proxy-deprecation popup failed:', err?.message);
+        // Treat failure as dismissal — still clear the sentinel so we don't loop.
+    }
+
+    // Clear sentinel FIRST so any later failure in navigation can't cause re-show.
+    delete settings._proxyMigrationV2_5_notice;
+    try { saveSettingsDebounced(); } catch { /* noop */ }
+
+    if (result === POPUP_RESULT.AFFIRMATIVE) {
+        try {
+            const { openSettingsPopup } = await import('./src/ui/settings-ui.js');
+            const toolKey = PROXY_MIG_TOOL_KEY[firstKey];
+            // openSettingsPopup honors { tab, subtab, toolKey } — see settings-ui.js applyNavigateTo.
+            await openSettingsPopup({ tab: 'connection', subtab: 'ai-connections', toolKey });
+
+            // Pulse-glow the first migrated feature's accordion. Defer so the
+            // popup's DOM has time to mount, then schedule removal so we never
+            // leak an orange outline indefinitely.
+            setTimeout(() => {
+                try {
+                    const $acc = $(`.dle-conn-accordion[data-tool="${toolKey}"]`);
+                    if (!$acc.length) return;
+                    $acc.addClass('dle-pulse-attention');
+                    // Scroll into view (best-effort; works for popup-mounted DOM).
+                    const el = $acc.get(0);
+                    if (el && typeof el.scrollIntoView === 'function') {
+                        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }
+                    setTimeout(() => $acc.removeClass('dle-pulse-attention'), 6000);
+                } catch (e) { console.warn('[DLE] pulse-attention failed:', e?.message); }
+            }, 250);
+        } catch (err) {
+            console.warn('[DLE] proxy-deprecation: open settings failed:', err?.message);
+        }
+    }
 }
 
 // ============================================================================
@@ -2624,6 +2756,16 @@ async function _doInit() {
         }
         _debugNamespaceUnsub = onDebugModeChanged(installDebugNamespace);
         installDebugNamespace();
+
+        // v2.5: one-shot Custom-Proxy deprecation notice. Fire-and-forget — the
+        // popup awaits user interaction internally and we don't want to block
+        // init or `_dleInitialized = true`. Defer one tick so jQuery+ST popup
+        // infra is fully mounted (mirrors the wizard's setTimeout pattern).
+        setTimeout(() => {
+            _maybeShowProxyDeprecationNotice().catch(err => {
+                console.warn('[DLE] proxy-deprecation notice failed:', err?.message);
+            });
+        }, 500);
 
         _dleInitCount++;
         pushEvent('init', { initCount: _dleInitCount, vaultCount: (getSettings().vaults || []).filter(v => v.enabled).length });

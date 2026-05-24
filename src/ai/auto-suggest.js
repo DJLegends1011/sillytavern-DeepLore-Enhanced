@@ -87,7 +87,10 @@ export async function callAutoSuggest(systemPrompt, userMessage, toolKey = 'auto
         } finally {
             if (onStop) { try { eventSource.removeListener(event_types.GENERATION_STOPPED, onStop); } catch { /* noop */ } }
         }
-    } else if (mode === 'profile' || mode === 'proxy') {
+    } else if (mode === 'profile') {
+        // v2.5 dead-head: 'proxy' removed from the dispatch whitelist. callAI's
+        // proxy branch throws a migration error; the unknown-mode `else` below
+        // also throws clearly if a legacy 'proxy' value slips through here.
         // S4-2: mutation gate (see above).
         if (!tryAcquireHalfOpenProbe()) throw new Error('AI circuit breaker is open — skipping auto-suggest');
         try {

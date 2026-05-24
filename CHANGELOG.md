@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.5 (in progress)
+
+### Removed
+
+- **Custom Proxy AI connection mode** — dead-headed. Connection Profile supersedes. Existing users migrated automatically with a one-shot notice popup. Code preserved for rollback (`src/ai/proxy-api.js` still present, marked `@deprecated v2.5`). `enableCorsProxy: true` is no longer required for DLE AI features. See `docs/gotchas.md` #68 for migration semantics and rollback path.
+
+---
+
 ## 2.0.2 (2026-04-27)
 
 > Hotfix for AI search regression on non-Claude models.

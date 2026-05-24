@@ -1,4 +1,9 @@
 /**
+ * @deprecated v2.5 — Custom Proxy connection mode removed. Use Connection Profile instead.
+ * This file kept for rollback safety. Dispatch is gated; callers throw via callAI / agentic-api.
+ * Do NOT add new consumers. Do NOT call from new code paths.
+ */
+/**
  * DeepLore Enhanced — CORS-Bridged AI Proxy Module
  * Routes proxy-mode calls through SillyTavern's built-in CORS proxy (/proxy/:url).
  * Requires `enableCorsProxy: true` in ST's config.yaml.
