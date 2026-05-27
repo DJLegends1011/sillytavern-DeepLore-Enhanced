@@ -1,18 +1,29 @@
-import { chat_metadata } from '../../../../../../script.js';
+import { chat_metadata, getCurrentChatId } from '../../../../../../script.js';
 import { escapeHtml } from '../../../../../utils.js';
 import { getSettings } from '../../settings.js';
 import {
-    vaultIndex, lastInjectionSources, previousSources, lastPipelineTrace,
+    vaultIndex,
     generationLock, indexing,
     cooldownTracker, decayTracker, chatInjectionCounts, trackerKey,
     fieldDefinitions,
 } from '../state.js';
+import { getCurrentForChat as getCurrentVerdictForChat, getPrevious as getPreviousVerdict } from '../verdict/verdict-store.js';
+
+// Local helper — UI consumers must read the CURRENT CHAT's verdict, not the
+// ring-global newest. See docs/gotchas.md #46 ("UI consumer rule").
+function _currentVerdictForChat() {
+    let cid = null;
+    try { cid = getCurrentChatId() ?? null; } catch { cid = null; }
+    return getCurrentVerdictForChat(cid);
+}
+import { diffVerdicts } from '../verdict/verdict-pure.js';
 import { DEFAULT_FIELD_DEFINITIONS } from '../fields.js';
-import { buildObsidianURI, computeSourcesDiff, categorizeRejections, resolveEntryVault, normalizePinBlock } from '../helpers.js';
+import { buildObsidianURI, categorizeRejections, resolveEntryVault, normalizePinBlock, comparePriority } from '../helpers.js';
 import {
     ds, BROWSE_ROW_HEIGHT, BROWSE_OVERSCAN,
     getMatchLabel, computeEntryTemperatures,
 } from './drawer-state.js';
+import { buildBrowseRowModel, topFolderOf } from './drawer-browse-pure.js';
 
 let _cachedRejectionMap = new Map();
 let _cachedRejectionTrace = null;
@@ -31,9 +42,15 @@ let _lastInjectionRenderHash = null;
 export function renderInjectionTab() {
     const $drawer = ds.$drawer;
     if (!$drawer) return;
-    const sources = lastInjectionSources;
-    const prev = previousSources;
-    const trace = lastPipelineTrace;
+    // Verdict store is the single source of truth for "what did DLE decide this turn."
+    // Empty verdict (injectedSources=[]) is a valid result; null means no verdict written yet.
+    // UI consumers must read the CURRENT CHAT's verdict (not ring-global newest) so a
+    // stale verdict from another chat in the ring can't flicker through on chat-switch.
+    const currentVerdict = _currentVerdictForChat();
+    const previousVerdict = getPreviousVerdict();
+    const sources = currentVerdict?.injectedSources?.length ? currentVerdict.injectedSources : null;
+    const prev = previousVerdict?.injectedSources?.length ? previousVerdict.injectedSources : null;
+    const trace = currentVerdict?.trace ?? null;
 
     // Content-hash guard — skip full re-render when inputs are unchanged. Hash inputs:
     // sources (title/tokens/matchedBy/vaultSource), filter state, trace's rejected-entry
@@ -85,7 +102,7 @@ export function renderInjectionTab() {
     $filterToggle.find('.dle-why-filter-btn').removeClass('active').attr('aria-checked', 'false').attr('tabindex', '-1');
     $filterToggle.find(`[data-filter="${ds.whyTabFilter}"]`).addClass('active').attr('aria-checked', 'true').attr('tabindex', '0');
 
-    const diff = computeSourcesDiff(sources, prev);
+    const diff = diffVerdicts(currentVerdict, previousVerdict);
 
     $diff.attr('aria-live', 'polite');
     const diffParts = [];
@@ -173,8 +190,9 @@ export function renderInjectionTab() {
     if (!showFiltered) {
         $whyNotSection.removeClass('dle-visible');
     } else if (trace) {
-        const injectedTitles = new Set(sources.map(s => s.title));
-        const rejectedGroups = categorizeRejections(trace, injectedTitles);
+        // BUG-AUDIT v2.5: trackerKey-shape keys so same-titled cross-vault entries don't collide.
+        const injectedKeys = new Set(sources.map(s => `${s.vaultSource || ''}:${(s.title || '').toLowerCase()}`));
+        const rejectedGroups = categorizeRejections(trace, injectedKeys);
         const nonEmpty = rejectedGroups.filter(g => g.entries.length > 0);
 
         if (nonEmpty.length > 0) {
@@ -374,11 +392,16 @@ export function renderBrowseTab() {
     const pinSet = new Set(pins.map(p => { const n = normalizePinBlock(p); return `${n.vaultSource || ''}:${n.title.toLowerCase()}`; }));
     const blockSet = new Set(blocks.map(b => { const n = normalizePinBlock(b); return `${n.vaultSource || ''}:${n.title.toLowerCase()}`; }));
 
-    // lastInjectionSources gets cleared after message render — fall back to lastPipelineTrace.
+    // Verdict carries both injectedSources and trace together; no post-render clear semantics.
+    // BUG-AUDIT v2.5: key injectedSet by trackerKey (vaultSource:title) to honor the
+    // multi-vault invariant. Bare title collapses Alice@vault-a + Alice@vault-b.
+    const _browseVerdict = _currentVerdictForChat();
     const injectedSet = new Set();
-    const injSources = lastInjectionSources ?? lastPipelineTrace?.injected;
+    const injSources = _browseVerdict?.injectedSources?.length
+        ? _browseVerdict.injectedSources
+        : _browseVerdict?.trace?.injected;
     if (injSources) {
-        for (const s of injSources) injectedSet.add(s.title.toLowerCase());
+        for (const s of injSources) injectedSet.add(`${s.vaultSource || ''}:${s.title.toLowerCase()}`);
     }
 
     // Search syntax: bare tokens AND substring-match title+keys; prefixes (tag:/folder:/key:/summary:/field:name=val) are field-qualified.
@@ -472,7 +495,8 @@ export function renderBrowseTab() {
         case 'tokens_desc': entries.sort((a, b) => (b.tokenEstimate || 0) - (a.tokenEstimate || 0)); break;
         case 'tokens_asc': entries.sort((a, b) => (a.tokenEstimate || 0) - (b.tokenEstimate || 0)); break;
         case 'injections_desc': entries.sort((a, b) => (chatInjectionCounts.get(trackerKey(b)) || 0) - (chatInjectionCounts.get(trackerKey(a)) || 0)); break;
-        default: entries.sort((a, b) => (a.priority || 50) - (b.priority || 50));
+        // #16: default sort honors settings.priorityReversed (explicit priority_asc/desc above bypass it).
+        default: entries.sort((a, b) => comparePriority(a, b, getSettings().priorityReversed));
     }
 
     // P10: ds.browseQuickFilter = null | 'since-gen' | 'never-injected' (undefined = off).
@@ -489,8 +513,8 @@ export function renderBrowseTab() {
         `<span class="dle-qf-pill${sinceGenActive ? ' dle-qf-active' : ''}" role="button" tabindex="0" aria-pressed="${sinceGenActive}" data-qf="since-gen">Since last gen</span>` +
         `<span class="dle-qf-pill${neverInjectedActive ? ' dle-qf-active' : ''}" role="button" tabindex="0" aria-pressed="${neverInjectedActive}" data-qf="never-injected">Never injected</span>`
     );
-    if (sinceGenActive && lastInjectionSources && previousSources) {
-        const diff = computeSourcesDiff(lastInjectionSources, previousSources);
+    if (sinceGenActive && _browseVerdict && getPreviousVerdict()) {
+        const diff = diffVerdicts(_browseVerdict, getPreviousVerdict());
         const addedKeys = new Set(diff.added.map(s => s.title.toLowerCase()));
         entries = entries.filter(e => addedKeys.has(e.title.toLowerCase()));
     } else if (neverInjectedActive) {
@@ -507,6 +531,22 @@ export function renderBrowseTab() {
     }
 
     ds.browseFilteredEntries = entries;
+    // Carto/Why nav into a collapsed folder must auto-expand that folder, otherwise the
+    // re-expand block in renderBrowseWindow finds nothing and the nav silently no-ops.
+    if (ds.browseFolderGrouping && ds.browseNavigateTarget) {
+        const target = entries.find(e => e.title === ds.browseNavigateTarget);
+        if (target) {
+            const folder = topFolderOf(target);
+            if (!(ds.browseExpandedFolders instanceof Set)) ds.browseExpandedFolders = new Set();
+            ds.browseExpandedFolders.add(folder);
+        }
+    }
+    // #13: build row model — entries-only when grouping OFF, header+entry interleaved when ON.
+    // Collapsed folders omit their entries from the model, so virtual-scroll math just walks rowModel.
+    ds.browseRowModel = buildBrowseRowModel(entries, {
+        grouping: !!ds.browseFolderGrouping,
+        expandedFolders: ds.browseExpandedFolders instanceof Set ? ds.browseExpandedFolders : null,
+    });
     ds.browseLastRangeStart = -1;
     ds.browseLastRangeEnd = -1;
     // Carto/Why? navigation target survives one filter run for auto-expand; otherwise collapse.
@@ -524,8 +564,29 @@ export function renderBrowseTab() {
     // min-height so flex doesn't collapse the virtual-scroll container.
     const listEl = $list[0];
     if (!listEl) return;
-    const totalHeight = entries.length * BROWSE_ROW_HEIGHT + (ds.browseExpandedExtraHeight || 0);
+    const totalHeight = ds.browseRowModel.length * BROWSE_ROW_HEIGHT + (ds.browseExpandedExtraHeight || 0);
     $list.css({ 'min-height': totalHeight + 'px' });
+
+    // Sync batch-toolbar pressed/visibility state — render is the single source of truth.
+    const $toolbar = $drawer.find('.dle-browse-batch-toolbar');
+    if ($toolbar.length) {
+        $toolbar.find('.dle-browse-group-toggle')
+            .attr('data-pressed', ds.browseFolderGrouping ? 'true' : 'false')
+            .attr('aria-pressed', ds.browseFolderGrouping ? 'true' : 'false');
+        $toolbar.find('.dle-browse-select-toggle')
+            .attr('data-pressed', ds.browseSelectMode ? 'true' : 'false')
+            .attr('aria-pressed', ds.browseSelectMode ? 'true' : 'false');
+        const selCount = ds.browseSelected?.size || 0;
+        const $optBtn = $toolbar.find('.dle-browse-optimize-selected');
+        const $clrBtn = $toolbar.find('.dle-browse-clear-selection');
+        if (selCount > 0) {
+            $optBtn.prop('hidden', false).find('.dle-browse-optimize-count').text(`Optimize Selected (${selCount})`);
+            $clrBtn.prop('hidden', false);
+        } else {
+            $optBtn.prop('hidden', true);
+            $clrBtn.prop('hidden', true);
+        }
+    }
 
     // Reset scroll to top only when the filter signature actually changed.
     // Resetting unconditionally on every render (e.g. pin/block toggle that re-renders) yanked the user back mid-scroll.
@@ -537,6 +598,9 @@ export function renderBrowseTab() {
         cf: ds.browseCustomFieldFilters || {},
         qf: ds.browseQuickFilter ?? null,
         sort: sortKey || 'priority_asc',
+        // #13: grouping + collapsed-folder set change row-count, so they belong in the scroll-reset signature.
+        grp: !!ds.browseFolderGrouping,
+        exp: ds.browseExpandedFolders instanceof Set ? [...ds.browseExpandedFolders].sort().join('|') : '',
     });
     const scrollContainer = $drawer.find('.dle-drawer-inner')[0];
     if (scrollContainer && ds._browseLastFilterSig !== _filterSignature) {
@@ -570,8 +634,9 @@ export function renderBrowseWindow() {
     const listEl = $list[0];
     if (!listEl) return;
 
-    const entries = ds.browseFilteredEntries;
-    if (!entries.length) { $list.empty(); return; }
+    // #13: virtual scroll now walks the row model (headers + entries) rather than entries alone.
+    const rowModel = ds.browseRowModel;
+    if (!rowModel || !rowModel.length) { $list.empty(); return; }
 
     // Scroll container is .dle-drawer-inner (scrollableInner), not the tab panel.
     const scrollContainer = $drawer.find('.dle-drawer-inner')[0];
@@ -601,7 +666,7 @@ export function renderBrowseWindow() {
     const adjustedEnd = (relativeScroll + viewHeight) > expandedBoundary
         ? (relativeScroll + viewHeight) - expandedOffset : (relativeScroll + viewHeight);
     const startIdx = Math.max(0, Math.floor(adjustedStart / BROWSE_ROW_HEIGHT) - BROWSE_OVERSCAN);
-    const endIdx = Math.min(entries.length, Math.ceil(adjustedEnd / BROWSE_ROW_HEIGHT) + BROWSE_OVERSCAN);
+    const endIdx = Math.min(rowModel.length, Math.ceil(adjustedEnd / BROWSE_ROW_HEIGHT) + BROWSE_OVERSCAN);
 
     if (startIdx === ds.browseLastRangeStart && endIdx === ds.browseLastRangeEnd) return;
     ds.browseLastRangeStart = startIdx;
@@ -612,43 +677,91 @@ export function renderBrowseWindow() {
     const blocks = chat_metadata?.deeplore_blocks || [];
     const pinSet = new Set(pins.map(p => { const n = normalizePinBlock(p); return `${n.vaultSource || ''}:${n.title.toLowerCase()}`; }));
     const blockSet = new Set(blocks.map(b => { const n = normalizePinBlock(b); return `${n.vaultSource || ''}:${n.title.toLowerCase()}`; }));
-    // CHARACTER_MESSAGE_RENDERED moves sources to message.extra; lastPipelineTrace is the fallback.
+    // Verdict carries injectedSources + trace together; one read covers both.
+    // BUG-AUDIT v2.5: key injectedSet by trackerKey to honor multi-vault invariant.
+    const _windowVerdict = _currentVerdictForChat();
+    const _windowTrace = _windowVerdict?.trace ?? null;
     const injectedSet = new Set();
-    const injSources = lastInjectionSources ?? lastPipelineTrace?.injected;
+    const injSources = _windowVerdict?.injectedSources?.length
+        ? _windowVerdict.injectedSources
+        : _windowTrace?.injected;
     if (injSources) {
-        for (const s of injSources) injectedSet.add(s.title.toLowerCase());
+        for (const s of injSources) injectedSet.add(`${s.vaultSource || ''}:${s.title.toLowerCase()}`);
     }
 
     const tempMap = computeEntryTemperatures();
 
     // Rejection lookup is cached; rebuild only when the trace identity changes.
-    if (lastPipelineTrace !== _cachedRejectionTrace) {
+    if (_windowTrace !== _cachedRejectionTrace) {
         _cachedRejectionMap = new Map();
-        _cachedRejectionTrace = lastPipelineTrace;
-        if (lastPipelineTrace) {
-            const rejGroups = categorizeRejections(lastPipelineTrace, injectedSet);
+        _cachedRejectionTrace = _windowTrace;
+        if (_windowTrace) {
+            const rejGroups = categorizeRejections(_windowTrace, injectedSet);
             for (const group of rejGroups) {
                 for (const entry of group.entries) {
-                    if (!_cachedRejectionMap.has(entry.title.toLowerCase())) {
-                        _cachedRejectionMap.set(entry.title.toLowerCase(), { label: group.label, icon: group.icon, reason: entry.reason });
+                    // BUG-AUDIT v2.5: trackerKey-shape lookup so cross-vault same-titles don't collide.
+                    const rkey = `${entry.vaultSource || ''}:${(entry.title || '').toLowerCase()}`;
+                    if (!_cachedRejectionMap.has(rkey)) {
+                        _cachedRejectionMap.set(rkey, { label: group.label, icon: group.icon, reason: entry.reason });
                     }
                 }
             }
         }
     }
     const rejectionMap = _cachedRejectionMap;
+    const selectMode = !!ds.browseSelectMode;
+    const selectedSet = ds.browseSelected instanceof Set ? ds.browseSelected : new Set();
 
     let html = '';
     for (let i = startIdx; i < endIdx; i++) {
-        const e = entries[i];
+        const row = rowModel[i];
+        if (!row) continue;
+
+        let top = i * BROWSE_ROW_HEIGHT;
+        if (ds.browseExpandedIdx !== null && i > ds.browseExpandedIdx) {
+            top += ds.browseExpandedExtraHeight;
+        }
+
+        if (row.type === 'header') {
+            // Folder header row — collapsible, hosts "select all in folder" checkbox in select mode.
+            const folder = row.folder;
+            // Tri-state: all-selected, partial, none.
+            let selCount = 0;
+            let totalInFolder = 0;
+            if (selectMode) {
+                for (const e of ds.browseFilteredEntries) {
+                    if (topFolderOf(e) !== folder) continue;
+                    totalInFolder++;
+                    if (selectedSet.has(trackerKey(e))) selCount++;
+                }
+            }
+            const allSelected = selectMode && totalInFolder > 0 && selCount === totalInFolder;
+            const someSelected = selectMode && selCount > 0 && selCount < totalInFolder;
+            const selectorHtml = selectMode
+                ? `<input type="checkbox" class="dle-browse-folder-select" data-folder="${escapeHtml(folder)}"${allSelected ? ' checked' : ''}${someSelected ? ' data-indeterminate="true"' : ''} aria-label="Select all entries in ${escapeHtml(folder)}" />`
+                : '';
+            html += `<div class="dle-browse-folder-header" data-folder="${escapeHtml(folder)}" data-expanded="${row.expanded ? 'true' : 'false'}" role="button" tabindex="0" aria-expanded="${row.expanded ? 'true' : 'false'}" aria-label="${escapeHtml(folder)} (${row.count} entries) — ${row.expanded ? 'expanded' : 'collapsed'}, click to toggle" style="position:absolute;top:${top}px;left:0;right:0;height:${BROWSE_ROW_HEIGHT}px;">`;
+            html += `${selectorHtml}<span class="dle-browse-folder-caret"><i class="fa-solid fa-chevron-right" aria-hidden="true"></i></span>`;
+            html += `<span class="dle-browse-folder-name">${escapeHtml(folder)}</span>`;
+            html += `<span class="dle-browse-folder-count">${row.count}</span>`;
+            html += `</div>`;
+            continue;
+        }
+
+        const e = row.entry;
+        if (!e) continue;
         const tl = e.title.toLowerCase();
         const pbKey = `${e.vaultSource || ''}:${tl}`;
         const isPinned = pinSet.has(pbKey);
         const isBlocked = blockSet.has(pbKey);
-        const isInjected = injectedSet.has(tl);
+        // BUG-AUDIT v2.5: injectedSet + rejectionMap keyed by trackerKey (vaultSource:title.toLowerCase()).
+        const isInjected = injectedSet.has(pbKey);
+        const trk = trackerKey(e);
+        const isSelected = selectedSet.has(trk);
 
         const classes = ['dle-browse-entry'];
         if (isInjected) classes.push('dle-browse-injected');
+        if (isSelected) classes.push('dle-browse-selected');
 
         const keysStr = e.constant ? '(constant)' : (e.keys ? e.keys.slice(0, 4).join(', ') : '');
         const prioLabel = e.constant ? 'CONST' : `P${e.priority || 50}`;
@@ -661,17 +774,16 @@ export function renderBrowseWindow() {
         if (e.constant) statusParts.push('constant');
         const browseAriaLabel = `${escapeHtml(e.title)}, ${prioLabel}${statusParts.length ? ', ' + statusParts.join(', ') : ''}`;
 
-        let top = i * BROWSE_ROW_HEIGHT;
-        if (ds.browseExpandedIdx !== null && i > ds.browseExpandedIdx) {
-            top += ds.browseExpandedExtraHeight;
-        }
-        const tempKey = trackerKey(e);
+        const tempKey = trk;
         const temp = tempMap.get(tempKey);
         const tempStyle = temp && temp.hue !== 'neutral' ? `--dle-temp:${temp.tempScore.toFixed(2)};--dle-temp-hue:${temp.hue};` : '';
         const tempClass = temp && temp.hue !== 'neutral' ? ` dle-temp-${temp.hue}` : '';
 
-        const previewId = `dle-preview-${CSS.escape(trackerKey(e))}`;
-        html += `<div class="${classes.join(' ')}${tempClass}" data-title="${escapeHtml(e.title)}" data-idx="${i}" role="listitem" aria-label="${browseAriaLabel}" aria-controls="${previewId}" aria-setsize="${entries.length}" aria-posinset="${i + 1}" style="position:absolute;top:${top}px;left:0;right:0;height:${BROWSE_ROW_HEIGHT}px;${tempStyle}">`;
+        const previewId = `dle-preview-${CSS.escape(trk)}`;
+        html += `<div class="${classes.join(' ')}${tempClass}" data-title="${escapeHtml(e.title)}" data-vault="${escapeHtml(e.vaultSource || '')}" data-tracker="${escapeHtml(trk)}" data-idx="${i}" role="listitem" aria-label="${browseAriaLabel}" aria-controls="${previewId}" aria-setsize="${rowModel.length}" aria-posinset="${i + 1}" style="position:absolute;top:${top}px;left:0;right:0;height:${BROWSE_ROW_HEIGHT}px;${tempStyle}">`;
+        if (selectMode) {
+            html += `<input type="checkbox" class="dle-browse-row-select" data-tracker="${escapeHtml(trk)}"${isSelected ? ' checked' : ''} aria-label="Select ${escapeHtml(e.title)} for batch action" />`;
+        }
         const _hoverParts = [];
         if (e.summary) _hoverParts.push(escapeHtml(e.summary));
         if (e.keys && e.keys.length) _hoverParts.push(`Keys: ${escapeHtml(e.keys.join(', '))}`);
@@ -682,11 +794,11 @@ export function renderBrowseWindow() {
         html += `<span class="dle-browse-keys" aria-label="Keywords: ${escapeHtml(keysStr || 'none')}">${escapeHtml(keysStr)}</span>`;
         html += `</div>`;
         html += `<div class="dle-browse-controls">`;
-        const rejection = !isInjected ? rejectionMap.get(tl) : null;
+        const rejection = !isInjected ? rejectionMap.get(pbKey) : null;
         if (rejection) {
             html += `<span class="dle-browse-why-not" title="${escapeHtml(rejection.label)}: ${escapeHtml(rejection.reason)}" aria-label="${escapeHtml(rejection.label)}"><i class="fa-solid ${escapeHtml(rejection.icon)}" aria-hidden="true"></i></span>`;
         }
-        const browseCount = chatInjectionCounts.get(trackerKey(e)) || 0;
+        const browseCount = chatInjectionCounts.get(trk) || 0;
         if (browseCount > 0) html += `<span class="dle-inject-count" title="Injected ${browseCount} times this chat" aria-label="Injected ${browseCount} times this chat">${browseCount}×</span>`;
         html += `<span class="dle-browse-priority${prioClass}" title="${e.constant ? 'Constant — always injected. Set via #lorebook-always tag.' : `Priority ${e.priority || 50} (lower = more important)`}" aria-label="${e.constant ? 'Constant entry, always injected' : `Priority ${e.priority || 50}`}">${prioLabel}</span>`;
         html += `<button class="dle-browse-pin${isPinned ? ' dle-pin-active' : ''}" data-entry="${escapeHtml(e.title)}" data-vault="${escapeHtml(e.vaultSource || '')}" aria-label="${isPinned ? 'Unpin' : 'Pin'}" title="${isPinned ? 'Pinned — always inject' : 'Click to pin'}"><i class="fa-solid fa-thumbtack" aria-hidden="true"></i></button>`;
@@ -697,6 +809,9 @@ export function renderBrowseWindow() {
     }
 
     $list.html(html);
+
+    // Folder-selector indeterminate state has to be set in JS (HTML attribute is not honored by checkbox).
+    $list.find('.dle-browse-folder-select[data-indeterminate="true"]').each(function () { this.indeterminate = true; });
 
     // Re-expand previously-expanded entry across re-renders, reusing cached preview HTML.
     if (ds.browseExpandedEntry) {

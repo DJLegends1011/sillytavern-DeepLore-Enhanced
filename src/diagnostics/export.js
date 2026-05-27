@@ -394,7 +394,7 @@ diagnose what's wrong with the user's setup.
 
 ### Schema reference
 
-\`pipelineTrace\` fields (in \`snapshot.pipeline.lastPipelineTrace\`):
+\`pipelineTrace\` fields (in \`snapshot.pipeline.verdict.trace\`):
 - \`keywordMatched[]\` — entries that matched on keyword/BM25 in stage 1
 - \`aiSelected[]\` — entries the AI picked in stage 2
 - \`gatedOut[]\`, \`contextualGatingRemoved[]\` — removed by era/location/scene gating

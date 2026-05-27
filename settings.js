@@ -3,6 +3,11 @@ import {
 } from '../../../extensions.js';
 import { saveSettingsDebounced } from '../../../../script.js';
 import { validateSettings } from './core/utils.js';
+// Re-export pure migration helpers for call-site compatibility (index.js, tests).
+// `runMigrations` and `PROXY_DEPRECATION_MODE_KEYS` live in the pure module so
+// regression tests can import them without ST globals.
+import { runMigrations, PROXY_DEPRECATION_MODE_KEYS } from './src/settings-migrations-pure.js';
+export { runMigrations, PROXY_DEPRECATION_MODE_KEYS };
 
 export const MODULE_NAME = 'deeplore_enhanced';
 
@@ -95,6 +100,11 @@ export const defaultSettings = {
     cacheTTL: 300,
     reviewResponseTokens: 0,
     debugMode: false,
+    // i18n: AI prompt locale (separate from UI locale). Empty = follow ST UI locale.
+    // Values: '' (follow UI), 'en', 'es-es', 'fr-fr', 'de-de', 'ja-jp', 'zh-cn'.
+    // Affects which translated default prompts the AI features use; user-overridden
+    // prompt text (settings.aiSystemPrompt, scribePrompt, etc.) is unaffected.
+    aiPromptLocale: '',
     // Author's Notebook (user-written)
     notebookEnabled: false,
     notebookPosition: 1,
@@ -114,6 +124,14 @@ export const defaultSettings = {
     aiNotepadModel: '',
     aiNotepadMaxTokens: 1024,
     aiNotepadTimeout: 30000,
+    // FIFO cap on AI Notepad entries (lines) per chat. New entries bump the oldest
+    // non-pinned line when the cap is reached. 0 disables the entry cap (the legacy
+    // 64KB char cap still applies as a backstop).
+    aiNotepadMaxEntries: 50,
+    // Bigram-Dice similarity threshold for the manual "Deduplicate" button in the
+    // AI Notepad popup. 0.0 = identical only; 1.0 = exact strings; ~0.85 catches
+    // near-duplicates without merging distinct notes that happen to share words.
+    aiNotepadFuzzyDedupThreshold: 0.85,
     // AI Search
     aiSearchEnabled: false,
     aiSearchConnectionMode: 'profile',
@@ -143,6 +161,9 @@ export const defaultSettings = {
     scribeMaxTokens: 1024,
     scribeTimeout: 60000,
     scribeScanDepth: 20,
+    // Vault name to write Scribe summaries to. '' = use primary (first enabled) vault.
+    // The value is a vault.name string (vaults are identified by name, not numeric id).
+    scribeWriteVaultId: '',
     // Vault Sync
     syncPollingInterval: 0,
     showSyncToasts: true,
@@ -158,6 +179,8 @@ export const defaultSettings = {
     autoSuggestTimeout: 30000,
     autoSuggestFolder: '',
     autoSuggestPrompt: '',
+    // Vault name to write auto-suggest entries to. '' = use primary vault.
+    autoSuggestWriteVaultId: '',
     stripDuplicateInjections: true,
     stripLookbackDepth: 2,
     // BUG-AUDIT-H20: must match HTML <option value="keyword">, NOT "keyword-only".
@@ -221,12 +244,22 @@ export const defaultSettings = {
     librarianResultTokenBudget: 1500,
     librarianAutoSendOnGap: true,
     librarianWriteFolder: '',
+    // Default vault (by name) the Librarian writes new entries to. '' = primary.
+    // Librarian popup also exposes a per-write override dropdown when multiple
+    // vaults are configured.
+    librarianWriteVaultId: '',
     librarianConnectionMode: 'inherit', // intentionally separate from aiSearchConnectionMode — see CLAUDE.md
     librarianProfileId: '',
     librarianProxyUrl: 'http://127.0.0.1:42069',
     librarianModel: '',                  // blank = inherit from AI Search.
     librarianSessionMaxTokens: 4096,
     librarianSessionTimeout: 120000,    // 120s headroom — opus-4-6 forced-final-response with thinking can exceed 60s.
+    // Hard caps on the Emma agentic loop, surfaced for users who hit them.
+    librarianMaxToolCallsPerTurn: 10,
+    librarianMaxValidationRetries: 3,
+    librarianSessionHistoryMessages: 10,    // Emma's own session memory window
+    librarianAgenticHistoryMessages: 40,    // writing-AI grounding window (buildChatMessages)
+    librarianSessionToolCallCap: null,      // null = unlimited; otherwise total search+flag calls allowed per session
     librarianManifestMaxChars: 8000,
     librarianRelatedEntriesMaxChars: 4000,
     librarianDraftMaxChars: 4000,
@@ -237,10 +270,34 @@ export const defaultSettings = {
     // librarianPerMessageActivity: ON ties gap/flag records to messages (clear on new gen, keep on swipe, delete with msg).
     // OFF = legacy behavior (gaps accumulate, dropdowns ephemeral). See CLAUDE.md "non-obvious settings semantics".
     librarianPerMessageActivity: false,
+    // #16: global priority-order toggle. false = lower priority number wins (Obsidian/WI convention).
+    // true = higher wins. Affects pipeline budget allocation, Librarian view, Cartographer display.
+    // Browse popup's explicit priority_asc/desc dropdown bypasses this — user-typed sort always wins literal.
+    priorityReversed: false,
+    // #18: when true, importEntries / upsertConvertedEntry caveman-compress each entry's body
+    // before writing to the vault. Per-import option can still override per call. Stored
+    // entries are annotated with `compress: caveman` in frontmatter for audit.
+    importCompressByDefault: false,
+    // Custom Fields in AI Manifest: whitelist of custom-field names sent to the AI
+    // alongside each candidate entry. Empty array = include ALL custom fields with
+    // values (current behavior). Populate to prune the manifest for token control —
+    // e.g. ['era', 'faction'] sends only those even if entries have more.
+    aiManifestIncludeFields: [],
+    // DLE-Side Response Prefill: inject seed text as the last assistant message so
+    // the writing AI continues from it instead of starting with "Certainly, here's…".
+    // Mode: off (no injection), anthropic-only (only when underlying model is Claude
+    // — native prefill behavior), all-providers (applies to every chat-completion
+    // source — some accept it as continuation, others may ignore).
+    responsePrefillSeed: '',
+    responsePrefillMode: 'off',
+    // #15: dedicated summary feature — /dle-summarize-range AI prompt + budgets.
+    summarySystemPrompt: '',     // empty = use built-in default in summarize.js
+    summaryMaxTokens: 400,
+    summaryTimeout: 30000,
     analyticsData: {},
     _wizardCompleted: false,
     // Increment to trigger migrations in runMigrations().
-    settingsVersion: 3,
+    settingsVersion: 4,
 };
 
 /** Per-tool settings-key map for resolveConnectionConfig(). */
@@ -294,29 +351,9 @@ export function resolveConnectionConfig(toolKey) {
     };
 }
 
-function runMigrations(settings, fromVersion, _toVersion) {
-    if (fromVersion < 1) {
-        // 0 → 1: initial versioned settings (no-op).
-        if (settings.debugMode) console.log('[DLE] Migrating settings to version 1');
-    }
-    if (fromVersion < 2) {
-        // 1 → 2: AI Connections consolidation. Rename librarianSessionModel → librarianModel.
-        // Other tools' connectionMode is intentionally NOT touched — existing users keep their explicit settings.
-        if (settings.debugMode) console.log('[DLE] Migrating settings to version 2 (AI Connections consolidation)');
-        if (settings.librarianSessionModel) {
-            settings.librarianModel = settings.librarianSessionModel;
-        }
-        delete settings.librarianSessionModel;
-    }
-    if (fromVersion < 3) {
-        // 2 → 3: only unconfigured Librarian (profile mode, no profileId) flips to 'inherit'.
-        // Users who explicitly chose a profile keep that selection.
-        if (settings.debugMode) console.log('[DLE] Migrating settings to version 3 (Librarian inherit default)');
-        if (settings.librarianConnectionMode === 'profile' && !settings.librarianProfileId) {
-            settings.librarianConnectionMode = 'inherit';
-        }
-    }
-}
+// runMigrations + PROXY_DEPRECATION_MODE_KEYS now live in
+// src/settings-migrations-pure.js so they're importable in test envs without
+// pulling in ST globals. Re-exported at the top of this file.
 
 /** Numeric range constraints + enum whitelists for validateSettings(). */
 export const settingsConstraints = {
@@ -332,6 +369,13 @@ export const settingsConstraints = {
     reviewResponseTokens: { min: 0, max: 100000 },
     aiNotepadMaxTokens: { min: 256, max: 8192 },
     aiNotepadTimeout: { min: 5000, max: 999999 },
+    aiNotepadMaxEntries: { min: 0, max: 1000 },
+    aiNotepadFuzzyDedupThreshold: { min: 0.1, max: 1 },
+    librarianMaxToolCallsPerTurn: { min: 1, max: 50 },
+    librarianMaxValidationRetries: { min: 0, max: 10 },
+    librarianSessionHistoryMessages: { min: 5, max: 100 },
+    librarianAgenticHistoryMessages: { min: 10, max: 200 },
+    librarianSessionToolCallCap: { min: 0, max: 1000 },
     aiSearchMaxTokens: { min: 64, max: 4096 },
     aiSearchTimeout: { min: 1000, max: 999999 },
     aiSearchScanDepth: { min: 1, max: 100 },
@@ -380,6 +424,7 @@ export const settingsConstraints = {
     // unrecognized value, which deduplicateMultiVault then silently treated like 'first'
     // (drop duplicates instead of preserving). Safe default 'all' restored on mismatch.
     multiVaultConflictResolution: { enum: ['all', 'first', 'last', 'merge'] },
+    responsePrefillMode: { enum: ['off', 'anthropic-only', 'all-providers'] },
 };
 
 // BUG-088: settings cache REMOVED. ST's native pattern is direct read of
@@ -404,10 +449,13 @@ export function getSettings() {
     const s = extension_settings[MODULE_NAME];
 
     // BUG-071: coerce string-typed numbers (e.g. JSON imports) or reset to default if non-numeric.
+    // Skip null — used as a sentinel meaning "unset / unlimited" for some keys
+    // (e.g. librarianSessionToolCallCap). Without this skip, Number(null) === 0
+    // would silently persist 0, which downstream code may treat as a hard cap.
     for (const key of Object.keys(settingsConstraints)) {
         // Enum keys are validated by validateSettings() below.
         if (Array.isArray(settingsConstraints[key].enum)) continue;
-        if (s[key] !== undefined && typeof s[key] !== 'number') {
+        if (s[key] !== undefined && s[key] !== null && typeof s[key] !== 'number') {
             const num = Number(s[key]);
             if (!Number.isNaN(num)) {
                 s[key] = num;
@@ -504,4 +552,38 @@ export function getVaultByName(settings, vaultName) {
         if (match) return match;
     }
     return getPrimaryVault(settings);
+}
+
+const WRITE_VAULT_KEYS = {
+    librarian: 'librarianWriteVaultId',
+    scribe: 'scribeWriteVaultId',
+    autoSuggest: 'autoSuggestWriteVaultId',
+};
+
+/**
+ * Resolve which vault a write-capable tool should target.
+ *
+ * Precedence: explicit override (per-write picker) > tool's configured default
+ * (settings.{tool}WriteVaultId) > primary enabled vault. Each step falls back
+ * to the next on miss/disabled — never throws so writes can't fail because
+ * config drifted from the vault list.
+ *
+ * @param {'librarian'|'scribe'|'autoSuggest'} toolKey
+ * @param {typeof defaultSettings} [settings]
+ * @param {string} [overrideName]  Per-call override (e.g. Librarian popup picker)
+ * @returns {{ name: string, host: string, port: number, apiKey: string, https: boolean, enabled: boolean }}
+ */
+export function resolveWriteVault(toolKey, settings, overrideName) {
+    const s = settings || getSettings();
+    if (overrideName) {
+        const match = s.vaults?.find(v => v.name === overrideName && v.enabled);
+        if (match) return match;
+    }
+    const key = WRITE_VAULT_KEYS[toolKey];
+    const configuredName = key ? s[key] : '';
+    if (configuredName) {
+        const match = s.vaults?.find(v => v.name === configuredName && v.enabled);
+        if (match) return match;
+    }
+    return getPrimaryVault(s);
 }

@@ -12,6 +12,7 @@
 ![Version](https://img.shields.io/badge/version-2.0.2-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![SillyTavern](https://img.shields.io/badge/SillyTavern-1.12.14+-orange)
+[![i18n](https://img.shields.io/badge/i18n-EN%20%7C%20ES%20%7C%20FR%20%7C%20DE%20%7C%20JA%20%7C%20ZH-purple)](https://github.com/pixelnull/sillytavern-DeepLore-Enhanced/wiki/Contributing-Translations)
 
 [**Live demo →**](https://pixelnull.github.io/sillytavern-DeepLore-Enhanced/) · [Wiki](https://github.com/pixelnull/sillytavern-DeepLore-Enhanced/wiki)
 
@@ -221,6 +222,8 @@ Full feature docs: [**Wiki →**](https://github.com/pixelnull/sillytavern-DeepL
 See [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) for the complete list.
 
 ## Upgrading
+
+> **v2.5 note**: Custom Proxy connection mode for AI features (claude-code-proxy direct routing via ST's CORS bridge) was removed in v2.5. All AI features now use SillyTavern Connection Profiles. If you were using Custom Proxy, DLE will show a migration popup on first boot of v2.5 and automatically switch each affected feature (AI Search, Scribe, Auto Lorebook, AI Notepad, Librarian, Optimize Keys) to its corresponding Connection Profile. `enableCorsProxy: true` in ST's `config.yaml` is no longer required for DLE AI features (it remains required only for ST's own raw-URL AI requests if you use those, and for Obsidian vault fetching when using HTTPS with a self-signed cert).
 
 If you had **DeepLore Enhanced** (the previous name of this extension), update in place; same repo. No reindex needed; 1.0-beta vaults work as-is.
 

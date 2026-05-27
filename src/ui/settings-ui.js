@@ -21,6 +21,7 @@ import {
     librarianSessionStats, librarianChatStats,
     claudeAutoEffortBad, claudeAutoEffortDetail, onClaudeAutoEffortChanged,
     notifyDebugModeChanged,
+    resetAiCircuitBreaker,
 } from '../state.js';
 import { ensureIndexFresh, buildIndex, buildIndexWithReuse } from '../vault/vault.js';
 import {
@@ -104,6 +105,17 @@ function bindVaultListEvents(settings, $scope = null, $addBtn = null) {
     container.off('.dleVault');
     if ($addBtn) $addBtn.off('.dleVault');
 
+    // V-M5 (2026-05-22): capture the vault name at focus time so the rename
+    // confirmation (below) can revert on cancel. Documented as a destructive
+    // operation: renaming a vault changes the trackerKey prefix (`vaultSource:title`)
+    // for every entry under it, so per-entry cooldowns, decay state, pins, blocks,
+    // chat counts, and analytics for the old name no longer match anything — they
+    // are effectively cleared. Option A (re-key all trackers on rename) was
+    // considered and deferred as future work; this UI guard documents the trade.
+    container.on('focus.dleVault', '.dle-vault-name', function () {
+        $(this).data('dleOriginalName', String($(this).val()).trim());
+    });
+
     container.on('input.dleVault', '.dle-vault-name, .dle-vault-host, .dle-vault-port, .dle-vault-key', function () {
         const row = $(this).closest('.dle-vault-row');
         const idx = parseInt(row.data('index'), 10);
@@ -140,6 +152,49 @@ function bindVaultListEvents(settings, $scope = null, $addBtn = null) {
         settings.obsidianPort = primary.port;
         settings.obsidianApiKey = primary.apiKey;
         saveSettingsDebounced();
+    });
+
+    // V-M5 (2026-05-22): when the user finishes editing a vault name (blur),
+    // surface a confirmation popup explaining that rename is destructive — per-
+    // entry cooldowns, decay, pins, blocks, chat counts, and analytics keyed on
+    // the old `vaultSource:title` no longer match anything and are effectively
+    // cleared. If the user cancels, revert the name in both the input and
+    // settings. The input-time validator above has already enforced uniqueness,
+    // so by the time we hit this handler `settings.vaults[idx].name` is the
+    // final new name and `dleOriginalName` (captured on focus) is the prior name.
+    container.on('change.dleVault', '.dle-vault-name', async function () {
+        const $input = $(this);
+        const row = $input.closest('.dle-vault-row');
+        const idx = parseInt(row.data('index'), 10);
+        if (isNaN(idx) || !settings.vaults[idx]) return;
+        const originalName = $input.data('dleOriginalName');
+        const newName = settings.vaults[idx].name;
+        // First-edit or no-op cases — nothing to confirm.
+        if (originalName == null || originalName === '' || originalName === newName) {
+            $input.data('dleOriginalName', newName);
+            return;
+        }
+        const confirmed = await callGenericPopup(
+            `<div class="dle-popup"><p>Rename vault from <strong>${escapeHtml(originalName)}</strong> to <strong>${escapeHtml(newName)}</strong>?</p>`
+                + '<p style="margin-top: 8px;"><strong>This is destructive.</strong> Renaming a vault clears per-entry cooldowns, pin/block lists, chat counts, and analytics for that vault. Entries under the new name start with fresh state.</p>'
+                + '<p style="margin-top: 8px; opacity: 0.8;">Entries themselves are not deleted — only the per-entry tracking data tied to the old vault name.</p></div>',
+            POPUP_TYPE.CONFIRM,
+            '',
+            { okButton: 'Rename', cancelButton: 'Cancel' },
+        );
+        if (!confirmed) {
+            // Revert both the input value and the settings field. Other tracker
+            // state was never re-keyed (Option B accepts that loss only when the
+            // user confirms), so there's nothing else to roll back.
+            settings.vaults[idx].name = originalName;
+            $input.val(originalName);
+            $input.data('dleOriginalName', originalName);
+            saveSettingsDebounced();
+            return;
+        }
+        // Confirmed — record the new baseline so subsequent edits prompt again
+        // (a second rename in the same session should still confirm).
+        $input.data('dleOriginalName', newName);
     });
 
     container.on('change.dleVault', '.dle-vault-enabled', function () {
@@ -230,10 +285,20 @@ function bindVaultListEvents(settings, $scope = null, $addBtn = null) {
             return;
         }
         const vaultName = settings.vaults[idx].name || `Vault ${idx + 1}`;
-        const confirmed = await callGenericPopup(
-            `Remove vault "${escapeHtml(vaultName)}"? This cannot be undone.`,
-            POPUP_TYPE.CONFIRM, '', { okButton: 'Remove', cancelButton: 'Cancel' },
-        );
+        // V-M5 (2026-05-22): wrap the confirm in try/catch — if callGenericPopup
+        // throws (popup util unavailable mid-teardown, popup root detached, etc.),
+        // we must NOT fall through and silently remove the vault. Treat any throw
+        // as "user did not confirm" and bail out.
+        let confirmed;
+        try {
+            confirmed = await callGenericPopup(
+                `Remove vault "${escapeHtml(vaultName)}"? This cannot be undone.`,
+                POPUP_TYPE.CONFIRM, '', { okButton: 'Remove', cancelButton: 'Cancel' },
+            );
+        } catch (err) {
+            console.warn('[DLE] vault-remove confirm popup failed:', err?.message);
+            return;
+        }
         if (!confirmed) return;
         settings.vaults.splice(idx, 1);
         const primary = getPrimaryVault(settings);
@@ -325,7 +390,10 @@ function updatePopupModeVisibility($container, settings) {
     $container.find('#dle-sp-scan-depth').closest('.flex-container').toggle(!isAiOnly);
     $container.find('#dle-sp-optimize-keys-mode').closest('.flex-container').toggleClass('dle-disabled', isAiOnly);
     $container.find('#dle-sp-case-sensitive, #dle-sp-match-whole-words, #dle-sp-recursive-scan').prop('disabled', isAiOnly);
-    $container.find('#dle-sp-ai-claude-prefix').closest('.checkbox_label').toggle(aiEnabled && isProxy);
+    // v2.5: Claude prefix toggle is proxy-only and proxy mode is deprecated.
+    // Force-hide regardless of legacy aiSearchConnectionMode state so users
+    // migrated mid-session never see a stale checkbox flash visible.
+    $container.find('#dle-sp-ai-claude-prefix').closest('.checkbox_label').hide();
     const $aiPanel = $container.find('#dle-sp-ai');
     $container.find('#dle-sp-ai-disabled-notice').toggle(!aiEnabled);
     $aiPanel.find('.dle-ai-content-wrap')
@@ -565,6 +633,10 @@ function buildAccordionHtml($container) {
 
         html += `<div class="radio_group">`;
         for (const mode of config.supportedModes) {
+            // v2.5: proxy mode deprecated; skip rendering the radio so users can't
+            // select it. supportedModes / MODE_LABELS / proxy-row markup kept intact
+            // for rollback and so legacy proxy-mode settings still resolve cleanly.
+            if (mode === 'proxy') continue;
             html += `<label title="${MODE_LABELS[mode]}"><input type="radio" name="${id}-mode" value="${mode}" /> ${MODE_LABELS[mode]}</label>`;
         }
         html += `</div>`;
@@ -632,7 +704,9 @@ function updateAccordionVisibility($container, toolKey) {
     const isSt = mode === 'st';
 
     $container.find(`.${id}-profile-row`).toggle(isProfile);
-    $container.find(`.${id}-proxy-row`).toggle(isProxy);
+    // v2.5: proxy mode deprecated; force-hide proxy URL row regardless of legacy
+    // settings state (migration nukes proxy mode, but defend the UI too).
+    $container.find(`.${id}-proxy-row`).hide();
     $container.find(`.${id}-inherit-note`).toggle(isInherit);
     // Model row: hidden in 'st' mode (override unavailable), shown otherwise.
     $container.find(`.${id}-model-row`).toggle(!isSt);
@@ -877,8 +951,8 @@ export async function openSettingsPopup(navigateTo = null) {
 
     function switchFeaturesSubtab($subtab) {
         const subtab = $subtab.data('features-subtab');
-        $container.find('.dle-features-subtab').removeClass('active');
-        $subtab.addClass('active');
+        $container.find('.dle-features-subtab').removeClass('active').attr('aria-selected', 'false');
+        $subtab.addClass('active').attr('aria-selected', 'true');
         $container.find('.dle-features-subpanel').removeClass('active').attr('hidden', '');
         $container.find(`[data-features-subpanel="${subtab}"]`).addClass('active').removeAttr('hidden');
         accountStorage.setItem('dle-last-features-subtab', subtab);
@@ -895,8 +969,8 @@ export async function openSettingsPopup(navigateTo = null) {
 
     function switchConnectionSubtab($subtab) {
         const subtab = $subtab.data('connection-subtab');
-        $container.find('.dle-connection-subtab').removeClass('active');
-        $subtab.addClass('active');
+        $container.find('.dle-connection-subtab').removeClass('active').attr('aria-selected', 'false');
+        $subtab.addClass('active').attr('aria-selected', 'true');
         $container.find('.dle-connection-subpanel').removeClass('active').attr('hidden', '');
         $container.find(`[data-connection-subpanel="${subtab}"]`).addClass('active').removeAttr('hidden');
         accountStorage.setItem('dle-last-connection-subtab', subtab);
@@ -906,7 +980,9 @@ export async function openSettingsPopup(navigateTo = null) {
     }
 
     // BUG-225: headers aren't interactive — remove from tab order.
-    $container.find('.dle-settings-tab--header').attr('tabindex', '-1').attr('aria-hidden', 'true');
+    // role="presentation" (in HTML) keeps them out of the accessibility tree as a "tab",
+    // while subtab children carry role="tab"/aria-selected/aria-controls themselves.
+    $container.find('.dle-settings-tab--header').attr('tabindex', '-1');
 
     $container.on('click', '.dle-settings-tab:not(.dle-settings-tab--header)', function () {
         switchSettingsTab($(this));
@@ -1091,6 +1167,29 @@ export async function openSettingsPopup(navigateTo = null) {
     });
 }
 
+// Populate a per-tool "Write to Vault" <select>. Empty option means "use primary".
+// Vaults appear by .name; disabled vaults are still listed (marked) so users can
+// see why a previously-chosen vault is now inactive instead of silently losing it.
+function populateWriteVaultSelect($el, settings, selectedName) {
+    if (!$el || $el.length === 0) return;
+    const vaults = settings.vaults || [];
+    const opts = ['<option value="">(primary vault)</option>'];
+    for (const v of vaults) {
+        const name = String(v.name || '');
+        if (!name) continue;
+        const safe = escapeHtml(name);
+        const suffix = v.enabled ? '' : ' (disabled)';
+        const sel = name === selectedName ? ' selected' : '';
+        opts.push(`<option value="${safe}"${sel}>${safe}${suffix}</option>`);
+    }
+    $el.html(opts.join(''));
+    // Keep the configured value even if no <option> matches (e.g. vault renamed).
+    // Empty value falls back to primary at resolveWriteVault() time.
+    if (selectedName && !vaults.some(v => v.name === selectedName)) {
+        $el.append(`<option value="${escapeHtml(selectedName)}" selected>${escapeHtml(selectedName)} (missing)</option>`);
+    }
+}
+
 // ── Popup: Load Settings ──
 
 function loadPopupSettings($container) {
@@ -1138,6 +1237,8 @@ function loadPopupSettings($container) {
     $c('#dle-sp-strip-dedup').prop('checked', settings.stripDuplicateInjections);
     $c('#dle-sp-strip-lookback').val(settings.stripLookbackDepth).prop('disabled', !settings.stripDuplicateInjections);
     $c('#dle-sp-keyword-occurrence-weighting').prop('checked', settings.keywordOccurrenceWeighting);
+    $c('#dle-sp-priority-reversed').prop('checked', settings.priorityReversed);
+    $c('#dle-sp-import-compress-default').prop('checked', settings.importCompressByDefault);
     $c('#dle-sp-contextual-gating-tolerance').val(settings.contextualGatingTolerance);
 
     // ── Injection tab ──
@@ -1169,6 +1270,9 @@ function loadPopupSettings($container) {
     $c('#dle-sp-ai-scan-depth').val(settings.aiSearchScanDepth);
     $c('#dle-sp-ai-system-prompt').val(settings.aiSearchSystemPrompt);
     $c('#dle-sp-ai-summary-length').val(settings.aiSearchManifestSummaryLength);
+    $c('#dle-sp-ai-manifest-fields').val(Array.isArray(settings.aiManifestIncludeFields) ? settings.aiManifestIncludeFields.join(', ') : '');
+    $c('#dle-sp-response-prefill-mode').val(settings.responsePrefillMode || 'off');
+    $c('#dle-sp-response-prefill-seed').val(settings.responsePrefillSeed || '');
     $c('#dle-sp-ai-claude-prefix').prop('checked', settings.aiSearchClaudeCodePrefix);
     $c('#dle-sp-ai-force-user-role').prop('checked', settings.aiForceUserRole);
     $c('#dle-sp-scribe-informed-retrieval').prop('checked', settings.scribeInformedRetrieval);
@@ -1208,12 +1312,18 @@ function loadPopupSettings($container) {
     $c('#dle-sp-librarian-max-results').val(settings.librarianMaxResults);
     $c('#dle-sp-librarian-token-budget').val(settings.librarianResultTokenBudget);
     $c('#dle-sp-librarian-write-folder').val(settings.librarianWriteFolder || '');
+    populateWriteVaultSelect($c('#dle-sp-librarian-write-vault'), settings, settings.librarianWriteVaultId || '');
     $c('#dle-sp-librarian-auto-send').prop('checked', settings.librarianAutoSendOnGap !== false);
     $c('#dle-sp-librarian-sub').toggle(settings.librarianEnabled);
     $c('#dle-sp-librarian-manifest-max').val(settings.librarianManifestMaxChars || 8000);
     $c('#dle-sp-librarian-related-max').val(settings.librarianRelatedEntriesMaxChars || 4000);
     $c('#dle-sp-librarian-chat-context-max').val(settings.librarianChatContextMaxChars || 4000);
     $c('#dle-sp-librarian-draft-max').val(settings.librarianDraftMaxChars || 4000);
+    $c('#dle-sp-librarian-max-tool-calls-per-turn').val(settings.librarianMaxToolCallsPerTurn ?? 10);
+    $c('#dle-sp-librarian-max-validation-retries').val(settings.librarianMaxValidationRetries ?? 3);
+    $c('#dle-sp-librarian-session-history').val(settings.librarianSessionHistoryMessages ?? 10);
+    $c('#dle-sp-librarian-agentic-history').val(settings.librarianAgenticHistoryMessages ?? 40);
+    $c('#dle-sp-librarian-session-tool-cap').val(settings.librarianSessionToolCallCap ?? '');
     $c(`input[name="dle-sp-librarian-prompt-mode"][value="${settings.librarianSystemPromptMode || 'default'}"]`).prop('checked', true);
     $c('#dle-sp-librarian-custom-prompt').val(settings.librarianCustomSystemPrompt || '');
     $c('#dle-sp-librarian-custom-prompt').toggle((settings.librarianSystemPromptMode || 'default') !== 'default');
@@ -1247,6 +1357,8 @@ function loadPopupSettings($container) {
     $c(`input[name="dle-sp-ai-notepad-mode"][value="${aiNbMode}"]`).prop('checked', true);
     $c('#dle-sp-ai-notepad-prompt').val(settings.aiNotepadPrompt || '');
     $c('#dle-sp-ai-notepad-extract-prompt').val(settings.aiNotepadExtractPrompt || '');
+    $c('#dle-sp-ai-notepad-max-entries').val(settings.aiNotepadMaxEntries ?? 50);
+    $c('#dle-sp-ai-notepad-fuzzy-threshold').val(settings.aiNotepadFuzzyDedupThreshold ?? 0.85);
     $c('#dle-sp-ai-notepad-mode-tag-desc').toggle(aiNbMode === 'tag');
     $c('#dle-sp-ai-notepad-mode-extract-desc').toggle(aiNbMode === 'extract');
     $c('#dle-sp-ai-notepad-tag-options').toggle(aiNbMode === 'tag');
@@ -1259,6 +1371,7 @@ function loadPopupSettings($container) {
     $c('#dle-sp-scribe-controls').find('.menu_button').toggleClass('disabled', !settings.scribeEnabled);
     $c('#dle-sp-scribe-interval').val(settings.scribeInterval);
     $c('#dle-sp-scribe-folder').val(settings.scribeFolder);
+    populateWriteVaultSelect($c('#dle-sp-scribe-write-vault'), settings, settings.scribeWriteVaultId || '');
     $c('#dle-sp-scribe-scan-depth').val(settings.scribeScanDepth);
     $c('#dle-sp-scribe-prompt').val(settings.scribePrompt);
 
@@ -1267,6 +1380,7 @@ function loadPopupSettings($container) {
     $c('#dle-sp-autosuggest-controls').find('input, textarea, select').prop('disabled', !settings.autoSuggestEnabled);
     $c('#dle-sp-autosuggest-interval').val(settings.autoSuggestInterval);
     $c('#dle-sp-autosuggest-folder').val(settings.autoSuggestFolder);
+    populateWriteVaultSelect($c('#dle-sp-autosuggest-write-vault'), settings, settings.autoSuggestWriteVaultId || '');
     $c('#dle-sp-autosuggest-skip-review').prop('checked', settings.autoSuggestSkipReview);
     $c('#dle-sp-autosuggest-prompt').val(settings.autoSuggestPrompt);
     $c('#dle-sp-optimize-keys-prompt').val(settings.optimizeKeysPrompt);
@@ -1647,6 +1761,8 @@ function bindPopupEvents($container) {
     $c('#dle-sp-strip-dedup').on('change', function () { settings.stripDuplicateInjections = $(this).prop('checked'); $c('#dle-sp-strip-lookback').prop('disabled', !settings.stripDuplicateInjections); saveSettingsDebounced(); });
     $c('#dle-sp-strip-lookback').on('input', function () { settings.stripLookbackDepth = numVal($(this).val(), 2); saveSettingsDebounced(); });
     $c('#dle-sp-keyword-occurrence-weighting').on('change', function () { settings.keywordOccurrenceWeighting = $(this).prop('checked'); saveSettingsDebounced(); });
+    $c('#dle-sp-priority-reversed').on('change', function () { settings.priorityReversed = $(this).prop('checked'); saveSettingsDebounced(); });
+    $c('#dle-sp-import-compress-default').on('change', function () { settings.importCompressByDefault = $(this).prop('checked'); saveSettingsDebounced(); });
     $c('#dle-sp-contextual-gating-tolerance').on('change', function () { settings.contextualGatingTolerance = String($(this).val()); saveSettingsDebounced(); });
 
     // ── Injection tab ──
@@ -1718,6 +1834,13 @@ function bindPopupEvents($container) {
     $c('#dle-sp-ai-scan-depth').on('input', function () { settings.aiSearchScanDepth = numVal($(this).val(), 4); saveSettingsDebounced(); });
     $c('#dle-sp-ai-system-prompt').on('input', function () { settings.aiSearchSystemPrompt = String($(this).val()); saveSettingsDebounced(); });
     $c('#dle-sp-ai-summary-length').on('input', function () { settings.aiSearchManifestSummaryLength = numVal($(this).val(), 600); saveSettingsDebounced(); });
+    $c('#dle-sp-ai-manifest-fields').on('input', function () {
+        const raw = String($(this).val() || '');
+        settings.aiManifestIncludeFields = raw.split(',').map(s => s.trim()).filter(Boolean);
+        saveSettingsDebounced();
+    });
+    $c('#dle-sp-response-prefill-mode').on('change', function () { settings.responsePrefillMode = String($(this).val()); saveSettingsDebounced(); });
+    $c('#dle-sp-response-prefill-seed').on('input', function () { settings.responsePrefillSeed = String($(this).val()); saveSettingsDebounced(); });
     $c('#dle-sp-ai-claude-prefix').on('change', function () { settings.aiSearchClaudeCodePrefix = $(this).prop('checked'); saveSettingsDebounced(); });
     $c('#dle-sp-ai-force-user-role').on('change', function () { settings.aiForceUserRole = $(this).prop('checked'); saveSettingsDebounced(); });
     $c('#dle-sp-scribe-informed-retrieval').on('change', function () { settings.scribeInformedRetrieval = $(this).prop('checked'); saveSettingsDebounced(); });
@@ -1742,7 +1865,8 @@ function bindPopupEvents($container) {
     $c('#dle-sp-graph-gravity').on('input', function () { const v = parseFloat($(this).val()); settings.graphGravity = isNaN(v) ? 11.0 : v; saveSettingsDebounced(); });
     $c('#dle-sp-graph-damping').on('input', function () { const v = parseFloat($(this).val()); settings.graphDamping = isNaN(v) ? 0.50 : v; saveSettingsDebounced(); });
     // BUG-AUDIT-14: isNaN check instead of || so 0 is valid.
-    $c('#dle-sp-graph-hover-falloff').on('input', function () { const v = parseFloat($(this).val()); settings.graphHoverFalloff = isNaN(v) ? 0.9 : v; saveSettingsDebounced(); });
+    // Audit S1-04: previous fallback 0.9 exceeded the constraint max 0.85 — use the actual default.
+    $c('#dle-sp-graph-hover-falloff').on('input', function () { const v = parseFloat($(this).val()); settings.graphHoverFalloff = isNaN(v) ? 0.55 : v; saveSettingsDebounced(); });
     $c('#dle-sp-graph-edge-filter-alpha').on('input', function () { settings.graphEdgeFilterAlpha = parseFloat($(this).val()) || 0.05; saveSettingsDebounced(); });
 
     // ── Librarian settings ──
@@ -1824,11 +1948,37 @@ function bindPopupEvents($container) {
     $c('#dle-sp-librarian-max-results').on('input', function () { settings.librarianMaxResults = numVal($(this).val(), 5); saveSettingsDebounced(); });
     $c('#dle-sp-librarian-token-budget').on('input', function () { settings.librarianResultTokenBudget = numVal($(this).val(), 1500); saveSettingsDebounced(); });
     $c('#dle-sp-librarian-write-folder').on('input', function () { settings.librarianWriteFolder = $(this).val().trim(); saveSettingsDebounced(); });
+    $c('#dle-sp-librarian-write-vault').on('change', function () { settings.librarianWriteVaultId = String($(this).val() || ''); saveSettingsDebounced(); });
     $c('#dle-sp-librarian-auto-send').on('change', function () { settings.librarianAutoSendOnGap = $(this).prop('checked'); saveSettingsDebounced(); });
     $c('#dle-sp-librarian-manifest-max').on('input', function () { settings.librarianManifestMaxChars = numVal($(this).val(), 8000); saveSettingsDebounced(); });
     $c('#dle-sp-librarian-related-max').on('input', function () { settings.librarianRelatedEntriesMaxChars = numVal($(this).val(), 4000); saveSettingsDebounced(); });
     $c('#dle-sp-librarian-chat-context-max').on('input', function () { settings.librarianChatContextMaxChars = numVal($(this).val(), 4000); saveSettingsDebounced(); });
     $c('#dle-sp-librarian-draft-max').on('input', function () { settings.librarianDraftMaxChars = numVal($(this).val(), 4000); saveSettingsDebounced(); });
+    $c('#dle-sp-librarian-max-tool-calls-per-turn').on('input', function () {
+        settings.librarianMaxToolCallsPerTurn = Math.max(1, Math.min(50, numVal($(this).val(), 10)));
+        saveSettingsDebounced();
+    });
+    $c('#dle-sp-librarian-max-validation-retries').on('input', function () {
+        settings.librarianMaxValidationRetries = Math.max(0, Math.min(10, numVal($(this).val(), 3)));
+        saveSettingsDebounced();
+    });
+    $c('#dle-sp-librarian-session-history').on('input', function () {
+        settings.librarianSessionHistoryMessages = Math.max(5, Math.min(100, numVal($(this).val(), 10)));
+        saveSettingsDebounced();
+    });
+    $c('#dle-sp-librarian-agentic-history').on('input', function () {
+        settings.librarianAgenticHistoryMessages = Math.max(10, Math.min(200, numVal($(this).val(), 40)));
+        saveSettingsDebounced();
+    });
+    $c('#dle-sp-librarian-session-tool-cap').on('input', function () {
+        const raw = String($(this).val()).trim();
+        if (raw === '') { settings.librarianSessionToolCallCap = null; }
+        else {
+            const n = Math.max(0, Math.min(1000, Number(raw)));
+            settings.librarianSessionToolCallCap = Number.isFinite(n) ? n : null;
+        }
+        saveSettingsDebounced();
+    });
     $c('input[name="dle-sp-librarian-prompt-mode"]').on('change', function () {
         settings.librarianSystemPromptMode = $(this).val();
         $c('#dle-sp-librarian-custom-prompt').toggle(settings.librarianSystemPromptMode !== 'default');
@@ -1836,12 +1986,22 @@ function bindPopupEvents($container) {
     });
     $c('#dle-sp-librarian-custom-prompt').on('input', function () { settings.librarianCustomSystemPrompt = $(this).val(); saveSettingsDebounced(); });
 
+    // M6 (2026-05-22): per-popup AbortController for the Test Connection button.
+    // Second click while a probe is in flight CANCELS instead of being ignored.
+    let _testAiAbortCtrl = null;
     $c('#dle-sp-test-ai').on('click', async function () {
         const $btn = $(this);
-        if ($btn.prop('disabled')) return;
-        $btn.prop('disabled', true).addClass('disabled');
+        // Second click while in-flight = cancel.
+        if (_testAiAbortCtrl) {
+            try { _testAiAbortCtrl.abort(); } catch { /* noop */ }
+            _testAiAbortCtrl = null;
+            return;
+        }
+        _testAiAbortCtrl = new AbortController();
+        const ctrl = _testAiAbortCtrl;
+        $btn.addClass('dle-testing');
         const statusEl = $c('#dle-sp-ai-status');
-        statusEl.text('Testing...').removeClass('success failure');
+        statusEl.text('Testing... (click again to cancel)').removeClass('success failure');
         try {
             if (settings.aiSearchConnectionMode === 'profile') {
                 if (!settings.aiSearchProfileId) throw new Error('No connection profile selected');
@@ -1849,11 +2009,15 @@ function bindPopupEvents($container) {
                 const m = getProfileModelHint(); statusEl.text(`Connected${m ? ' (' + m + ')' : ''}`).addClass('success').removeClass('failure');
             } else {
                 if (!settings.aiSearchModel) throw new Error('Proxy mode requires a model name');
-                const data = await testProxyConnection(settings.aiSearchProxyUrl, settings.aiSearchModel);
-                statusEl.text(data.ok ? 'Connected' : `Failed: ${data.error}`).toggleClass('success', data.ok).toggleClass('failure', !data.ok);
+                const data = await testProxyConnection(settings.aiSearchProxyUrl, settings.aiSearchModel, ctrl.signal);
+                if (data.aborted) { statusEl.text('Cancelled').removeClass('success failure'); }
+                else { statusEl.text(data.ok ? 'Connected' : `Failed: ${data.error}`).toggleClass('success', data.ok).toggleClass('failure', !data.ok); }
             }
-        } catch (err) { statusEl.text(`Error: ${err.message}`).addClass('failure').removeClass('success'); }
-        finally { $btn.prop('disabled', false).removeClass('disabled'); }
+        } catch (err) {
+            if (ctrl.signal.aborted || err?.userAborted) { statusEl.text('Cancelled').removeClass('success failure'); }
+            else { statusEl.text(`Error: ${err.message}`).addClass('failure').removeClass('success'); }
+        }
+        finally { if (_testAiAbortCtrl === ctrl) _testAiAbortCtrl = null; $btn.removeClass('dle-testing'); }
     });
 
     $c('#dle-sp-preview-ai').on('click', async function () {
@@ -1885,6 +2049,22 @@ function bindPopupEvents($container) {
     });
     $c('#dle-sp-ai-notepad-prompt').on('input', function () { settings.aiNotepadPrompt = $(this).val(); saveSettingsDebounced(); });
     $c('#dle-sp-ai-notepad-extract-prompt').on('input', function () { settings.aiNotepadExtractPrompt = $(this).val(); saveSettingsDebounced(); });
+    $c('#dle-sp-ai-notepad-max-entries').on('input', function () {
+        const raw = String($(this).val()).trim();
+        // Empty input → fall back to default 50 instead of silently storing 0
+        // (Number('') === 0). 0 is still allowed as an explicit "no limit" choice.
+        const n = raw === '' ? 50 : Math.max(0, Math.min(1000, numVal(raw, 50)));
+        settings.aiNotepadMaxEntries = n; saveSettingsDebounced();
+    });
+    $c('#dle-sp-ai-notepad-fuzzy-threshold').on('input', function () {
+        const raw = String($(this).val()).trim();
+        let v = raw === '' ? 0.85 : Number(raw);
+        // Refuse non-positive / non-finite values — threshold 0 would merge
+        // everything on Deduplicate click. Lower bound 0.1 prevents accidental data-wipe.
+        if (!Number.isFinite(v) || v <= 0) v = 0.85;
+        v = Math.max(0.1, Math.min(1, v));
+        settings.aiNotepadFuzzyDedupThreshold = v; saveSettingsDebounced();
+    });
     $c('input[name="dle-sp-ai-notepad-mode"]').on('change', function () {
         settings.aiNotepadMode = $(this).val(); saveSettingsDebounced();
         const isTag = settings.aiNotepadMode === 'tag';
@@ -1905,6 +2085,7 @@ function bindPopupEvents($container) {
     });
     $c('#dle-sp-scribe-interval').on('input', function () { settings.scribeInterval = numVal($(this).val(), 5); saveSettingsDebounced(); });
     $c('#dle-sp-scribe-folder').on('input', function () { settings.scribeFolder = String($(this).val()).trim() || 'Sessions'; saveSettingsDebounced(); });
+    $c('#dle-sp-scribe-write-vault').on('change', function () { settings.scribeWriteVaultId = String($(this).val() || ''); saveSettingsDebounced(); });
     $c('#dle-sp-scribe-prompt').on('input', function () { settings.scribePrompt = String($(this).val()); saveSettingsDebounced(); });
     $c('#dle-sp-scribe-scan-depth').on('input', function () { settings.scribeScanDepth = numVal($(this).val(), 20); saveSettingsDebounced(); });
 
@@ -1915,6 +2096,7 @@ function bindPopupEvents($container) {
     });
     $c('#dle-sp-autosuggest-interval').on('input', function () { settings.autoSuggestInterval = numVal($(this).val(), 10); saveSettingsDebounced(); });
     $c('#dle-sp-autosuggest-folder').on('input', function () { settings.autoSuggestFolder = String($(this).val()).trim(); saveSettingsDebounced(); });
+    $c('#dle-sp-autosuggest-write-vault').on('change', function () { settings.autoSuggestWriteVaultId = String($(this).val() || ''); saveSettingsDebounced(); });
     $c('#dle-sp-autosuggest-skip-review').on('change', function () { settings.autoSuggestSkipReview = $(this).prop('checked'); saveSettingsDebounced(); });
     $c('#dle-sp-autosuggest-prompt').on('input', function () { settings.autoSuggestPrompt = String($(this).val()); saveSettingsDebounced(); });
     $c('#dle-sp-optimize-keys-prompt').on('input', function () { settings.optimizeKeysPrompt = String($(this).val()); saveSettingsDebounced(); });
@@ -2009,6 +2191,21 @@ function bindPopupEvents($container) {
 
         loadPopupSettings($container);
         toastr.success('All settings reset to defaults. Connections preserved.', 'DeepLore Enhanced');
+    });
+
+    // PR #28.1 — Settings-side Reset AI Breaker.
+    $c('#dle-sp-reset-ai-breaker').on('click', async function () {
+        const confirmed = await callGenericPopup(
+            '<div style="text-align:center;"><p><strong>Reset AI breaker?</strong></p><p>Pending cooldown will be discarded. Next AI call attempts immediately.</p></div>',
+            POPUP_TYPE.CONFIRM, '', { okButton: 'Reset', cancelButton: 'Cancel' },
+        );
+        if (!confirmed) return;
+        const result = resetAiCircuitBreaker();
+        if (result.wasOpen) {
+            toastr.success(result.hadPendingCooldown ? 'AI breaker reset — pending cooldown discarded.' : 'AI breaker reset.', 'DeepLore Enhanced');
+        } else {
+            toastr.info('AI breaker was already closed.', 'DeepLore Enhanced');
+        }
     });
 
     const clampMap = {

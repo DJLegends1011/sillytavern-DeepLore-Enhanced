@@ -45,11 +45,9 @@ export let aiSearchCache = { hash: '', manifestHash: '', chatLineCount: 0, resul
 /** Session-scoped AI search usage stats */
 export let aiSearchStats = { calls: 0, cachedHits: 0, totalInputTokens: 0, totalOutputTokens: 0, hierarchicalCalls: 0 };
 
-/** Context Cartographer: sources from the last generation interceptor run */
-export let lastInjectionSources = null;
-/** Epoch at which lastInjectionSources was set (race condition guard: CHARACTER_MESSAGE_RENDERED
- *  only consumes sources when this matches chatEpoch, preventing stale cross-chat writes) */
-export let lastInjectionEpoch = -1;
+// REMOVED (Verdict refactor, 2026-05-22): lastInjectionSources, lastInjectionEpoch.
+// Replaced by src/verdict/verdict-store.js (per-turn record carrying injectedSources +
+// epoch + msgIdx + chatId + trace together; consumed via getCurrent() / getByMessage()).
 
 /** Session Scribe: chat position tracking, lock, and prior note context */
 export let lastScribeChatLength = 0;
@@ -74,8 +72,8 @@ export let syncIntervalId = null;
 /** Track last warning ratio to avoid spamming toasts */
 export let lastWarningRatio = 0;
 
-/** Last pipeline trace for /dle-inspect command */
-export let lastPipelineTrace = null;
+// REMOVED (Verdict refactor, 2026-05-22): lastPipelineTrace.
+// Replaced by verdict.trace (single source of truth, lives on the verdict written per turn).
 
 /** Auto Lorebook: message counter */
 export let autoSuggestMessageCount = 0;
@@ -102,8 +100,8 @@ export let lastVaultFailureCount = 0;
 /** How many vaults were attempted during the last index build */
 export let lastVaultAttemptCount = 0;
 
-/** Context Cartographer: previous sources for diff display */
-export let previousSources = null;
+// REMOVED (Verdict refactor, 2026-05-22): previousSources.
+// Replaced by verdict ring buffer's getPrevious() — last verdict for the current chat.
 
 /** Average token estimate across all vault entries (computed at index build) */
 export let vaultAvgTokens = 0;
@@ -150,8 +148,8 @@ export function emptyAiSearchCache() {
     return { hash: '', manifestHash: '', chatLineCount: 0, results: [], matchedEntrySet: null };
 }
 export function resetAiSearchCache() { aiSearchCache = emptyAiSearchCache(); }
-export function setLastInjectionSources(v) { lastInjectionSources = v; }
-export function setLastInjectionEpoch(v) { lastInjectionEpoch = v; }
+// setLastInjectionSources / setLastInjectionEpoch removed in Verdict refactor. Use
+// writeVerdict from src/verdict/verdict-store.js instead.
 export function setLastScribeChatLength(v) { lastScribeChatLength = v; }
 export function setScribeInProgress(v) { scribeInProgress = v; }
 
@@ -188,7 +186,9 @@ export function setGenerationCount(v) { generationCount = v; }
 export function setInjectionHistory(v) { injectionHistory = v; }
 export function setSyncIntervalId(v) { syncIntervalId = v; }
 export function setLastWarningRatio(v) { lastWarningRatio = v; }
-export function setLastPipelineTrace(v) { lastPipelineTrace = v; notifyPipelineTraceUpdated(); }
+// setLastPipelineTrace removed in Verdict refactor. The verdict carries the trace;
+// onPipelineComplete + onInjectionSourcesReady cover legacy notification semantics, and
+// onVerdictChanged (src/verdict/verdict-store.js) covers per-write subscriptions.
 export function setAutoSuggestMessageCount(v) { autoSuggestMessageCount = v; }
 export function setDecayTracker(v) { decayTracker = v; }
 export function setConsecutiveInjections(v) { consecutiveInjections = v; }
@@ -196,7 +196,8 @@ export function setChatInjectionCounts(v) { chatInjectionCounts = v; notifyChatI
 export function setLastHealthResult(v) { lastHealthResult = v; }
 export function setLastVaultFailureCount(v) { lastVaultFailureCount = v; }
 export function setLastVaultAttemptCount(v) { lastVaultAttemptCount = v; }
-export function setPreviousSources(v) { previousSources = v; }
+// setPreviousSources removed in Verdict refactor. The verdict ring buffer's natural
+// chronological ordering is the new diff anchor.
 export function setVaultAvgTokens(v) { vaultAvgTokens = v; }
 export function setChatEpoch(v) { chatEpoch = v; }
 
@@ -358,10 +359,46 @@ export function recordAiSuccess() {
 }
 /** Release the half-open probe without recording success or failure.
  *  Used by hierarchicalPreFilter: its outcome shouldn't affect the circuit breaker
- *  since the main aiSearch() call handles its own probing independently. */
+ *  since the main aiSearch() call handles its own probing independently.
+ *
+ *  L2 fix (v2.5): notify circuit observers so UI surfaces (drawer status
+ *  indicator, settings-ui chip) refresh while a cooldown-expired probe is
+ *  in flight and then released. Without this, the chip can show stale
+ *  "probing" state until the next record* call mutates the breaker. The
+ *  underlying open/closed flags are unchanged here (this is a release, not
+ *  a transition), so observers see the same `isAiCircuitOpen()` value —
+ *  but the probe-in-flight aspect (exposed via subsystem getters) shifts. */
 export function releaseHalfOpenProbe() {
     aiCircuitHalfOpenProbe = false;
     aiCircuitProbeTimestamp = 0;
+    notifyCircuitStateChanged();
+}
+/**
+ * PR #28.1 — Operator-initiated reset of the AI circuit breaker.
+ *
+ * Differs from `recordAiSuccess()` in intent: recordAiSuccess fires on actual
+ * AI call success and zeroes the failure count as a side effect; this is the
+ * "user clicked Reset" path that discards pending cooldown without claiming
+ * the underlying service recovered. Same end state (closed circuit) but the
+ * emitted event is tagged so analytics / debug logs can distinguish manual
+ * resets from organic recoveries.
+ *
+ * Returns the prior state so callers can show a meaningful toast.
+ * @returns {{ wasOpen: boolean, hadPendingCooldown: boolean }}
+ */
+export function resetAiCircuitBreaker() {
+    const wasOpen = aiCircuitOpen;
+    const hadPendingCooldown = wasOpen && (Date.now() - aiCircuitOpenedAt) < AI_CIRCUIT_COOLDOWN;
+    aiCircuitHalfOpenProbe = false;
+    aiCircuitProbeTimestamp = 0;
+    aiCircuitFailures = 0;
+    aiCircuitOpen = false;
+    aiCircuitOpenedAt = 0;
+    if (wasOpen) {
+        pushEventSafe('ai_circuit', { from: 'open', to: 'closed', manualReset: true });
+        notifyCircuitStateChanged();
+    }
+    return { wasOpen, hadPendingCooldown };
 }
 /**
  * Circuit breaker state machine (3 states):
@@ -624,23 +661,8 @@ export function notifyChatInjectionCountsUpdated() {
     }
 }
 
-// Distinct from notifyPipelineComplete — avoids firing the SR "Pipeline complete:
-// N entries injected" announcement for every trace write.
-/** @type {Set<() => void>} */
-const pipelineTraceCallbacks = new Set();
-
-export function onPipelineTraceUpdated(callback) {
-    pipelineTraceCallbacks.add(callback);
-    return () => pipelineTraceCallbacks.delete(callback);
-}
-
-export function clearPipelineTraceCallbacks() { pipelineTraceCallbacks.clear(); }
-
-export function notifyPipelineTraceUpdated() {
-    for (const cb of [...pipelineTraceCallbacks]) {
-        try { cb(); } catch (err) { console.warn('[DLE] pipelineTrace callback error:', err.message); }
-    }
-}
+// pipelineTraceCallbacks family removed in Verdict refactor. Use onVerdictChanged
+// from src/verdict/verdict-store.js — fires on every writeVerdict + clearChat + hydrateChat.
 
 /**
  * Compute overall system status for the header badge. Pure (reads state).

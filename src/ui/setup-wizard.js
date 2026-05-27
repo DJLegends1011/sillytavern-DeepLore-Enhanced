@@ -163,8 +163,8 @@ function goToPage(page) {
     $wizard.find('.dle-wizard-page').removeClass('active');
     $wizard.find(`[data-wizard-page="${page}"]`).addClass('active');
 
-    $wizard.find('.dle-wizard-step').removeClass('active');
-    $wizard.find(`.dle-wizard-step[data-step="${page}"]`).addClass('active');
+    $wizard.find('.dle-wizard-step').removeClass('active').attr('aria-selected', 'false').removeAttr('aria-current');
+    $wizard.find(`.dle-wizard-step[data-step="${page}"]`).addClass('active').attr('aria-selected', 'true').attr('aria-current', 'step');
 
     updateNavButtons();
 
@@ -281,8 +281,14 @@ function wireConnectionTest() {
                     });
                 }
                 $wizard.find('#dle-wiz-trust-cert').hide();
+                // V-M4 (2026-05-22): testConnection may return `{ ok: false, diagnosis }`
+                // with no `error` set. escapeHtml(undefined) renders the literal string
+                // "undefined" — fall back to a diagnosis-derived string so the user
+                // doesn't see "Error: undefined" in the UI.
+                const errorText = result.error
+                    || (result.diagnosis ? `Diagnosis: ${result.diagnosis}` : 'Unknown error');
                 $result
-                    .html(`<i class="fa-solid fa-circle-xmark"></i> ${escapeHtml(result.error)}`)
+                    .html(`<i class="fa-solid fa-circle-xmark"></i> ${escapeHtml(errorText)}`)
                     .removeClass('dle-wizard-result-success')
                     .addClass('dle-wizard-result-error')
                     .show();
@@ -411,6 +417,9 @@ function wirePresets() {
 }
 
 function wireAiSetup() {
+    // v2.5: proxy mode deprecated; wiring kept dormant for rollback.
+    // The proxy radio is hidden in setup-wizard.html so this toggle is a no-op
+    // in normal flow; left intact to revive cleanly if proxy mode comes back.
     $wizard.find('input[name="dle-wiz-ai-mode"]').on('change', function () {
         const mode = $(this).val();
         $wizard.find('#dle-wiz-ai-profile-fields').toggle(mode === 'profile');

@@ -123,10 +123,12 @@ if (lockEpoch === generationLockEpoch) setGenerationLock(false);
 
 **Additional rules:**
 - Throttle failures and user aborts do NOT trip the breaker (they're not service failures)
-- `hierarchicalPreFilter` uses `releaseHalfOpenProbe()` — its outcome shouldn't affect the breaker since `aiSearch()` handles its own probing
+- HTTP 401/403 (auth) and 429 (rate-limit) do NOT trip the breaker — bad API key / provider backoff is user-actionable, not service-down
+- Every AI wrapper MUST route its trip decision through the shared `isExcludedFromBreaker(err)` helper — implemented in `src/ai/breaker-pure.js` (intentionally ST-free for tests) and re-exported from `src/ai/ai.js` so existing import paths keep working. Inline classification by copy-paste drifts (Wave-B audit found 4 wrappers with 3-condition checks missing 401/403/429 — second bad-key call locked the user out for 30s). Single source of truth is non-negotiable.
+- `hierarchicalPreFilter` uses `releaseHalfOpenProbe()` — its outcome shouldn't affect the breaker since `aiSearch()` handles its own probing. Every non-error early-return MUST release the probe (use the `_releaseProbeOnce` try/finally pattern); otherwise HALF-OPEN slot leaks for the full `AI_PROBE_TIMEOUT` (60s) and blocks recovery (AI-audit H1).
 - Stale probes auto-reset after 60s (`AI_PROBE_TIMEOUT`)
 
-**Where:** `src/state.js` — AI circuit breaker state machine: `recordAiFailure()`, `recordAiSuccess()`, `releaseHalfOpenProbe()`, `isAiCircuitOpen()`, `tryAcquireHalfOpenProbe()` (see header comment on the 3-state CLOSED/OPEN/HALF-OPEN machine).
+**Where:** `src/state.js` — AI circuit breaker state machine: `recordAiFailure()`, `recordAiSuccess()`, `releaseHalfOpenProbe()`, `isAiCircuitOpen()`, `tryAcquireHalfOpenProbe()` (see header comment on the 3-state CLOSED/OPEN/HALF-OPEN machine). `src/ai/breaker-pure.js` — `isExcludedFromBreaker()` shared classifier (pure, ST-free for tests; re-exported from `src/ai/ai.js`). Mirrored in `docs/ai-subsystem.md` "What does NOT trip the breaker" + "All Circuit Breaker Callers" table.
 
 ---
 
@@ -212,13 +214,13 @@ if (lockEpoch === generationLockEpoch) setGenerationLock(false);
 
 ---
 
-## 19. `pseudonymizeTrace()` Must Scrub `matchedBy` and AI `reason`
+## 19. `pseudonymizeTrace()` Must Scrub `matchedBy`, AI `reason`, and `vaultSource`
 
-**Rule:** When pseudonymizing pipeline trace data for diagnostic export, `matchedBy` fields and AI `reason` strings must also be scrubbed.
+**Rule:** When pseudonymizing pipeline trace data for diagnostic export, `matchedBy` fields, AI `reason` strings, AND per-entry `vaultSource` must also be scrubbed.
 
-**Why:** `matchedBy` can contain entry titles and keyword matches that reveal vault content. AI `reason` strings contain the AI's rationale for selecting entries, which can quote vault content or character names. Without scrubbing these, the "anonymized" diagnostic export leaks user content.
+**Why:** `matchedBy` can contain entry titles and keyword matches that reveal vault content. AI `reason` strings contain the AI's rationale for selecting entries, which can quote vault content or character names. `vaultSource` (per the CLAUDE.md trackerKey invariant — trace entries carry `vaultSource` per-entry) leaks the user's project/vault name (e.g. "Private Lore Vault") even though title/filename are pseudonymized. Without scrubbing these, the "anonymized" diagnostic export leaks user content.
 
-**Where:** `src/diagnostics/state-snapshot.js` `pseudonymizeTrace()`.
+**Where:** `src/diagnostics/pseudonymize-trace.js` (pure helpers, extracted 2026-05-22 for testability). `src/diagnostics/state-snapshot.js` wraps them via `pseudonymizeTracePure(trace, _pseudoCtx)` using a per-snapshot context. Regression coverage: `test/diagnostics.test.mjs` section F (13 tests, F1–F13) — the `vaultSource` leak (F4) was the gap closed alongside the extraction.
 
 ---
 
@@ -236,11 +238,11 @@ if (lockEpoch === generationLockEpoch) setGenerationLock(false);
 
 ## 21. Agentic Loop Epoch Guards
 
-**Rule:** The agentic loop MUST check `epoch !== chatEpoch || lockEpoch !== generationLockEpoch` at the TOP of every iteration, before any API call or state mutation. Also check `signal.aborted`.
+**Rule:** The agentic loop MUST check `epoch !== chatEpoch || lockEpoch !== generationLockEpoch` at the TOP of every iteration, before any API call or state mutation. Also check `signal.aborted`. The FLAG-phase helper `_runFlagIteration` mirrors this guard — it accepts `epoch` and `lockEpoch` parameters and re-checks them around its own awaits (before `callWithTools`, after `callWithTools`, around each `flagLoreAction` call, and after each `flagLoreAction` returns before pushing to `toolActivity`).
 
-**Why:** The agentic loop runs multiple iterations (up to 15) with awaits between each. A chat switch or stop-button press during any iteration must bail the loop immediately. Without this, a stale loop writes tool results and creates messages in the wrong chat.
+**Why:** The agentic loop runs multiple iterations (up to 15) with awaits between each. A chat switch or stop-button press during any iteration must bail the loop immediately. Without this, a stale loop writes tool results and creates messages in the wrong chat. For `_runFlagIteration` specifically (CRIT-LIB-1, 2026-05-22), the inner `flagLoreAction` has its own epoch check at `librarian-tools.js:544` that protects `persistGaps` (chat_metadata stays clean), but `sessionActivityLog.push` and `incrementStats` fire unconditionally — without the helper's own guards, an old-chat flag would pollute the NEW chat's Activity feed and double-count session/chat stats. `AbortError` in `_runFlagIteration` is re-thrown (not swallowed) so the main loop's catch can surface it via the standard abort path.
 
-**Where:** `src/librarian/agentic-loop.js: runAgenticLoop()` — epoch + abort check at iteration start of the main `for` loop.
+**Where:** `src/librarian/agentic-loop.js: runAgenticLoop()` — epoch + abort check at iteration start of the main `for` loop. `src/librarian/agentic-loop.js: _runFlagIteration()` — pre-call guard, post-`callWithTools` guard, mid-flag-loop guard, post-`flagLoreAction` guard (skips `toolActivity.push` on epoch shift). Tests: `test/regression.test.mjs` F5a–F5d (CRIT-LIB-1).
 
 ---
 
@@ -400,7 +402,7 @@ if (lockEpoch === generationLockEpoch) setGenerationLock(false);
 
 **Why (BUG-396):** Strip-dedup uses `deeplore_injection_log` to suppress entries "already in context." If a user deletes a message and clears picks, the log still contains entries from the deleted message — strip-dedup removes them as duplicates even though the injected content is gone. The user sees entries vanish despite their keywords appearing in chat.
 
-**Where:** `src/drawer/drawer-events.js` Clear Picks handler. The three things it must clear: (1) `aiSearchCache` — AI selection results, (2) `lastInjectionSources` — drawer display, (3) `chat_metadata.deeplore_injection_log` — strip-dedup history.
+**Where:** `src/drawer/drawer-events.js` Clear Picks handler. The two things it must clear: (1) `aiSearchCache` — AI selection results, (2) `chat_metadata.deeplore_injection_log` — strip-dedup history. The verdict store is NOT cleared here — clearing user-visible verdict history would lose the "what did DLE choose for message #47?" affordance. Next generation's verdict supersedes the prior one naturally.
 
 ---
 
@@ -470,13 +472,15 @@ if (lockEpoch === generationLockEpoch) setGenerationLock(false);
 
 ---
 
-## 43. `onProse` Re-Checks Epoch After Every Await
+## 43. Every Post-Await Branch in the Agentic Dispatch Re-Checks Epoch
 
-**Rule:** Inside `onProse` (Librarian write-tool handler), re-check both `chatEpoch` and `generationLockEpoch` after each await — at minimum after `saveReply()` and after `saveChatConditional()`. If the epoch changed during the await, set `proseMsg = null` and bail.
+**Rule:** EVERY async branch in the Librarian agentic dispatch must re-check both `chatEpoch` and `generationLockEpoch` after each await. This applies to all THREE branches: (a) the `onProse` callback (in-loop save), (b) the post-loop `if (proseMsg)` normal path that attaches `tool_calls` and may inject the dropdown, (c) the post-loop `else if (result.prose)` fallback path that handles "AI returned prose without calling write() tool". At minimum check after `saveReply()` and after `saveChatConditional()`. If the epoch changed during the await, bail (set `proseMsg = null` in `onProse`; plain `return` in the post-loop branches).
 
-**Why:** `saveReply` awaits `MESSAGE_RECEIVED` and `CHARACTER_MESSAGE_RENDERED` handlers; either can yield long enough for the user to switch chats. Without a recheck, `chat[chat.length - 1]` is captured on the *new* active chat, then `saveChatConditional()` persists the captured ref into a chat that the user never asked to write to. The post-loop recheck at the outer try/catch isn't enough on its own — it stops downstream mutation but doesn't prevent the trailing `saveChatConditional()` inside `onProse` from running on the wrong chat. Pattern: any new await inside `onProse` needs another guard.
+**Why:** `saveReply` awaits `MESSAGE_RECEIVED` and `CHARACTER_MESSAGE_RENDERED` handlers; either can yield long enough for the user to switch chats. Without a recheck, `chat[chat.length - 1]` is captured on the *new* active chat, then `saveChatConditional()` persists the captured ref into a chat that the user never asked to write to. The post-loop recheck at the outer try/catch isn't enough on its own — it stops further mutation but doesn't prevent a trailing `saveChatConditional()` (or `injectLibrarianDropdown`) from running on the wrong chat.
 
-**Where:** `index.js` — Librarian dispatch block (`runAgenticLoop` callback path).
+Branch-specific risks: the `proseMsg` branch (b) is partially-safe because `proseMsg` itself is a direct reference captured against the correct old chat, so the `extra.deeplore_tool_calls = ...` write is safe across a CHAT_CHANGED. BUT the subsequent `injectLibrarianDropdown(chat.length - 1, ...)` uses a `chat.length` lookup that resolves against the NEW active chat — leaking a dropdown into the wrong chat's DOM. The recheck between `await saveChatConditional()` and `injectLibrarianDropdown` covers this (F6 fix, 2026-05-22). The fallback branch (c) is more dangerous because it bypasses `onProse` entirely — its `chat[chat.length - 1]` resolution and the dropdown injection both target the new chat (F3 fix, 2026-05-22). Every new await added to this dispatch needs another guard; do not inherit guards from neighboring blocks.
+
+**Where:** `index.js` — Librarian dispatch block: `onProse` callback (in-loop saves), the post-loop `if (proseMsg)` normal path (post-`saveChatConditional` recheck before `injectLibrarianDropdown`), and the post-loop `else if (result.prose)` fallback branch (rechecks after both `saveReply` and `saveChatConditional`). Tests: `test/regression.test.mjs` F3a–F3c (fallback branch) and F6a–F6c (proseMsg branch).
 
 ---
 
@@ -497,3 +501,451 @@ if (lockEpoch === generationLockEpoch) setGenerationLock(false);
 **Why:** Title is interpolated as the wrapper tag name (`<{{title}}>`), so unescaped `<` in a title produces an unparseable wrapper. Content is freeform text to ST, the LLM, and every downstream consumer in the injection path — there is no XML parser between `setExtensionPrompt` and the model. Vault authors intentionally embed XML, markdown, code samples, `<3`, nested tags, and ampersands in entry content; escaping clobbers all of those (issue #16). Earlier BUG-090 expanded the escape on the assumption of "downstream XML tooling" — no such tooling exists. The original pre-BUG-090 stub was paranoia about prompt-injection from `</system>`-style tokens, but vault content is author-controlled, not user-input, and ST's prompt structure is JSON-shaped, not text-parsed.
 
 **Where:** `core/matching.js` — `formatEntry` arrow inside `formatAndGroup`. Test: `test/unit.mjs` "XML escaping in content templates: title escaped, content raw (issue #16)".
+
+---
+
+## 46. Verdict Store Replaces the Four Racing Globals
+
+**Rule:** Pipeline outputs (injected sources, full trace, previous-turn diff) live on a single per-turn record in `src/verdict/verdict-store.js`. Read via `getCurrent()` / `getPrevious()` / `getByMessage()`. The legacy globals (`lastInjectionSources`, `lastPipelineTrace`, `previousSources`, `lastInjectionEpoch`) are gone — references in new code must be replaced with verdict reads. Do not reintroduce module-level globals for this data.
+
+**Why (D-05, 2026-05-22):** The four globals raced. `lastInjectionSources` was cleared on render but `lastPipelineTrace` survived → drawer fallback chains (`lastInjectionSources ?? lastPipelineTrace?.injected`) had to be threaded through every consumer. Cartographer + drawer + `/dle-inspect` could disagree across messages because they read different globals at different epoch boundaries. Swipes left partial state behind (rollback only touched some globals). "What did DLE inject on message #47?" was unanswerable — the data was overwritten on message #48. The verdict store fixes all three: one record per turn, msgIdx-anchored, ring buffer + per-chat IDB spill (cap 200, auto-pruned).
+
+**Storage rules:**
+- In-memory ring buffer (`RING_CAP=50`) is the fast path. `getCurrent()` / `getPrevious()` read from it synchronously.
+- IDB spill (`IDB_PER_CHAT_CAP=200`) is **per-chat, persistent across chat switches**. Each chat's rows survive when the user navigates away, so resume-after-reload of any prior chat replays its verdict history.
+- On CHAT_CHANGED: `clearRing()` drops the in-memory ring (synchronous, no IDB touch), `setCurrentChatId(newId)` rebinds scope, `hydrateChat(newId)` async-pulls IDB rows for the destination chat. **Do NOT call `clearChat(null)` here** — that's a nuke-from-orbit helper that wipes every chat's IDB rows, which makes the 200-row per-chat spill moot and permanently breaks resume-after-reload.
+- `clearChat(chatId)` (specific chatId) is for "user permanently deleted chat" flows; `clearChatIdb(chatId)` covers IDB-only removal without touching the ring.
+- **NEVER** persist verdicts to `chat_metadata` — that would bloat chat files. The Roadmap explicitly rejected that variant.
+- Pipeline writes ONE verdict per turn at commit (after `setExtensionPrompt` calls). Empty-injection turns still write a verdict (`injectedSources: []`) so consumers see "nothing this turn" instead of the prior verdict bleeding through.
+
+**Trace shape note:** `trace.keywordMatched`, `aiSelected`, `cooldownRemoved`, `contextualGatingRemoved`, `gatedOut`, `stripDedupRemoved`, `budgetCut`, `refineKeyBlocked`, `probabilitySkipped`, `warmupFailed` now carry `vaultSource` on each entry (2026-05-22). The perEntry aggregator in `verdict-pure.js` requires this to honor the trackerKey invariant (vaultSource:title) under `multiVaultConflictResolution='all'`.
+
+**CHARACTER_MESSAGE_RENDERED attachment:** The handler in `index.js` reads the current verdict and attaches `message.extra.deeplore_sources` only when `verdict.msgIdx === messageId && verdict.epoch === chatEpoch`. The `message.extra._deeplore_sources_tag` flag prevents double-attach on swipe.
+
+**Consumer contract for historical lookups (Wave B audit fix, 2026-05-22):** UI surfaces that inspect a SPECIFIC message (the per-message "Why?" button, cartographer popup opened on an older message, anything reading `message.extra.deeplore_sources` after page reload) MUST thread the message's `msgIdx` (= `chat.length` at gen start = the rendered message's `mesid`) through to the verdict-store API. Resolve via `getByMessageSync(msgIdx, chatId)` for the message's verdict and `getPreviousForMessage(msgIdx, chatId)` for its predecessor — never compare a bare `injectedSources` array against `getCurrent()` / `getPrevious()`, which would invert the diff direction (added/removed swap) whenever the inspected message isn't the live newest one. Also: prefer `getCurrentForChat(chatId)` over the ring-global `getCurrent()` so a stale verdict from another chat in the ring can't pollute the popup. Bug history: cartographer used a conditional fallback `(_currentVerdict?.injectedSources === sources) ? diff(current, prev) : diff({injectedSources: sources}, current)` — the else branch's `(current, previous)` were semantically swapped. Regression guard: `VRD-9` / `VRD-9b` in `test/regression.test.mjs`.
+
+**UI consumer rule (Verdict-audit M4, 2026-05-22):** Every UI render path, slash-command handler, drawer event handler, and tool runtime that reads "the current verdict" MUST resolve it as `getCurrentForChat(getCurrentChatId())`, never bare `getCurrent()`. `getCurrent()` is ring-global — returns the newest verdict for ANY chat in the ring, which leaks a stale verdict from a prior chat for ~50ms after CHAT_CHANGED (between `clearRing()` firing and `hydrateChat()` resolving). The chat-scoped variant correctly returns `null` during that window so the drawer / cartographer / `/dle-inspect` show "no verdict yet" instead of flickering the prior chat's data. Each migrated file defines a local `_currentVerdictForChat()` helper that swallows `getCurrentChatId()` throws (`try/catch → null`) — important during boot before ST internals are wired. The verdict-store API itself honors `getCurrentForChat(null)` → falls through to `getCurrent()` as a boot-window safety net. **Exempt paths (intentional bare `getCurrent`):** verdict-store internal definition; `src/diagnostics/flight-recorder.js` (captures pipeline-complete events where "newest write" IS what just completed). Migrated UI surfaces: `src/drawer/{drawer,drawer-render-tabs,drawer-render-footer,drawer-render-status,drawer-events}.js`, `src/ui/{cartographer,commands-pipeline,diagnostics}.js`, `src/librarian/librarian-tools.js`, `src/diagnostics/state-snapshot.js`. Regression guards: `VRD-13` (lint-style: no bare `getCurrent(` allowed in `src/drawer/`, `src/ui/`, `src/librarian/`, `src/diagnostics/state-snapshot.js`), `VRD-13b` (null-chatId fallback), `VRD-13c` (cross-chat flicker scenario) in `test/regression.test.mjs`.
+
+**Hydrate/write race (F2 fix, 2026-05-22):** `hydrateChat(chatId)` MUST NOT clobber verdicts that arrived in the ring while it was awaiting IDB. CHAT_CHANGED dispatches `clearRing() + setCurrentChatId(new) + hydrateChat(new)` (async); if the user triggers Generate before hydration resolves, `onGenerate` calls `writeVerdict` synchronously and the fresh verdict lands in the ring. The pre-fix code did `ring = ring.filter(v => v.chatId !== chatId); ring.push(...slice)` — which deleted the fresh write, so `getCurrent` / `getCurrentForChat` / `getByMessageSync` all lost that turn's verdict. Fix (Option A — merge instead of replace): preserve any ring entry for this chat whose `ts` is newer than the freshest hydrated `ts` and re-append at the tail. Ordering after merge: other chats unchanged → chronological hydrated slice → preserved-fresh at tail (so backward scans find the live verdict first). Regression guard: `VRD-9c` in `test/regression.test.mjs`.
+
+**Where:** `src/verdict/verdict-store.js` (live, exports `getCurrent` / `getCurrentForChat` / `getPrevious` / `getPreviousForMessage` / `getByMessage` / `getByMessageSync`), `src/verdict/verdict-pure.js` (testable helpers), `src/vault/cache.js` (shared IDB `DeepLoreEnhanced` schema v2). Consumer call sites: drawer (`drawer-render-tabs.js` / `-status.js` / `-footer.js` / `drawer.js` / `drawer-events.js`), `src/ui/cartographer.js`, `src/ui/commands-pipeline.js` (`/dle-inspect`), `src/ui/diagnostics.js`, `src/librarian/librarian-tools.js`, `src/diagnostics/flight-recorder.js`, `src/diagnostics/state-snapshot.js`. Tests: `test/verdict.test.mjs` (70 pure-helper), regression VRD-1..VRD-9c + VRD-13/13b/13c.
+
+---
+
+## 47. i18n Hooks Into ST's Built-in System — Do Not Roll Your Own
+
+**Rule:** All UI translation goes through `src/i18n/i18n.js` which wraps ST's `addLocaleData()` / `t``\` / `translate()` / `getCurrentLocale()` from `public/scripts/i18n.js`. Locale dicts live at `locales/dle.{lang}.json` (UI) and `src/i18n/prompts/{lang}.js` (AI-facing). English is canonical; the five translations (es-es, fr-fr, de-de, ja-jp, zh-cn) are machine-translated and refined by the community.
+
+**Why (v2.5 i18n rollout, 2026-05-22):** ST already has a `data-i18n="key"` MutationObserver that auto-translates injected DOM as soon as a key matches its locale dict. Rolling our own observer would (1) double-fire on every node ST already handles, (2) miss the ST-shipped UI chrome around our extension, and (3) force a second locale-switcher UI. Hooking ST's system means a user who switches ST to Spanish gets DLE in Spanish "for free" — no separate setting, no second reload.
+
+**Boot order (matters):** `initDleI18n()` runs in `index.js` jQuery handler **before** `renderExtensionTemplateAsync('settings')` and before `createDrawerPanel()`. If we registered locale data AFTER inserting `data-i18n` attrs, ST's MutationObserver would fire once with no dict and never re-run for those nodes. Register first; insert HTML second.
+
+**Fallback chain:**
+- Requested locale (ST current locale, or override) → base lang (`es` → `es-es`) → `en`.
+- Per-key: target dict → EN dict → `translate(key)` (ST's missing-key tracker) → key itself.
+- Result: a partially-translated locale never shows raw `dle_xxx_key` strings to users.
+
+**AI prompts are a separate axis:** Setting `aiPromptLocale` (default `''` = follow UI locale) overrides which `src/i18n/prompts/{lang}.js` ships to the LLM. Users on UI=ja-jp can keep `aiPromptLocale='en'` if they don't trust machine-translated prompts to preserve LLM behavior. `resolveAiPromptLocale()` in `i18n-pure.js` codifies precedence: setting → override → UI → 'en'.
+
+**Placeholders:** ST's `t``\` requires `${0}`, `${1}` indexed placeholders — not named, not bare `{0}`. Recon-to-JSON pipeline normalized all 348 interpolations; Pass 3 audit caught 44 cart-diag.json violations and Pass 4 fixed them. Translation pipeline must preserve placeholder count + index per string. `placeholderMismatch()` in `i18n-pure.js` validates source-vs-translation.
+
+**Plurals split into key pairs:** ST's `t``\` doesn't do CLDR plural rules. The recon pass captured 10 strings with embedded JS ternaries (e.g. `"${0} entr${0 === 1 ? 'y' : 'ies'}"`). Nine became simple `_one` / `_other` pairs; one nested ternary (`dle_entries_stat_title`) split into 4 keys (`_lore_one/_other` + `_vault_one/_other` — call site concatenates). Net +10 keys vs source, total 2097 in `locales/dle.en.json`. Consumers must select the right key at runtime: `const k = count === 1 ? 'dle_x_one' : 'dle_x_other'; tr(k)`.
+
+**Machine-translation coverage:** Wave 5 (Haiku) hit 0.5-4.8% UI coverage due to output-token cap. Wave 5b (Opus, 2 chunks per Romance lang to respect 64K output cap) hit **95.8-97.3% real-translation coverage** per locale (es-es 95.8%, fr-fr 95.9%, de-de 95.8%, ja-jp 97.0%, zh-cn 97.3%). Remaining 2.7-4.2% are intentional pass-throughs: brand names ("DeepLore Enhanced", "Emma", "SillyTavern", "Obsidian", "Claude"), config identifiers (`lorebook-guide`, `update_draft`, file paths), tech loanwords valid in target lang (JSON, PNG, HTTPS, AI), pure-markup label fragments (`<b>${0}</b>: ${1}`), and URLs. AI prompt files (`src/i18n/prompts/{lang}.js`, 30 exports + `__meta`) are 100% translated per locale. All tagged `machine_translated: true` + `translator_model: 'claude-opus'` in `__meta`. Untranslated keys still fall back to English via `mergeLocaleDicts()`.
+
+**Where:** `src/i18n/i18n.js` (live ST integration), `src/i18n/i18n-pure.js` (pure helpers + tests), `src/i18n/prompts/{lang}.js` (AI prompt dicts), `locales/dle.{lang}.json` (UI dicts). Init call: `index.js` jQuery handler. Setting: `aiPromptLocale` in `settings.js`. Tests: `test/i18n.test.mjs` (88 assertions, includes canonical-file sanity checks for bare `{N}` and ternary leakage). Community process: wiki page `Contributing-Translations.md`, issue template `.github/ISSUE_TEMPLATE/translation_feedback.md`.
+
+---
+
+## 48. Reuse-Sync Must Honor Partial-Fetch Flags (V-C1)
+
+**Rule:** `buildIndexWithReuse()` MUST treat `data.partial === true` and `isPartialFetchFailure(data.failed, data.total)` the same way `buildIndex()` does — and `finalizeIndex()` MUST be called with `skipCacheSave: true` whenever ANY vault returned partial data this cycle. The earlier code passed neither flag through, so a transient Obsidian REST glitch could silently truncate the IDB cache and wipe trackers/cooldowns/pins on next hydrate.
+
+**Failure mode (the actual bug, ship-blocker V-C1 / 2026-05-22):**
+1. Obsidian REST returns a partial directory listing (`data.partial: true`) — recursive `listAllFiles` couldn't walk every subdir due to a transient error.
+2. Reuse-sync's loop counts every file missing from `data.files` as "removed" (`hasChanges = true; removedCount++`).
+3. `setVaultIndex(dedupedEntries)` commits the truncated index in memory.
+4. `finalizeIndex(..., {})` runs WITHOUT `skipCacheSave` → `saveIndexToCache(entries)` writes the truncated set to IDB.
+5. Next hydrate loads the incomplete cache. The analytics-prune at `finalizeIndex` L218-227 walks `settings.analyticsData` and deletes any key whose `trackerKey` isn't in the current index — silently dropping cooldowns, decay state, pin/block trackers for entries that were never actually deleted.
+
+**Mitigation:**
+- `classifyReuseFetch(data)` in `src/vault/vault-pure.js` is the single source of truth — returns `{action, carryForward, skipCacheSave}`. Used by both the reuse-sync loop (per-vault dispatch) and indirectly by tests.
+- Three failure actions all set `skipCacheSave: true` (test `J10` pins this invariant): `invalid` (non-array `data.files`), `partial` (truncated listing), `partial_failure` (high per-file failure rate).
+- `buildIndexWithReuse()` passes `skipCacheSave: anyVaultFailed` to `finalizeIndex()` — `anyVaultFailed` is sticky across the vault loop, so a single partial vault protects the whole rebuild's IDB write.
+
+**Asymmetry note:** The original comment at the `finalizeIndex` call site claimed reuse-sync could *always* persist because it carried forward failed vaults. That reasoning is incomplete — the carry-forward covered the entries-array but not the cache-write decision, and partial-listing cases weren't covered by carry-forward at all. The fix removes the asymmetry: reuse-sync now treats cache safety the same way as `buildIndex()`.
+
+**Where:** `src/vault/vault.js: buildIndexWithReuse()` — per-vault partial / partial_failure branches in the fetch loop, and the `skipCacheSave: anyVaultFailed` arg in the final `finalizeIndex` call. `src/vault/vault-pure.js: classifyReuseFetch()` + `PARTIAL_FETCH_FAILURE_THRESHOLD`. Tests: `test/vault.test.mjs` section J (12 V-C1 guards).
+
+---
+
+## 49. Import Dedup Existence Check Must Fail Loud on Network Errors (V-C2)
+
+**Rule:** `_findUniquePath()` in `src/vault/import.js` MUST return `null` on ANY existence-check failure (AbortError or otherwise). The classifier `classifyDedupProbe(fetchResult, err)` in `src/vault/vault-pure.js` is the single source of truth — any error path yields `{accept: false, taken: false}`. Callers (`importEntries`, `upsertConvertedEntry`) MUST then surface a skip/error rather than overwrite.
+
+**Failure mode (ship-blocker V-C2 / 2026-05-22):**
+1. User imports a World Info JSON. A file with the same name already exists in their vault.
+2. The dedup walker calls `obsidianFetch` to check if `Foo_imported.md` exists.
+3. The network glitches mid-flight — `fetch` throws `TypeError: Failed to fetch` (or a DNS error, or a non-Abort timeout).
+4. The old `catch (err) { ... return candidatePath; }` returned the candidate path "assume free."
+5. The caller's `writeNote(...)` then PUT the new content to `Foo_imported.md` — silently overwriting the user's existing vault file. The behavior was exactly inverted from what a dedup helper should do.
+
+**Mitigation:**
+- `classifyDedupProbe(fetchResult, err)` returns three outcomes: `{accept:true, taken:false}` (free), `{accept:false, taken:true}` (advance suffix), `{accept:false, taken:false}` (inconclusive — bail).
+- Inconclusive states MUST NOT produce a candidate path. Test `K10` pins that all error variants (Abort, network, timeout, DNS) return inconclusive.
+- Callers handle the null return by skipping the file with an error message that names all three possible causes (network, abort, cap-exhausted) so the user can diagnose.
+
+**Where:** `src/vault/import.js: _findUniquePath()` (uses `classifyDedupProbe` internally) + the two call sites in `importEntries()` (L107 region) and `upsertConvertedEntry()` (L188 region). `src/vault/vault-pure.js: classifyDedupProbe()`. Tests: `test/vault.test.mjs` section K (10 V-C2 guards).
+
+---
+
+## 51. `verdictMsgIdx` Must Anchor on Global `chat`, Not Filtered `chatMessages`
+
+**Rule:** When capturing `verdictMsgIdx` at the top of `onGenerate`, use the global `chat` array length, NOT the `chatMessages` interceptor parameter length. The verdict's `msgIdx` must equal the `messageId` that `CHARACTER_MESSAGE_RENDERED` will later fire with.
+
+**Why (F4 fix, 2026-05-22):** `chatMessages` is ST's FILTERED `coreChat` copy (gotcha #26). For some generation modes (regen with trailing `is_system` continuation marker, certain group-chat / hidden-message scenarios), `chatMessages.length !== chat.length`. Meanwhile, `saveReply` pushes onto the GLOBAL `chat` array; `CHARACTER_MESSAGE_RENDERED` fires with `messageId === chat.length - 1` (post-push) which equals `chat.length` (pre-push). The render handler at `index.js` checks `v.msgIdx === messageId && v.epoch === chatEpoch` before attaching `deeplore_sources`. On mismatch, attachment silently skips — no console error, no toast. Symptoms: Cartographer popup and drawer Why? tab show no sources for some generations despite the verdict being correctly written. This defeats the entire msgIdx-anchored lookup model the verdict refactor introduced (#46).
+
+**Where:** `index.js: onGenerate()` — `const verdictMsgIdx = Array.isArray(chat) ? chat.length : -1;`. The handler that consumes it: `index.js` CHARACTER_MESSAGE_RENDERED listener (matches `v.msgIdx === messageId`). Test: `test/regression.test.mjs` F4 case.
+
+---
+
+## 50. `trackerKey` Drift — Bare Title Fallbacks Are a Regression Class
+
+**Rule:** EVERY Map/Set keyed by entry identity in any pipeline, drawer, librarian, or ai-search code path MUST use `trackerKey(entry) = ${vaultSource || ''}:${title}` (or the lowercase-tail variant `${vaultSource || ''}:${title.toLowerCase()}` for case-insensitive lookups). Bare `entry.title` keys silently collapse same-titled cross-vault entries into one slot. Any `<entry>.title` in pipeline trace objects (`keywordMatched`, `aiSelected`, `cooldownRemoved`, `contextualGatingRemoved`, `gatedOut`, `stripDedupRemoved`, `budgetCut`, `refineKeyBlocked`, `probabilitySkipped`, `warmupFailed`, **`injected`**) MUST carry `vaultSource` so downstream perEntry aggregation honors the invariant.
+
+**Why (BUG-AUDIT v2.5 cross-cutting fix, 2026-05-22):** This is the highest-conviction systemic bug class in the v2.5 audit. The contract in CLAUDE.md ("ALWAYS use `trackerKey` for Map keys; bare titles collide") has been re-stated multiple times, yet drifted across at least 10 sites in 6 modules. Each new feature reintroduced the bare-title pattern because the local code "just needed a quick title lookup." The fix below patched every known site; this entry exists to catch the next regression at code-review time.
+
+**Ten sites that drifted (all fixed in this wave — see tests `MV-1..MV-11`):**
+1. `src/drawer/drawer-render-tabs.js` — `injectedSet.add(s.title.toLowerCase())` collapsed Alice@vault-a + Alice@vault-b (Browse tab + virtual-scroll window). Now uses `${vaultSource || ''}:${title.toLowerCase()}`.
+2. `src/librarian/librarian-tools.js` — `searchLore()` dedup `injectedTitles` set was bare-title; vault-B's "Alice" was suppressed when vault-A's "Alice" was injected.
+3. `index.js` `trace.injected` lacked `vaultSource` — fallback chain on drawer (when injectedSources is empty but trace.injected isn't) lost the disambiguator.
+4. `src/stages.js: applyStripDedup` + `index.js` log writer — strip-dedup key omitted `vaultSource`. A Castle@A injected last turn falsely suppressed Castle@B this turn.
+5. `src/pipeline/match.js` — `titleMap = new Map(entries.map(e => [e.title.toLowerCase(), e]))` was last-vault-wins for cascade_links + characterContextScan. Now uses `Map<title, Entry[]>` and unions across vaults.
+6. `src/ai/ai.js` AI search — manifest XML uses bare `name="title"` attribute (single tag for same-titled cross-vault entries). The post-response walk already pushes both vault entries when the AI selects that title (linear iteration of `indexToSearch`); this is the safe behavior, kept stable. Manifest-level vault disambiguation would require a prompt-format change across all 6 locales — **deferred to a future major release**.
+7. `src/stages.js: applyRequiresExcludesGating` — `activeTitles = new Set(result.map(e => e.title.toLowerCase()))` collapses cross-vault titles. **DOCUMENTED LIMITATION** (test `MV-7`): `requires: ["Castle"]` in vault B's entry IS satisfied by vault A's "Castle". Don't change semantics — author-written `requires`/`excludes` are bare titles by convention. If author wants vault-scoped requires, future work would extend frontmatter syntax (e.g. `Title@VaultName`).
+8. `src/stages.js: applyRequiresExcludesGating` sort tiebreak — bare `a.title.localeCompare(b.title)` was non-deterministic across vaults for same-title same-priority entries. Now uses secondary `vaultSource` tiebreak.
+9. `src/helpers.js: buildCategoryManifest` — sample list joined bare titles, showing "Alice, Alice" to the AI for cross-vault duplicates. Second occurrence now suffixed with `@vaultSource`.
+10. `src/stages.js: applyPinBlock` — `matchedKeys.set(entry.title, '(pinned)')` lost pin reason for the second vault's same-titled entry. Now uses `trackerKey(entry)`.
+
+**Cross-cutting changes:**
+- `matchEntries` (`src/pipeline/match.js`) now writes ALL `matchedKeys.set()` with `trackerKey(entry)` (constants, bootstrap, keyword, cascade, fuzzy, recursion, active-character).
+- `runPipeline` (`src/pipeline/pipeline.js`) reads/writes matchedKeys via `trackerKey()` everywhere (AI selections, wiki-link expansion, constant/bootstrap fillers).
+- Consumers — `index.js`, `src/ui/commands-pipeline.js` — read `matchedKeys.get(trackerKey(e))`.
+- `categorizeRejections(trace, injectedKeys)` (`src/helpers.js`) now takes a Set of trackerKey-shape strings and emits `vaultSource` on output entries. Callers in `src/drawer/drawer-render-tabs.js` and `src/ui/cartographer.js` build the Set as `${vaultSource || ''}:${title.toLowerCase()}`.
+- `trace.injected` mapper in `index.js` includes `vaultSource: e.vaultSource || ''`.
+
+**Backward compatibility:** Single-vault setups have `vaultSource === '' || undefined` everywhere. The key `:title` matches itself and does NOT collide with `MyVault:title`. Legacy `deeplore_injection_log` rows written before this fix (no `vaultSource`) compare as `:title` — they still match new entries from single-vault setups, but will NOT match entries from a named vault. This is intentional: a vault rename or re-import should NOT trigger phantom dedup against pre-rename injections.
+
+**Where (regression guards):** `test/regression.test.mjs` `MV-1..MV-11` cover every site listed above. `test/vault.test.mjs` covers the broader multi-vault dedup contract. Any new code touching pipeline trace, drawer state, librarian dedup, or ai-search match resolution MUST add a corresponding `MV-N` guard before landing.
+
+---
+
+## 52. Verdict `pruneCurrentChat` Is Sampled — Cap Is A Soft Limit
+
+**Rule:** `pruneCurrentChat()` (in `src/verdict/verdict-store.js`) does NOT scan IDB on every `writeVerdict`. It increments a module-scope counter (`pruneCallCount`) and only actually scans every `PRUNE_SAMPLE_RATE`'th call (default N=10). Between scans the per-chat IDB store may temporarily contain up to `IDB_PER_CHAT_CAP + N - 1` rows (default 200 + 9 = 209). This is intentional. Do NOT add code that depends on the cap being a hard ceiling.
+
+**Why (Wave C P1 perf fix, 2026-05-22):** The pre-fix implementation called `store.getAll()` on EVERY generation, deserializing every verdict for every chat in the IndexedDB store, then JS-filtering by chatId. Cost was 3-10 ms baseline and 50+ ms on power-user multi-chat installs with many stored verdicts — paid unconditionally even when no prune was needed. The fix is two-pronged:
+
+1. **Counter-based sampling.** 90% of calls now no-op the scan entirely. Worst-case the chat sits at cap+9 between scans; the next scan trims it back down. Cap is a soft limit, not a hard ceiling.
+
+2. **Bounded key-only cursor.** When a scan does run, it uses `store.openKeyCursor(IDBKeyRange.bound(chatId+':', chatId+':￿'), 'next')` to walk oldest-first, collecting keys only — no value deserialization, scoped to the current chat. The key shape `${chatId}:${paddedMsgIdx}:${ts}` from `buildIdbKey` makes this safe. Victims are selected by `selectPruneVictimsFromOrderedKeys(keys, cap)` — the leading slice of an oldest-first list.
+
+**Soft-limit consequences:**
+- Tools that introspect IDB row counts must NOT assert `count <= IDB_PER_CHAT_CAP`. Use `<= IDB_PER_CHAT_CAP + PRUNE_SAMPLE_RATE - 1` as the upper bound.
+- `clearChat(chatId)` and `clearChatIdb(chatId)` still touch every row for the target chat (no sampling). They use `listIdbForChat()` which performs an unconditional `getAll()` scoped to the chat — fine because they're rare admin ops, not per-generation.
+- `hydrateChat` still uses `listIdbForChat()` (`getAll()`). That's correct — hydration needs every row to sort/slice. Don't sample hydration.
+
+**Test override:** `_setPruneSampleRateForTests(rate)` exists so tests can force `rate=1` (scan every call) or `rate=N` to assert sampling behavior. Production code MUST NOT call it. `resetForTests()` re-snaps the rate to 10.
+
+---
+
+## 53. PM-mode Registration Requires `promptManager.activeCharacter` — Boot Without a Character Used To Silently Fail
+
+**Rule:** When `injectionMode === 'prompt_list'`, the four named PM entries (`deeplore_constants`, `deeplore_lore`, `deeplore_notebook`, `deeplore_ai_notepad`) can only be inserted into the per-character prompt order map once `promptManager.activeCharacter` is set. The base `addPrompt()` call works without an active character (orphans live in `promptManager.serviceSettings.prompts`), but they will NOT render in the PM UI and won't be selectable until they're added to a character's order — which is gated on `activeCharacter`.
+
+**Why (BUG-PM1 fix, 2026-05-22):** Old `index.js` PM-init flow polled every 1s with a 10s ceiling, then `clearInterval` and silent exit. If the user booted ST without an auto-loaded character (very common — fresh ST install, after using the No Character placeholder, group-chat boot states), `promptManager.activeCharacter` stayed null for the full 10s and registration silently aborted. First gen post-character-select would fall through to `extension_prompts` mode (no PM entries to fill, so lore appeared at ST's default IN_PROMPT position — NOT where the user dragged the entries in PM, because the entries didn't exist). The CHAT_CHANGED handler at L2174 partly mitigated this by re-registering on chat switch, BUT only when both `injectionMode === 'prompt_list'` AND `promptManager?.activeCharacter` — and `CHAT_CHANGED` doesn't always fire when a user picks a character with no existing chat.
+
+**Three-prong fix (`index.js`):**
+
+1. **Refactored** the registration body to a single idempotent module-level helper, `ensurePmEntriesRegistered()` — returns `true` when promptManager is ready AND activeCharacter is set (full success), `false` when caller should retry. Shared by init, CHAT_CHANGED, CHAT_LOADED, and the background latch — so a single regression in registration logic surfaces in all four call sites at once instead of drifting.
+
+2. **Surface the deferral.** On the 10s ceiling exhausting without success, `dedupWarning('PM-mode init deferred — pick a character to finish registering DLE prompts.', 'pm_init_deferred', ...)` fires exactly once per dedup window. Toast wording is intentionally action-guiding (tells the user what to do), not error-laden — this is an expected boot state for some users, not a failure.
+
+3. **Background latch.** `_startPmRegistrationLatch()` runs every 5s with a 5-minute cap. Self-cancels when `injectionMode` is flipped away from `prompt_list` (so settings-flip mid-wait doesn't leak the timer for 5min) and when `_teardownDleExtension()` runs (so re-init doesn't accumulate latches). The 5-min cap matters: users who never pick a character within 5min of boot are extremely unlikely to ever generate, so unbounded polling would be a long-tail leak.
+
+4. **CHAT_LOADED listener.** `event_types.CHAT_LOADED` (`'chatLoaded'`) fires when ST loads a character with its chat — covers the case where a user picks a character but no CHAT_CHANGED fires (e.g. resuming the same chat that was loaded at boot). The handler is a cheap settings-read + `ensurePmEntriesRegistered()` call — safe to attach unconditionally.
+
+**Idempotency contract:** `ensurePmEntriesRegistered()` is safe to call any number of times. It uses `getPromptById()` to detect existing rows, patches legacy fields in-place (`role`, `extension`, friendly display names), and inserts into the order map only via `!order.find(e => e.identifier === id)` guard — never double-inserts.
+
+**Where:** `index.js` `ensurePmEntriesRegistered()` (top-level helper, near `_teardownDleExtension`), init() PM-mode block, CHAT_CHANGED handler PM-re-register block, init() CHAT_LOADED listener. Test: `test/regression.test.mjs` `PM-1..PM-4b`.
+
+**Where:** `src/verdict/verdict-store.js` (`pruneCurrentChat`, `PRUNE_SAMPLE_RATE`, `pruneCallCount`, `_setPruneSampleRateForTests`, `_getPruneStatsForTests`, `_invokePruneForTests`). Pure helpers in `src/verdict/verdict-pure.js` (`shouldRunPruneScan`, `selectPruneVictimsFromOrderedKeys`). Regression tests: `VRD-10` (sampling) + `VRD-11` (bounded cursor) + `VRD-12` (under-cap no-deletes) in `test/regression.test.mjs`; pure-helper coverage in `test/verdict.test.mjs`.
+
+---
+
+## 66. `searchLoreAction` Returns Structured `{text, titles}` — NEVER Regex `### ...` Out Of The Text
+
+**Rule:** `searchLoreAction()` in `src/librarian/librarian-tools.js` returns `{ text: string, titles: string[] }` (with `toString()` / `Symbol.toPrimitive` back-compat coercion to `text`). Callers that need the authoritative matched-entry list MUST read `.titles` directly. Do NOT regex-extract `### (.+)` headings from `.text` — vault content is freeform Markdown, and entries routinely have their own `### Section`, `### Stats`, `### Background` subheadings. Regex-parsing inflates counts and pollutes the Activity dropdown with section names that don't exist as entries.
+
+**Why (CRIT-LIB-2, 2026-05-22):** The pre-fix agentic-loop did `[...searchResult.matchAll(/^### (.+)$/gm)].map(m => m[1])`, then `.filter(t => t !== 'Related entries:')`. Two problems: (a) every `### Section` inside vault content was falsely added as a "result title", causing the librarian Activity dropdown to claim 4-5 matches when only 1 entry was actually surfaced; (b) the literal-string filter `!== 'Related entries:'` broke under any locale change — translated `### Verwandte Einträge:` / `### 関連エントリ:` headings sailed straight into the title list. Both vanish under the structured return: `.titles` is built from `bestHit.title + linked.map(le => le.title)` in `searchLoreAction`, locale-agnostic and section-heading-immune by construction.
+
+**Defensive coercion:** Callers should still tolerate a legacy bare-string return (`typeof r === 'string' ? r : r?.text ?? ''` for text, `Array.isArray(r?.titles) ? r.titles : []` for titles). Belt-and-suspenders against future regressions.
+
+**Where:** `src/librarian/librarian-tools.js` (`_searchResult` helper + every return in `searchLoreAction`). Consumer: `src/librarian/agentic-loop.js` `case 'search'` block. Regression tests: `LIB-2a..LIB-2e` in `test/regression.test.mjs`.
+
+---
+
+## 54. `onProse` Throw Must Not Lose Paid-For Prose
+
+**Rule:** Inside the agentic loop's `case 'write'` block, `await onProse?.(prose)` MUST be wrapped in a try/catch. On failure, the loop returns `{ prose, toolActivity, usage }` immediately with `prose` populated — never let the throw propagate to index.js's outer catch, which would (a) skip the fallback save branch because `proseMsg` was not yet captured, and (b) surface a generic "Generation failed — try again or disable Librarian" toast over an LLM response the user already paid for.
+
+**Why (CRIT-LIB-3, 2026-05-22):** In the pre-fix code, if `await saveReply()` or `await saveChatConditional()` inside the `onProse` callback threw (disk full, IDB locked, ST internal error, transient race), the throw propagated up through `runAgenticLoop`, into the index.js try/catch at L1281. In that catch, `proseMsg` is null because its assignment (L1199) happens AFTER the failing await. The path then fell through to the generic `dedupError('Generation failed — try again or disable Librarian.')`, telling the user to retry — but the LLM had already generated valid prose and consumed tokens. The prose was lost behind a misleading error.
+
+**Fix design — preserve prose via either dispatch branch:**
+- The wrapping try/catch keeps `prose` and `writeDone` set, then `return { prose, toolActivity, usage }` from inside the iteration.
+- If onProse failed BEFORE `proseMsg` was captured (saveReply threw): `proseMsg` is null in index.js → the `else if (result.prose)` fallback branch runs `saveReply()` itself. Fallback branch is already F3-hardened with epoch guards.
+- If onProse failed AFTER `proseMsg` was captured (saveChatConditional threw mid-await): `proseMsg` is set in index.js → the `if (proseMsg)` primary branch runs, retries `saveChatConditional()`, with F6 epoch guard between save and dropdown injection.
+
+Either way, the user's prose lands in chat and tool_calls get attached. The pushEvent log records `onProse_error` with the failing error message so diagnostics still surfaces the underlying issue.
+
+**Where:** `src/librarian/agentic-loop.js` — `case 'write'` block, the `try { await onProse(prose); } catch { ... return {...} }` wrapper. The two consumer branches at `index.js: 1239` (`if (proseMsg)`) and `index.js: 1256` (`else if (result.prose)`) already exist; this fix routes prose to whichever branch the onProse partial state dictates. Regression tests: `LIB-3a..LIB-3e` in `test/regression.test.mjs`.
+
+---
+
+## 55. `finalizeIndex` Incremental Derived-State Updates (P3)
+
+**Rule:** When modifying `finalizeIndex`, `computeDerivedIndexFields`, BM25 construction, or `computeEntityDerivedState`, ANY change to the full-rebuild math MUST also be reflected in the incremental helpers in `src/vault/vault-incremental.js` (`incrementalMentionWeights`, `incrementalBM25Update`, `incrementalEntityRegexes`) AND the `fullMentionWeights` reference implementation used by the equivalence tests. Drift = silent ranking corruption (BM25) or wrong mention scores that degrade quality invisibly.
+
+**Why (P3 perf fix, Wave C / 2026-05-22):** `finalizeIndex` is called on every `buildIndexWithReuse` tick, but its full rebuild is O(N²) for mentionWeights (every source × every target), O(N) for BM25 tokenization + O(M) IDF, and O(N×K) for `entityShortNameRegexes`. On a 500-entry vault that's ~100-500ms per sync-poll-with-changes. With incremental updates the cost is proportional to changed entries (~5-20ms typical).
+
+**Two-path architecture:**
+- `buildIndexWithReuse()` passes `previousEntries: indexSnapshot` to `finalizeIndex()`. `buildIndex()` and `hydrateFromCache()` do NOT — they always full-rebuild (cold start has no prior derived state to delta against, and full rebuilds are unconditional anyway).
+- Inside `finalizeIndex`, three derived-state computations check `shouldUseIncremental(changedCount, totalCount)` (default threshold 50% — anything above and the bookkeeping overhead exceeds the savings).
+- Incremental paths still call the same state setters (`setMentionWeights`, `setEntityShortNameRegexes`, `setFuzzySearchIndex`). The `entityRegexVersion` bump (BUG-394 / AI cache invalidation) is preserved because `setEntityShortNameRegexes` still fires.
+
+**Correctness invariant:** For the same final entry set, full and incremental paths MUST produce byte-equivalent output:
+- Same `mentionWeights` Map (same keys, same counts).
+- Same BM25 index (`docs.size`, `idf` values within 1e-9, `invertedIndex` postings, `avgDl`).
+- Same `entityNameSet` Set + same regex sources/flags (RegExp identity preserved via `prevRegexes` reuse for surviving names — this is what makes the path actually cheap).
+
+**Where:** `src/vault/vault.js: finalizeIndex()` + `computeDerivedIndexFields()` (incremental dispatch + full-rebuild fallback). `src/vault/vault-incremental.js` (pure helpers). `src/vault/bm25.js` (unchanged — full builder still used by `hydrateFromCache` + the fallback). Tests: `test/vault.test.mjs` section L (13 equivalence + threshold + rename + defensive-fallback guards, including `L1` mentionWeights mod / `L4` BM25 mod / `L7` entity regex parity / `L8` threshold / `L11` rename orphan cleanup).
+
+---
+
+## 56. Drawer Dismiss Handler Must Exempt Clicks Inside ST Popups
+
+**Rule:** The drawer's `click.dle-drawer-dismiss` outside-click handler MUST bail when the click target lives inside any `<dialog class="popup">` (callGenericPopup), `dialog[open]`, `.toast`, `.toast-container`, or `.ui-dialog` — not just `#deeplore-panel`.
+
+**Why:** ST's `callGenericPopup` clones `#popup_template` (which contains `<dialog class="popup">`) and appends it to `document.body` — NOT inside the drawer. The naive "click is outside `#deeplore-panel`" check fires `true` for every click inside a popup spawned from the drawer (rule-builder edit chip, vault-scan, optimize-keys review, "Why not?" diag, gating folder picker, settings-popup confirms, etc.). In overlay mode with no pin, this closed the drawer behind the popup on the user's first click inside the modal. After the dialog closed, the drawer was gone — surprise loss of context.
+
+**Where:** Bail conditions live in `src/drawer/drawer-dismiss-pure.js: shouldBailDrawerDismiss()`. Consumed by the `$(document).on('click.dle-drawer-dismiss', …)` handler in `src/drawer/drawer.js` (`createDrawerPanel()`).
+
+**Selectors and rationale:**
+- `dialog.popup, .popup` — ST's `callGenericPopup` base class. Subclasses (`.popup--input`, `.popup--confirm`, `.wide_dialogue_popup`) all inherit from it.
+- `dialog[open]` — covers any native `<dialog>` opened via `showModal()` even without `.popup` class (third-party extensions, future ST popups).
+- `.toast, .toast-container` — toastr notifications. Many are click-to-dismiss; even ones that aren't must not close the drawer behind them.
+- `.ui-dialog` — legacy jQuery-UI dialogs (still surfaces in a few corners of ST).
+
+**Defense in depth:** the helper also calls `document.querySelector('dialog[open]')?.contains(target)` so polyfilled / oddly-classed dialogs still match.
+
+**Regression test:** `test/regression.test.mjs` — `DRAWER-DISMISS-1..4` cover the popup-bail (don't dismiss), drawer-toggle bail (don't dismiss), chat-area click (DO dismiss), and missing-panel defensive return.
+
+---
+
+## 57. Frontmatter Parsing MUST NOT Pollute Object.prototype (V-H3)
+
+**Rule:** `parseFrontmatter()` in `core/utils.js` builds the frontmatter container via `Object.create(null)` — a prototype-less object. Any future refactor that switches back to a plain object literal (`const frontmatter = {}`) re-opens the prototype pollution attack. The frontmatter object MUST have `null` prototype.
+
+**Why (V-H3 ship-blocker / 2026-05-22):** The YAML key regex at `core/utils.js:58` (`/^(\w[\w.-]*)\s*:\s*(.*)/`) matches `__proto__`, `constructor`, and `prototype`. With a plain object, `frontmatter['__proto__'] = value` invokes the inherited `__proto__` setter from `Object.prototype` and replaces the object's prototype chain — or with nested YAML like `__proto__:\n  - pwned`, the array assignment lands as a property on `Object.prototype` itself, visible from EVERY object in the JS process. Vault content is user-controlled and Cartographer / import flows can pull from third-party sources (companion-extension JSON, raw GitHub vault dumps, community-shared lorebooks). One hostile frontmatter file = global state corruption affecting unrelated code across DLE, ST core, and every other ST extension.
+
+**Why Object.create(null) is sufficient (not paranoid):**
+- `Object.create(null)` has no prototype chain, so there's no inherited `__proto__` setter to invoke. Direct assignment `frontmatter['__proto__'] = x` creates a regular own property called `__proto__` on the prototype-less object — no chain mutation.
+- Same for `constructor` and `prototype` — no inherited accessor to trigger.
+- Downstream consumers (`core/pipeline.js`, `src/ui/popups.js:775`, `src/ui/commands-admin.js:168`) use `Object.keys(frontmatter)`, `Object.entries(frontmatter)`, explicit `typeof`/`===` checks, and `Object.prototype.hasOwnProperty.call(frontmatter, key)` — all of which work correctly on prototype-less objects.
+- `JSON.stringify(Object.create(null))` returns `'{}'` (Node and all major engines), so the test runner's `assertEqual` (which uses `JSON.stringify(a) === JSON.stringify(b)`) still works.
+- Regression test `parseFrontmatter: no frontmatter` checks `Object.keys(frontmatter).length === 0` — passes on prototype-less.
+
+**What this does NOT protect against:** an attacker who controls vault content can still write arbitrary YAML keys into frontmatter (e.g. `evil_key: <script>`). Frontmatter values pass through type coercion + string-escape on the consumer side; this gotcha covers only the global-prototype-corruption attack, not content-injection per se.
+
+**Where:** `core/utils.js: parseFrontmatter()` — the `const frontmatter = Object.create(null);` line. Regression tests: `test/unit.mjs` "V-H3:" parseFrontmatter cases (5 tests covering `__proto__` scalar, `__proto__` nested, `constructor`, `prototype`, and the implementation contract via `Object.getPrototypeOf`). Future contributors should add new V-H3 cases if a new attack vector is discovered.
+
+---
+
+## 67. Librarian HIGH-Severity Fixes (HL2/HL3/HL4/HL5)
+
+Four independent invariants surfaced by the v2.5 Librarian audit (2026-05-22). Each has a sharp failure mode if violated. Tests pin them as `HL2/HL3/HL4/HL5` in `test/regression.test.mjs`.
+
+**HL2 — Scrub-before-truncate for error shaping (`src/librarian/agentic-api.js`).** When sanitizing API error response bodies before re-throwing as `Error.message`, scrub secrets FIRST, slice SECOND. The pre-fix order (`text.substring(0, 200).replace(...)`) cut tokens below the regex's `{10,}` minimum when they began in the last ~15 chars of the 200-char window — the regex missed and a partial bearer/sk-* leaked into the thrown error. Real Anthropic 401/403 bodies quote the offending header. Generalize: any new error-shaping helper that does replace + truncate must scrub first.
+
+**HL3 — Synthetic ids live in a module WeakMap, not on the raw response (`src/librarian/agentic-api.js`).** `parseToolCalls` used to stamp `p._dleSyntheticId = id` onto Google Gemini `responseContent.parts[i]`. That (a) made `parseToolCalls` non-pure despite its name, (b) crashes under strict mode if ST ever freezes responses, (c) leaks stamped ids into diagnostic re-serialization paths. The fix lifts assignment into `_ensureSyntheticIds(data)` → `Map<part, id>`, stored in a module-level `WeakMap` (`_syntheticIds`). `buildAssistantMessage` reads via `_getSyntheticId(part)`. Both consumers see the same id without touching raw data. WeakMap keying by part-object reference is safe because parts are only GC'd when the whole response object is.
+
+**HL4 — Snapshot+restore `extension_prompts` around the agentic dispatch clear (`index.js`).** Per gotcha #2, `clearPrompts` MUST NOT fire without verified replacement. The agentic dispatch clears DLE entries from `extension_prompts` (and PM aux contents) BEFORE `runAgenticLoop` so the agentic system prompt doesn't duplicate them. If the loop throws synchronously (no profile, Gemini safety block on the first call, etc.) the catch never re-populates them. Self-heals next turn, but any same-turn observer (other extension hooked into post-generation events) sees no lore. The fix snapshots DLE-prefixed `extension_prompts` + `deeplore_notebook` + `deeplore_ai_notepad` + PM contents BEFORE the clear, then restores in catch only when **no prose was produced** AND `epoch === chatEpoch && lockEpoch === generationLockEpoch`. Successful agentic runs intentionally leave the cleared state — the agentic message already replaced the pipeline's role for that turn.
+
+**HL5 — Defensive `proseMsg.extra ||= {}` (`index.js`).** ST's `saveReply` normally creates `message.extra = {}`, but third-party extensions can interpose on `MESSAGE_RECEIVED` and strip it. Without the guard, the primary-branch line `proseMsg.extra.deeplore_tool_calls = result.toolActivity` throws TypeError, propagates to the outer catch, and fires `'Generation failed'` AFTER the prose was already saved — dropdown silently lost. The fallback branch (`else if (result.prose)`) already had the guard from the Wave A F3 fix; the primary branch needed mirror coverage. Any new `.extra.<field> = ...` write in the agentic dispatch must repeat the guard.
+
+**Where:** `src/librarian/agentic-api.js` — HL2 scrub-then-slice in `callWithToolsViaProxy`; HL3 `_syntheticIds` WeakMap + `_ensureSyntheticIds`/`_getSyntheticId` helpers; `parseToolCalls` + `buildAssistantMessage` consume via the helpers. `index.js` — HL4 `_promptsSnapshot` capture before clear, restore in catch's no-prose branch; HL5 `proseMsg.extra = proseMsg.extra || {}` before the tool_calls assignment. Tests: `HL2-1..HL5-1` in `test/regression.test.mjs`.
+
+---
+
+## 58. Every `<button>` in DLE HTML MUST Specify `type="button"` (a11y / form-safety)
+
+**Rule:** All `<button>` elements in DLE templates (`drawer.html`, `setup-wizard.html`, `settings-popup.html`, and any future HTML) MUST carry an explicit `type="button"` attribute. Without it, the HTML5 default is `type="submit"`.
+
+**Why (a11y bundle, 2026-05-22):** ST's `callGenericPopup` wraps content in a `<dialog>` that may be parented inside a form (true for the wizard popup specifically — it has text inputs on multiple steps). A bare `<button>` inside any ancestor `<form>` submits that form when the user presses Enter inside an input — silently dismissing the popup mid-flow, losing entered data, and triggering whatever the form's default-submit handler does. The wizard was the urgent case (30 inputs across 9 steps); the drawer (59 buttons) and settings popup (15 buttons) were defensively patched at the same time so the invariant is global. Adding the attr is mechanical and never changes existing event handlers — every DLE click handler is `.on('click', ...)` (delegated or direct), unaffected by the type.
+
+**Also fixed in this bundle:** stray bare `/` between attributes (e.g. `placeholder="x" / data-i18n="..."`) — 18 inputs across the three templates. Modern browsers tolerate it but HTML5 linters, accessibility scanners, and the i18n key-extractor we ship for translators all choke. The slash served no purpose (HTML5 doesn't require self-closing on void elements).
+
+**Wizard a11y note (related, same bundle):** the wizard step buttons (`.dle-wizard-step`) are a tablist of 9 — `role="tablist"` on the `<nav>`, `role="tab"` + `aria-selected` + `aria-controls="dle-wizard-page-N"` on each button; the corresponding `<div class="dle-wizard-page">` panels carry `id="dle-wizard-page-N"` + `role="tabpanel"` + `aria-labelledby="dle-wizard-step-N"`. `goToPage()` in `src/ui/setup-wizard.js` updates `aria-selected` and `aria-current="step"` on switch. Settings popup sidebar's two `--header` divs (`Connection`, `Features`) are `role="presentation"` (NOT `role="tab"`) so their child subtab buttons can themselves carry `role="tab"` / `aria-selected` / `aria-controls` without violating the tablist pattern; `switchConnectionSubtab` / `switchFeaturesSubtab` in `src/ui/settings-ui.js` update `aria-selected` on switch.
+
+**Where:** every `<button>` opening tag in `drawer.html`, `setup-wizard.html`, `settings-popup.html`. Wizard a11y: `setup-wizard.html` step buttons + page divs, `src/ui/setup-wizard.js: goToPage()`. Settings sidebar a11y: `settings-popup.html` `.dle-settings-tab--header` divs + sub-tab buttons, `src/ui/settings-ui.js: switchSettingsTab` / `switchFeaturesSubtab` / `switchConnectionSubtab`.
+
+---
+
+## 59. Boot-Path Race Guards (BOOT-MED-1/2/3)
+
+Three independent boot-time invariants surfaced by the v2.5 audit (2026-05-22). Each protects a narrow but sharp race window between extension load and first user interaction. Tests pin them as `BOOT-MED-1..3` in `test/regression.test.mjs`.
+
+**BOOT-MED-1 — Init latch is promise-based, not boolean (`index.js`).** The jQuery handler is async. The old guard set `_dleInitialized = true` SYNCHRONOUSLY at the top, then awaited i18n + HTML render + drawer + settings + slash commands + flight recorder (~15+ awaits over hundreds of ms). A second jQuery dispatch arriving mid-await (HMR reload, fast double-load, ST extension hot-swap) saw `_dleInitialized === true`, fell into the `_teardownDleExtension()` branch, and torn down the FIRST init's listeners/state WHILE its awaits were still resolving. Half-registered observers, missing handlers, drawer panel destroyed mid-creation. Fix: wrap `_doInit()` in a `_dleInitInProgress` promise; concurrent callers `await _dleInitInProgress; return;` instead of re-entering. `_dleInitialized = true` flips ONLY after every await resolves (inside the IIFE's tail). Third+ dispatches after init completes still trigger a true re-init (BUG-063 contract preserved). The latch sentinel is cleared in `finally` so an init failure doesn't permanently wedge the extension.
+
+**BOOT-MED-2 — `_updatePipelineStatus` must NOT orphan elements (`index.js`).** Old code: `document.createElement('div')` runs unconditionally, then `document.getElementById('form_sheld')?.prepend(el)` no-ops if `#form_sheld` is missing. The detached element is discarded. Next call re-checks `getElementById('dle-pipeline-status')`, doesn't find the orphan (not in DOM), and creates another. Every status update during a missing-target window leaks a div. Rare (DOM-ready usually fires before first generation), but theme variants and a teardown-race window can hit it. Fix: only `createElement` when a parent target exists; fall back to `document.body` if `#form_sheld` is missing (status surfaces with different visual position but stays observable and findable). Same-id check on subsequent calls now reliably finds the existing element regardless of which parent received it.
+
+**BOOT-MED-3 — Critical event handlers register before init's awaits (`index.js`).** The real CHAT_CHANGED handler registers ~700 lines into `_doInit()`, AFTER i18n + HTML + drawer + settings setup. On slow machines or large vaults, a CHAT_CHANGED that lands during this window is DROPPED — DLE never sees the destination chat, vaultIndex / Verdict / per-chat trackers / PM all miss hydration for that chat until the NEXT switch. Fix: register an `_earlyChatChangedStub` at the very TOP of `_doInit()` (before any await). The stub captures the latest chatId in `_pendingChatChanged`. When the real handler installs, `_installRealChatChangedHandler` drains the queue exactly once. Rapid early switches collapse to the final destination (correct semantic — intermediate transient chats never "happened" from DLE's perspective). The stub is tracked in `_dleListeners` so teardown removes it cleanly; teardown also clears `_realChatChangedHandler` + queue state so re-init starts clean.
+
+**Other events that could benefit from early-register (not patched in this wave because race window is much narrower):** `GENERATION_STOPPED` (only fires if user clicks Stop, requires being in a chat), `GENERATION_ENDED` (same), `CHARACTER_MESSAGE_RENDERED` (requires a generation, which requires init to have finished enough to register the interceptor). `APP_READY` already has the BUG-118 latch-and-fallback-timer pattern that covers its own race. The current `CHAT_CHANGED` fix is the highest-value one because it's the ONLY early event that can fire from a plain UI click before any generation occurs.
+
+**Where:** `index.js` — `_dleInitInProgress` + `_doInit()` extraction + the new `jQuery(async function ...)` wrapper at the bottom (Boot-MED-1); `_updatePipelineStatus` (Boot-MED-2); `_earlyChatChangedStub` + `_installRealChatChangedHandler` + the `eventSource.on(CHAT_CHANGED, _earlyChatChangedStub)` registration at the TOP of `_doInit()` + the `_realCcHandler` rename + drain call at the bottom of the CHAT_CHANGED registration block (Boot-MED-3). Tests: `BOOT-MED-1..3` in `test/regression.test.mjs` — 9 tests covering double-dispatch latching, orphan leak prevention (old vs new behavior), and stub-queue-drain semantics including rapid-switch collapse and re-init no-replay.
+
+---
+
+## 60. Bootstrap Exemption Is Gen-Scoped To `bootstrapActive` (Stages H-3)
+
+**Rule:** `lorebook-bootstrap` entries bypass post-pipeline gating ONLY while `bootstrapActive === true` (i.e. `chat.length <= settings.newChatThreshold`). Once bootstrap deactivates, a bootstrap-tagged entry that reaches the post-pipeline stages via cascade-link / AI selection / pin must be gated like any other entry. The canonical truth-source is `helpers.js:isForceInjected(entry, { bootstrapActive })`.
+
+**Why:** Bootstrap is designed to seed lore during the first few generations of a chat. After that, a bootstrap entry is just another candidate — it should be subject to contextual gating, requires/excludes, cooldown, strip-dedup, and folder filter like everything else. Pre-fix (BUG fixed 2026-05-22), `buildExemptionPolicy` unconditionally added bootstrap entries to `forceInject` regardless of chat state. Pre-pipeline filters in `runPipeline` (e.g. the `alwaysInject` builder, the `isForceInjected(e, { bootstrapActive })` partitioning of AI results) honored the flag correctly, but the post-pipeline policy did not. Any bootstrap entry that survived early filtering and arrived at a post-pipeline stage silently bypassed every gate.
+
+**Symptom of regression:** a bootstrap-tagged entry leaks into late-chat generations even when its `era`/`location`/`character_present` doesn't match, even when its `requires` are missing, even when it was injected last turn (cooldown should suppress), even when its folder is filtered out. The user sees stale intro lore re-appearing far past the bootstrap window with no obvious cause.
+
+**Fix:** `buildExemptionPolicy(vaultSnapshot, pins, blocks, bootstrapActive)` takes a 4th positional arg. Bootstrap entries join `forceInject` ONLY when `bootstrapActive === true`. Default is `false` (conservative — accidentally bypassing gating is the bug).
+
+**Where in code:**
+- `src/stages.js: buildExemptionPolicy()` — 4th arg added.
+- `src/pipeline/pipeline.js: runPipeline()` — the single Wave C P2 cached-policy call now passes `bootstrapActive` (computed inline from `chat.length <= settings.newChatThreshold`).
+- `index.js` post-pipeline policy build (~L795) — reads `trace?.bootstrapActive === true` so the post-pipeline stages match the pre-pipeline filter.
+- `src/ui/commands-pipeline.js` `/dle-why` slash command — passes `false` intentionally (diagnostic preview shows the conservative "post-bootstrap" view).
+- `src/pipeline/pipeline.js: matchTextForExternal()` — defaults to `false` (external context-free match has no chat history, bootstrap not meaningful).
+
+**Tests:** `H-3-1..6` in `test/regression.test.mjs` (default arg, contract agreement with `isForceInjected`, cascade gating, requires/excludes scoping, static guards on the runPipeline + index.js call sites). `I9` in `test/stages.test.mjs` rewritten to assert BOTH halves (active=true survives, active=false gated). `I9b` / `I9c` added for cascade and AI-selected scenarios. `B1` (stages.test.mjs) and the `bootstrap and seed entries ARE in forceInject` test in `unit.mjs` updated to reflect the new contract.
+
+---
+
+## 61. `clearIndexCache` Aborted Transactions Hang Without `tx.onabort` (V-M3)
+
+**Rule:** Every IndexedDB transaction `await` in `src/vault/cache.js` MUST wire all three handlers: `tx.oncomplete`, `tx.onerror`, AND `tx.onabort`. Missing `tx.onabort` causes the `await new Promise(...)` to hang forever on a transaction abort (quota exceeded, version-change abort, browser tab close mid-flight), which means the `finally` block's `db.close()` never runs and the IndexedDB connection leaks for the lifetime of the page.
+
+**Why (V-M3 fix, 2026-05-22):** `saveIndexToCache` and `pruneOrphanedCacheKeys` were updated post-BUG-380 to include `tx.onabort = () => reject(tx.error || new Error('Transaction aborted'))`. `clearIndexCache` was missed in that sweep — it wired only `oncomplete` + `onerror`. The actual abort path was unreachable in the happy case (success drives `oncomplete`) but became a hard hang under quota pressure or a tab close during the Settings → About → Danger Zone "Clear cache" click. The fix copies the sibling pattern verbatim so all three transactional ops in the file share the same shape; the cross-function consistency check `test/vault.test.mjs:N3` asserts ≥3 occurrences of the canonical pattern.
+
+**Pattern (canonical — copy verbatim for new transactional cache.js ops):**
+```javascript
+await new Promise((resolve, reject) => {
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error || new Error('Transaction aborted'));
+});
+```
+
+**Where:** `src/vault/cache.js: clearIndexCache()`. The same pattern in `saveIndexToCache()` and `pruneOrphanedCacheKeys()` is the reference. Tests: `test/vault.test.mjs` section N (N1–N3). Runtime test would require fake-indexeddb + a settings.js shim (cache.js → settings.js → ST `extensions.js`, unresolvable in node); section N pins three structural / pattern / consistency assertions instead. Browser-side smoke: trigger the "Clear cache" danger-zone action under quota pressure or with another SillyTavern tab open — pre-fix the action hung the popup indefinitely.
+
+---
+
+## 62. Vault Rename Is Destructive — Confirm Before Apply (V-M5, Option B)
+
+**Rule:** When the user changes `settings.vaults[idx].name` via the settings UI, surface a confirmation popup BEFORE committing the rename, and revert both the input value and `settings.vaults[idx].name` if cancelled. The destructive consequence (per-entry trackers keyed on `vaultSource:title` no longer match anything) is documented in the popup body so the user can choose.
+
+**Why (V-M5 known limitation, 2026-05-22):** `trackerKey(entry) = ${vaultSource}:${title}` (`src/state.js`). Every per-entry tracker — `cooldownTracker`, `decayTracker`, `consecutiveInjections`, `injectionHistory`, `chatInjectionCounts`, `perSwipeInjectedKeys`, `settings.analyticsData`, `chat_metadata.deeplore_pins`, `chat_metadata.deeplore_blocks` — uses this key. A vault rename changes the `vaultSource` prefix for every entry under it, so the old keys become orphaned and look like fresh entries with no state. The pipeline's analytics-prune in `finalizeIndex` (`src/vault/vault.js`) actively deletes `settings.analyticsData` keys whose `trackerKey` isn't in the current index, so the orphaned data does NOT survive the next index rebuild.
+
+**Two options considered:**
+- **Option A (re-key all trackers on rename):** detect the rename diff (oldName → newName) and walk every tracker / `chat_metadata` map, re-keying `oldName:*` → `newName:*`. Invasive — touches 9+ collections across multiple modules, each with its own lifecycle. Adds a one-shot operation that can partially fail mid-walk (chat_metadata persistence is per-chat). Deferred as future work.
+- **Option B (chosen for v2.5):** treat rename as destructive, document it via a confirmation popup + this gotcha entry + the per-test pin in `test/vault.test.mjs` section O. Faster to ship, no surface area for new bugs, and explicit user consent. The existing analytics-prune behavior is documented rather than fought.
+
+**UX contract (Option B):**
+1. `focus` on the vault-name input captures `dleOriginalName` via `$.data()`.
+2. The pre-existing `input` handler still validates uniqueness against other vault names (auto-suffixes `Vault 2`, etc.).
+3. `change` (blur) on the vault-name input compares against `dleOriginalName` — if they differ, fires `callGenericPopup(..., POPUP_TYPE.CONFIRM, ...)` with copy that names the destructive consequence and the affected tracker categories.
+4. Cancel → revert `settings.vaults[idx].name` AND the input value to `dleOriginalName`, then `saveSettingsDebounced()`.
+5. Confirm → record the new name as the next baseline so a subsequent edit prompts again.
+
+**Where:** `src/ui/settings-ui.js: bindVaultListEvents()` — `focus.dleVault` capture + `change.dleVault` confirmation handler. Tests: `test/vault.test.mjs` section O (O1–O5). Affected runtime collections (read this list before adding any new per-entry tracker — it MUST be updated): `cooldownTracker`, `decayTracker`, `consecutiveInjections`, `injectionHistory`, `chatInjectionCounts`, `perSwipeInjectedKeys`, `analyticsData`, `chat_metadata.deeplore_pins`, `chat_metadata.deeplore_blocks`, `chat_metadata.deeplore_chat_counts`. If Option A is ever implemented, every collection above needs an explicit re-key step.
+
+---
+
+## 63. Cascade-Pulled Entries With `excludeRecursion: true` Must Not Seed Recursion Text (M-5)
+
+**Rule:** In `src/pipeline/match.js`, cascade-link expansion (~L142-167) tracks which linked entries carry `excludeRecursion: true` via a `cascadeExcludedFromRecursion` Set, and the recursion init (~L168-176) builds the initial `newlyMatched` by filtering those entries out of `matchedSet`. Cascade-pulled excluded entries still belong in `matchedSet` (they ARE matched and will be injected) — they just cannot contribute their content to the recursion text scan.
+
+**Why (M-5 fix, 2026-05-22):** `excludeRecursion: true` is author intent for "never use this entry's content for scanning." Cascade pulls entries based on an explicit author relationship (`cascadeLinks`), so a cascade-pulled entry with `excludeRecursion: true` is fully matched and injected — that's correct. But its content must not seed step-1 recursion text, or one round of recursive keyword matching can fire against text the author marked off-limits. The inline filter at the top of the recursion while-loop (`.filter(e => !e.excludeRecursion)`) already catches this and remains the authoritative gate — the cascade-side filter is **belt-and-suspenders defense** so a future refactor of the recursion text gathering (different gather order, different filter location, factored-out helper) cannot silently leak cascade-pulled excluded content for one step.
+
+**Distinguish carefully:**
+- `matchedSet`: which entries are matched. Cascade-pulled excludeRecursion entries ARE in this set (they get injected).
+- `newlyMatched` initial recursion seed: which entries' content feeds the first recursion text scan. Cascade-pulled excludeRecursion entries are NOT in this seed.
+- Downstream injection: cascade-pulled excludeRecursion entries flow normally to the injection path (because they're in `matchedSet`).
+
+**Multi-vault interaction (MV-5 preserved):** Same-titled cross-vault entries pulled via cascade still union into `matchedSet` (`titleMap.get(title)` returns Entry[]). The M-5 filter applies per-entry — vault-A's "Alice" with `excludeRecursion: true` is filtered from the recursion seed, vault-B's "Alice" with `excludeRecursion: false` still seeds normally. Both remain in `matchedSet` for injection. See test `M-5d`.
+
+**Where:** `src/pipeline/match.js` — `cascadeExcludedFromRecursion` Set populated during cascade expansion, consulted when building `newlyMatched` initial seed. Existing inline filter `.filter(e => !e.excludeRecursion)` at the top of the recursion while-loop remains as the authoritative gate. Regression tests: `M-5a..M-5d` in `test/regression.test.mjs` (cascade-pulled-IN-matchedSet, content-not-leaked, excludeRecursion=false-still-recurses, MV-5-cross-vault-cascade-preserved).
+
+---
+
+## 64. Settings UI MEDIUMs Bundle (V-M1, V-M2, V-M4, V-M5 — 2026-05-22)
+
+Four small but sharp UI fixes that each protect a narrow correctness window. None change runtime data shape; all are pinned by `V-M1..M5` tests in `test/regression.test.mjs`.
+
+**V-M1 — Browse folder-grouping fallback must use `getWriterVisibleEntries()`, NOT raw `vaultIndex`.** `src/drawer/drawer-events.js: wireBrowseTab()` (~L630-645). On first toggle, `ds.browseFilteredEntries` is often empty (drawer just opened, no render pass yet). The pre-fix fallback fell through to raw `vaultIndex`, which (a) includes `lorebook-guide` entries the user never sees in Browse, and (b) ignores any active filter set. The folder-expanded Set then contained folders unrelated to what the user was actually looking at. Fix: use `getWriterVisibleEntries()` (parameterless — reads from module-scoped `vaultIndex` internally) for the fallback. This matches the contract from gotcha #5: anything user-facing that respects `lorebook-guide` semantics MUST go through this filter.
+
+**V-M2 — `wireStatusActions` MUST gate on `indexing` the same way `wireToolsTab` does.** `src/drawer/drawer-events.js: wireStatusActions()` (~L201-300). Tool buttons in the drawer's Tools tab refuse to run when `indexing===true` (BUG-359 guard at L140-148). The top status zone's action buttons (`scribe`, `newlore`, `librarian-chat`, `graph`, `clear-picks`, `skip-tools`) only checked `generationLock` — running `/dle-newlore` or `/dle-scribe` mid-index races the build commit (BUG-016 zombie-build territory). Fix: add `if (action !== 'refresh' && indexing) { dedupWarning('Indexing in progress — try again in a moment.', 'index_busy'); return; }` at the top of the click handler. **`refresh` is exempt** because it IS the index trigger (and has its own `ds.refreshing` latch) — gating it would deadlock the user out of recovering from a stuck indexing flag. The shared `dedupWarning` category `index_busy` participates in toast-dedup just like Wave C boot uses for its PM-mode warnings.
+
+**V-M4 — Wizard test-conn surfaces a fallback string when `result.error` is `undefined`.** `src/ui/setup-wizard.js: wireConnectionTest()` (~L275-289). `testConnection` may return `{ ok: false, diagnosis: 'cert', error: undefined }` — the diagnosis branch fires the help popup but the error-line render then does `escapeHtml(undefined)`, which puts the literal string `"undefined"` into the UI. Fix: `const errorText = result.error || (result.diagnosis ? \`Diagnosis: ${result.diagnosis}\` : 'Unknown error');` before the escape call. Order matters — explicit `error` wins when present, diagnosis is the next-best derivative, "Unknown error" is the floor.
+
+**V-M5 — Vault remove confirmation MUST be wrapped in try/catch.** `src/ui/settings-ui.js: bindVaultListEvents()` (~L279-299). The pre-fix shape was `const confirmed = await callGenericPopup(...)` with no try/catch. `callGenericPopup` normally returns `false` for both cancel and backdrop-dismiss (so `if (!confirmed) return;` covers both), but if the popup util THROWS (popup root detached mid-teardown, util unavailable in some boot-race window), the throw escapes the handler entirely — no UI feedback, no `return`, and worse, if a future refactor moves any mutation BEFORE the await, partial mutation could leak. Fix: wrap the await in try/catch, log a diagnostic warning, and treat any throw as "user did not confirm" (bail out, do not splice). Distinct from V-M5 vault-rename (gotcha #62) which is about the destructive consequence of a successful rename — this is about the popup-failure path of a remove.
+
+**Where:** `src/drawer/drawer-events.js: wireBrowseTab()` group-toggle (V-M1); `src/drawer/drawer-events.js: wireStatusActions()` click handler (V-M2); `src/ui/setup-wizard.js: wireConnectionTest()` (V-M4); `src/ui/settings-ui.js: bindVaultListEvents()` vault-remove click handler (V-M5). Tests: `V-M1..M5` in `test/regression.test.mjs` (10 assertions).
+
+---
+
+## 65. Stages MEDIUMs Bundle (M-3, M-4, M-6, M-7, M-8 — 2026-05-22)
+
+Five small pipeline-stage fixes that each shut down a specific footgun. None change runtime data shape; pinned by `M-3-*`, `M-4-*`, `M-6-*`, `M-7-*`, `M-8-*` tests in `test/regression.test.mjs`.
+
+**M-3 — Strip-dedup empty-hash audit (confirmed safe via title differentiation).** `src/stages.js: applyStripDedup()`. Original audit concern: when `entry._contentHash` is unset (parse-failure path, hydration window before cache loader stamps), the read-side dedup key trails an empty hash suffix — could two unrelated entries collide? Investigation: NO. The key shape is `<vaultSource>:<title>|<pos>|<depth>|<role>|<hash>` — distinct titles already differentiate entries in the recentEntries Set regardless of hash state. An earlier patch attempt using a per-entry `_no_hash_<vaultSource>:<title>` sentinel was rejected because it broke the legitimate same-entry case: a parse-failure-window log record (`contentHash: ''`) needs to dedup against a same-entry current-gen entry that also has no `_contentHash` — same canonical entry, both wildcards, MUST match symmetrically (`|| ''` on both sides). The audit conclusion was "no fix needed beyond the existing v2.5 vaultSource prefix"; the M-3 deliverable is the three regression tests below pinning the invariant. Tests `M-3-1..3`: cross-title entries with empty hash do not collide; same-title same-vault entries with empty hash on both sides DO dedup (symmetric wildcard); cross-vault same-title entries do not collide because the vaultSource prefix disambiguates them.
+
+**M-4 — `applyStripDedup` `lookbackDepth <= 0` is a no-op.** `src/stages.js: applyStripDedup()`. `arr.slice(-0)` returns the entire array (because `-0 === 0`), so a call asking for "no lookback" silently got "lookback against ALL injection history" — the opposite intent. The settings UI clamps to min 1, but the function is also called from `index.js`, `/dle-why`, and `matchTextForExternal`, none of which were bound by the UI minimum. **New invariant:** `lookbackDepth <= 0` returns `entries` unchanged with no dedup applied. The footgun is no longer accidental-feature; if a caller really wants "dedup against entire log" they pass `Number.MAX_SAFE_INTEGER` explicitly.
+
+**M-6 — `hasWarmup(entry)` helper unifies warmup gate across all 3 match paths.** `src/helpers.js` (new export). Pre-fix, `src/pipeline/match.js` used two different shape checks: `entry.warmup !== null` in the primary keyword and recursion paths, `entry.warmup && entry.warmup >= 1` in the BM25 fuzzy path. The two diverge on NaN, accidental `0`, empty string, `false`, negative numbers, and Infinity — none of which the frontmatter parser emits today but any of which can surface from cache hydration, manual `chat_metadata` edits, or future field-definition changes. Canonical predicate: `typeof w === 'number' && Number.isFinite(w) && w > 0`. All three sites now call `hasWarmup(entry)`. Future warmup-gate sites MUST use the same helper.
+
+**M-7 — Contextual gating short-circuit honors `exists`/`not_exists` rules.** `src/stages.js: applyContextualGating()`. `exists` and `not_exists` are field-presence checks on the ENTRY, not value comparisons against active context. The original short-circuit (return entries unchanged when no field had user-set context) fired BEFORE the per-entry loop got a chance to evaluate them — so a vault that used `not_exists` to mark "incomplete entries to drop" silently passed every entry when the user hadn't set any other context. Fix: extend `hasAnyContext` so it returns true when ANY enabled rule uses an existence operator, letting the loop run and evaluate them properly. The short-circuit still fires for the original "purely value-comparing rules with no active context" case.
+
+**M-8 — Truncation preserves canonical `_contentHash` for strip-dedup symmetry.** `core/matching.js: formatAndGroup()`. Pre-fix, the truncated entry got `_contentHash = entry._contentHash + '_trunc'` so strip-dedup would not match a truncated entry against a prior full-content injection of the same entry. The intent was "don't let a fragment masquerade as the full thing." But the practical effect was: gen 1 injects "Castle" full (hash X), gen 2's tighter budget truncates "Castle" (hash X_trunc), dedup mismatches, same entry re-injects back-to-back even though the author's canonical content is identical. Truncation is a presentation-layer concession to the budget — it must NOT change dedup identity. **New invariant:** the dedup hash always reflects pre-truncation canonical content, so budget changes don't bypass dedup. `_truncated` flag and `_originalTokens` still record that this version was cut, for any UI/analytics that need to display the fact.
+
+**Where:** `src/stages.js: applyStripDedup()` (M-4), `src/stages.js: applyContextualGating()` (M-7), `src/helpers.js: hasWarmup()` (M-6 helper), `src/pipeline/match.js` (M-6 call sites — 3 places), `core/matching.js: formatAndGroup()` truncated-entry branch (M-8). M-3 is audit-only (no code change beyond the pre-existing v2.5 vaultSource prefix in the dedup key). Tests: `M-3-1..3`, `M-4-1..2`, `M-6-1..4`, `M-7-1..3`, `M-8-1..2` in `test/regression.test.mjs` (17 assertions total). Test `F5` / `F5b` in `test/stages.test.mjs` updated to reflect M-4's behavior change.
+
+---
+
+## 68. Custom Proxy connection mode dead-headed in v2.5
+
+**Files:** `src/ai/ai.js` (callAI dispatch), `src/librarian/agentic-api.js` (4 sites), `src/ai/proxy-api.js` (kept for rollback)
+**Date:** 2026-05-23
+**Migration:** `settings.js: runMigrations` v3→v4 flips any `*ConnectionMode === 'proxy'` to `'profile'` and sets `_proxyMigrationV2_5_notice` sentinel. Boot-time popup explains + pulse-glows the migrated mode dropdown.
+**Rollback path:** Un-hide `<option value="proxy">` in `settings-popup.html` + `setup-wizard.html`. Revert `callAI` dispatch throw. `proxy-api.js` + `breaker-pure.js` classifiers still live.
+**Why dead-head not full strip:** Connection Profile may not match every user's pre-v2.5 setup; rollback safety valued. Files marked `@deprecated v2.5`.
+**Test:** `PRX-MIG-1/2/3` in `regression.test.mjs` verify migration semantics.
+
+**Affected settings (all migrated 'proxy' → 'profile' if previously set):**
+- `aiSearchConnectionMode`
+- `scribeConnectionMode`
+- `autoSuggestConnectionMode`
+- `aiNotepadConnectionMode`
+- `librarianConnectionMode`
+- `optimizeKeysConnectionMode`
+
+**Cascading consequence:** `enableCorsProxy: true` in ST's `config.yaml` is **no longer required for DLE AI features** as of v2.5 (Profile mode uses CMRS which routes server-side and bypasses the CORS bridge entirely). It IS still required if you use ST's own raw-URL AI requests outside DLE. Vault fetching via Obsidian Local REST API is unaffected — Obsidian's REST plugin has built-in CORS and DLE has never used the CORS bridge for vault traffic (see `docs/vault-and-indexing.md` §3 "CORS proxy usage").
+
+**Inherit chain:** `'inherit'` mode still works (chains to aiSearch). But aiSearch's mode can no longer BE `'proxy'` post-migration, so the inherit chain always lands on `'profile'`. No special handling needed in `resolveConnectionConfig` — the impossibility is enforced at the migration boundary, not the resolve boundary.

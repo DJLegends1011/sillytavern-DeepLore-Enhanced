@@ -1,20 +1,30 @@
-import { chat_metadata, saveSettingsDebounced } from '../../../../../../script.js';
+import { chat_metadata, saveSettingsDebounced, getCurrentChatId } from '../../../../../../script.js';
 import { saveMetadataDebounced } from '../../../../../extensions.js';
 import { accountStorage } from '../../../../../util/AccountStorage.js';
 import { escapeHtml } from '../../../../../utils.js';
 import { getSettings, invalidateSettingsCache } from '../../settings.js';
 import {
     vaultIndex, indexTimestamp, indexEverLoaded,
-    aiSearchStats, lastInjectionSources,
+    aiSearchStats,
     generationLock, indexing,
     notifyGatingChanged, notifyPinBlockChanged,
     fieldDefinitions, folderList,
     loreGaps,
-    resetAiSearchCache, setLastInjectionSources,
+    resetAiSearchCache,
     aiSearchCache, lastGenerationTrackerSnapshot,
     generationCount, chatEpoch,
     suppressNextAgenticLoop, setSuppressNextAgenticLoop,
+    getWriterVisibleEntries,
 } from '../state.js';
+import { getCurrentForChat as getCurrentVerdictForChat } from '../verdict/verdict-store.js';
+
+// Local helper — UI consumers must read the CURRENT CHAT's verdict, not the
+// ring-global newest. See docs/gotchas.md #46 ("UI consumer rule").
+function _currentVerdictForChat() {
+    let cid = null;
+    try { cid = getCurrentChatId() ?? null; } catch { cid = null; }
+    return getCurrentVerdictForChat(cid);
+}
 import { DEFAULT_FIELD_DEFINITIONS } from '../fields.js';
 import { normalizePinBlock, buildObsidianURI } from '../helpers.js';
 import { buildIndex } from '../vault/vault.js';
@@ -26,7 +36,7 @@ import {
 import { renderInjectionTab, renderBrowseTab, renderBrowseWindow, renderStatusZone } from './drawer-render.js';
 import { renderLibrarianTab } from './drawer-render-librarian.js';
 import { hideGap, dismissGap, getHiddenGapIds, persistGaps } from '../librarian/librarian-tools.js';
-import { dedupError } from '../toast-dedup.js';
+import { dedupError, dedupWarning } from '../toast-dedup.js';
 
 // ════════════════════════════════════════════════════════════════════════════
 // Helpers
@@ -158,15 +168,21 @@ export function wireTabExpand($drawer) {
             const target = $(this).data('expand');
             // Why tab "Full View" → Context Cartographer popup (no API call).
             if (target === 'injection') {
-                const { lastInjectionSources } = await import('../state.js');
-                let sources = lastInjectionSources;
-                // lastInjectionSources gets cleared after render — fall back to the last AI message.
+                const currentVerdict = _currentVerdictForChat();
+                let sources = currentVerdict?.injectedSources?.length ? currentVerdict.injectedSources : null;
+                let msgIdx = currentVerdict?.injectedSources?.length ? currentVerdict.msgIdx : null;
+                // Verdict ring buffer can miss a turn after reload before hydrate finishes —
+                // fall back to deeplore_sources on the last AI message for resume continuity.
                 if (!sources || sources.length === 0) {
                     const { chat } = await import('../../../../../../script.js');
                     if (chat) {
                         for (let i = chat.length - 1; i >= 0; i--) {
                             if (!chat[i].is_user && chat[i].extra?.deeplore_sources?.length > 0) {
                                 sources = chat[i].extra.deeplore_sources;
+                                // messageId of the AI message === chat.length at gen start
+                                // (see verdictMsgIdx in index.js onGenerate). Thread it so
+                                // cartographer's diff anchors on the right verdict.
+                                msgIdx = i;
                                 break;
                             }
                         }
@@ -174,7 +190,9 @@ export function wireTabExpand($drawer) {
                 }
                 if (sources && sources.length > 0) {
                     const { showSourcesPopup } = await import('../ui/cartographer.js');
-                    showSourcesPopup(sources);
+                    const _opts = {};
+                    if (typeof msgIdx === 'number' && Number.isFinite(msgIdx)) _opts.msgIdx = msgIdx;
+                    showSourcesPopup(sources, _opts);
                 } else {
                     toastr.info('No lore sources from the last generation. Send a message first.', 'DeepLore Enhanced', { timeOut: 3000 });
                 }
@@ -192,6 +210,14 @@ export function wireTabExpand($drawer) {
 export function wireStatusActions($drawer) {
     $drawer.on('click', '.dle-action-btn[data-action]', function () {
         const action = $(this).data('action');
+        // V-M2 (2026-05-22): mirror wireToolsTab's indexing gate (L140-148).
+        // 'refresh' itself triggers buildIndex and has its own ds.refreshing latch,
+        // so let it through; everything else races the in-flight build commit (BUG-016
+        // zombie-build territory) when indexing is true.
+        if (action !== 'refresh' && indexing) {
+            dedupWarning('Indexing in progress — try again in a moment.', 'index_busy');
+            return;
+        }
         switch (action) {
             case 'refresh': {
                 if (ds.refreshing) return;
@@ -260,13 +286,12 @@ export function wireStatusActions($drawer) {
                             consecutiveSize: snap.consecutive?.size ?? 0,
                             historySize: snap.injectionHistory?.size ?? 0,
                         } : null,
-                        lastInjectionSources: lastInjectionSources ? 'set' : 'null',
+                        verdictInjected: _currentVerdictForChat()?.injectedSources?.length ?? 0,
                         generationCount,
                         chatEpoch,
                     });
                 }
                 resetAiSearchCache();
-                setLastInjectionSources(null);
                 // BUG-396: clear injection log too, so strip-dedup doesn't remove entries that were in deleted/regenerated messages.
                 if (chat_metadata.deeplore_injection_log) {
                     chat_metadata.deeplore_injection_log = [];
@@ -352,7 +377,7 @@ export function wireInjectionTab($drawer) {
 
     $drawer.on('click', '.dle-copy-titles-btn', function () {
         const $btn = $(this);
-        const sources = lastInjectionSources;
+        const sources = _currentVerdictForChat()?.injectedSources ?? null;
         if (!sources || sources.length === 0) {
             toastr.warning('No injected entries to copy.', 'DeepLore Enhanced', { timeOut: 2000 });
             return;
@@ -556,7 +581,7 @@ export function wireBrowseTab($drawer) {
             ds.browseExpandedEntry = null;
             ds.browseExpandedIdx = null;
             ds.browseExpandedExtraHeight = 0;
-            const totalHeight = ds.browseFilteredEntries.length * BROWSE_ROW_HEIGHT;
+            const totalHeight = (ds.browseRowModel?.length || ds.browseFilteredEntries.length) * BROWSE_ROW_HEIGHT;
             $list.css({ 'min-height': totalHeight + 'px' });
             ds.browseLastRangeStart = -1;
             ds._browseLastScrollTop = undefined;
@@ -609,11 +634,157 @@ export function wireBrowseTab($drawer) {
         ds.browseExpandedIdx = entryIdx;
         ds.browseExpandedExtraHeight = extraHeight;
 
-        const totalHeight = ds.browseFilteredEntries.length * BROWSE_ROW_HEIGHT + extraHeight;
+        const totalHeight = (ds.browseRowModel?.length || ds.browseFilteredEntries.length) * BROWSE_ROW_HEIGHT + extraHeight;
         $list.css({ 'min-height': totalHeight + 'px' });
         ds.browseLastRangeStart = -1;
         ds._browseLastScrollTop = undefined;
         renderBrowseWindow();
+    });
+
+    // ─── #13 — folder grouping toggle ───
+    $drawer.find('.dle-browse-group-toggle').on('click', function () {
+        ds.browseFolderGrouping = !ds.browseFolderGrouping;
+        // When turning grouping ON for the first time, expand every top-folder so the
+        // user sees their entries — collapsing on demand is opt-in.
+        if (ds.browseFolderGrouping) {
+            if (!(ds.browseExpandedFolders instanceof Set)) ds.browseExpandedFolders = new Set();
+            // Audit M7: on first toggle, browseFilteredEntries may still be []
+            // (drawer just opened, no filter pass yet). Fall through to writer-visible
+            // entries (excludes lorebook-guide) so the expanded set matches the entries
+            // the Browse tab will actually show — empty Set means "all collapsed" in the
+            // pure helper. V-M1 (2026-05-22): was `vaultIndex` (raw), which pulled in
+            // guide entries and folders the user's filter would have excluded.
+            const source = (ds.browseFilteredEntries && ds.browseFilteredEntries.length)
+                ? ds.browseFilteredEntries
+                : getWriterVisibleEntries();
+            const folders = new Set();
+            for (const e of source || []) {
+                folders.add(e.folderPath ? e.folderPath.split('/')[0] : '(root)');
+            }
+            ds.browseExpandedFolders = folders;
+        }
+        // Expansion of a single entry is folder-scoped — collapsing/regrouping invalidates it.
+        ds.browseExpandedEntry = null;
+        ds.browseExpandedIdx = null;
+        ds.browseExpandedExtraHeight = 0;
+        scheduleRender(renderBrowseTab);
+        announceToScreenReader(ds.browseFolderGrouping ? 'Grouping by folder' : 'Flat list');
+    });
+
+    // ─── #13 — folder header expand/collapse ───
+    // Audit M5: scope delegation to .dle-browse-list so future .dle-browse-folder-header
+    // CSS uses elsewhere in the drawer (gating tab, librarian, etc.) can't trigger Browse
+    // expand/collapse and corrupt browseExpandedFolders.
+    $drawer.find('.dle-browse-list').on('click', '.dle-browse-folder-header', function (e) {
+        // Don't toggle when the user is interacting with the select-all checkbox.
+        if (e.target && (e.target.tagName === 'INPUT' || e.target.closest('.dle-browse-folder-select'))) return;
+        const folder = $(this).data('folder');
+        if (!folder) return;
+        if (!(ds.browseExpandedFolders instanceof Set)) ds.browseExpandedFolders = new Set();
+        if (ds.browseExpandedFolders.has(folder)) {
+            ds.browseExpandedFolders.delete(folder);
+        } else {
+            ds.browseExpandedFolders.add(folder);
+        }
+        // Collapsing a folder that contains the expanded preview invalidates it.
+        ds.browseExpandedEntry = null;
+        ds.browseExpandedIdx = null;
+        ds.browseExpandedExtraHeight = 0;
+        scheduleRender(renderBrowseTab);
+    });
+    $drawer.find('.dle-browse-list').on('keydown', '.dle-browse-folder-header', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $(this).trigger('click'); }
+    });
+
+    // ─── #26 — select mode toggle ───
+    $drawer.find('.dle-browse-select-toggle').on('click', function () {
+        ds.browseSelectMode = !ds.browseSelectMode;
+        if (!ds.browseSelectMode) {
+            // Leaving select mode clears the selection so a stale set can't surprise the user later.
+            if (ds.browseSelected instanceof Set) ds.browseSelected.clear();
+        }
+        scheduleRender(renderBrowseTab);
+        announceToScreenReader(ds.browseSelectMode ? 'Select mode on' : 'Select mode off');
+    });
+
+    // ─── #26 — row checkbox ───
+    $drawer.find('.dle-browse-list').on('click', '.dle-browse-row-select', function (e) {
+        // Stop the click from bubbling into the row's expand handler.
+        e.stopPropagation();
+        const trk = $(this).data('tracker');
+        if (!trk) return;
+        if (!(ds.browseSelected instanceof Set)) ds.browseSelected = new Set();
+        if (this.checked) ds.browseSelected.add(trk);
+        else ds.browseSelected.delete(trk);
+        // Cheap re-render to update toolbar count + row highlight + folder-header tri-state.
+        ds.browseLastRangeStart = -1;
+        scheduleRender(renderBrowseTab);
+    });
+    // Audit M2: Space toggles the checkbox natively AND bubbles to the info-row keydown
+    // handler (which treats Space as "expand/collapse preview"). Stop that bubble so the
+    // user doesn't get a surprise preview toggle every time they tick a selection.
+    $drawer.find('.dle-browse-list').on('keydown', '.dle-browse-row-select', function (e) {
+        if (e.key === ' ' || e.key === 'Enter') e.stopPropagation();
+    });
+
+    // ─── #26 — folder header select-all ───
+    $drawer.find('.dle-browse-list').on('click', '.dle-browse-folder-select', function (e) {
+        e.stopPropagation();
+        const folder = $(this).data('folder');
+        if (!folder) return;
+        if (!(ds.browseSelected instanceof Set)) ds.browseSelected = new Set();
+        // Live computation of which entries live under this folder.
+        const inFolder = [];
+        for (const ent of ds.browseFilteredEntries || []) {
+            const top = ent.folderPath ? ent.folderPath.split('/')[0] : '(root)';
+            if (top === folder) {
+                const trk = `${ent.vaultSource || ''}:${ent.title}`;
+                inFolder.push(trk);
+            }
+        }
+        const allSelected = inFolder.length > 0 && inFolder.every(k => ds.browseSelected.has(k));
+        if (allSelected) {
+            for (const k of inFolder) ds.browseSelected.delete(k);
+        } else {
+            for (const k of inFolder) ds.browseSelected.add(k);
+        }
+        ds.browseLastRangeStart = -1;
+        scheduleRender(renderBrowseTab);
+    });
+
+    // ─── #26 — clear selection ───
+    $drawer.find('.dle-browse-clear-selection').on('click', function () {
+        if (ds.browseSelected instanceof Set) ds.browseSelected.clear();
+        scheduleRender(renderBrowseTab);
+        announceToScreenReader('Selection cleared');
+    });
+
+    // ─── #26 — Optimize Selected (handler in popups.js to avoid circular import) ───
+    $drawer.find('.dle-browse-optimize-selected').on('click', async function () {
+        // Audit M1: prevent double-click from spawning two parallel batch runs.
+        if (ds._batchOptimizeInflight) return;
+        const trks = ds.browseSelected instanceof Set ? [...ds.browseSelected] : [];
+        if (!trks.length) return;
+        ds._batchOptimizeInflight = true;
+        const $btn = $(this).prop('disabled', true);
+        try {
+            const mod = await import('../ui/popups.js');
+            if (typeof mod.runBatchOptimize !== 'function') {
+                toastr.error('Batch optimize unavailable.', 'DeepLore Enhanced');
+                return;
+            }
+            await mod.runBatchOptimize(trks);
+            // Clear selection after the run completes regardless of accept/reject choices —
+            // the toolbar should not keep an "Optimize Selected (N)" button after the run is done.
+            if (ds.browseSelected instanceof Set) ds.browseSelected.clear();
+            scheduleRender(renderBrowseTab);
+        } catch (err) {
+            console.error('[DLE] runBatchOptimize failed:', err);
+            toastr.error('Batch optimize failed: ' + (err?.message || err), 'DeepLore Enhanced');
+        } finally {
+            ds._batchOptimizeInflight = false;
+            $btn.prop('disabled', false);
+        }
     });
 }
 
@@ -718,6 +889,10 @@ export function wireGatingTab($drawer) {
         };
         $chip.one('transitionend', apply);
         setTimeout(apply, 200);
+    });
+    // Audit S6-1: a11y parity with sibling .dle-chip-x — Enter/Space activates the chip-X.
+    $drawer.find('#dle-panel-gating').on('keydown', '.dle-folder-chip-x', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $(this).trigger('click'); }
     });
 
     $drawer.find('#dle-panel-gating').on('keydown', '.dle-gating-set', function (e) {

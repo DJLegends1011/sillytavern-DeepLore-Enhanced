@@ -86,8 +86,21 @@ Tag-mode extraction also runs inside the `CHARACTER_MESSAGE_RENDERED` handler (s
 
 ### Storage
 - **Per-message:** `message.extra.deeplore_ai_notes` — the extracted notes for this specific message
-- **Accumulated:** `chat_metadata.deeplore_ai_notepad` — all notes concatenated, capped at 64KB (`AI_NOTEPAD_MAX_CHARS`)
-- **Cap function:** `capNotepad(text)` — trims oldest block at paragraph boundary (`\n\n`)
+- **Accumulated:** `chat_metadata.deeplore_ai_notepad` — all notes concatenated
+- **Pinned entries:** `chat_metadata.deeplore_ai_notepad_pins` — array of normalized line keys (see `normalizeNotepadLine()` in `src/helpers.js`). Pinned lines survive both cap passes below.
+
+### Cap function `capNotepad(text, opts?)` (#25)
+
+Applied at every append site. Two passes in order:
+
+1. **Entry-count FIFO** — when `settings.aiNotepadMaxEntries > 0` (default 50), oldest non-pinned lines are dropped first until the line count is at or below the cap. Pinned lines (matched by normalized key against `deeplore_ai_notepad_pins`) are skipped even when they are the oldest, so pin = sticky.
+2. **64KB char backstop** (`AI_NOTEPAD_MAX_CHARS`) — kept as a hard ceiling so a single pathologically large note can't blow up chat metadata. Trims oldest block at paragraph boundary (`\n\n`).
+
+`opts.settings` and `opts.chat_metadata` are accepted for test isolation; production callers pass `text` only.
+
+### Manual fuzzy dedup
+
+The AI Notepad popup exposes a `Deduplicate` button that walks lines in order and drops later entries whose `normalizeNotepadLine()` key matches an earlier kept line OR whose bigram-Dice similarity (`bigramDiceSimilarity()` in `src/helpers.js`) meets `settings.aiNotepadFuzzyDedupThreshold` (default 0.85). If an incoming line is pinned and the existing match is not, the pin wins — pinned text replaces the kept slot. Deterministic, no LLM dependency. LLM-driven culling is deferred past 2.5 by design.
 
 ### Swipe Rollback (BUG-290)
 On `MESSAGE_SWIPED` handler (`_registerEs(event_types.MESSAGE_SWIPED, ...)` — notepad rollback block using `lastIndexOf(anchored)`): Removes the **last occurrence** of the swiped message's notes from `deeplore_ai_notepad`, anchored on `'\n' + notes`. Uses `lastIndexOf` (not first `replace`) to avoid removing an earlier message's identical notes.
@@ -136,20 +149,23 @@ Injected as auxiliary prompt via `_injectAuxPrompt('deeplore_notebook', content,
 
 Shows a "Sources" button on messages that had lore injected.
 
-### Source Tagging (inside `onGenerate()` — `setLastInjectionSources(...)` commit block)
+### Source Tagging (inside `onGenerate()` — verdict commit block)
 ```
-setLastInjectionSources(injectedEntries.map(e => ({
-    title, filename, matchedBy, priority, tokens, vaultSource
-})))
-setLastInjectionEpoch(epoch)
+writeVerdict(buildVerdict({
+    trace,
+    injectedSources: injectedEntries.map(e => ({ title, filename, matchedBy, priority, tokens, vaultSource })),
+    chatId, msgIdx, epoch, lockEpoch,
+}))
 ```
 
-### Source Consumption (inside `CHARACTER_MESSAGE_RENDERED` handler — `injectSourcesButton(messageId)` block)
+### Source Consumption (inside `CHARACTER_MESSAGE_RENDERED` handler)
 ```
-→ Check: lastInjectionSources exists and is non-empty
-→ Check: lastInjectionEpoch === chatEpoch (epoch guard)
-→ Check: not already consumed for this messageId (_consumedByMesId)
-→ Store on message.extra.deeplore_sources
+→ Read current verdict via getCurrent() (verdict-store.js)
+→ Check: verdict.msgIdx === messageId && verdict.epoch === chatEpoch
+→ Check: verdict.injectedSources is non-empty
+→ Check: message.extra._deeplore_sources_tag !== `${verdict.genId}:${verdict.ts}` (double-attach guard)
+→ Store verdict.injectedSources on message.extra.deeplore_sources
+→ Set message.extra._deeplore_sources_tag for next-swipe idempotency
 → saveMetadataDebounced()
 → injectSourcesButton(messageId)
 ```
@@ -158,9 +174,9 @@ setLastInjectionEpoch(epoch)
 Namespaced as `.dle-carto` on `#chat` for clean teardown. Handles `click` and `keydown` (Enter/Space for a11y). Opens `showSourcesPopup(sources, { aiNotes })`.
 
 ### Diff Display
-`previousSources` (in state.js) holds the prior generation's sources for side-by-side comparison in the popup.
+Cartographer's "Since last gen" diff is computed via `diffVerdicts(getCurrent(), getPrevious())` (in `src/verdict/verdict-pure.js`). The ring buffer naturally provides the previous turn's verdict — no separate `previousSources` global needed.
 
-**Gotcha:** `lastPipelineTrace` doubles as a fallback display source when `lastInjectionSources` is cleared after render — don't blindly null it.
+**Verdict store** replaces the four legacy globals (`lastInjectionSources`, `lastPipelineTrace`, `previousSources`, `lastInjectionEpoch`). See `docs/gotchas.md` #46 for the full migration rationale.
 
 ---
 
@@ -213,7 +229,7 @@ Ring buffer of per-generation event summaries (`generationBuffer`, size **50** �
 
 **Additional snapshot fields:**
 - `snap.vault`: +`buildPromiseActive`, `buildEpoch`, `syncActive`, `folderDistribution`
-- `snap.pipeline`: +`lastScribeChatLength`, `hasLastScribeSummary`, `perSwipeInjectedKeysCount`, `lastInjectionSourceCount`, `lastInjectionEpoch`, `injectionEpochMatchesChatEpoch`
+- `snap.pipeline`: +`lastScribeChatLength`, `hasLastScribeSummary`, `perSwipeInjectedKeysCount`, `verdict` (`{genId, msgIdx, epoch, lockEpoch, ts, injectedSourceCount, perEntryCount, epochMatchesChatEpoch, trace}` or null), `verdictRingDepth`
 - `snap.staleness`: +`capturedDuringIndexBuild`
 - `snap.registeredPrompts` — actual DLE `extension_prompts` metadata (what's currently registered with ST)
 - `snap.gatingContext` — active era/location/scene/character values (pseudonymized via `scrubber.js`)
@@ -281,7 +297,8 @@ Beyond the existing `init`, `obsidian_circuit`, `search_mode`, `cache_save`, `ca
 Read-only object created on `init()`. Three getters (no setters):
 
 - **`.state`** — snapshot of key state variables: `vaultIndex`, `generationCount`, `chatEpoch`, `generationLock`, `cooldownTracker`, etc.
-- **`.trace`** — returns `lastPipelineTrace`
+- **`.trace`** — returns `getCurrentVerdict()?.trace ?? null`
+- **`.verdict`** — returns the current verdict record (genId, msgIdx, epoch, injectedSources, trace, perEntry)
 - **`.buffers`** — returns `.drain()` of all 6 ring buffers (console, network, errors, aiCalls, events, generations)
 
 For browser console debugging. Read-only — mutations have no effect on DLE state.

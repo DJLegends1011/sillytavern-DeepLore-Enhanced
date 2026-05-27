@@ -8,14 +8,17 @@ import { escapeHtml } from '../../../../../utils.js';
 import { callGenericPopup, POPUP_TYPE } from '../../../../../popup.js';
 import { SlashCommandParser } from '../../../../../slash-commands/SlashCommandParser.js';
 import { SlashCommand } from '../../../../../slash-commands/SlashCommand.js';
-import { ARGUMENT_TYPE } from '../../../../../slash-commands/SlashCommandArgument.js';
+import { SlashCommandArgument, ARGUMENT_TYPE } from '../../../../../slash-commands/SlashCommandArgument.js';
+import { SlashCommandEnumValue } from '../../../../../slash-commands/SlashCommandEnumValue.js';
 import { classifyError, NO_ENTRIES_MSG, yamlEscape } from '../../core/utils.js';
-import { getSettings, getPrimaryVault } from '../../settings.js';
-import { vaultIndex, scribeInProgress, setIndexTimestamp, setSkipNextPipeline } from '../state.js';
+import { getSettings, getPrimaryVault, resolveConnectionConfig } from '../../settings.js';
+import { vaultIndex, scribeInProgress, setIndexTimestamp, setSkipNextPipeline, loreGaps, tryAcquireHalfOpenProbe, recordAiSuccess, recordAiFailure } from '../state.js';
 import { buildIndex, ensureIndexFresh, getMaxResponseTokens } from '../vault/vault.js';
 import { runScribe } from '../ai/scribe.js';
 import { runAutoSuggest, showSuggestionPopup } from '../ai/auto-suggest.js';
 import { optimizeEntryKeys, showOptimizePopup } from './popups.js';
+import { fuzzyTitleMatchAll } from '../helpers.js';
+import { parseRange, summarizeRange, rollbackSummary, listSummaries } from '../ai/summarize.js';
 
 export function registerAiCommands() {
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
@@ -35,10 +38,44 @@ export function registerAiCommands() {
                 toastr.info('Usage: /dle-optimize-keys <entry name>', 'DeepLore Enhanced');
                 return '';
             }
-            const entry = vaultIndex.find(e => e.title.toLowerCase() === name.toLowerCase());
+            let entry = vaultIndex.find(e => e.title.toLowerCase() === name.toLowerCase());
             if (!entry) {
-                toastr.warning(`Entry "${name}" not found.`, 'DeepLore Enhanced');
-                return '';
+                // Fuzzy fallback so a typo / partial name doesn't drop on the floor.
+                const titles = vaultIndex.map(e => e.title);
+                const matches = fuzzyTitleMatchAll(name, titles, 0.6);
+                if (matches.length === 0) {
+                    toastr.warning(`Entry "${name}" not found.`, 'DeepLore Enhanced');
+                    return '';
+                }
+                if (matches.length === 1) {
+                    entry = vaultIndex.find(e => e.title === matches[0].title);
+                    toastr.info(`Matched "${entry.title}" (${Math.round(matches[0].similarity * 100)}%).`, 'DeepLore Enhanced');
+                } else {
+                    const top = matches.slice(0, 10);
+                    const html = `<div class="dle-popup">
+                        <h3>Optimize keys: pick an entry</h3>
+                        <p class="dle-text-xs dle-muted">No exact match for "${escapeHtml(name)}". Found ${matches.length} similar:</p>
+                        <ol class="dle-fuzzy-picker-list">
+                            ${top.map(m => `<li><button type="button" class="menu_button dle-fuzzy-pick" data-title="${escapeHtml(m.title)}">${escapeHtml(m.title)} <span class="dle-dimmed">(${Math.round(m.similarity * 100)}%)</span></button></li>`).join('')}
+                        </ol>
+                    </div>`;
+                    let picked = null;
+                    await callGenericPopup(html, POPUP_TYPE.TEXT, '', {
+                        wide: true,
+                        // Scope queries to this popup's dialog so a stacked popup doesn't cross-fire.
+                        onOpen: (popup) => {
+                            popup.dlg.querySelectorAll('.dle-fuzzy-pick').forEach(btn => {
+                                btn.addEventListener('click', () => {
+                                    picked = btn.getAttribute('data-title');
+                                    popup.okButton?.click();
+                                });
+                            });
+                        },
+                    });
+                    if (!picked) return '';
+                    entry = vaultIndex.find(e => e.title === picked);
+                    if (!entry) return '';
+                }
             }
             const loadingToast = toastr.info(`Optimizing keywords for "${entry.title}"...`, 'DeepLore Enhanced', { timeOut: 0, extendedTimeOut: 0 });
             try {
@@ -52,6 +89,12 @@ export function registerAiCommands() {
             }
             return '';
         },
+        unnamedArgumentList: [SlashCommandArgument.fromProps({
+            description: 'vault entry title',
+            typeList: [ARGUMENT_TYPE.STRING],
+            isRequired: true,
+            enumProvider: () => vaultIndex.map(e => new SlashCommandEnumValue(e.title)),
+        })],
         helpString: 'Suggest better keywords for an entry using AI. Usage: /dle-optimize-keys <entry name>.',
         returns: ARGUMENT_TYPE.STRING,
     }));
@@ -104,6 +147,11 @@ export function registerAiCommands() {
             await runScribe(userPrompt?.trim() || '');
             return 'Session note written.';
         },
+        unnamedArgumentList: [SlashCommandArgument.fromProps({
+            description: 'optional focus topic for the scribe',
+            typeList: [ARGUMENT_TYPE.STRING],
+            isRequired: false,
+        })],
         helpString: 'Write a session summary note to Obsidian. Usage: /dle-scribe <focus topic>. Example: /dle-scribe What happened with the sword?',
         returns: ARGUMENT_TYPE.STRING,
     }));
@@ -170,6 +218,11 @@ export function registerAiCommands() {
                 return '';
             }
         },
+        unnamedArgumentList: [SlashCommandArgument.fromProps({
+            description: 'optional question to ask about the vault',
+            typeList: [ARGUMENT_TYPE.STRING],
+            isRequired: false,
+        })],
         helpString: 'Send the entire vault to the AI for review and feedback. Usage: /dle-review <question>. Example: /dle-review What inconsistencies do you see?',
         returns: ARGUMENT_TYPE.STRING,
     }));
@@ -245,7 +298,92 @@ export function registerAiCommands() {
             }
             return '';
         },
+        unnamedArgumentList: [SlashCommandArgument.fromProps({
+            description: 'subcommand: review | audit | gap <id>',
+            typeList: [ARGUMENT_TYPE.STRING],
+            isRequired: false,
+            // Dynamic enum: static subcommands + gap-by-id for any open gaps.
+            // MUST be sync — ST's SlashCommandAutoCompleteNameResult calls
+            // enumProvider without awaiting and reads `.length` immediately, so
+            // returning a Promise produces silent autocomplete failure.
+            enumProvider: () => {
+                const base = [
+                    new SlashCommandEnumValue('review', 'open the review browser'),
+                    new SlashCommandEnumValue('audit', 'audit existing entries'),
+                ];
+                const gaps = (Array.isArray(loreGaps) ? loreGaps : []).map(g =>
+                    new SlashCommandEnumValue(`gap ${g.id}`, g.summary || g.title || g.id),
+                );
+                return [...base, ...gaps];
+            },
+        })],
         helpString: 'Open the Librarian AI session. Usage: /dle-librarian [gap &lt;id&gt; | review | audit]',
+        returns: ARGUMENT_TYPE.STRING,
+    }));
+
+    // #15 — Dedicated summary feature: AI-summarize a chat range, hide originals, prepend summary.
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'dle-summarize-range',
+        callback: async (_args, rangeArg) => {
+            if (!chat || chat.length === 0) {
+                toastr.info('No active chat.', 'DeepLore Enhanced');
+                return '';
+            }
+            const range = parseRange(rangeArg || '', chat.length);
+            if (!range) {
+                toastr.warning('Usage: /dle-summarize-range <start-end> | <N-> | <-N> | <N>. Examples: 5-15, 10- (from 10 to end), -8 (last 8), 7 (just message 7).', 'DeepLore Enhanced');
+                return '';
+            }
+            const loading = toastr.info(`Summarizing messages ${range.start}–${range.end}...`, 'DeepLore Enhanced', { timeOut: 0, extendedTimeOut: 0 });
+            try {
+                const result = await summarizeRange(range);
+                toastr.clear(loading);
+                if (!result.ok) {
+                    toastr.error(result.error, 'DeepLore Enhanced');
+                    return '';
+                }
+                toastr.success(`Summarized ${result.hiddenCount} messages. ID: ${result.summaryId} (use /dle-summarize-rollback ${result.summaryId} to undo).`, 'DeepLore Enhanced', { timeOut: 8000 });
+                return result.summaryId;
+            } catch (err) {
+                toastr.clear(loading);
+                toastr.error(`Summarize failed: ${err.message}`, 'DeepLore Enhanced');
+                return '';
+            }
+        },
+        unnamedArgumentList: [SlashCommandArgument.fromProps({
+            description: 'range: start-end, N- (from N), -N (last N), or single N',
+            typeList: [ARGUMENT_TYPE.STRING],
+            isRequired: true,
+        })],
+        helpString: 'AI-summarize a chat range, hide originals, prepend the summary. Usage: /dle-summarize-range <range>. Examples: 5-15 (range), 10- (from 10 to end), -8 (last 8 messages), 7 (single message).',
+        returns: ARGUMENT_TYPE.STRING,
+    }));
+
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'dle-summarize-rollback',
+        callback: async (_args, idArg) => {
+            const id = (idArg || '').trim();
+            const result = await rollbackSummary(id || 'all');
+            if (!result.ok) {
+                toastr.warning(result.error || 'Rollback failed', 'DeepLore Enhanced');
+                return '';
+            }
+            toastr.success(`Restored ${result.restored} messages, removed ${result.removed} summary message${result.removed === 1 ? '' : 's'}.`, 'DeepLore Enhanced');
+            return '';
+        },
+        unnamedArgumentList: [SlashCommandArgument.fromProps({
+            description: 'summary id to roll back (omit or "all" = roll back every summary in this chat)',
+            typeList: [ARGUMENT_TYPE.STRING],
+            isRequired: false,
+            enumProvider: () => {
+                const list = listSummaries();
+                return [
+                    new SlashCommandEnumValue('all', 'roll back every summary'),
+                    ...list.map(s => new SlashCommandEnumValue(s.id, `#${s.summaryIndex} · ${s.hiddenCount} hidden · ${new Date(s.createdAt).toLocaleTimeString()}`)),
+                ];
+            },
+        })],
+        helpString: 'Roll back a /dle-summarize-range operation. Usage: /dle-summarize-rollback [id|all].',
         returns: ARGUMENT_TYPE.STRING,
     }));
 }
@@ -255,10 +393,17 @@ export function registerAiCommands() {
  * @returns {{ generated: number, skipped: number, failed: number, aborted: number }}
  */
 export async function summarizeEntries(entries) {
-    const { callAI } = await import('../ai/ai.js');
+    const { callAI, isExcludedFromBreaker } = await import('../ai/ai.js');
     const { writeNote, obsidianFetch, encodeVaultPath } = await import('../vault/obsidian-api.js');
     const settings = getSettings();
     const vault = getPrimaryVault(settings);
+    // Wave-B contract: the batch summary path was bypassing BOTH resolveConnectionConfig
+    // AND the breaker. Without breaker integration a bad API key here used to bake every
+    // per-entry call without ever shedding load; without resolveConnectionConfig the loop
+    // ignored settings.optimizeKeys / inheritance and reached straight into aiSearch.* .
+    // Mirror callScribe / callAutoSuggest: resolve a tool config, gate every call with
+    // tryAcquireHalfOpenProbe, route the trip decision through isExcludedFromBreaker.
+    const resolved = resolveConnectionConfig('optimizeKeys');
 
     let generated = 0;
     let skipped = 0;
@@ -273,16 +418,29 @@ export async function summarizeEntries(entries) {
             const systemPrompt = 'You are a lore librarian. Write a concise AI search summary (max 600 chars) for the following lorebook entry. The summary should answer: What is this? When should it be selected? Key relationships? Do NOT include physical descriptions or atmospheric prose. Write for an AI that needs to decide whether to inject this entry.';
             const userMsg = `Entry: ${entry.title}\n\nContent:\n${entry.content.substring(0, 3000)}`;
 
-            const result = await callAI(systemPrompt, userMsg, {
-                caller: 'summaryGen',
-                mode: settings.aiSearchConnectionMode || 'profile',
-                profileId: settings.aiSearchProfileId,
-                proxyUrl: settings.aiSearchProxyUrl,
-                model: settings.aiSearchModel,
-                maxTokens: 300,
-                timeout: settings.aiSearchTimeout,
-            });
-            const responseText = result.text;
+            // Breaker probe per call. If open (or probe taken), skip this entry but keep
+            // looping — `failed++` (not aborted), so the toast at the end still reports
+            // a useful count.
+            if (!tryAcquireHalfOpenProbe()) {
+                console.warn('[DLE] summarizeEntries: circuit breaker open — skipping entry', entry.title);
+                failed++;
+                continue;
+            }
+            let result;
+            try {
+                result = await callAI(systemPrompt, userMsg, {
+                    ...resolved,
+                    caller: 'summaryGen',
+                    maxTokens: 300,
+                });
+                recordAiSuccess();
+            } catch (callErr) {
+                if (!isExcludedFromBreaker(callErr)) recordAiFailure();
+                throw callErr;
+            }
+            // Audit DIAG-09: result.text may be undefined when the AI call fails or returns
+            // an unexpected shape. Bare .trim() would throw and crash the per-entry loop.
+            const responseText = (result && typeof result.text === 'string') ? result.text : '';
 
             const summary = responseText.trim().substring(0, 600);
             if (!summary) {

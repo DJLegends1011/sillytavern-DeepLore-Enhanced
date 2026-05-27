@@ -254,7 +254,10 @@ export function initRender(gs) {
 
         const pinnedLabel = (n.pinned && !n._treePinned) ? '<span class="dle-graph-tooltip-badge dle-graph-tooltip-badge--pinned">pinned</span>' : '';
         const gatingFields = [];
-        if (entry.customFields) {
+        // Audit S9-4: `entry` (gs._vaultIndex?.[n.id]) can be undefined when the vault
+        // index changes mid-hover (chat switch / rebuild). The original code dereferenced
+        // entry.customFields / entry.priority without guarding the variable itself.
+        if (entry?.customFields) {
             const activeColorField = gs.colorMode?.startsWith('field:') ? gs.colorMode.slice(6) : null;
             for (const [key, val] of Object.entries(entry.customFields)) {
                 if (val != null && val !== '' && (!Array.isArray(val) || val.length > 0)) {
@@ -269,10 +272,11 @@ export function initRender(gs) {
         }
         // 3+ fields wrap to multiple lines; fewer fit inline with dot separator.
         const fieldsSeparator = gatingFields.length >= 3 ? '<br>' : ' · ';
+        const priorityLabel = entry?.priority ?? '—';
         tooltipEl.innerHTML = `
             <strong>${escapeHtml(n.title)}</strong> ${vaultLabel}
             ${typeBadge}${healthBadge}${pinnedLabel}
-            <span class="dle-graph-tooltip-stats">~${n.tokens} tokens · Priority ${entry.priority} · ${connections} connections · ${injections} injections</span>
+            <span class="dle-graph-tooltip-stats">~${n.tokens} tokens · Priority ${priorityLabel} · ${connections} connections · ${injections} injections</span>
             ${gatingFields.length > 0 ? `<span class="dle-graph-tooltip-gating">${gatingFields.join(fieldsSeparator)}</span>` : ''}
         `;
     }

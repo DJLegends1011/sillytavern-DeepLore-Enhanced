@@ -35,6 +35,10 @@
 !core/
 !core/**
 
+# i18n locale dictionaries (shipped to clients via fetch at runtime)
+!locales/
+!locales/**
+
 # Code-level docs
 !docs/
 !docs/**

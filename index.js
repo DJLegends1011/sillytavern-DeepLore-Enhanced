@@ -8,6 +8,8 @@ import './src/diagnostics/boot.js';
 import {
     setExtensionPrompt,
     extension_prompts,
+    extension_prompt_types,
+    extension_prompt_roles,
     saveSettingsDebounced,
     chat,
     chat_metadata,
@@ -19,10 +21,12 @@ import {
     setSendButtonState,
     activateSendButtons,
     deactivateSendButtons,
+    getCurrentChatId,
 } from '../../../../script.js';
 import { renderExtensionTemplateAsync, saveMetadataDebounced } from '../../../extensions.js';
+import { callGenericPopup, POPUP_TYPE, POPUP_RESULT } from '../../../popup.js';
 import { eventSource, event_types } from '../../../events.js';
-import { promptManager } from '../../../openai.js';
+import { promptManager, oai_settings } from '../../../openai.js';
 import { formatAndGroup } from './core/matching.js';
 import { classifyError } from './core/utils.js';
 import {
@@ -31,10 +35,10 @@ import {
     applyStripDedup, trackGeneration, decrementTrackers, recordAnalytics,
 } from './src/stages.js';
 import { clearPrompts } from './core/pipeline.js';
-import { getSettings, PROMPT_TAG_PREFIX, PROMPT_TAG, invalidateSettingsCache, resolveConnectionConfig, DEFAULT_AI_NOTEPAD_PROMPT } from './settings.js';
+import { getSettings, PROMPT_TAG_PREFIX, PROMPT_TAG, invalidateSettingsCache, resolveConnectionConfig, DEFAULT_AI_NOTEPAD_PROMPT, PROXY_DEPRECATION_MODE_KEYS } from './settings.js';
 import {
     vaultIndex, getWriterVisibleEntries, indexEverLoaded, indexing,
-    lastInjectionSources, lastInjectionEpoch, lastScribeChatLength, scribeInProgress,
+    lastScribeChatLength, scribeInProgress,
     cooldownTracker, generationCount, injectionHistory, consecutiveInjections,
     chatInjectionCounts, setChatInjectionCounts, trackerKey,
     lastWarningRatio, decayTracker, chatEpoch,
@@ -42,10 +46,9 @@ import {
     lastGenerationTrackerSnapshot, setLastGenerationTrackerSnapshot,
     setCooldownTracker, setDecayTracker, setConsecutiveInjections, setInjectionHistory,
     generationLock, generationLockTimestamp, generationLockEpoch, setGenerationLock, setGenerationLockEpoch,
-    setLastInjectionSources, setLastInjectionEpoch, setLastScribeChatLength, setLastScribeSummary,
+    setLastScribeChatLength, setLastScribeSummary,
     setGenerationCount, setLastWarningRatio, setChatEpoch, setLastIndexGenerationCount,
-    aiSearchCache, resetAiSearchCache, setAutoSuggestMessageCount, autoSuggestMessageCount, setLastPipelineTrace,
-    setPreviousSources, lastPipelineTrace,
+    aiSearchCache, resetAiSearchCache, setAutoSuggestMessageCount, autoSuggestMessageCount,
     notepadExtractInProgress, setNotepadExtractInProgress,
     notifyPipelineComplete, notifyInjectionSourcesReady, notifyGatingChanged,
     notifyChatInjectionCountsUpdated,
@@ -73,13 +76,21 @@ import { registerSlashCommands } from './src/ui/commands.js';
 import { dedupError, dedupWarning } from './src/toast-dedup.js';
 import { createDrawerPanel, resetDrawerState, destroyDrawerPanel } from './src/drawer/drawer.js';
 import { pushActivity } from './src/drawer/drawer-state.js';
-import { extractAiNotes, normalizeLoreGap } from './src/helpers.js';
+import { extractAiNotes, normalizeLoreGap, normalizeNotepadLine } from './src/helpers.js';
 import { clearSessionActivityLog, persistGaps } from './src/librarian/librarian-tools.js';
 import { injectLibrarianDropdown, removeLibrarianDropdown } from './src/librarian/librarian-ui.js';
 import { clearSessionState as clearLibrarianSessionState } from './src/librarian/librarian-session.js';
 import { runAgenticLoop } from './src/librarian/agentic-loop.js';
-import { isToolCallingSupported, getActiveMaxTokens, isReasoningOnlyModel, getResolvedModel } from './src/librarian/agentic-api.js';
+import { isToolCallingSupported, getActiveMaxTokens, isReasoningOnlyModel, getResolvedModel, isUnderlyingClaude } from './src/librarian/agentic-api.js';
 import { buildChatMessages } from './src/librarian/agentic-messages.js';
+import {
+    buildVerdict,
+    writeVerdict,
+    clearRing as clearVerdictRing,
+    setCurrentChatId as setVerdictChatId,
+    hydrateChat as hydrateVerdictChat,
+    getCurrent as getCurrentVerdictForRender,
+} from './src/verdict/verdict-store.js';
 
 // ============================================================================
 // BUG-063: Lifecycle / teardown infrastructure.
@@ -90,6 +101,16 @@ import { buildChatMessages } from './src/librarian/agentic-messages.js';
 // ============================================================================
 const _dleListeners = { eventSource: [] };
 let _dleInitialized = false;
+// Boot-MED-1 (2026-05-22): promise-based init latch. The jQuery handler is async
+// and `_dleInitialized = true` previously flipped synchronously BEFORE the body's
+// awaits resolved. A second invocation (HMR, duplicate jQuery dispatch, fast double-
+// load) would see `_dleInitialized === true`, call `_teardownDleExtension()` on
+// the FIRST still-in-flight init, and tear down listeners/state while the first
+// init's awaits continued resolving — half-registered state, missing observers,
+// orphan timers. Now: second caller awaits the first's _dleInitInProgress promise
+// and short-returns. Only after the first init completes does `_dleInitialized`
+// flip true (inside the promise body, after all awaits).
+let _dleInitInProgress = null;
 let _dleBeforeUnloadHandler = null;
 // Stage 8 sets true on each analytics record; the modulo-5 save clears it.
 // CHAT_CHANGED + beforeunload flush so in-flight batches aren't lost.
@@ -105,6 +126,43 @@ let _analyticsPendingSave = false;
 // (no payload). 10s safety timeout clears the flag if RELEASED never fires.
 let inSteppedThinking = false;
 let _steppedThinkingTimeout = null;
+
+// Boot-MED-3 (2026-05-22): early-register event stubs.
+// ST's CHAT_CHANGED can fire while DLE's init is mid-await (slow machines, large
+// vaults, user clicks a chat during boot). The real CHAT_CHANGED handler is
+// registered ~700 lines into init() after i18n, drawer creation, settings UI etc.
+// If a chat switch lands before registration, DLE never sees it — vaultIndex
+// hydration, Verdict scope rebind, PM re-registration all miss the destination
+// chat until the NEXT switch. Stub queues the latest chatId; once the real handler
+// installs (setRealChatChangedHandler), the queued event is replayed exactly once.
+// Only the LATEST chatId matters — rapid early switches collapse to the final
+// destination, which is the correct semantic (intermediate transient chats never
+// "happened" from DLE's perspective).
+let _pendingChatChanged = null;
+let _pendingChatChangedFired = false;
+let _realChatChangedHandler = null;
+
+function _earlyChatChangedStub() {
+    if (_realChatChangedHandler) {
+        try { _realChatChangedHandler(); } catch (err) { console.warn('[DLE] CHAT_CHANGED handler error:', err?.message); }
+        return;
+    }
+    let id = null;
+    try { id = getCurrentChatId() || null; } catch { /* getCurrentChatId may fail pre-ST-ready */ }
+    _pendingChatChanged = id;
+    _pendingChatChangedFired = true;
+}
+
+function _installRealChatChangedHandler(handler) {
+    _realChatChangedHandler = handler;
+    // Drain: if a CHAT_CHANGED fired during init, replay it exactly once.
+    if (_pendingChatChangedFired) {
+        _pendingChatChangedFired = false;
+        const queued = _pendingChatChanged;
+        _pendingChatChanged = null;
+        try { handler(queued); } catch (err) { console.warn('[DLE] queued CHAT_CHANGED replay failed:', err?.message); }
+    }
+}
 
 // Unsubscriber for the debugMode observer that installs/uninstalls __DLE_DEBUG.
 // Captured at init, released by _teardownDleExtension so re-init doesn't double-register.
@@ -148,7 +206,119 @@ function _teardownDleExtension() {
     // Drop __DLE_DEBUG — its frozen getter closures retain vaultIndex + ring buffers
     // across re-init, GC-pinning the old module's state graph (~1-5 MB) for the page lifetime.
     try { delete globalThis.__DLE_DEBUG; } catch { /* non-configurable in rare envs */ }
+    // Boot-MED-3: drop early-CHAT_CHANGED queue + handler ref so re-init starts clean.
+    // (The real handler was registered via _registerEs and just got removed above; this
+    // clears the closure ref so a queued event from the OLD instance can't fire into
+    // the NEW instance's handler.)
+    _realChatChangedHandler = null;
+    _pendingChatChanged = null;
+    _pendingChatChangedFired = false;
     _dleInitialized = false;
+    // Stop the long-lived PM-registration latch if init() is being torn down — its
+    // closure pins the old module's promptManager reference. Re-init re-creates it.
+    if (_pmRegistrationLatchTimer) {
+        try { clearInterval(_pmRegistrationLatchTimer); } catch { /* ignore */ }
+        _pmRegistrationLatchTimer = null;
+        _pmRegistrationLatchDeadline = 0;
+    }
+}
+
+// ── PM-mode entry registration (shared by init + CHAT_CHANGED + CHAT_LOADED + latch) ──
+const PM_ENTRY_IDS = ['constants', 'lore'];
+const PM_DISPLAY_NAMES_BASE = {
+    'deeplore_notebook': 'DLE Author\'s Notebook',
+    'deeplore_ai_notepad': 'DLE AI Notepad',
+};
+
+/**
+ * Idempotent PM-entry registration. Safe to call repeatedly — patches stale rows,
+ * adds missing rows, inserts into character order map after `main`/`chatHistory`.
+ * @returns {boolean} true when registration is FULLY complete (promptManager ready
+ *   AND activeCharacter set so the order map could be patched). false means the
+ *   caller should retry later (boot poll or background latch).
+ */
+function ensurePmEntriesRegistered() {
+    if (!promptManager) return false;
+    const ids = [
+        `${PROMPT_TAG_PREFIX}constants`,
+        `${PROMPT_TAG_PREFIX}lore`,
+        'deeplore_notebook',
+        'deeplore_ai_notepad',
+    ];
+    const displayNames = {
+        [`${PROMPT_TAG_PREFIX}constants`]: 'DLE Constants',
+        [`${PROMPT_TAG_PREFIX}lore`]: 'DLE Lore Entries',
+        ...PM_DISPLAY_NAMES_BASE,
+    };
+    for (const id of ids) {
+        const existing = promptManager.getPromptById(id);
+        if (!existing) {
+            promptManager.addPrompt({
+                name: displayNames[id] || id,
+                content: '',
+                system_prompt: true,
+                role: 'system',
+                marker: false,
+                enabled: true,
+                extension: true,
+            }, id);
+        } else {
+            if (!existing.role) existing.role = 'system';
+            if (!existing.extension) existing.extension = true;
+            const friendlyName = displayNames[id];
+            if (friendlyName && existing.name !== friendlyName) existing.name = friendlyName;
+        }
+        // Insert after 'main' or 'chatHistory' rather than appending — appending
+        // would land entries after jailbreak, which is the wrong default placement.
+        if (promptManager.activeCharacter) {
+            const order = promptManager.getPromptOrderForCharacter(promptManager.activeCharacter);
+            if (order && !order.find(e => e.identifier === id)) {
+                const anchorIdx = order.findIndex(e => e.identifier === 'main' || e.identifier === 'chatHistory');
+                if (anchorIdx >= 0) {
+                    order.splice(anchorIdx + 1, 0, { identifier: id, enabled: true });
+                } else {
+                    order.push({ identifier: id, enabled: true });
+                }
+            }
+        }
+    }
+    try { promptManager.render(false); } catch { /* render is best-effort */ }
+    // FULL success requires activeCharacter so the order map was patchable. Otherwise
+    // entries exist as orphans (in promptManager.serviceSettings.prompts) but lack
+    // a position in the character's order — they won't render in the PM UI yet.
+    return !!promptManager.activeCharacter;
+}
+
+// Long-lived PM registration latch — handles boots where no character is selected.
+// 5 min cap so an idle ST tab doesn't leak forever; users who never pick a character
+// in 5 min are very unlikely to ever generate anyway.
+let _pmRegistrationLatchTimer = null;
+let _pmRegistrationLatchDeadline = 0;
+const _PM_LATCH_INTERVAL_MS = 5000;
+const _PM_LATCH_CAP_MS = 5 * 60 * 1000;
+
+function _startPmRegistrationLatch() {
+    if (_pmRegistrationLatchTimer) return; // already running
+    _pmRegistrationLatchDeadline = Date.now() + _PM_LATCH_CAP_MS;
+    _pmRegistrationLatchTimer = setInterval(() => {
+        if (getSettings().injectionMode !== 'prompt_list') {
+            // User flipped away from PM mode mid-wait — stand down.
+            clearInterval(_pmRegistrationLatchTimer);
+            _pmRegistrationLatchTimer = null;
+            return;
+        }
+        if (ensurePmEntriesRegistered()) {
+            clearInterval(_pmRegistrationLatchTimer);
+            _pmRegistrationLatchTimer = null;
+            console.info('[DLE] PM-mode entries registered (background latch).');
+            return;
+        }
+        if (Date.now() >= _pmRegistrationLatchDeadline) {
+            clearInterval(_pmRegistrationLatchTimer);
+            _pmRegistrationLatchTimer = null;
+            console.warn('[DLE] PM-mode registration latch expired after 5 min with no active character. Switch to a character or change Injection Mode in DLE settings.');
+        }
+    }, _PM_LATCH_INTERVAL_MS);
 }
 
 /** Default extraction prompt for AI Notepad extract-mode. */
@@ -172,14 +342,68 @@ const VISIBLE_NOTES_PATTERNS = [
     /\[Meta:[\s\S]*?\]/gi,
 ];
 
-// BUG-AUDIT-H08: 64KB soft cap on deeplore_ai_notepad — prevents unbounded growth across
-// long sessions. Excess is trimmed from the oldest end at the nearest paragraph boundary.
+// BUG-AUDIT-H08: 64KB soft cap on deeplore_ai_notepad — kept as a hard backstop
+// even after #25 introduced an entry-count cap. Without it a single pathologically
+// large note could still blow up the chat metadata.
 const AI_NOTEPAD_MAX_CHARS = 65536;
-function capNotepad(text) {
-    if (!text || text.length <= AI_NOTEPAD_MAX_CHARS) return text;
-    const trimmed = text.slice(text.length - AI_NOTEPAD_MAX_CHARS);
-    const boundary = trimmed.indexOf('\n\n');
-    return boundary !== -1 ? trimmed.slice(boundary + 2) : trimmed;
+
+/**
+ * Cap the AI Notepad string. Two limits applied in order:
+ *   1. Entry-count FIFO (#25): when settings.aiNotepadMaxEntries > 0, oldest
+ *      non-pinned lines are dropped first; pinned lines (matched by normalized
+ *      key against chat_metadata.deeplore_ai_notepad_pins) are protected.
+ *   2. Char backstop: legacy 64KB cap on the resulting string.
+ *
+ * Pure aside from reading settings + pin list; the chat_metadata object is
+ * accepted so test mocks can pass a plain object instead of pulling ST globals.
+ */
+function capNotepad(text, opts = {}) {
+    if (!text) return text;
+    const settings = opts.settings || getSettings();
+    const metadata = opts.chat_metadata || chat_metadata || {};
+    const maxEntries = Number(settings.aiNotepadMaxEntries) || 0;
+
+    if (maxEntries > 0) {
+        const lines = text.split('\n');
+        // Count non-empty lines as entries; preserve blank lines that separate them.
+        const entryIndices = [];
+        for (let i = 0; i < lines.length; i++) {
+            if (lines[i].trim()) entryIndices.push(i);
+        }
+        if (entryIndices.length > maxEntries) {
+            const pinList = Array.isArray(metadata.deeplore_ai_notepad_pins)
+                ? metadata.deeplore_ai_notepad_pins
+                : [];
+            const pinSet = new Set(pinList.filter(k => typeof k === 'string' && k));
+            const toRemove = entryIndices.length - maxEntries;
+            // Walk oldest → newest, dropping non-pinned entries until we've trimmed
+            // enough. Pinned lines stay even if they're the oldest — pin = sticky.
+            const removeSet = new Set();
+            let removed = 0;
+            for (const idx of entryIndices) {
+                if (removed >= toRemove) break;
+                const key = normalizeNotepadLine(lines[idx]);
+                if (pinSet.has(key)) continue;
+                removeSet.add(idx);
+                removed++;
+            }
+            if (removeSet.size > 0) {
+                const kept = [];
+                for (let i = 0; i < lines.length; i++) {
+                    if (removeSet.has(i)) continue;
+                    kept.push(lines[i]);
+                }
+                text = kept.join('\n').replace(/^\n+/, '');
+            }
+        }
+    }
+
+    if (text.length > AI_NOTEPAD_MAX_CHARS) {
+        const trimmed = text.slice(text.length - AI_NOTEPAD_MAX_CHARS);
+        const boundary = trimmed.indexOf('\n\n');
+        text = boundary !== -1 ? trimmed.slice(boundary + 2) : trimmed;
+    }
+    return text;
 }
 
 // ============================================================================
@@ -192,14 +416,26 @@ function capNotepad(text) {
 /**
  * Show pipeline status toast above the input ("DeepLore: Choosing Lore…", etc.).
  * Slides up from behind #form_sheld on first call; subsequent calls swap text in-place.
+ *
+ * Boot-MED-2 (2026-05-22): create element ONLY when a parent target exists.
+ * Previously `document.createElement('div')` ran unconditionally — if `#form_sheld`
+ * was missing (rare; pre-DOM-ready boot, theme variants, race with ST teardown),
+ * `?.prepend(el)` silently no-op'd and the detached element was discarded.
+ * Subsequent calls re-checked `getElementById('dle-pipeline-status')`, didn't find
+ * the orphan (not in DOM), and created another — every call leaked a div.
+ * Fallback: if `#form_sheld` is missing, attach to `document.body` so status
+ * still surfaces (visual position differs but functional and observable).
  */
 function _updatePipelineStatus(text) {
     let el = document.getElementById('dle-pipeline-status');
     if (!el) {
+        const target = document.getElementById('form_sheld') || document.body;
+        if (!target) return; // No DOM at all — skip (test envs / cold-boot).
         el = document.createElement('div');
         el.id = 'dle-pipeline-status';
         // Prepended into #form_sheld so it sits above the send form (CSS positioned absolute).
-        document.getElementById('form_sheld')?.prepend(el);
+        // Fallback to document.body keeps the element observable rather than orphaning it.
+        target.prepend(el);
     }
     el.classList.remove('dle-toast-out');
     el.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> DeepLore: ${text}`;
@@ -215,6 +451,137 @@ function _removePipelineStatus() {
 }
 
 // ============================================================================
+// v2.5 proxy-mode deprecation notice (one-shot, consumed at boot).
+// settings._proxyMigrationV2_5_notice is set by runMigrations (settings.js) when
+// at least one per-feature *ConnectionMode === 'proxy' was flipped to 'profile'.
+// This popup runs ONCE per migration event: regardless of whether the user clicks
+// "Open Settings" or "Dismiss", the sentinel is cleared so subsequent boots don't
+// re-show it. "Open Settings" jumps to Connection → AI Connections and pulses the
+// first migrated feature's accordion (precedence order from PROXY_DEPRECATION_MODE_KEYS).
+// ============================================================================
+
+/** Map mode-key → i18n key for the friendly feature label shown in the popup. */
+const PROXY_MIG_FEATURE_LABEL_I18N = {
+    aiSearchConnectionMode: 'dle_label_ai_search',
+    scribeConnectionMode: 'dle_feature_session_scribe_h4',
+    librarianConnectionMode: 'dle_analytics_section_librarian',
+    aiNotepadConnectionMode: 'dle_feature_ai_notepad_h4',
+    autoSuggestConnectionMode: 'dle_feature_auto_lorebook_h4',
+    optimizeKeysConnectionMode: 'dle_tool_optimize_keys',
+};
+
+/** Map mode-key → toolKey used by openSettingsPopup({ toolKey }) navigation. */
+const PROXY_MIG_TOOL_KEY = {
+    aiSearchConnectionMode: 'aiSearch',
+    scribeConnectionMode: 'scribe',
+    librarianConnectionMode: 'librarian',
+    aiNotepadConnectionMode: 'aiNotepad',
+    autoSuggestConnectionMode: 'autoSuggest',
+    optimizeKeysConnectionMode: 'optimizeKeys',
+};
+
+/**
+ * Resolve an i18n key with English fallback. Uses dynamic import so a missing
+ * i18n module (test envs, init failures) doesn't crash the popup path.
+ */
+async function _t(key, fallback) {
+    try {
+        const { translate } = await import('../../../i18n.js');
+        const out = translate(key, fallback);
+        return out || fallback;
+    } catch {
+        return fallback;
+    }
+}
+
+async function _maybeShowProxyDeprecationNotice() {
+    const settings = getSettings();
+    const migrated = settings._proxyMigrationV2_5_notice;
+    if (!Array.isArray(migrated) || migrated.length === 0) return;
+
+    // Sort migrated keys by PROXY_DEPRECATION_MODE_KEYS precedence so the "first"
+    // pulse target is deterministic regardless of insertion order in the sentinel.
+    const ordered = PROXY_DEPRECATION_MODE_KEYS.filter(k => migrated.includes(k));
+    const firstKey = ordered[0];
+    if (!firstKey) {
+        // Sentinel had unknown keys — clear it and bail to avoid loop on next boot.
+        delete settings._proxyMigrationV2_5_notice;
+        try { saveSettingsDebounced(); } catch { /* noop */ }
+        return;
+    }
+
+    // Resolve labels.
+    const title = await _t('dle_proxy_migration_title', 'Custom Proxy mode removed');
+    const explainer = await _t(
+        'dle_proxy_migration_explainer',
+        "DeepLore v2.5 removed the Custom Proxy connection mode. The Connection Profile path is more reliable and matches SillyTavern's connection system. Your affected features have been switched to Connection Profile, but you may need to set up profiles in SillyTavern's Connection Manager. Click below to jump to the right settings page.",
+    );
+    const affectedHeader = await _t('dle_proxy_migration_affected', 'Affected features:');
+    const okLabel = await _t('dle_proxy_migration_open_settings', 'Open Settings');
+    const cancelLabel = await _t('dle_proxy_migration_dismiss', 'Dismiss');
+
+    const labelLis = [];
+    for (const key of ordered) {
+        const i18nKey = PROXY_MIG_FEATURE_LABEL_I18N[key];
+        // Defensive fallback: key in PROXY_DEPRECATION_MODE_KEYS but missing from
+        // the label map — show the raw setting name rather than crash.
+        const fallback = i18nKey ? i18nKey.replace(/^dle_(label|feature|tool|analytics_section)_/, '') : key;
+        const label = i18nKey ? await _t(i18nKey, fallback) : fallback;
+        labelLis.push(`<li>${label}</li>`);
+    }
+    const html =
+        `<div class="dle-popup">`
+        + `<p>${explainer}</p>`
+        + `<p style="margin-top: 10px;"><strong>${affectedHeader}</strong></p>`
+        + `<ul style="margin: 4px 0 0 18px;">${labelLis.join('')}</ul>`
+        + `</div>`;
+
+    let result;
+    try {
+        result = await callGenericPopup(html, POPUP_TYPE.CONFIRM, title, {
+            okButton: okLabel,
+            cancelButton: cancelLabel,
+            wide: true,
+        });
+    } catch (err) {
+        console.warn('[DLE] proxy-deprecation popup failed:', err?.message);
+        // Treat failure as dismissal — still clear the sentinel so we don't loop.
+    }
+
+    // Clear sentinel FIRST so any later failure in navigation can't cause re-show.
+    delete settings._proxyMigrationV2_5_notice;
+    try { saveSettingsDebounced(); } catch { /* noop */ }
+
+    if (result === POPUP_RESULT.AFFIRMATIVE) {
+        try {
+            const { openSettingsPopup } = await import('./src/ui/settings-ui.js');
+            const toolKey = PROXY_MIG_TOOL_KEY[firstKey];
+            // openSettingsPopup honors { tab, subtab, toolKey } — see settings-ui.js applyNavigateTo.
+            await openSettingsPopup({ tab: 'connection', subtab: 'ai-connections', toolKey });
+
+            // Pulse-glow the first migrated feature's accordion. Defer so the
+            // popup's DOM has time to mount, then schedule removal so we never
+            // leak an orange outline indefinitely.
+            setTimeout(() => {
+                try {
+                    const $acc = $(`.dle-conn-accordion[data-tool="${toolKey}"]`);
+                    if (!$acc.length) return;
+                    $acc.addClass('dle-pulse-attention');
+                    // Scroll into view (best-effort; works for popup-mounted DOM).
+                    const el = $acc.get(0);
+                    if (el && typeof el.scrollIntoView === 'function') {
+                        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }
+                    setTimeout(() => $acc.removeClass('dle-pulse-attention'), 6000);
+                } catch (e) { console.warn('[DLE] pulse-attention failed:', e?.message); }
+            }, 250);
+        } catch (err) {
+            console.warn('[DLE] proxy-deprecation: open settings failed:', err?.message);
+        }
+    }
+}
+
+// ============================================================================
 // Generation Interceptor
 // ============================================================================
 
@@ -225,12 +592,69 @@ function _removePipelineStatus() {
  * @param {function} abort         abort(true) breaks the interceptor chain immediately
  * @param {string} type            generation type ('normal' | 'continue' | 'append' | 'quiet' | ...)
  */
+/**
+ * DLE-Side Response Prefill: inject seed text as a final assistant-role
+ * extension prompt at chat depth 0, so the writing AI continues from it
+ * instead of starting with "Certainly, here's…".
+ *
+ * Lifted to the top of onGenerate so every meaningful generation (including
+ * pipeline-skip paths and pipeline early-aborts) gets consistent prefill
+ * state — otherwise stale prefill from a prior generation leaks via the
+ * "obsidian no fallback" / "empty match" / "stale pipeline" early returns
+ * that don't reach the in-flow registration (REG-B1).
+ *
+ * Uses a dle_-prefixed id (NOT deeplore_) so the various clearPrompts()
+ * calls — including the Librarian agentic-loop clear — don't sweep it
+ * away as if it were lore prompt state (REG-B3).
+ */
+const PREFILL_ID = 'dle_response_prefill';
+function applyResponsePrefill(settings) {
+    const seed = (settings.responsePrefillSeed || '').trim();
+    const mode = settings.responsePrefillMode || 'off';
+    let apply = false;
+    if (seed && mode !== 'off') {
+        if (mode === 'all-providers') {
+            apply = true;
+        } else if (mode === 'anthropic-only') {
+            const src = oai_settings?.chat_completion_source || '';
+            const model = oai_settings?.[`${src}_model`] || '';
+            // Use isUnderlyingClaude — catches Bedrock/Vertex Custom-source
+            // `claude-*` models as well as OpenRouter `anthropic/claude-*`,
+            // not just the OR variant (REG-B2).
+            apply = src === 'claude' || isUnderlyingClaude(model);
+        }
+    }
+    if (apply) {
+        setExtensionPrompt(
+            PREFILL_ID,
+            seed,
+            extension_prompt_types.IN_CHAT,
+            0,
+            false,
+            extension_prompt_roles.ASSISTANT,
+        );
+    } else {
+        // Clear stale prefill from a prior generation.
+        setExtensionPrompt(PREFILL_ID, '', extension_prompt_types.NONE, 0);
+    }
+}
+
 async function onGenerate(chatMessages, contextSize, abort, type) {
     const settings = getSettings();
 
     if (type === 'quiet' || !settings.enabled) {
+        // Quiet/disabled paths should also drop any stale prefill so it
+        // doesn't survive a settings toggle mid-session.
+        if (!settings.enabled) {
+            setExtensionPrompt(PREFILL_ID, '', extension_prompt_types.NONE, 0);
+        }
         return;
     }
+
+    // Run BEFORE the skip guards so prefill survives stepped-thinking,
+    // skipNextPipeline, and tool-call continuation generations (those still
+    // emit a writing-AI call that benefits from prefill).
+    applyResponsePrefill(settings);
 
     // Stepped Thinking coexistence: skip pipeline + Librarian dispatch while a
     // stepped-thinking generation pass is in flight. See `inSteppedThinking`
@@ -301,6 +725,17 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
     const epoch = chatEpoch;
     // Capture lock epoch to detect if this pipeline has been superseded by a force-released lock
     const lockEpoch = generationLockEpoch;
+    // Verdict identity — captured before any await so CHAT_CHANGED mid-flight can't bind
+    // this verdict to the wrong chat. msgIdx = the chat length at gen start (stable per turn).
+    // F4 fix: use global `chat` (not the filtered `chatMessages` interceptor copy — see
+    // gotcha #26). saveReply pushes onto global chat, and CHARACTER_MESSAGE_RENDERED fires
+    // with messageId === chat.length - 1 (post-push) === chat.length (pre-push). Using
+    // chatMessages.length here breaks when ST filters trailing is_system / hidden messages
+    // out of the interceptor copy, causing the verdict's msgIdx to mismatch the rendered
+    // message's id → deeplore_sources attachment silently skips.
+    let verdictChatId = null;
+    try { verdictChatId = getCurrentChatId() || null; } catch { verdictChatId = null; }
+    const verdictMsgIdx = Array.isArray(chat) ? chat.length : -1;
 
     // Generation correlation ID — threads through trace, flight recorder, and log lines
     const genId = Math.random().toString(36).slice(2, 8);
@@ -326,8 +761,9 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
 
     try {
         // Two intentional non-clears at pipeline entry:
-        // 1) lastInjectionSources is NOT cleared — CHARACTER_MESSAGE_RENDERED handler clears
-        //    after consumption, and the epoch tag prevents stale-source consumption.
+        // 1) Verdict ring buffer is NOT cleared here — it stays valid until next verdict
+        //    overwrites it. CHARACTER_MESSAGE_RENDERED reads the current verdict by msgIdx
+        //    so stale-turn sources can't bleed onto the wrong message.
         // 2) clearPrompts is deferred to commit phase. Clearing here caused silent lore loss
         //    when early returns fired (vault timeout, empty vault, no matches) — old prompts
         //    were destroyed with nothing replacing them.
@@ -488,7 +924,10 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
             if (settings.debugMode) console.debug('[DLE] Pipeline aborted by user before commit');
             return;
         }
-        const policy = buildExemptionPolicy(vaultSnapshot, pins, blocks);
+        // Stages H-3 / gotcha #60: thread bootstrapActive from the trace so the
+        // post-pipeline policy mirrors runPipeline's. Without this, bootstrap
+        // entries bypass ALL post-pipeline gating regardless of chat length.
+        const policy = buildExemptionPolicy(vaultSnapshot, pins, blocks, trace?.bootstrapActive === true);
 
         // Stage 1: Pin/Block overrides.
         const _pinBlockStart = performance.now();
@@ -497,15 +936,17 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
 
         // Stage 2: Contextual gating.
         const _gatingStart = performance.now();
-        const preContextual = new Set(finalEntries.map(e => e.title));
+        // Capture pre/post entry refs so vaultSource survives the diff (title-only Set
+        // would conflate multi-vault entries with the same title in conflictResolution='all').
+        const preContextual = new Map(finalEntries.map(e => [`${e.vaultSource || ''}:${e.title}`, e]));
         const fieldDefs = fieldDefinitions.length > 0 ? fieldDefinitions : DEFAULT_FIELD_DEFINITIONS;
         finalEntries = applyContextualGating(finalEntries, ctx, policy, settings.debugMode, settings, fieldDefs);
         trace.contextualGatingMs = Math.round(performance.now() - _gatingStart);
         if (trace) {
-            const postContextual = new Set(finalEntries.map(e => e.title));
-            trace.contextualGatingRemoved = [...preContextual]
-                .filter(t => !postContextual.has(t))
-                .map(title => ({ title, reason: 'Filtered by era/location/scene/character' }));
+            const postContextual = new Set(finalEntries.map(e => `${e.vaultSource || ''}:${e.title}`));
+            trace.contextualGatingRemoved = [...preContextual.entries()]
+                .filter(([k]) => !postContextual.has(k))
+                .map(([, entry]) => ({ title: entry.title, vaultSource: entry.vaultSource || '', reason: 'Filtered by era/location/scene/character' }));
         }
 
         if (trace?.aiFallback) {
@@ -541,14 +982,14 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
 
         // Stage 3: re-injection cooldown.
         const _cooldownStart = performance.now();
-        const preCooldown = new Set(finalEntries.map(e => e.title));
+        const preCooldown = new Map(finalEntries.map(e => [`${e.vaultSource || ''}:${e.title}`, e]));
         finalEntries = applyReinjectionCooldown(finalEntries, policy, injectionHistory, generationCount, settings.reinjectionCooldown, settings.debugMode);
         trace.reinjectionCooldownMs = Math.round(performance.now() - _cooldownStart);
         if (trace) {
-            const postCooldown = new Set(finalEntries.map(e => e.title));
-            trace.cooldownRemoved = [...preCooldown]
-                .filter(t => !postCooldown.has(t))
-                .map(title => ({ title, reason: 'Cooldown active' }));
+            const postCooldown = new Set(finalEntries.map(e => `${e.vaultSource || ''}:${e.title}`));
+            trace.cooldownRemoved = [...preCooldown.entries()]
+                .filter(([k]) => !postCooldown.has(k))
+                .map(([, entry]) => ({ title: entry.title, vaultSource: entry.vaultSource || '', reason: 'Cooldown active' }));
         }
 
         if (finalEntries.length === 0) {
@@ -564,7 +1005,7 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
 
         // Stage 4: requires/excludes gating (forceInject entries exempt).
         const _reqExclStart = performance.now();
-        const { result: gated, removed: gatingRemoved } = applyRequiresExcludesGating(finalEntries, policy, settings.debugMode);
+        const { result: gated, removed: gatingRemoved } = applyRequiresExcludesGating(finalEntries, policy, settings.debugMode, settings.priorityReversed);
         trace.requiresExcludesMs = Math.round(performance.now() - _reqExclStart);
 
         if (gated.length === 0) {
@@ -621,10 +1062,10 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
                 });
             }
             if (trace) {
-                const postDedupTitles = new Set(postDedup.map(e => e.title));
+                const postDedupKeys = new Set(postDedup.map(e => `${e.vaultSource || ''}:${e.title}`));
                 trace.stripDedupRemoved = gated
-                    .filter(e => !postDedupTitles.has(e.title))
-                    .map(e => ({ title: e.title, reason: 'Already in recent context' }));
+                    .filter(e => !postDedupKeys.has(`${e.vaultSource || ''}:${e.title}`))
+                    .map(e => ({ title: e.title, vaultSource: e.vaultSource || '', reason: 'Already in recent context' }));
             }
         }
         trace.stripDedupMs = Math.round(performance.now() - _stripDedupStart);
@@ -639,25 +1080,27 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
 
         if (trace) {
             trace.gatedOut = gatingRemoved.map(e => ({
-                title: e.title, requires: e.requires, excludes: e.excludes,
+                title: e.title, vaultSource: e.vaultSource || '', requires: e.requires, excludes: e.excludes,
             }));
-            const acceptedTitles = new Set(acceptedEntries.map(e => e.title));
-            trace.budgetCut = postDedup.filter(e => !acceptedTitles.has(e.title))
-                .map(e => ({ title: e.title, tokens: e.tokenEstimate, priority: e.priority }));
+            const acceptedKeys = new Set(acceptedEntries.map(e => `${e.vaultSource || ''}:${e.title}`));
+            trace.budgetCut = postDedup.filter(e => !acceptedKeys.has(`${e.vaultSource || ''}:${e.title}`))
+                .map(e => ({ title: e.title, vaultSource: e.vaultSource || '', tokens: e.tokenEstimate, priority: e.priority }));
+            // BUG-AUDIT v2.5: trace.injected must carry vaultSource so drawer fallback
+            // (when injectedSources is empty but trace.injected isn't) doesn't collapse
+            // same-titled cross-vault entries to one key.
             trace.injected = acceptedEntries.map(e => ({
                 title: e.title,
+                vaultSource: e.vaultSource || '',
                 tokens: e.tokenEstimate,
                 truncated: !!e._truncated,
                 originalTokens: e._originalTokens || e.tokenEstimate,
             }));
             trace.totalTokens = totalTokens;
             trace.budgetLimit = settings.maxTokensBudget;
-            // BUG-278/279: stale-pipeline guard on trace publish + activity feed. Both write to
-            // session-global state read by the drawer — a stale pipeline landing here would
-            // overwrite the new chat's trace / push a stale activity row.
+            // BUG-278/279: stale-pipeline guard on activity feed. A stale pipeline landing here
+            // would push a stale activity row. Trace lands inside the verdict written below;
+            // the verdict's epoch/lockEpoch tag carries the same staleness signal forward.
             if (epoch === chatEpoch && lockEpoch === generationLockEpoch) {
-                setLastPipelineTrace(trace);
-
                 const aiUsed = trace.aiSelected?.length > 0;
                 const modeLabel = trace.mode === 'keywords-only' ? 'Keywords'
                     : aiUsed ? (trace.aiFallback ? 'Fallback' : 'AI')
@@ -723,17 +1166,28 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
                 );
             }
 
-            // Capture injection sources for Context Cartographer; epoch-tagged so
-            // CHARACTER_MESSAGE_RENDERED only consumes sources from the matching generation.
-            setLastInjectionSources(injectedEntries.map(e => ({
+            // Capture injection sources for the verdict. Single authoritative per-turn record;
+            // the verdict carries trace + sources together so consumers don't need to coordinate
+            // multiple globals. msgIdx + epoch on the verdict gate cross-chat staleness on read.
+            const injectedSourceRecords = injectedEntries.map(e => ({
                 title: e.title,
                 filename: e.filename,
-                matchedBy: matchedKeys.get(e.title) || '?',
+                // BUG-AUDIT v2.5: matchedKeys keyed by trackerKey (vaultSource:title).
+                matchedBy: matchedKeys.get(trackerKey(e)) || '?',
                 priority: e.priority,
                 tokens: e.tokenEstimate,
                 vaultSource: e.vaultSource || '',
-            })));
-            setLastInjectionEpoch(epoch);
+            }));
+            try {
+                writeVerdict(buildVerdict({
+                    trace,
+                    injectedSources: injectedSourceRecords,
+                    chatId: verdictChatId,
+                    msgIdx: verdictMsgIdx,
+                    epoch,
+                    lockEpoch,
+                })).catch(err => console.warn('[DLE] Verdict write failed:', err?.message));
+            } catch (err) { console.warn('[DLE] Verdict build failed:', err?.message); }
             // Notify drawer early so Why? tab populates BEFORE agentic loop / ST generation starts.
             notifyInjectionSourcesReady();
         } else {
@@ -745,9 +1199,18 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
                     if (pmEntry) pmEntry.content = '';
                 }
             }
-            // Clear stale sources so the Why? tab doesn't show prior-generation data.
-            setLastInjectionSources(null);
-            setLastInjectionEpoch(epoch);
+            // Empty-injected verdict so consumers see "nothing this turn" rather than the
+            // prior verdict's state. Trace still carries the rejection breakdown.
+            try {
+                writeVerdict(buildVerdict({
+                    trace,
+                    injectedSources: [],
+                    chatId: verdictChatId,
+                    msgIdx: verdictMsgIdx,
+                    epoch,
+                    lockEpoch,
+                })).catch(err => console.warn('[DLE] Verdict write failed:', err?.message));
+            } catch (err) { console.warn('[DLE] Verdict build failed:', err?.message); }
             notifyInjectionSourcesReady();
         }
 
@@ -828,8 +1291,12 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
             const _logLenBefore = chat_metadata.deeplore_injection_log.length;
             chat_metadata.deeplore_injection_log.push({
                 gen: generationCount + 1,
+                // BUG-AUDIT v2.5: record vaultSource so strip-dedup key matches reliably
+                // across vaults. Legacy log rows without vaultSource compare as '' which
+                // still matches the single-vault case.
                 entries: injectedEntries.map(e => ({
                     title: e.title,
+                    vaultSource: e.vaultSource || '',
                     pos: e.injectionPosition ?? settings.injectionPosition,
                     depth: e.injectionDepth ?? settings.injectionDepth,
                     role: e.injectionRole ?? settings.injectionRole,
@@ -947,7 +1414,7 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
                     (contextSize > 0 ? ` (${Math.round(totalTokens / contextSize * 100)}% of ${contextSize} context)` : ''));
                 console.table(injectedEntries.map(e => ({
                     title: e.title,
-                    matchedBy: matchedKeys.get(e.title) || '?',
+                    matchedBy: matchedKeys.get(trackerKey(e)) || '?',
                     priority: e.priority,
                     tokens: e.tokenEstimate,
                     constant: e.constant,
@@ -986,6 +1453,31 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
             // C6: Reset search counter for this generation (searchLoreAction reads it internally)
             setLoreGapSearchCount(0);
 
+            // HIGH-LIB-4 (2026-05-22): snapshot extension_prompts + aux + PM
+            // content BEFORE clearing so the catch can restore them if the
+            // agentic loop throws synchronously (no profile selected, Gemini
+            // safety block on first call, etc.) without ever producing prose.
+            // Per gotcha #2 ("NEVER clearPrompts without verified replacement"),
+            // the bare clear-then-return path leaves any same-turn observer
+            // seeing no lore. Self-heals next turn, but the window is real.
+            // Restore policy: only if catch fires AND no prose was produced.
+            // See gotchas.md #56.
+            const _promptsSnapshot = {
+                extPrompts: {},
+                pmContents: {},
+            };
+            for (const key of Object.keys(extension_prompts)) {
+                if (key.startsWith(PROMPT_TAG_PREFIX) || key === 'deeplore_notebook' || key === 'deeplore_ai_notepad') {
+                    _promptsSnapshot.extPrompts[key] = extension_prompts[key];
+                }
+            }
+            if (promptManager) {
+                for (const id of [`${PROMPT_TAG_PREFIX}constants`, `${PROMPT_TAG_PREFIX}lore`, 'deeplore_notebook', 'deeplore_ai_notepad']) {
+                    const pmEntry = promptManager.getPromptById(id);
+                    if (pmEntry) _promptsSnapshot.pmContents[id] = pmEntry.content;
+                }
+            }
+
             // H6: Clear extension prompts — lore is embedded in the agentic system prompt,
             // so extension_prompts would duplicate it when CMRS.sendRequest builds the payload.
             clearPrompts(extension_prompts, PROMPT_TAG_PREFIX, PROMPT_TAG);
@@ -1021,7 +1513,7 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
                     // awaited MESSAGE_RECEIVED, addOneMessage, awaited CHARACTER_MESSAGE_RENDERED.
                     //
                     // The CHARACTER_MESSAGE_RENDERED handler (L1315) then:
-                    //   - attaches deeplore_sources from lastInjectionSources
+                    //   - attaches deeplore_sources from the current verdict (matched by msgIdx)
                     //   - injects the sources button
                     //   - extracts AI notes (mutates message.mes → cleaned text)
                     //
@@ -1077,8 +1569,24 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
 
                 if (proseMsg) {
                     // Lifecycle events already fired in onProse — just attach tool data and re-save.
+                    // proseMsg holds a direct reference captured in onProse against the correct
+                    // old chat, so the `extra.deeplore_tool_calls` write lands on that exact
+                    // message even on stale epoch. The danger is the post-save dropdown injection,
+                    // which uses chat.length - 1 (would target the NEW active chat).
+                    // HIGH-LIB-5 (2026-05-22): ST normally initializes message.extra to {} in
+                    // saveReply, but third-party extensions can interpose on MESSAGE_RECEIVED
+                    // and strip it. Defensive `||=` keeps a TypeError from propagating into
+                    // the outer catch (which would then fire 'Generation failed' AFTER the
+                    // prose was saved, silently losing the dropdown). Mirrors the F3 fallback
+                    // branch's `msg.extra = msg.extra || {}` (gotcha #56).
+                    proseMsg.extra = proseMsg.extra || {};
                     proseMsg.extra.deeplore_tool_calls = result.toolActivity;
                     await saveChatConditional();
+                    // gotcha #43: every post-await branch needs the epoch guard, mirroring the
+                    // F3 fallback fix below. Without this, injectLibrarianDropdown would target
+                    // chat.length - 1 on the NEW active chat and inject a stale dropdown into
+                    // the user's wrong chat DOM.
+                    if (epoch !== chatEpoch || lockEpoch !== generationLockEpoch) return;
 
                     if (settings.librarianShowToolCalls && result.toolActivity.length > 0) {
                         injectLibrarianDropdown(chat.length - 1, result.toolActivity);
@@ -1086,11 +1594,20 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
                 } else if (result.prose) {
                     // Fallback path: onProse never fired (text-only response, no write() tool call).
                     // saveReply gives us the proper message lifecycle (global chat, events, swipe_info).
+                    // F3 fix: this branch awaits twice (saveReply + saveChatConditional) but
+                    // bypasses onProse's in-loop guards (gotcha #43). Without these rechecks,
+                    // a CHAT_CHANGED during either await would have us read chat[chat.length-1]
+                    // off the NEW chat and persist tool_calls + a Librarian dropdown into it.
                     await saveReply({ type, getMessage: result.prose });
+                    if (epoch !== chatEpoch || lockEpoch !== generationLockEpoch) return;
+
                     const msg = chat[chat.length - 1];
+                    if (!msg) return;
+                    msg.extra = msg.extra || {};
                     msg.extra.deeplore_tool_calls = result.toolActivity;
                     updateViewMessageIds();
                     await saveChatConditional();
+                    if (epoch !== chatEpoch || lockEpoch !== generationLockEpoch) return;
 
                     if (settings.librarianShowToolCalls && result.toolActivity.length > 0) {
                         injectLibrarianDropdown(chat.length - 1, result.toolActivity);
@@ -1112,6 +1629,28 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
                         dedupError('Gemini blocked or returned an empty response. Try rephrasing, relaxing safety in your profile preset, or using a different model.', 'agentic_safety_block', { hint: err.message?.slice(0, 200) });
                     } else {
                         dedupError('Generation failed \u2014 try again or disable Librarian.', 'agentic_error');
+                    }
+                }
+                // HIGH-LIB-4 (2026-05-22): when the agentic loop threw without producing
+                // prose, restore the extension_prompts + PM contents we cleared above.
+                // Gotcha #2: clearing without verified replacement leaves same-turn
+                // observers seeing no lore. Only restore on the no-prose path \u2014
+                // if prose was produced the cleared state is intentional (the agentic
+                // message already replaced the pipeline's role).
+                if (!proseMsg && (epoch === chatEpoch && lockEpoch === generationLockEpoch)) {
+                    try {
+                        for (const [key, value] of Object.entries(_promptsSnapshot.extPrompts)) {
+                            extension_prompts[key] = value;
+                        }
+                        if (promptManager) {
+                            for (const [id, content] of Object.entries(_promptsSnapshot.pmContents)) {
+                                const pmEntry = promptManager.getPromptById(id);
+                                if (pmEntry) pmEntry.content = content;
+                            }
+                        }
+                        if (settings.debugMode) console.debug('[DLE] HIGH-LIB-4: restored extension_prompts after agentic loop error');
+                    } catch (restoreErr) {
+                        console.warn('[DLE] HIGH-LIB-4: failed to restore prompts snapshot:', restoreErr);
                     }
                 }
             } finally {
@@ -1199,15 +1738,38 @@ globalThis.deepLoreEnhanced_matchText = matchTextForExternal;
 // Initialization
 // ============================================================================
 
-jQuery(async function () {
+/**
+ * Init body — extracted from the jQuery handler so the promise-latch wrapper
+ * (Boot-MED-1) doesn't need to nest ~900 lines of body. Resolves the
+ * `_dleInitInProgress` promise; on its resolution, `_dleInitialized` flips true.
+ */
+async function _doInit() {
     try {
-        // BUG-063: re-init guard. Hot reload / duplicate load → tear down prior listeners
-        // and DOM before re-registering, otherwise every handler doubles.
-        if (_dleInitialized) {
-            console.warn('[DLE] init() called twice — tearing down prior instance before re-initializing');
-            _teardownDleExtension();
+        // Boot-MED-3 (2026-05-22): register CHAT_CHANGED stub BEFORE any await so a
+        // chat switch mid-init isn't lost. Stub captures latest chatId; real handler
+        // replays it once installed (see _installRealChatChangedHandler at the
+        // CHAT_CHANGED registration site below).
+        //
+        // We intentionally use eventSource.on directly (not _registerEs) AND push
+        // it into _dleListeners so teardown removes it. The stub remains in place
+        // until the real handler attaches; both run, but the stub becomes a no-op
+        // trampoline once _realChatChangedHandler is set.
+        eventSource.on(event_types.CHAT_CHANGED, _earlyChatChangedStub);
+        _dleListeners.eventSource.push({
+            event: event_types.CHAT_CHANGED,
+            handler: _earlyChatChangedStub,
+            once: false,
+        });
+
+        // i18n must register BEFORE any HTML/popup renders so ST's MutationObserver
+        // sees data-i18n attrs from the start. Failures here are non-fatal — UI just
+        // falls back to English.
+        try {
+            const { initDleI18n } = await import('./src/i18n/i18n.js');
+            await initDleI18n();
+        } catch (err) {
+            console.warn('[DLE] i18n init failed (falling back to English):', err?.message);
         }
-        _dleInitialized = true;
 
         const settingsHtml = await renderExtensionTemplateAsync(
             'third-party/sillytavern-DeepLore-Enhanced',
@@ -1332,61 +1894,42 @@ jQuery(async function () {
         // PM-mode: register prompts at init so they appear in Prompt Manager before the
         // first generation. Content is written directly to PM entries at gen time (not via
         // setExtensionPrompt) so the user's drag position in PM controls placement.
+        // BUG-PM1 (2026-05-22): the prior 10s ceiling silently abandoned registration when
+        // the user booted without a selected character (`promptManager.activeCharacter` null).
+        // Now: short poll → if not registered yet, surface a deduped warning AND start a
+        // long-lived background latch (5min cap, every 5s) AND attach to CHAT_LOADED so
+        // registration completes the instant a character is picked, even if the user never
+        // switches chats. See docs/gotchas.md #53.
         const initSettings = getSettings();
         if (initSettings.injectionMode === 'prompt_list') {
-            // promptManager may not be ready yet — poll briefly with a 10s ceiling.
-            const PM_DISPLAY_NAMES = {
-                [`${PROMPT_TAG_PREFIX}constants`]: 'DLE Constants',
-                [`${PROMPT_TAG_PREFIX}lore`]: 'DLE Lore Entries',
-                'deeplore_notebook': 'DLE Author\'s Notebook',
-                'deeplore_ai_notepad': 'DLE AI Notepad',
-            };
-            const registerPmEntries = () => {
-                if (!promptManager) return false;
-                const ids = [`${PROMPT_TAG_PREFIX}constants`, `${PROMPT_TAG_PREFIX}lore`, 'deeplore_notebook', 'deeplore_ai_notepad'];
-                for (const id of ids) {
-                    const existing = promptManager.getPromptById(id);
-                    if (!existing) {
-                        promptManager.addPrompt({
-                            name: PM_DISPLAY_NAMES[id] || id,
-                            content: '',
-                            system_prompt: true,
-                            role: 'system',
-                            marker: false,
-                            enabled: true,
-                            extension: true,
-                        }, id);
-                    } else {
-                        // Patch legacy entries (missing role / old display name).
-                        if (!existing.role) existing.role = 'system';
-                        if (!existing.extension) existing.extension = true;
-                        const friendlyName = PM_DISPLAY_NAMES[id];
-                        if (friendlyName && existing.name !== friendlyName) existing.name = friendlyName;
-                    }
-                    // Insert after 'main' or 'chatHistory' rather than appending — appending
-                    // would land entries after jailbreak, which is the wrong default placement.
-                    if (promptManager.activeCharacter) {
-                        const order = promptManager.getPromptOrderForCharacter(promptManager.activeCharacter);
-                        if (!order.find(e => e.identifier === id)) {
-                            const anchorIdx = order.findIndex(e => e.identifier === 'main' || e.identifier === 'chatHistory');
-                            if (anchorIdx >= 0) {
-                                order.splice(anchorIdx + 1, 0, { identifier: id, enabled: true });
-                            } else {
-                                order.push({ identifier: id, enabled: true });
-                            }
-                        }
-                    }
-                }
-                promptManager.render(false);
-                return true;
-            };
-            if (!registerPmEntries()) {
+            const fullyRegistered = ensurePmEntriesRegistered();
+            if (!fullyRegistered) {
+                // Phase 1: rapid 10s poll (every 1s) — covers the common "ST still booting" case.
                 const interval = setInterval(() => {
-                    if (registerPmEntries()) clearInterval(interval);
+                    if (ensurePmEntriesRegistered()) clearInterval(interval);
                 }, 1000);
-                setTimeout(() => clearInterval(interval), 10000);
+                setTimeout(() => {
+                    clearInterval(interval);
+                    if (!ensurePmEntriesRegistered()) {
+                        // Phase 2: not registered after 10s — surface the deferral, then
+                        // keep trying in the background until a character is picked.
+                        dedupWarning(
+                            'PM-mode init deferred — pick a character to finish registering DLE prompts.',
+                            'pm_init_deferred',
+                            { hint: 'promptManager not ready (no active character). Will retry on chat/character load.' },
+                        );
+                        _startPmRegistrationLatch();
+                    }
+                }, 10000);
             }
         }
+        // Independent of the boot poll: re-register the instant ST emits CHAT_LOADED
+        // (fires when a character is loaded with its chat) — covers the case where the
+        // user picks a character but doesn't switch chats afterward (no CHAT_CHANGED).
+        // No-op when injectionMode is anything other than prompt_list (cheap settings read).
+        _registerEs(event_types.CHAT_LOADED, () => {
+            if (getSettings().injectionMode === 'prompt_list') ensurePmEntriesRegistered();
+        });
         if (initSettings.enabled) {
             // Hydrate from IndexedDB first; full Obsidian rebuild runs in background.
             // BUG-118: same fast-machine APP_READY race as the wizard above. Latch + 3s fallback.
@@ -1420,7 +1963,14 @@ jQuery(async function () {
             const message = chat[messageId];
             const sources = message?.extra?.deeplore_sources;
             if (!sources || sources.length === 0) return;
-            showSourcesPopup(sources, { aiNotes: message?.extra?.deeplore_ai_notes });
+            // Thread msgIdx so cartographer resolves the verdict (and its predecessor) for
+            // THIS specific message — not the live newest one. Without this, "added/removed"
+            // diff inverted when inspecting older messages (audit fix, 2026-05-22).
+            // messageId === chat.length at gen start (see gen-pipeline `verdictMsgIdx`).
+            const msgIdx = Number(messageId);
+            const _opts = { aiNotes: message?.extra?.deeplore_ai_notes };
+            if (Number.isFinite(msgIdx)) _opts.msgIdx = msgIdx;
+            showSourcesPopup(sources, _opts);
         });
 
         // Stepped-Thinking coexistence — see `inSteppedThinking` declaration above for the full rationale.
@@ -1563,17 +2113,22 @@ jQuery(async function () {
 
             // --- Cartographer: attach sources, inject button ---
             try {
-                if (settings.showLoreSources && lastInjectionSources && lastInjectionSources.length > 0) {
-                    if (lastInjectionEpoch === chatEpoch && lastInjectionSources._consumedByMesId !== messageId) {
-                        if (message && !message.is_user) {
-                            message.extra = message.extra || {};
-                            message.extra.deeplore_sources = lastInjectionSources;
-                            lastInjectionSources._consumedByMesId = messageId;
+                if (settings.showLoreSources) {
+                    // Verdict store is authoritative. Match msgIdx + epoch so a verdict from
+                    // a prior turn (or a different chat) can't bleed onto this message.
+                    const v = getCurrentVerdictForRender();
+                    if (v && v.msgIdx === messageId && v.epoch === chatEpoch
+                        && Array.isArray(v.injectedSources) && v.injectedSources.length > 0
+                        && message && !message.is_user) {
+                        message.extra = message.extra || {};
+                        // Guard against double-attach on swipe → same verdict, same message.
+                        const tag = `${v.genId || ''}:${v.ts}`;
+                        if (message.extra._deeplore_sources_tag !== tag) {
+                            message.extra.deeplore_sources = v.injectedSources;
+                            message.extra._deeplore_sources_tag = tag;
                             saveMetadataDebounced();
                         }
                     }
-                }
-                if (settings.showLoreSources) {
                     injectSourcesButton(messageId);
                 }
             } catch (err) { console.warn('[DLE] Cartographer render-handler failed:', err?.message); }
@@ -1788,9 +2343,11 @@ jQuery(async function () {
             } catch (err) { console.warn('[DLE] MESSAGE_SWIPE_DELETED reindex failed:', err?.message); }
         });
 
-        // BUG-038: ST wipes chat_metadata itself on delete, but the Librarian session draft
-        // lives in localStorage (librarian-session.js SESSION_STORAGE_KEY) and would otherwise
-        // linger as an orphan pointing at a now-deleted chat.
+        // BUG-038: ST wipes chat_metadata itself on delete, so the chat_metadata-stored
+        // Librarian session draft (BUG-043) goes with it. This handler stays in place
+        // mainly to evict any leftover legacy localStorage draft from pre-BUG-043 installs
+        // and to no-op the chat_metadata cleanup defensively in case ST's wipe order
+        // changes upstream.
         const _onChatDeleted = () => {
             try { clearLibrarianSessionState(); } catch (err) { console.warn('[DLE] CHAT_DELETED cleanup failed:', err.message); }
         };
@@ -1878,7 +2435,10 @@ jQuery(async function () {
             } catch (err) { console.warn('[DLE] MESSAGE_EDITED cleanup failed:', err.message); }
         });
 
-        _registerEs(event_types.CHAT_CHANGED, () => {
+        // Boot-MED-3: defined as a named function so the early-CHAT_CHANGED stub can
+        // call it (via _installRealChatChangedHandler below) to drain any chat switch
+        // that happened during init's awaits.
+        const _realCcHandler = () => {
             // Flush pending analytics BEFORE the chatEpoch bump invalidates the in-flight
             // pipeline's save path. Without this, the 1-4 generations since the last modulo-5
             // flush would vanish on chat switch.
@@ -1976,15 +2536,27 @@ jQuery(async function () {
             setLastGenerationTrackerSnapshot(null);
             setGenerationCount(0);
             setLastIndexGenerationCount(0);
-            setLastInjectionEpoch(-1);
             setLastWarningRatio(0);
             resetAiSearchCache();
             resetAiThrottle();
             setAutoSuggestMessageCount(0);
-            setLastPipelineTrace(null);
-            setLastInjectionSources(null);
-            setPreviousSources(null);
             resetCartographer();
+
+            // Verdict store: clear in-memory ring (cheap, synchronous), rebind scope,
+            // then async-hydrate the new chat's IDB rows back into the ring. IDB rows
+            // for ALL chats stay on disk so resume-after-reload of any prior chat
+            // works — clearRing only touches in-memory state. Old `clearChat(null)`
+            // would have nuked the entire IDB store on every chat switch, defeating
+            // the per-chat 200-row spill entirely. See docs/gotchas.md #46.
+            {
+                let newVerdictChatId = null;
+                try { newVerdictChatId = getCurrentChatId() || null; } catch { /* noop */ }
+                clearVerdictRing();
+                setVerdictChatId(newVerdictChatId);
+                if (newVerdictChatId) {
+                    hydrateVerdictChat(newVerdictChatId).catch(err => console.warn('[DLE] Verdict hydrate failed:', err?.message));
+                }
+            }
 
             // Librarian: hydrate gaps + reset counters. normalizeLoreGap collapses legacy v1
             // statuses (acknowledged / in_progress / rejected) → v2 set (pending ↔ written).
@@ -1999,32 +2571,9 @@ jQuery(async function () {
             notifyGatingChanged();
 
             // Re-register PM entries for the new active character (prompt_list mode).
-            if (getSettings().injectionMode === 'prompt_list' && promptManager?.activeCharacter) {
-                const ids = [`${PROMPT_TAG_PREFIX}constants`, `${PROMPT_TAG_PREFIX}lore`, 'deeplore_notebook', 'deeplore_ai_notepad'];
-                const pmNames = { [`${PROMPT_TAG_PREFIX}constants`]: 'DLE Constants', [`${PROMPT_TAG_PREFIX}lore`]: 'DLE Lore Entries', 'deeplore_notebook': 'DLE Author\'s Notebook', 'deeplore_ai_notepad': 'DLE AI Notepad' };
-                for (const id of ids) {
-                    const existing = promptManager.getPromptById(id);
-                    if (!existing) {
-                        promptManager.addPrompt({
-                            name: pmNames[id] || id, content: '', system_prompt: true,
-                            role: 'system', marker: false, enabled: true, extension: true,
-                        }, id);
-                    } else {
-                        if (!existing.role) existing.role = 'system';
-                        if (!existing.extension) existing.extension = true;
-                        const friendlyName = pmNames[id];
-                        if (friendlyName && existing.name !== friendlyName) existing.name = friendlyName;
-                    }
-                    const order = promptManager.getPromptOrderForCharacter(promptManager.activeCharacter);
-                    if (order && !order.find(e => e.identifier === id)) {
-                        const anchorIdx = order.findIndex(e => e.identifier === 'main' || e.identifier === 'chatHistory');
-                        if (anchorIdx >= 0) {
-                            order.splice(anchorIdx + 1, 0, { identifier: id, enabled: true });
-                        } else {
-                            order.push({ identifier: id, enabled: true });
-                        }
-                    }
-                }
+            // Shared idempotent helper — see ensurePmEntriesRegistered() near top of file.
+            if (getSettings().injectionMode === 'prompt_list') {
+                ensurePmEntriesRegistered();
             }
 
             // Chat load: migrate stale data → inject UI, in that order.
@@ -2145,7 +2694,11 @@ jQuery(async function () {
                 });
             };
             setTimeout(() => { if (injectEpoch === chatEpoch) injectAllChatLoadUI(); }, 100);
-        });
+        };
+        _registerEs(event_types.CHAT_CHANGED, _realCcHandler);
+        // Boot-MED-3: install the real handler — also drains any CHAT_CHANGED queued
+        // by the early stub during init's awaits. Replays exactly once.
+        _installRealChatChangedHandler(_realCcHandler);
 
         // BUG-063: page-unload teardown releases tracked listeners + drawer DOM on reload.
         _dleBeforeUnloadHandler = () => {
@@ -2185,7 +2738,8 @@ jQuery(async function () {
                         fieldDefinitions: fieldDefinitions.slice(),
                     };
                 },
-                get trace() { return lastPipelineTrace; },
+                get trace() { return getCurrentVerdictForRender()?.trace ?? null; },
+                get verdict() { return getCurrentVerdictForRender(); },
                 get buffers() {
                     return {
                         console: consoleBuffer.drain(),
@@ -2203,6 +2757,16 @@ jQuery(async function () {
         _debugNamespaceUnsub = onDebugModeChanged(installDebugNamespace);
         installDebugNamespace();
 
+        // v2.5: one-shot Custom-Proxy deprecation notice. Fire-and-forget — the
+        // popup awaits user interaction internally and we don't want to block
+        // init or `_dleInitialized = true`. Defer one tick so jQuery+ST popup
+        // infra is fully mounted (mirrors the wizard's setTimeout pattern).
+        setTimeout(() => {
+            _maybeShowProxyDeprecationNotice().catch(err => {
+                console.warn('[DLE] proxy-deprecation notice failed:', err?.message);
+            });
+        }, 500);
+
         _dleInitCount++;
         pushEvent('init', { initCount: _dleInitCount, vaultCount: (getSettings().vaults || []).filter(v => v.enabled).length });
         console.log('[DLE] DeepLore Enhanced client extension initialized');
@@ -2210,4 +2774,31 @@ jQuery(async function () {
         console.error('[DLE] Failed to initialize:', err);
         toastr.error('DeepLore Enhanced failed to initialize. Check the browser console (F12) for details.', 'DLE Error', { timeOut: 0 });
     }
+}
+
+jQuery(async function () {
+    // Boot-MED-1 (2026-05-22): promise-based init latch.
+    // If a second jQuery dispatch fires while the first init is mid-await (HMR,
+    // duplicate dispatch, fast double-load), await the in-flight init and return
+    // — DO NOT tear down a still-initializing instance.
+    if (_dleInitInProgress) {
+        try { await _dleInitInProgress; }
+        catch (err) { console.warn('[DLE] previous init failed, second invocation suppressed:', err?.message); }
+        return;
+    }
+    if (_dleInitialized) {
+        // Init fully completed previously. This is a true re-init (e.g. extension
+        // hot-reload after stable mount). Tear down then continue below to redo init.
+        console.warn('[DLE] init() called twice — tearing down prior instance before re-initializing');
+        _teardownDleExtension();
+    }
+    _dleInitInProgress = (async () => {
+        await _doInit();
+        // Flip the "fully initialized" flag ONLY after every await resolves. Subsequent
+        // jQuery dispatches now hit the `_dleInitialized` branch above and trigger a true
+        // re-init (teardown + redo) instead of stomping a still-initializing instance.
+        _dleInitialized = true;
+    })();
+    try { await _dleInitInProgress; }
+    finally { _dleInitInProgress = null; }
 });

@@ -1,16 +1,25 @@
-import { doNavbarIconClick, saveSettingsDebounced } from '../../../../../../script.js';
+import { doNavbarIconClick, saveSettingsDebounced, getCurrentChatId } from '../../../../../../script.js';
 import { renderExtensionTemplateAsync } from '../../../../../extensions.js';
 import { accountStorage } from '../../../../../util/AccountStorage.js';
 import { escapeHtml } from '../../../../../utils.js';
 import { getSettings } from '../../settings.js';
 import {
     vaultIndex, generationLock,
-    lastInjectionSources, loreGaps,
+    loreGaps,
     onIndexUpdated, onAiStatsUpdated, onCircuitStateChanged,
     onPipelineComplete, onInjectionSourcesReady, onGatingChanged, onPinBlockChanged, onGenerationLockChanged,
     onIndexingChanged, onLoreGapsChanged, onClaudeAutoEffortChanged, onPipelinePhaseChanged,
-    onChatInjectionCountsUpdated, onPipelineTraceUpdated, onFieldDefinitionsUpdated,
+    onChatInjectionCountsUpdated, onFieldDefinitionsUpdated,
 } from '../state.js';
+import { getCurrentForChat as getCurrentVerdictForChat, onVerdictChanged } from '../verdict/verdict-store.js';
+
+// Local helper — UI consumers must read the CURRENT CHAT's verdict, not the
+// ring-global newest. See docs/gotchas.md #46 ("UI consumer rule").
+function _currentVerdictForChat() {
+    let cid = null;
+    try { cid = getCurrentChatId() ?? null; } catch { cid = null; }
+    return getCurrentVerdictForChat(cid);
+}
 
 import {
     ds, DRAWER_ID, OVERLAY_CHAT_WIDTH_THRESHOLD,
@@ -27,6 +36,7 @@ import {
     wireToolsTab, wireTabExpand, wireStatusActions, wireInjectionTab, wireBrowseTab, wireGatingTab, wireHealthIcons,
     wireLibrarianTab, wireGlobalShortcuts,
 } from './drawer-events.js';
+import { shouldBailDrawerDismiss } from './drawer-dismiss-pure.js';
 import { pushEvent } from '../diagnostics/interceptors.js';
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -53,6 +63,7 @@ export function resetDrawerState() {
     ds.browseTagFilter = '';
     // browseSort / librarianSort / browseSort [data-sort] are user UI prefs — accountStorage-persisted, intentionally not reset.
     ds.browseFilteredEntries = [];
+    ds.browseRowModel = [];
     ds.browseLastRangeStart = -1;
     ds.browseLastRangeEnd = -1;
     ds.browseExpandedEntry = null;
@@ -62,6 +73,14 @@ export function resetDrawerState() {
     ds.browseNavigateTarget = null;
     ds.browseCustomFieldFilters = {}; // BUG-AUDIT-11
     ds.browseFolderFilter = '';
+    // #26: selection is chat-specific (trackerKeys can collide across vault sets).
+    // Clear browseSelected BEFORE flipping selectMode so any future selectMode observer
+    // sees a consistent (off + empty) state.
+    if (ds.browseSelected instanceof Set) ds.browseSelected.clear();
+    ds.browseSelectMode = false;
+    // ds.browseFolderGrouping + ds.browseExpandedFolders are session-scoped UI state (NOT
+    // persisted to accountStorage like browseSort is — they only survive chat-switches).
+    // BUG-042 will promote them to accountStorage in a later wave.
     ds.contextTokens = 0;
     // ds.stGenerating tracks ST's generation state across chat switches — GENERATION_ENDED clears it.
     ds.librarianFilter = 'flag';
@@ -287,12 +306,16 @@ export async function createDrawerPanel() {
     });
 
     // Dismiss-on-outside-click — only when in overlay mode and not pinned.
+    // Bail conditions (see drawer-dismiss-pure.js): clicks inside the panel,
+    // inside any popup/dialog/toast spawned over it, or on the drawer toggle
+    // icon must NOT dismiss. Without the popup exemption, callGenericPopup
+    // dialogs (rendered to <body>, not inside #deeplore-panel) close the
+    // drawer behind them on every click — see docs/gotchas.md #56.
     $(document).on('click.dle-drawer-dismiss', (e) => {
         if (!$panel.hasClass('openDrawer')) return;
         if ($panel.hasClass('pinnedOpen')) return;
         if (!$panel.hasClass('dle-overlay-mode')) return;
-        if ($panel[0].contains(e.target)) return;
-        if ($(e.target).closest('.drawer-toggle, #deeploreDrawerIcon').length) return;
+        if (shouldBailDrawerDismiss(e.target, $panel[0], document)) return;
         doNavbarIconClick.call($drawer.find('.drawer-toggle')[0]);
     });
 
@@ -514,17 +537,19 @@ export async function createDrawerPanel() {
         if (drawerDestroyed) return;
         invalidateTemperatureCache();
         scheduleRender(renderStatusZone);
-        // Re-render the injection tab on complete only when sources are empty —
-        // transitions "Choosing lore…" spinner → empty-state guide. With populated
-        // sources, onInjectionSourcesReady has already rendered them.
-        if (!lastInjectionSources || lastInjectionSources.length === 0) {
+        // Re-render the injection tab on complete only when verdict's injectedSources
+        // are empty — transitions "Choosing lore…" spinner → empty-state guide. With
+        // populated sources, onInjectionSourcesReady has already rendered them.
+        const _completeVerdict = _currentVerdictForChat();
+        const _completeInjCount = _completeVerdict?.injectedSources?.length ?? 0;
+        if (_completeInjCount === 0) {
             scheduleRender(renderInjectionTab);
         }
         scheduleRender(renderBrowseTab);
         scheduleRender(renderTimers);
         scheduleRender(renderFooter);
-        if (lastInjectionSources !== null && lastInjectionSources.length > 0) {
-            setTimeout(() => announceToScreenReader(`Pipeline complete: ${lastInjectionSources.length} entries injected.`), 0);
+        if (_completeInjCount > 0) {
+            setTimeout(() => announceToScreenReader(`Pipeline complete: ${_completeInjCount} entries injected.`), 0);
         }
     }));
 
@@ -597,11 +622,11 @@ export async function createDrawerPanel() {
         scheduleRender(updateInjectionCountBadges);
     }));
 
-    // Browse tab's rejected-entry lookup uses lastPipelineTrace.
+    // Browse tab's rejected-entry lookup reads the current verdict's trace.
     // Why? tab is NOT re-rendered here — onInjectionSourcesReady covers the same pipeline
-    // commit (trace + sources are set together), and CHAT_CHANGED's trace clear is covered
-    // by onPipelineComplete's empty-sources branch.
-    drawerListeners.stateObservers.push(onPipelineTraceUpdated(() => {
+    // commit (trace + sources are set together on the verdict), and CHAT_CHANGED's clear
+    // is covered by onPipelineComplete's empty-sources branch.
+    drawerListeners.stateObservers.push(onVerdictChanged(() => {
         if (drawerDestroyed) return;
         scheduleRender(renderBrowseTab);
     }));

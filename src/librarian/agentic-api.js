@@ -11,6 +11,7 @@ import { getContext } from '../../../../../extensions.js';
 import { resolveConnectionConfig } from '../../settings.js';
 import { validateProxyUrl } from '../ai/proxy-api.js';
 import { abortWith } from '../diagnostics/interceptors.js';
+import { isUnderlyingClaudeModel } from './agentic-api-pure.js';
 
 // ════════════════════════════════════════════════════════════════════════════
 // Provider Detection
@@ -49,13 +50,23 @@ export function isReasoningOnlyModel(model) {
  * Resolve the active model id for the Librarian connection.
  * Proxy: configured model. Profile: CMRS profile model first (most accurate),
  * then `oai_settings.{source}_model` fallback.
+ *
+ * Reads `resolveConnectionConfig('librarian').profileId` — Librarian's *configured*
+ * profile, not ST's globally-active profile. Using getActiveProfileId() here would
+ * silently mis-resolve the model whenever the user's active profile differs from
+ * the one wired into Librarian (the same root cause as #27 sym 2).
  */
 export function getResolvedModel() {
-    if (getLibrarianMode() === 'proxy') {
-        return resolveConnectionConfig('librarian').model || '';
+    const connConfig = resolveConnectionConfig('librarian');
+    if (connConfig.mode === 'proxy') {
+        // v2.5 dead-head: Custom Proxy removed. Don't claim a proxy model exists —
+        // dispatch (callAI / callWithTools) will refuse before any model is needed.
+        // Returning '' matches the existing "model unknown" fallback for profile mode
+        // with empty settings, so callers that branch on truthiness behave consistently.
+        return '';
     }
     try {
-        const profileId = getActiveProfileId();
+        const profileId = connConfig.profileId;
         if (profileId) {
             const profile = ConnectionManagerRequestService.getProfile?.(profileId);
             if (profile?.model) return profile.model;
@@ -82,9 +93,11 @@ export function isToolCallingSupported(model) {
     // when no profile is selected — this gate must return false, not raise.
     const resolved = resolveConnectionConfig('librarian');
     if (resolved.mode === 'proxy') {
-        if (!resolved.proxyUrl || !resolved.model) return false;
-        if (isReasoningOnlyModel(resolved.model)) return false;
-        return true;
+        // v2.5 dead-head: Custom Proxy removed. Report no tool support so the
+        // Librarian falls back to its non-tool path — that path then ALSO refuses
+        // on the actual call via callAI/callWithTools. Either way the error
+        // surfaces clearly; this just avoids a misleading "tools supported" claim.
+        return false;
     }
     if (main_api !== 'openai') return false;
     const source = oai_settings?.chat_completion_source;
@@ -101,7 +114,12 @@ export function isToolCallingSupported(model) {
 
 /** Proxy mode is always Claude format. */
 export function getProviderFormat() {
-    if (getLibrarianMode() === 'proxy') return 'claude';
+    // v2.5 dead-head: Custom Proxy removed. Return null rather than 'claude' so
+    // we don't suggest a working format for a refused-dispatch path. Callers
+    // (buildAssistantMessage / buildToolResults) only run after callWithTools
+    // would have dispatched — in proxy mode the dispatch throws first, so a
+    // null format here is never reached at runtime.
+    if (getLibrarianMode() === 'proxy') return null;
     const source = oai_settings?.chat_completion_source;
     if (source === 'claude') return 'claude';
     if (source === 'makersuite' || source === 'vertexai') return 'google';
@@ -115,9 +133,9 @@ export function getProviderFormat() {
  * the message parser, which must stay OpenAI-shape for OR responses.
  */
 export function isUnderlyingClaude(model) {
-    const m = model || getResolvedModel();
-    if (!m || typeof m !== 'string') return false;
-    return /^claude-/i.test(m) || /^anthropic\/claude/i.test(m);
+    // Delegate the regex contract to the pure helper; only the ST-context
+    // fallback (getResolvedModel) lives here.
+    return isUnderlyingClaudeModel(model || getResolvedModel());
 }
 
 /**
@@ -235,9 +253,16 @@ async function callWithToolsViaProxy(connConfig, messages, tools, toolChoice, ma
             if (response.status === 404 && text.includes('CORS proxy is disabled')) {
                 throw new Error('SillyTavern CORS proxy is not enabled. Set enableCorsProxy: true in config.yaml, or use a Connection Profile instead of Custom Proxy mode.');
             }
-            const safeText = text.substring(0, 200)
+            // HIGH-LIB-2 (2026-05-22): scrub BEFORE truncating. If a token starts in
+            // the last ~15 chars of the 200-char window, slicing first cuts the token
+            // below the regex's {10,} minimum so it never matches — and a partial
+            // token leaks into Error.message. Real Anthropic 401/403 bodies do quote
+            // the offending header. Always scrub-then-slice for error shaping.
+            // See gotchas.md #56.
+            const safeText = text
                 .replace(/sk-[a-zA-Z0-9_-]{10,}/g, 'sk-***')
-                .replace(/Bearer\s+[A-Za-z0-9_\-./]{10,}/g, 'Bearer ***');
+                .replace(/Bearer\s+[A-Za-z0-9_\-./]{10,}/g, 'Bearer ***')
+                .substring(0, 200);
             throw new Error(`Proxy returned HTTP ${response.status}: ${safeText}`);
         }
 
@@ -287,7 +312,18 @@ async function callWithToolsViaProxy(connConfig, messages, tools, toolChoice, ma
 export async function callWithTools(messages, tools, toolChoice, maxTokens, signal) {
     const connConfig = resolveConnectionConfig('librarian');
     if (connConfig.mode === 'proxy') {
-        return callWithToolsViaProxy(connConfig, messages, tools, toolChoice, maxTokens, signal);
+        // v2.5 dead-head: Custom Proxy removed. `callWithToolsViaProxy` is kept
+        // for rollback safety but unreachable from runtime dispatch — throw the
+        // same clear error as callAI so users get a consistent migration message.
+        throw new Error('Custom Proxy mode was removed in v2.5. Pick a Connection Profile in DLE Settings → Connection → AI Connections.');
+    }
+
+    // #27 sym 2: Librarian must use its own configured profile, not ST's globally-active one.
+    // No silent fallback — if Librarian's profile (or inherited aiSearch profile) is unset,
+    // the user should be told to set it rather than silently inheriting whichever profile
+    // happens to be active when Librarian runs.
+    if (!connConfig.profileId) {
+        throw new Error('Librarian needs a profile in AI Connections settings.');
     }
 
     const format = getProviderFormat();
@@ -331,7 +367,7 @@ export async function callWithTools(messages, tools, toolChoice, maxTokens, sign
     let result;
     try {
         result = await ConnectionManagerRequestService.sendRequest(
-            getActiveProfileId(),
+            connConfig.profileId,
             messages,
             maxTokens,
             {
@@ -386,6 +422,54 @@ function safeParseArgs(args, fallbackInput) {
     return args || fallbackInput || {};
 }
 
+// HIGH-LIB-3 (2026-05-22): synthetic-id storage for Google Gemini function-call
+// parts. The previous implementation stamped `p._dleSyntheticId` directly onto
+// the raw provider response, which (a) made `parseToolCalls` non-pure despite
+// its name, (b) would crash under strict mode if ST ever froze responses, and
+// (c) leaked stamped ids into any diagnostic re-serialization of the response.
+// The WeakMap keeps the same lookup contract (parseToolCalls writes,
+// buildAssistantMessage reads) without mutating raw data. Keyed by part object
+// reference — parts only need to be GC'd when the whole response is, so weak
+// references are correct here. Cleared in tests via `_resetSyntheticIdsForTests`.
+// See gotchas.md #56.
+const _syntheticIds = new WeakMap();
+
+/**
+ * Read-only accessor — returns an id only if one was previously assigned.
+ * `buildAssistantMessage` uses this without forcing assignment so cases where
+ * `parseToolCalls` was never called still produce a fresh id at the call site.
+ */
+export function _getSyntheticId(part) {
+    return _syntheticIds.get(part);
+}
+
+/**
+ * Lifts id stamping out of `parseToolCalls`. Walks Gemini parts, assigns each
+ * functionCall part a stable synthetic id (existing one if already assigned),
+ * and returns a Map<part, id> for the caller. Does NOT mutate `data` or parts.
+ */
+export function _ensureSyntheticIds(data) {
+    const out = new Map();
+    if (!data?.responseContent?.parts) return out;
+    for (const p of data.responseContent.parts) {
+        if (!p?.functionCall) continue;
+        let id = _syntheticIds.get(p);
+        if (!id) {
+            id = `gemini-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+            _syntheticIds.set(p, id);
+        }
+        out.set(p, id);
+    }
+    return out;
+}
+
+/** Test-only — clears the WeakMap by re-instantiating its closure semantics is impossible,
+ *  but tests can verify isolation by always passing fresh part objects. Exposed here
+ *  so HIGH-LIB-3 regression tests can assert mutation-freeness without touching prod state. */
+export function _isWeakMapBacked() {
+    return _syntheticIds instanceof WeakMap;
+}
+
 /**
  * Normalizes 4 provider formats to [{id, name, input}].
  */
@@ -405,18 +489,21 @@ export function parseToolCalls(data) {
     }
 
     // 2. Google Gemini/Vertex: responseContent.parts[].functionCall
-    // Stamp synthetic ID onto the raw part so buildAssistantMessage can reuse it
-    // for OpenAI-shape `tool_calls[].id`. Closes the round-trip: buildToolResults
-    // emits tool_call_id matching that id, and ST's convertGooglePrompt.toolNameMap
-    // resolves the function name from the id on the next turn.
+    // Synthetic id is assigned via the module-level WeakMap (see
+    // `_ensureSyntheticIds`) so `buildAssistantMessage` can reuse it for
+    // OpenAI-shape `tool_calls[].id` WITHOUT mutating the raw provider
+    // response. Closes the round-trip: buildToolResults emits tool_call_id
+    // matching that id, and ST's convertGooglePrompt.toolNameMap resolves the
+    // function name from the id on the next turn. HIGH-LIB-3 fix (2026-05-22).
     if (data.responseContent?.parts) {
         const functionCalls = data.responseContent.parts.filter(p => p.functionCall);
         if (functionCalls.length > 0) {
-            return functionCalls.map(p => {
-                const id = p._dleSyntheticId || `gemini-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-                p._dleSyntheticId = id;
-                return { id, name: p.functionCall.name, input: p.functionCall.args || {} };
-            });
+            const idMap = _ensureSyntheticIds(data);
+            return functionCalls.map(p => ({
+                id: idMap.get(p),
+                name: p.functionCall.name,
+                input: p.functionCall.args || {},
+            }));
         }
     }
 
@@ -517,10 +604,13 @@ export function buildAssistantMessage(data) {
         const result = { role: 'assistant' };
         if (textParts.length > 0) result.content = textParts.map(p => p.text).join('\n\n');
         if (fnParts.length > 0) {
+            // Reuse parseToolCalls's synthetic id (stored in module WeakMap, not
+            // on the part) so buildToolResults's tool_call_id matches on the next
+            // turn. If parseToolCalls was somehow not called first (defensive),
+            // fall back to a deterministic-per-call id so the message still
+            // round-trips. HIGH-LIB-3 fix (2026-05-22).
             result.tool_calls = fnParts.map((p, i) => {
-                // Reuse parseToolCalls's synthetic id so buildToolResults's
-                // tool_call_id matches on the next turn.
-                const id = p._dleSyntheticId || `gemini-${Date.now()}-${i}`;
+                const id = _getSyntheticId(p) || `gemini-${Date.now()}-${i}`;
                 return {
                     id,
                     type: 'function',

@@ -12,8 +12,11 @@ import { validateCachedEntry } from './cache-validate.js';
 export { validateCachedEntry };
 
 const DB_NAME = 'DeepLoreEnhanced';
-const DB_VERSION = 1;
+// v2 (2026-05-22): added `verdicts` object store for VerdictStore. Both modules must
+// use the same version so neither throws VersionError when the other has upgraded.
+const DB_VERSION = 2;
 const STORE_NAME = 'vaultCache';
+const VERDICT_STORE_NAME = 'verdicts'; // owned by src/verdict/verdict-store.js, created here too for coexistence on upgrade.
 const CACHE_SCHEMA_VERSION = 4; // H-06: key includes lorebookTag + conflictResolution
 
 /**
@@ -55,6 +58,11 @@ function openDBOnce() {
             const db = request.result;
             if (!db.objectStoreNames.contains(STORE_NAME)) {
                 db.createObjectStore(STORE_NAME);
+            }
+            // VerdictStore co-creates this from src/verdict/verdict-store.js; create here too so
+            // whichever module opens the DB first triggers a complete upgrade.
+            if (!db.objectStoreNames.contains(VERDICT_STORE_NAME)) {
+                db.createObjectStore(VERDICT_STORE_NAME);
             }
         };
         request.onsuccess = () => resolve(request.result);
@@ -251,9 +259,15 @@ export async function clearIndexCache() {
         db = await openDB();
         const tx = db.transaction(STORE_NAME, 'readwrite');
         tx.objectStore(STORE_NAME).clear();
+        // V-M3 (2026-05-22): include `tx.onabort` so an aborted transaction (quota,
+        // browser interruption, version-change abort) rejects the await instead of
+        // hanging it indefinitely. Without this, the `finally` block's `db.close()`
+        // never runs and the DB connection leaks. Mirrors the post-BUG-380 pattern
+        // in saveIndexToCache / pruneOrphanedCacheKeys.
         await new Promise((resolve, reject) => {
             tx.oncomplete = resolve;
             tx.onerror = () => reject(tx.error);
+            tx.onabort = () => reject(tx.error || new Error('Transaction aborted'));
         });
     } catch (err) {
         console.warn('[DLE] Failed to clear IndexedDB cache:', err.message);

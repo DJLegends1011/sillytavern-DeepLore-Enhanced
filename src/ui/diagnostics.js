@@ -1,11 +1,21 @@
 /** DeepLore Enhanced — Self-Healing Diagnostics & Why Not? */
+import { getCurrentChatId } from '../../../../../../script.js';
 import { getSettings } from '../../settings.js';
 import { buildScanText } from '../../core/utils.js';
 import { testEntryMatch, countKeywordOccurrences } from '../../core/matching.js';
 import {
     vaultIndex, indexTimestamp, cooldownTracker, injectionHistory,
-    generationCount, lastPipelineTrace, trackerKey,
+    generationCount, trackerKey,
 } from '../state.js';
+import { getCurrentForChat as getCurrentVerdictForChat } from '../verdict/verdict-store.js';
+
+// Local helper — UI consumers must read the CURRENT CHAT's verdict, not the
+// ring-global newest. See docs/gotchas.md #46 ("UI consumer rule").
+function _currentVerdictForChat() {
+    let cid = null;
+    try { cid = getCurrentChatId() ?? null; } catch { cid = null; }
+    return getCurrentVerdictForChat(cid);
+}
 
 /**
  * @returns {{ issues: Array<{type: string, severity: 'error'|'warning'|'info', entry: string, detail: string}>, errors: number, warnings: number }}
@@ -32,16 +42,20 @@ export function runHealthCheck() {
         issues.push({ type: 'Settings', severity: 'error', entry: '—', detail: 'AI-only mode enabled but no connection profile selected' });
     }
 
-    if (settings.aiSearchEnabled && settings.aiSearchConnectionMode === 'proxy' && !settings.aiSearchProxyUrl) {
-        issues.push({ type: 'Settings', severity: 'error', entry: '—', detail: 'AI search enabled in proxy mode but no proxy URL set' });
+    // v2.5 dead-head: Custom Proxy mode removed. Surface a migration-pointing
+    // error if a legacy proxy-mode setting is still saved on an enabled feature
+    // — the old "no proxy URL set" warning is moot since users can no longer
+    // pick proxy mode in the UI; the actionable signal is "switch to a profile".
+    if (settings.aiSearchEnabled && settings.aiSearchConnectionMode === 'proxy') {
+        issues.push({ type: 'Settings', severity: 'error', entry: '—', detail: 'AI search is set to Custom Proxy mode, which was removed in v2.5. Pick a Connection Profile in DLE Settings → Connection → AI Connections.' });
     }
 
     if (settings.scribeEnabled && settings.scribeConnectionMode === 'profile' && !settings.scribeProfileId) {
         issues.push({ type: 'Settings', severity: 'error', entry: '—', detail: 'Scribe enabled in profile mode but no profile selected' });
     }
 
-    if (settings.scribeEnabled && settings.scribeConnectionMode === 'proxy' && !settings.scribeProxyUrl) {
-        issues.push({ type: 'Settings', severity: 'error', entry: '—', detail: 'Scribe enabled in proxy mode but no proxy URL set' });
+    if (settings.scribeEnabled && settings.scribeConnectionMode === 'proxy') {
+        issues.push({ type: 'Settings', severity: 'error', entry: '—', detail: 'Scribe is set to Custom Proxy mode, which was removed in v2.5. Pick a Connection Profile in DLE Settings → Connection → AI Connections.' });
     }
 
     if (!settings.unlimitedBudget && settings.maxTokensBudget < 200) {
@@ -273,6 +287,8 @@ export function runHealthCheck() {
 export function diagnoseEntry(entry, chatMsgs) {
     const settings = getSettings();
     const result = { stage: 'unknown', detail: '', suggestions: [] };
+    // Verdict store carries the trace; replaces the old lastPipelineTrace global.
+    const _diagTrace = _currentVerdictForChat()?.trace ?? null;
 
     if (entry.keys.length === 0 && !entry.constant) {
         result.stage = 'no_keywords';
@@ -353,10 +369,10 @@ export function diagnoseEntry(entry, chatMsgs) {
         }
     }
 
-    if (lastPipelineTrace) {
+    if (_diagTrace) {
         const allMatchedTitles = new Set([
-            ...lastPipelineTrace.keywordMatched.map(m => m.title.toLowerCase()),
-            ...lastPipelineTrace.aiSelected.map(m => m.title.toLowerCase()),
+            ..._diagTrace.keywordMatched.map(m => m.title.toLowerCase()),
+            ..._diagTrace.aiSelected.map(m => m.title.toLowerCase()),
         ]);
 
         if (entry.requires && entry.requires.length > 0) {
@@ -378,9 +394,9 @@ export function diagnoseEntry(entry, chatMsgs) {
         }
     }
 
-    if (lastPipelineTrace && lastPipelineTrace.aiSelected) {
-        const wasCandidate = lastPipelineTrace.keywordMatched?.some(m => m.title === entry.title);
-        const wasSelected = lastPipelineTrace.aiSelected.some(m => m.title === entry.title);
+    if (_diagTrace && _diagTrace.aiSelected) {
+        const wasCandidate = _diagTrace.keywordMatched?.some(m => m.title === entry.title);
+        const wasSelected = _diagTrace.aiSelected.some(m => m.title === entry.title);
         if (wasCandidate && !wasSelected) {
             result.stage = 'ai_rejected';
             result.detail = 'Entry was in the AI search candidate list but was not selected by the AI.';
@@ -423,8 +439,8 @@ export function diagnoseEntry(entry, chatMsgs) {
         }
     } catch { /* chat_metadata may not be available */ }
 
-    if (lastPipelineTrace && Array.isArray(lastPipelineTrace.contextualGatingRemoved)) {
-        if (lastPipelineTrace.contextualGatingRemoved.some(e => e.title === entry.title)) {
+    if (_diagTrace && Array.isArray(_diagTrace.contextualGatingRemoved)) {
+        if (_diagTrace.contextualGatingRemoved.some(e => e.title === entry.title)) {
             result.stage = 'contextual_gating';
             result.detail = 'Entry was removed by contextual gating (era, location, scene type, or character filter).';
             result.suggestions.push('Check the entry\'s custom fields against the current gating state (/dle-context-state).');
@@ -432,8 +448,8 @@ export function diagnoseEntry(entry, chatMsgs) {
         }
     }
 
-    if (lastPipelineTrace && Array.isArray(lastPipelineTrace.stripDedupRemoved)) {
-        if (lastPipelineTrace.stripDedupRemoved.some(e => e.title === entry.title)) {
+    if (_diagTrace && Array.isArray(_diagTrace.stripDedupRemoved)) {
+        if (_diagTrace.stripDedupRemoved.some(e => e.title === entry.title)) {
             result.stage = 'strip_dedup';
             result.detail = 'Entry was already injected in a recent generation and was stripped as a duplicate.';
             result.suggestions.push('This is normal behavior. Increase stripLookbackDepth if you want entries to re-inject sooner.');

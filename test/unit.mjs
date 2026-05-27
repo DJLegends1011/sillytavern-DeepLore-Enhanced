@@ -20,7 +20,7 @@ import { parseVaultFile, clearPrompts } from '../core/pipeline.js';
 import { takeIndexSnapshot, detectChanges } from '../core/sync.js';
 
 // Enhanced-only pure functions (imported from production code, not reimplemented)
-import { extractAiResponseClient, clusterEntries, buildCategoryManifest, buildObsidianURI, convertWiEntry, stripObsidianSyntax, normalizeResults as normalizeResultsProd, checkHealthPure, parseMatchReason, computeSourcesDiff, categorizeRejections, resolveEntryVault, tokenBarColor, formatRelativeTime, isForceInjected, normalizePinBlock, matchesPinBlock, normalizeLoreGap, fuzzyTitleMatch, extractAiNotes, validateSessionResponse, parseSessionResponse, sanitizeFilename } from '../src/helpers.js';
+import { extractAiResponseClient, clusterEntries, buildCategoryManifest, buildObsidianURI, convertWiEntry, stripObsidianSyntax, normalizeResults as normalizeResultsProd, checkHealthPure, parseMatchReason, computeSourcesDiff, categorizeRejections, resolveEntryVault, tokenBarColor, formatRelativeTime, isForceInjected, normalizePinBlock, matchesPinBlock, normalizeLoreGap, fuzzyTitleMatch, extractAiNotes, validateSessionResponse, parseSessionResponse, sanitizeFilename, cmrsResultToText } from '../src/helpers.js';
 import { encodeVaultPath, validateVaultPath, pruneCircuitBreakers } from '../src/vault/obsidian-api.js';
 
 // BM25 functions (extracted to bm25.js for testability)
@@ -204,6 +204,94 @@ test('parseFrontmatter: block scalar with multiple indented colon lines', () => 
     assert(result.frontmatter.summary.includes('status: active'), 'third colon line preserved');
     assert(Array.isArray(result.frontmatter.tags), 'tags array should parse after block scalar');
     assertEqual(result.frontmatter.tags[0], 'lorebook', 'tag value correct');
+});
+
+// ============================================================================
+// V-H3 (2026-05-22): prototype pollution guard for parseFrontmatter
+// ============================================================================
+//
+// Hostile YAML frontmatter MUST NOT mutate Object.prototype. parseFrontmatter
+// builds via Object.create(null) so direct `frontmatter[__proto__] = value`
+// assignments land as own properties on the prototype-less object instead of
+// invoking the inherited __proto__ setter (which would replace the prototype).
+// Vault content is user-controlled and Cartographer/import flows can pull from
+// third-party sources — a polluted Object.prototype would affect unrelated code
+// across the entire process. See gotchas.md #57.
+
+test('V-H3: parseFrontmatter does NOT pollute Object.prototype via __proto__', () => {
+    // Probe: a fresh, unrelated object MUST NOT see the polluted property after
+    // parsing. Use a unique probe key so other tests can't accidentally satisfy
+    // the assertion via pre-existing pollution.
+    const probe = {};
+    assert(!('vh3_pwned' in probe), 'baseline: probe property absent before parse');
+
+    parseFrontmatter('---\n__proto__: vh3_pwned\n---\nbody');
+
+    // The critical assertion. Before V-H3 fix, `Object.prototype.vh3_pwned` was
+    // unset because the parsed value is the string "vh3_pwned", not an object —
+    // but the canonical attack form sets a sub-key. Try the sub-key form too.
+    assert(!('vh3_pwned' in probe), 'V-H3: scalar __proto__ assignment did NOT pollute Object.prototype');
+});
+
+test('V-H3: nested __proto__ key assignment does NOT pollute Object.prototype', () => {
+    // The classic prototype-pollution form: a key under __proto__ leaks onto
+    // Object.prototype via the inherited setter on a normal object. With
+    // Object.create(null) there is no inherited setter, so the assignment is
+    // an own property on the prototype-less frontmatter object.
+    const probe = {};
+    assert(!('vh3_leaked' in probe), 'baseline clean');
+
+    // Simulates an attacker setting a property visible across all objects.
+    parseFrontmatter('---\n__proto__:\n  - vh3_leaked\n---\nbody');
+
+    assert(!('vh3_leaked' in probe), 'V-H3: nested __proto__ did NOT pollute Object.prototype');
+    // Object.prototype.toString must still work normally — confirm the
+    // prototype chain is intact for normal objects.
+    assertEqual(typeof probe.toString, 'function', 'Object.prototype.toString still callable');
+});
+
+test('V-H3: constructor key does NOT pollute Object.prototype.constructor', () => {
+    // `constructor` is the second classic pollution vector. With Object.create(null)
+    // we never traverse the inherited setter — the assignment lands as an own
+    // property on the prototype-less object.
+    const originalCtor = Object.prototype.constructor;
+    parseFrontmatter('---\nconstructor: vh3_evil_ctor\n---\nbody');
+    assertEqual(Object.prototype.constructor, originalCtor,
+        'V-H3: Object.prototype.constructor unchanged after malicious YAML');
+
+    // A fresh object's .constructor still references Object.
+    const probe = {};
+    assertEqual(probe.constructor, Object, 'fresh object still inherits Object as constructor');
+});
+
+test('V-H3: prototype key does NOT pollute Object.prototype', () => {
+    // Third classic vector — `prototype` as a key name. Object.create(null)
+    // means this is just a regular own property, no chain mutation.
+    const probe = {};
+    assert(!('vh3_proto_leak' in probe), 'baseline clean');
+    parseFrontmatter('---\nprototype: vh3_proto_leak\n---\nbody');
+    assert(!('vh3_proto_leak' in probe), 'V-H3: `prototype` key did NOT leak');
+});
+
+test('V-H3: frontmatter object has no inherited prototype (defense in depth)', () => {
+    // Pin the implementation contract — Object.create(null) is what makes the
+    // above tests pass. If a future refactor switches back to `{}`, this test
+    // catches it.
+    const result = parseFrontmatter('---\ntitle: Test\n---\nbody');
+    assertEqual(Object.getPrototypeOf(result.frontmatter), null,
+        'V-H3: frontmatter object has null prototype');
+    // Sanity — still serializable and has the parsed data.
+    assertEqual(result.frontmatter.title, 'Test', 'normal parsing still works');
+    assertEqual(JSON.stringify(result.frontmatter), '{"title":"Test"}',
+        'JSON.stringify works on prototype-less object');
+});
+
+test('V-H3: legitimate frontmatter with keys containing "proto" still parses', () => {
+    // Make sure the fix didn't accidentally over-restrict — keys CONTAINING
+    // "proto" or "constructor" as substrings should still work normally.
+    const result = parseFrontmatter('---\nprotocol: https\nconstruction: ongoing\n---\nbody');
+    assertEqual(result.frontmatter.protocol, 'https', 'protocol key parses normally');
+    assertEqual(result.frontmatter.construction, 'ongoing', 'construction key parses normally');
 });
 
 // ============================================================================
@@ -1401,6 +1489,173 @@ test('extractAiResponseClient: non-JSON text', () => {
     assertEqual(extractAiResponseClient('Just some text with no JSON'), null, 'no JSON → null');
 });
 
+// PR #28.3 partial port — defensive parser hardening (dangling fence + object input).
+// IMPORTANT: these do NOT fix the json_schema-flow Gemini breaker-trip bug. That bug
+// happens at the ST layer: ST.extractJsonFromData runs tryParse(text), the trailing
+// fence makes parse fail, ST returns '{}' to DLE. By the time the text reaches
+// extractAiResponseClient it is already '{}' with no fence to strip. Real fix needs
+// either an upstream ST PR (harden tryParse) or a larger DLE workaround that
+// bypasses ST's json_schema processing. See PR-28.3-VERDICT.md.
+
+test('extractAiResponseClient: strips dangling closing fence (defense-in-depth)', () => {
+    // Pre-fix, this input is rescued by the bracket-balanced extraction fallback
+    // (the `[...]` substring still parses cleanly). The strip is belt-and-suspenders
+    // for the direct-parse path so the first JSON.parse attempt succeeds without
+    // having to walk the whole string.
+    const result = extractAiResponseClient('[{"title":"Bob","confidence":"high","reason":"r"}]\n```');
+    assert(Array.isArray(result), 'should parse despite trailing fence line');
+    assertEqual(result[0].title, 'Bob', 'should extract Bob');
+});
+
+test('extractAiResponseClient: object-wrapped response with dangling fence', () => {
+    // Bracket-balance finds the inner [{...}] of selected and returns it. The strip
+    // is not what rescues this case (object-wrap drops to bracket-balance regardless);
+    // covered here to lock the multi-path behavior in case bracket-balance regresses.
+    const result = extractAiResponseClient('{"selected":[{"title":"Charlotte","confidence":"high","reason":"active"}]}\n```');
+    assert(Array.isArray(result), 'bracket-balance still extracts the inner array');
+    assertEqual(result[0].title, 'Charlotte', 'inner array yields Charlotte');
+});
+
+test('extractAiResponseClient: accepts pre-parsed array input', () => {
+    const result = extractAiResponseClient([{ title: 'Alice', confidence: 'high', reason: 'r' }]);
+    assert(Array.isArray(result), 'array input returned as-is');
+    assertEqual(result[0].title, 'Alice', 'preserves Alice');
+});
+
+test('extractAiResponseClient: rejects non-array object input (caller unwraps)', () => {
+    // Object inputs that aren't valid result arrays return null so the caller
+    // (ai.js BUG-383 unwrap) can decide what to do with the shape. Parity with
+    // pre-change behavior, which treated all non-strings as null.
+    const result = extractAiResponseClient({ selected: [{ title: 'X' }] });
+    assertEqual(result, null, 'wrapper object is not a valid result array on its own');
+});
+
+// PR #28.3 partial port — cmrsResultToText usageMetadata aliases (the real fix).
+// Without these, Gemini token-usage stats reported 0/0 because the OAI usage path
+// missed Gemini's promptTokenCount / candidatesTokenCount field names.
+
+test('cmrsResultToText: maps Gemini usageMetadata to OAI-style usage', () => {
+    const out = cmrsResultToText({
+        content: 'hello',
+        usageMetadata: { promptTokenCount: 42, candidatesTokenCount: 7 },
+    });
+    assertEqual(out.text, 'hello', 'text passthrough');
+    assertEqual(out.usage.input_tokens, 42, 'promptTokenCount → input_tokens');
+    assertEqual(out.usage.output_tokens, 7, 'candidatesTokenCount → output_tokens');
+});
+
+test('cmrsResultToText: standard OAI usage still wins when both present', () => {
+    const out = cmrsResultToText({
+        content: 'x',
+        usage: { input_tokens: 10, output_tokens: 5 },
+        usageMetadata: { promptTokenCount: 999 },
+    });
+    assertEqual(out.usage.input_tokens, 10, 'standard input_tokens prioritized');
+    assertEqual(out.usage.output_tokens, 5, 'standard output_tokens prioritized');
+});
+
+// Wave 6.5 coverage backfill — edge inputs to cmrsResultToText that production
+// hits when ST's CMRS or upstream returns degenerate shapes.
+
+test('cmrsResultToText: null result returns empty text + zero usage', () => {
+    const out = cmrsResultToText(null);
+    assertEqual(out.text, '', 'null → empty text');
+    assertEqual(out.usage.input_tokens, 0, 'no input tokens');
+    assertEqual(out.usage.output_tokens, 0, 'no output tokens');
+});
+
+test('cmrsResultToText: undefined / empty object passes through safely', () => {
+    const a = cmrsResultToText(undefined);
+    assertEqual(a.text, '', 'undefined safe');
+    const b = cmrsResultToText({});
+    assertEqual(b.text, '', 'empty result.content missing → empty text');
+    assertEqual(b.usage.input_tokens, 0, 'empty usage zero');
+});
+
+test('cmrsResultToText: JSON-schema parsed object content stringifies (issue #24 contract)', () => {
+    // ST replaces result.content with the parsed object when data.json_schema is set;
+    // cmrsResultToText re-stringifies so downstream string ops (extractAiResponseClient,
+    // debug-preview .slice) keep working. Locks the issue #24 fix.
+    const out = cmrsResultToText({ content: { selected: [{ title: 'X' }] } });
+    assertEqual(typeof out.text, 'string', 'string contract preserved');
+    assert(out.text.includes('"selected"'), 'object serialized into text');
+    assert(out.text.includes('"X"'), 'inner payload preserved');
+});
+
+test('cmrsResultToText: partial Gemini usageMetadata maps what is present', () => {
+    const out = cmrsResultToText({
+        content: 'x',
+        usageMetadata: { candidatesTokenCount: 3 },
+    });
+    assertEqual(out.usage.input_tokens, 0, 'missing promptTokenCount → 0');
+    assertEqual(out.usage.output_tokens, 3, 'candidatesTokenCount mapped');
+});
+
+// Wave 6.5 backfill — summarize-pure purity + multi-summary contract.
+
+test('applyHideAndPrepend: does not mutate messages outside the range', () => {
+    const chat = [
+        { mes: 'before', is_system: false },
+        { mes: 'r0', is_system: false },
+        { mes: 'r1', is_system: false },
+        { mes: 'after', is_system: false },
+    ];
+    const beforeSnapshot = JSON.stringify(chat[0]);
+    const afterSnapshot = JSON.stringify(chat[3]);
+    applyHideAndPrepend(chat, { start: 1, end: 2 }, 'sum_X', 'text');
+    // chat[0] still original (not touched); chat[4] (was [3]) still original.
+    assertEqual(JSON.stringify(chat[0]), beforeSnapshot, 'pre-range message untouched');
+    assertEqual(JSON.stringify(chat[4]), afterSnapshot, 'post-range message untouched');
+});
+
+test('rollbackById: idempotent — second call with same id is a no-op', () => {
+    const chat = [
+        { mes: 'a', is_system: false },
+        { mes: 'b', is_system: false },
+    ];
+    applyHideAndPrepend(chat, { start: 0, end: 1 }, 'sum_X', 'text');
+    const first = rollbackById(chat, 'sum_X');
+    assertEqual(first.removed, 1, 'first removes summary');
+    assertEqual(first.restored, 2, 'first restores 2 messages');
+    const second = rollbackById(chat, 'sum_X');
+    assertEqual(second.removed, 0, 'second finds no summary to remove');
+    assertEqual(second.restored, 0, 'second finds no marked messages');
+    assertEqual(chat.length, 2, 'chat unchanged on second call');
+});
+
+test('applyHideAndPrepend: skips null/undefined entries inside range gracefully', () => {
+    const chat = [
+        { mes: 'a', is_system: false },
+        null,
+        { mes: 'c', is_system: false },
+    ];
+    const { hiddenCount } = applyHideAndPrepend(chat, { start: 0, end: 2 }, 'sum_X', 'text');
+    assertEqual(hiddenCount, 2, 'null entry skipped, two hidden');
+    assertEqual(chat.length, 4, 'summary inserted, null preserved');
+    // The null is still present (un-touched).
+    assertEqual(chat[2], null, 'null entry untouched');
+});
+
+// Wave 6.5 backfill — caveman edges.
+
+test('caveman: preserves contractions (do-not, we-have, I-am)', () => {
+    const out = compressCaveman("Don't worry, we've been there. I'm fine.");
+    assert(out.includes("Don't"), 'contraction preserved');
+    assert(out.includes("we've"), 'second contraction preserved');
+    assert(out.includes("I'm"), 'third contraction preserved');
+});
+
+test('caveman: handles em-dash and smart quotes without crashing', () => {
+    const out = compressCaveman('She said “the truth” — a strange thing.');
+    assert(typeof out === 'string', 'returns string');
+    assert(out.length > 0, 'non-empty output');
+});
+
+test('caveman: preserves URLs with query strings and fragments', () => {
+    const out = compressCaveman('Visit https://example.com/the/page?q=the+answer#section for the docs.');
+    assert(out.includes('https://example.com/the/page?q=the+answer#section'), 'URL preserved verbatim');
+});
+
 test('extractAiResponseClient: nested brackets in strings', () => {
     const result = extractAiResponseClient('[{"title":"Entry [with brackets]","confidence":"high","reason":"test"}]');
     assert(Array.isArray(result), 'should handle brackets in strings');
@@ -1486,6 +1741,639 @@ test('convertWiEntry: depth only included when > 0', () => {
     assert(!noDepth.content.includes('depth:'), 'depth 0 should be omitted');
     const withDepth = convertWiEntry({ comment: 'A', key: ['a'], depth: 3, content: 'c' }, 'lorebook');
     assert(withDepth.content.includes('depth: 3'), 'depth 3 should be included');
+});
+
+// ============================================================================
+// Tests: #18 caveman-compress import (src/caveman.js + convertWiEntry hook)
+// ============================================================================
+
+import { compressCaveman, resolveCompressMode } from '../src/caveman.js';
+
+test('caveman: drops articles at word boundaries', () => {
+    const out = compressCaveman('The cat sat on the mat. A dog watched an apple.');
+    assert(!/\bthe\b/i.test(out), 'no "the" in output');
+    assert(!/\ba\b/i.test(out), 'no standalone "a" in output');
+    assert(!/\ban\b/i.test(out), 'no standalone "an" in output');
+    assert(out.includes('cat sat on'), 'core words survive');
+    assert(out.includes('Alabama') === false && /apple/.test(out), 'fruit survives');
+});
+
+test('caveman: drops fillers without changing meaning', () => {
+    const out = compressCaveman('This is just really basically a test that simply works.');
+    assert(!/\bjust\b/i.test(out), 'just dropped');
+    assert(!/\breally\b/i.test(out), 'really dropped');
+    assert(!/\bbasically\b/i.test(out), 'basically dropped');
+    assert(!/\bsimply\b/i.test(out), 'simply dropped');
+    assert(out.includes('test that') && out.includes('works'), 'core preserved');
+});
+
+test('caveman: preserves fenced code blocks untouched', () => {
+    const input = 'The code:\n```js\nconst the = a; // the var\n```\nAnd a note.';
+    const out = compressCaveman(input);
+    assert(out.includes('const the = a; // the var'), 'fenced block body untouched');
+    assert(!/^And a note/m.test(out), '"a" outside code is dropped');
+});
+
+test('caveman: preserves inline code', () => {
+    const out = compressCaveman('Use the `the.api()` function.');
+    assert(out.includes('`the.api()`'), 'inline code untouched');
+    assert(!/Use the /.test(out), 'plain-text "the" dropped');
+});
+
+test('caveman: preserves URLs', () => {
+    const out = compressCaveman('See https://example.com/the/page for the docs.');
+    assert(out.includes('https://example.com/the/page'), 'URL untouched');
+    assert(!/for the docs/.test(out), '"the" outside URL dropped');
+});
+
+test('caveman: collapses multi-space artifacts', () => {
+    const out = compressCaveman('The   spaces   are   wide.');
+    assert(!/  /.test(out), 'no double spaces remain');
+});
+
+test('caveman: tidies space before punctuation after drops', () => {
+    const out = compressCaveman('I saw the , and the .');
+    assert(!/ ,/.test(out), 'no space-comma');
+    assert(!/ \./.test(out), 'no space-period');
+});
+
+test('caveman: preserves markdown list indent', () => {
+    const out = compressCaveman('- the first item\n- the second item');
+    assert(out.startsWith('- '), 'list bullet survives');
+    assert(out.includes('first item'), 'item body survives');
+});
+
+test('caveman: handles empty / null input', () => {
+    assertEqual(compressCaveman(''), '', 'empty string passes through');
+    assertEqual(compressCaveman(null), null, 'null passes through');
+    assertEqual(compressCaveman(undefined), undefined, 'undefined passes through');
+});
+
+test('resolveCompressMode: normalizes truthy values to "caveman"', () => {
+    assertEqual(resolveCompressMode(true), 'caveman', 'true → caveman');
+    assertEqual(resolveCompressMode('true'), 'caveman', '"true" → caveman');
+    assertEqual(resolveCompressMode('caveman'), 'caveman', '"caveman" → caveman');
+});
+
+test('resolveCompressMode: normalizes falsy values to null', () => {
+    assertEqual(resolveCompressMode(false), null, 'false → null');
+    assertEqual(resolveCompressMode('false'), null, '"false" → null');
+    assertEqual(resolveCompressMode(''), null, 'empty string → null');
+    assertEqual(resolveCompressMode(null), null, 'null → null');
+    assertEqual(resolveCompressMode(undefined), null, 'undefined → null');
+});
+
+test('resolveCompressMode: forward-compat passes unknown modes through', () => {
+    assertEqual(resolveCompressMode('ai-summary'), 'ai-summary', 'unknown mode survives for future use');
+});
+
+// --- Agent B audit regression guards ---
+
+test('caveman: preserves hyphenated "A-frame" / "A-list" / "the-end" tokens', () => {
+    const out = compressCaveman('She built an A-frame house. Buy A-list talent. Watch the-end-of-days.');
+    assert(out.includes('A-frame'), 'A-frame preserved (regression: \\b stripped the A)');
+    assert(out.includes('A-list'), 'A-list preserved');
+    assert(out.includes('the-end-of-days'), 'the-end-of-days preserved');
+});
+
+test('caveman: numeric / non-string input does not throw', () => {
+    assertEqual(compressCaveman(123), 123, 'number passes through');
+    assertEqual(compressCaveman(true), true, 'boolean passes through');
+    assertEqual(compressCaveman({}), {}, 'object passes through');
+});
+
+test('caveman: mask marker survives adjacent punctuation (no DLEPRES leak)', () => {
+    const out = compressCaveman('Use `the.api()`, not the old way.');
+    assert(!/DLEPRES/.test(out), 'no placeholder leak in output');
+    assert(out.includes('`the.api()`'), 'inline code preserved verbatim');
+});
+
+test('convertWiEntry: unknown compress mode does NOT annotate frontmatter', () => {
+    const wi = { comment: 'X', key: ['x'], content: 'The body text here.' };
+    const result = convertWiEntry(wi, 'lorebook', { compress: 'ai-summary' });
+    assert(!result.content.includes('compress:'), 'no annotation for unknown mode (avoids lying)');
+    assert(result.content.includes('The body text here.'), 'body untouched');
+});
+
+test('convertWiEntry: explicit compress: true annotates as caveman', () => {
+    const wi = { comment: 'X', key: ['x'], content: 'The cat is just a cat.' };
+    const result = convertWiEntry(wi, 'lorebook', { compress: true });
+    assert(result.content.includes('compress: caveman'), 'caveman annotation present');
+});
+
+// ============================================================================
+// Tests: Update Existing Entries — updateFrontmatterFields (src/helpers.js)
+// ============================================================================
+
+import { updateFrontmatterFields } from '../src/helpers.js';
+
+test('updateFrontmatterFields: replaces existing scalar value in place', () => {
+    const input = '---\npriority: 50\nstatus: active\n---\n\n# Body\n\nBody text.';
+    const result = updateFrontmatterFields(input, { priority: 10 });
+    assert(result.applied.includes('priority'), 'priority applied');
+    assert(result.content.includes('priority: 10'), 'new value present');
+    assert(!result.content.includes('priority: 50'), 'old value gone');
+    assert(result.content.includes('status: active'), 'untouched field preserved');
+    assert(result.content.includes('Body text.'), 'body preserved');
+});
+
+test('updateFrontmatterFields: appends new field before closing delimiter', () => {
+    const input = '---\npriority: 50\n---\n\nbody';
+    const result = updateFrontmatterFields(input, { newField: 'hello' });
+    assert(result.applied.includes('newField'), 'newField applied');
+    assert(result.content.includes('newField: hello'), 'appended');
+    assert(result.content.match(/newField: hello\s*\n---/), 'appended before closing ---');
+});
+
+test('updateFrontmatterFields: null value deletes existing field', () => {
+    const input = '---\npriority: 50\nstatus: active\n---\n\nbody';
+    const result = updateFrontmatterFields(input, { status: null });
+    assert(result.applied.includes('status'), 'status delete applied');
+    assert(!result.content.includes('status:'), 'status removed');
+    assert(result.content.includes('priority: 50'), 'other field intact');
+});
+
+test('updateFrontmatterFields: null value on absent field is skipped', () => {
+    const input = '---\npriority: 50\n---\n\nbody';
+    const result = updateFrontmatterFields(input, { nonexistent: null });
+    assert(result.skipped.includes('nonexistent'), 'reported as skipped');
+    assert(!result.content.includes('nonexistent'), 'no phantom field');
+});
+
+test('updateFrontmatterFields: refuses non-scalar values', () => {
+    const input = '---\npriority: 50\n---\n\nbody';
+    const result = updateFrontmatterFields(input, { priority: [1, 2, 3], obj: { a: 1 } });
+    assert(result.skipped.includes('priority'), 'array refused');
+    assert(result.skipped.includes('obj'), 'object refused');
+    assert(result.content.includes('priority: 50'), 'original priority preserved');
+});
+
+test('updateFrontmatterFields: refuses to overwrite array-block fields', () => {
+    const input = '---\nkeys:\n  - one\n  - two\n---\n\nbody';
+    const result = updateFrontmatterFields(input, { keys: 'replacement' });
+    assert(result.skipped.includes('keys'), 'array-block keys refused');
+    assert(result.content.includes('  - one'), 'array preserved');
+});
+
+test('updateFrontmatterFields: preserves quoting style of untouched fields', () => {
+    const input = '---\nname: "Alice"\npriority: 50\n---\n\nbody';
+    const result = updateFrontmatterFields(input, { priority: 10 });
+    assert(result.content.includes('name: "Alice"'), 'quoted name unchanged');
+});
+
+test('updateFrontmatterFields: serializes booleans/numbers/strings correctly', () => {
+    const input = '---\na: x\n---\n\nbody';
+    const result = updateFrontmatterFields(input, { b: true, c: 42, d: 'has spaces' });
+    assert(result.content.includes('b: true'), 'boolean');
+    assert(result.content.includes('c: 42'), 'number');
+    assert(result.content.match(/d:.*has spaces/), 'string');
+});
+
+test('updateFrontmatterFields: creates frontmatter when file has none', () => {
+    const input = '# Title\n\nplain body';
+    const result = updateFrontmatterFields(input, { priority: 50 });
+    assert(result.content.startsWith('---'), 'starts with delim');
+    assert(result.content.includes('priority: 50'), 'field present');
+    assert(result.content.includes('plain body'), 'body intact');
+});
+
+test('updateFrontmatterFields: handles BOM-prefixed input', () => {
+    const input = '﻿---\npriority: 50\n---\n\nbody';
+    const result = updateFrontmatterFields(input, { priority: 10 });
+    assert(result.content.includes('priority: 10'), 'BOM file updated');
+});
+
+test('updateFrontmatterFields: no-op when updates object is empty', () => {
+    const input = '---\npriority: 50\n---\n\nbody';
+    const result = updateFrontmatterFields(input, {});
+    assertEqual(result.applied.length, 0, 'no applied');
+    assertEqual(result.content, input, 'content byte-identical');
+});
+
+// --- #15 summary feature: parseRange + buildSummaryUserMessage ---
+
+import { parseRange, buildSummaryUserMessage, applyHideAndPrepend, rollbackById } from '../src/ai/summarize-pure.js';
+
+test('parseRange: start-end', () => {
+    const r = parseRange('5-15', 100);
+    assertEqual(r.start, 5);
+    assertEqual(r.end, 15);
+});
+
+test('parseRange: -N (last N)', () => {
+    const r = parseRange('-8', 100);
+    assertEqual(r.start, 92);
+    assertEqual(r.end, 99);
+});
+
+test('parseRange: -N caps at 0 when N > chatLen', () => {
+    const r = parseRange('-200', 50);
+    assertEqual(r.start, 0);
+    assertEqual(r.end, 49);
+});
+
+test('parseRange: N- (from N to end)', () => {
+    const r = parseRange('10-', 50);
+    assertEqual(r.start, 10);
+    assertEqual(r.end, 49);
+});
+
+test('parseRange: bare N (single message)', () => {
+    const r = parseRange('7', 50);
+    assertEqual(r.start, 7);
+    assertEqual(r.end, 7);
+});
+
+test('parseRange: rejects invalid ranges', () => {
+    assertEqual(parseRange('', 50), null, 'empty');
+    assertEqual(parseRange('abc', 50), null, 'non-numeric');
+    assertEqual(parseRange('50-100', 50), null, 'end >= chatLen');
+    assertEqual(parseRange('20-10', 50), null, 'start > end');
+    assertEqual(parseRange('-0', 50), null, 'last-zero');
+    assertEqual(parseRange('99', 50), null, 'bare N out of bounds');
+});
+
+test('buildSummaryUserMessage: includes name + body, skips hidden', () => {
+    const chat = [
+        { name: 'Alice', mes: 'hello', is_system: false },
+        { name: 'Bob', mes: 'hidden line', is_system: true },
+        { name: 'Alice', mes: 'world', is_system: false },
+    ];
+    const msg = buildSummaryUserMessage(chat, 0, 2);
+    assert(msg.includes('### Alice (#0)\nhello'), 'msg 0 included');
+    assert(!msg.includes('hidden line'), 'hidden msg skipped');
+    assert(msg.includes('### Alice (#2)\nworld'), 'msg 2 included');
+});
+
+// --- F1 + M3 audit regression: applyHideAndPrepend / rollbackById round-trip ---
+
+test('applyHideAndPrepend: marks each in-range msg with original is_system + summary id', () => {
+    const chat = [
+        { mes: 'a', is_system: false, name: 'u' },
+        { mes: 'b', is_system: true, name: 'u' },   // pre-hidden
+        { mes: 'c', is_system: false, name: 'u' },
+    ];
+    const { hiddenCount, summaryMsg } = applyHideAndPrepend(chat, { start: 0, end: 2 }, 'sum_X', 'summary text');
+    assertEqual(hiddenCount, 3, 'all three hidden');
+    assertEqual(chat.length, 4, 'summary inserted, originals preserved');
+    assertEqual(chat[0], summaryMsg, 'summary at start of range');
+    assertEqual(chat[1].extra.dle_original_is_system, false, 'msg a original was visible');
+    assertEqual(chat[2].extra.dle_original_is_system, true, 'msg b original was hidden — F1 regression');
+    assertEqual(chat[3].extra.dle_original_is_system, false, 'msg c original was visible');
+    assert(chat[1].is_system && chat[2].is_system && chat[3].is_system, 'all marked hidden post-apply');
+    assertEqual(chat[1].extra.dle_summarized_into, 'sum_X', 'summary id stamped');
+});
+
+test('rollbackById: restores exact original is_system for every message (F1 fix)', () => {
+    const chat = [
+        { mes: 'a', is_system: false, name: 'u' },
+        { mes: 'b', is_system: true, name: 'u' },   // pre-hidden — the F1 bug scenario
+        { mes: 'c', is_system: false, name: 'u' },
+    ];
+    applyHideAndPrepend(chat, { start: 0, end: 2 }, 'sum_X', 'summary text');
+    const { restored, removed } = rollbackById(chat, 'sum_X');
+    assertEqual(removed, 1, 'summary message removed');
+    assertEqual(restored, 3, 'three messages restored');
+    assertEqual(chat.length, 3, 'back to original length');
+    assertEqual(chat[0].is_system, false, 'msg a restored to visible');
+    assertEqual(chat[1].is_system, true, 'msg b restored to HIDDEN (this is the F1 fix — old code wrongly flipped to false)');
+    assertEqual(chat[2].is_system, false, 'msg c restored to visible');
+    // Marker keys cleaned up.
+    assert(!chat[0].extra?.dle_summarized_into, 'dle_summarized_into removed');
+    assert(!chat[0].extra?.dle_original_is_system, 'dle_original_is_system removed');
+});
+
+test('rollbackById: multi-summary out-of-order rollback restores correctly (M3 fix)', () => {
+    // Two summaries: A covers [0,2], then B covers post-A range [4,5] (originally [3,4] pre-A).
+    const chat = [
+        { mes: '0', is_system: false }, // hidden by A
+        { mes: '1', is_system: true },  // hidden by A, pre-hidden
+        { mes: '2', is_system: false }, // hidden by A
+        { mes: '3', is_system: false }, // hidden by B (post-A index 4)
+        { mes: '4', is_system: true },  // hidden by B, pre-hidden (post-A index 5)
+        { mes: '5', is_system: false }, // outside both
+    ];
+    applyHideAndPrepend(chat, { start: 0, end: 2 }, 'sum_A', 'A');
+    // Post-A chat: [sumA, msg0, msg1, msg2, msg3, msg4, msg5]
+    applyHideAndPrepend(chat, { start: 4, end: 5 }, 'sum_B', 'B');
+    // Post-B chat: [sumA, msg0, msg1, msg2, sumB, msg3, msg4, msg5]
+
+    // Roll back A FIRST (older), B second — historically the broken case.
+    const { restored: rA, removed: xA } = rollbackById(chat, 'sum_A');
+    assertEqual(xA, 1, 'sum_A removed');
+    assertEqual(rA, 3, 'three A-hidden msgs restored');
+    const { restored: rB, removed: xB } = rollbackById(chat, 'sum_B');
+    assertEqual(xB, 1, 'sum_B removed');
+    assertEqual(rB, 2, 'two B-hidden msgs restored');
+
+    assertEqual(chat.length, 6, 'back to original 6 messages');
+    assertEqual(chat[0].is_system, false, 'msg 0 visible (orig)');
+    assertEqual(chat[1].is_system, true, 'msg 1 still hidden (pre-hidden, F1+M3 fix)');
+    assertEqual(chat[2].is_system, false, 'msg 2 visible (orig)');
+    assertEqual(chat[3].is_system, false, 'msg 3 visible (orig)');
+    assertEqual(chat[4].is_system, true, 'msg 4 still hidden (pre-hidden, F1+M3 fix)');
+    assertEqual(chat[5].is_system, false, 'msg 5 visible (orig, outside both)');
+});
+
+test('rollbackById: unknown id is a no-op', () => {
+    const chat = [{ mes: 'a', is_system: false }];
+    const { restored, removed } = rollbackById(chat, 'sum_nope');
+    assertEqual(restored, 0, 'nothing restored');
+    assertEqual(removed, 0, 'nothing removed');
+    assertEqual(chat.length, 1, 'chat unchanged');
+});
+
+test('rollbackById: invalid args bail safely', () => {
+    assertEqual(rollbackById(null, 'sum_X').restored, 0, 'null chat');
+    assertEqual(rollbackById([], '').restored, 0, 'empty id');
+});
+
+test('buildSummaryUserMessage: skips empty body', () => {
+    const chat = [
+        { name: 'X', mes: '   ', is_system: false },
+        { name: 'Y', mes: 'content', is_system: false },
+    ];
+    const msg = buildSummaryUserMessage(chat, 0, 1);
+    assert(!msg.includes('#0'), 'empty-body msg skipped');
+    assert(msg.includes('content'), 'real msg included');
+});
+
+// --- Fuzzy name matching (all-results variant) ---
+
+import { fuzzyTitleMatchAll } from '../src/helpers.js';
+
+test('fuzzyTitleMatchAll: returns empty array on empty input', () => {
+    assertEqual(fuzzyTitleMatchAll('', ['foo', 'bar']).length, 0, 'empty query');
+    assertEqual(fuzzyTitleMatchAll('foo', []).length, 0, 'empty candidates');
+});
+
+test('fuzzyTitleMatchAll: returns all matches above threshold, sorted desc', () => {
+    const candidates = ['Alice', 'Alicia', 'Bob', 'Alic'];
+    const matches = fuzzyTitleMatchAll('Alic', candidates, 0.3);
+    assert(matches.length >= 2, 'multiple matches surfaced');
+    for (let i = 1; i < matches.length; i++) {
+        assert(matches[i - 1].similarity >= matches[i].similarity, 'sorted desc by similarity');
+    }
+});
+
+test('fuzzyTitleMatchAll: respects threshold cutoff', () => {
+    const candidates = ['Apple', 'Application', 'Banana'];
+    const strict = fuzzyTitleMatchAll('App', candidates, 0.9);
+    const lenient = fuzzyTitleMatchAll('App', candidates, 0.1);
+    assert(lenient.length > strict.length, 'lenient threshold finds more');
+});
+
+test('fuzzyTitleMatchAll: handles non-string input safely', () => {
+    assertEqual(fuzzyTitleMatchAll(null, ['x']).length, 0, 'null query');
+    assertEqual(fuzzyTitleMatchAll(undefined, ['x']).length, 0, 'undefined query');
+});
+
+// --- #13 + #26: Browse row-model + folder grouping helpers ---
+
+import { buildBrowseRowModel, topFolderOf, listTopFolders, entryKeysInFolder } from '../src/drawer/drawer-browse-pure.js';
+
+test('topFolderOf: returns (root) for missing folderPath', () => {
+    assertEqual(topFolderOf({}), '(root)', 'undefined folderPath');
+    assertEqual(topFolderOf({ folderPath: '' }), '(root)', 'empty folderPath');
+    assertEqual(topFolderOf(null), '(root)', 'null entry');
+});
+
+test('topFolderOf: takes first segment of multi-segment path', () => {
+    assertEqual(topFolderOf({ folderPath: 'Locations/Cities/Vire' }), 'Locations', 'multi-segment');
+    assertEqual(topFolderOf({ folderPath: 'Characters' }), 'Characters', 'single segment');
+});
+
+test('buildBrowseRowModel: grouping OFF returns flat entry rows in original order', () => {
+    const entries = [
+        { title: 'A', folderPath: 'Z' },
+        { title: 'B', folderPath: 'A' },
+        { title: 'C', folderPath: 'A' },
+    ];
+    const rows = buildBrowseRowModel(entries, { grouping: false });
+    assertEqual(rows.length, 3, 'flat list length');
+    assert(rows.every(r => r.type === 'entry'), 'no headers in flat mode');
+    assertEqual(rows[0].entry.title, 'A', 'order preserved');
+});
+
+test('buildBrowseRowModel: grouping ON inserts headers + groups in first-appearance order', () => {
+    const entries = [
+        { title: 'A1', folderPath: 'A' },
+        { title: 'B1', folderPath: 'B' },
+        { title: 'A2', folderPath: 'A' },
+    ];
+    const rows = buildBrowseRowModel(entries, { grouping: true, expandedFolders: new Set(['A', 'B']) });
+    // Headers preserve first-appearance order: A header → A1, A2 → B header → B1.
+    assertEqual(rows[0].type, 'header', 'first row is header');
+    assertEqual(rows[0].folder, 'A', 'first folder by appearance');
+    assertEqual(rows[0].count, 2, 'A has 2 entries');
+    assertEqual(rows[1].entry.title, 'A1', 'A1 second');
+    assertEqual(rows[2].entry.title, 'A2', 'A2 third');
+    assertEqual(rows[3].type, 'header', 'B header fourth');
+    assertEqual(rows[3].folder, 'B', 'B folder');
+});
+
+test('buildBrowseRowModel: collapsed folders omit child entry rows', () => {
+    const entries = [
+        { title: 'A1', folderPath: 'A' },
+        { title: 'A2', folderPath: 'A' },
+        { title: 'B1', folderPath: 'B' },
+    ];
+    // Only B is in the expanded set.
+    const rows = buildBrowseRowModel(entries, { grouping: true, expandedFolders: new Set(['B']) });
+    const headers = rows.filter(r => r.type === 'header');
+    assertEqual(headers.length, 2, 'both headers present');
+    const aHeader = headers.find(h => h.folder === 'A');
+    assertEqual(aHeader.expanded, false, 'A header marked collapsed');
+    const aEntries = rows.filter(r => r.type === 'entry' && r.folder === 'A');
+    assertEqual(aEntries.length, 0, 'collapsed folder yields no entry rows');
+    const bEntries = rows.filter(r => r.type === 'entry' && r.folder === 'B');
+    assertEqual(bEntries.length, 1, 'expanded folder yields entry rows');
+});
+
+test('buildBrowseRowModel: null expandedFolders defaults to all-expanded', () => {
+    const entries = [
+        { title: 'A1', folderPath: 'A' },
+        { title: 'B1', folderPath: 'B' },
+    ];
+    const rows = buildBrowseRowModel(entries, { grouping: true, expandedFolders: null });
+    const entryRows = rows.filter(r => r.type === 'entry');
+    assertEqual(entryRows.length, 2, 'all entries rendered when no set passed');
+});
+
+test('buildBrowseRowModel: empty entries returns empty array regardless of opts', () => {
+    assertEqual(buildBrowseRowModel([]).length, 0, 'empty');
+    assertEqual(buildBrowseRowModel(null, { grouping: true }).length, 0, 'null');
+});
+
+test('listTopFolders: returns sorted unique top folders, (root) for missing', () => {
+    const entries = [
+        { folderPath: 'B/sub' },
+        { folderPath: 'A' },
+        { folderPath: 'A/x' },
+        {},
+    ];
+    const folders = listTopFolders(entries);
+    assertEqual(folders.length, 3, 'three buckets');
+    assertEqual(folders[0], '(root)', 'sorted ascii');
+});
+
+test('entryKeysInFolder: collects keyFn results only for matching folder', () => {
+    const entries = [
+        { title: 'A1', vaultSource: 'V', folderPath: 'A' },
+        { title: 'B1', vaultSource: 'V', folderPath: 'B' },
+        { title: 'A2', vaultSource: 'V', folderPath: 'A' },
+    ];
+    const keyFn = e => `${e.vaultSource}:${e.title}`;
+    const keys = entryKeysInFolder(entries, 'A', keyFn);
+    assertEqual(keys.length, 2, 'two A entries');
+    assert(keys.includes('V:A1') && keys.includes('V:A2'), 'A entries collected');
+});
+
+// --- Wave 6.5 backfill: isUnderlyingClaudeModel (src/librarian/agentic-api-pure.js) ---
+// BUG-AUDIT (REG-B2) regression guard: anthropic/claude-* routes via OpenRouter must
+// trigger the same Claude-specific request mitigations as bare claude-* names.
+
+import { isUnderlyingClaudeModel } from '../src/librarian/agentic-api-pure.js';
+
+test('isUnderlyingClaudeModel: matches bare claude-* names', () => {
+    assert(isUnderlyingClaudeModel('claude-sonnet-4-5'), 'sonnet-4-5');
+    assert(isUnderlyingClaudeModel('claude-3-opus-20240229'), 'classic 3-opus');
+    assert(isUnderlyingClaudeModel('claude-haiku-4-5'), 'haiku');
+});
+
+test('isUnderlyingClaudeModel: matches anthropic/claude-* OpenRouter routes', () => {
+    assert(isUnderlyingClaudeModel('anthropic/claude-3.5-sonnet'), 'OR 3.5 sonnet');
+    assert(isUnderlyingClaudeModel('anthropic/claude-opus-4'), 'OR opus-4');
+});
+
+test('isUnderlyingClaudeModel: case insensitive on both prefixes', () => {
+    assert(isUnderlyingClaudeModel('CLAUDE-SONNET-4-5'), 'upper bare');
+    assert(isUnderlyingClaudeModel('Anthropic/Claude-3'), 'mixed case OR');
+});
+
+test('isUnderlyingClaudeModel: rejects non-Claude models', () => {
+    assert(!isUnderlyingClaudeModel('gpt-4o'), 'gpt-4o not claude');
+    assert(!isUnderlyingClaudeModel('gemini-2.5-pro'), 'gemini not claude');
+    assert(!isUnderlyingClaudeModel('mistral-large'), 'mistral not claude');
+    assert(!isUnderlyingClaudeModel('openrouter/anthropic/claude-3'), 'OR-prefixed-anthropic-prefixed does not match — must start with anthropic/');
+});
+
+test('isUnderlyingClaudeModel: handles null / undefined / non-string safely', () => {
+    assert(!isUnderlyingClaudeModel(null), 'null');
+    assert(!isUnderlyingClaudeModel(undefined), 'undefined');
+    assert(!isUnderlyingClaudeModel(''), 'empty');
+    assert(!isUnderlyingClaudeModel(42), 'number');
+    assert(!isUnderlyingClaudeModel({}), 'object');
+});
+
+// --- #16 priority reverse: comparePriority (src/helpers.js) ---
+
+import { comparePriority } from '../src/helpers.js';
+
+test('comparePriority: normal order — lower priority wins', () => {
+    const arr = [{ priority: 50 }, { priority: 10 }, { priority: 30 }];
+    arr.sort((a, b) => comparePriority(a, b, false));
+    assertEqual(arr[0].priority, 10, 'lowest first');
+    assertEqual(arr[2].priority, 50, 'highest last');
+});
+
+test('comparePriority: reversed — higher priority wins', () => {
+    const arr = [{ priority: 50 }, { priority: 10 }, { priority: 30 }];
+    arr.sort((a, b) => comparePriority(a, b, true));
+    assertEqual(arr[0].priority, 50, 'highest first in reversed');
+    assertEqual(arr[2].priority, 10, 'lowest last in reversed');
+});
+
+test('comparePriority: missing priority defaults to 50', () => {
+    const a = {};
+    const b = { priority: 10 };
+    // 50 vs 10 → b wins in normal order; a (50) loses → positive diff.
+    assert(comparePriority(a, b, false) > 0, 'missing acts as 50');
+    assert(comparePriority(a, b, true) < 0, 'reversed flips sign');
+});
+
+test('comparePriority: equal priorities return 0', () => {
+    assertEqual(comparePriority({ priority: 25 }, { priority: 25 }, false), 0, 'equal scalar');
+    assertEqual(comparePriority({ priority: 25 }, { priority: 25 }, true), 0, 'equal scalar reversed');
+});
+
+// --- Agent C audit regression guards ---
+
+test('updateFrontmatterFields: CRLF-authored file updates in place, no duplicate keys', () => {
+    const input = '---\r\npriority: 50\r\nstatus: active\r\n---\r\n\r\nbody';
+    const result = updateFrontmatterFields(input, { priority: 10 });
+    assert(result.applied.includes('priority'), 'priority applied');
+    const priorityHits = (result.content.match(/^priority:/gm) || []).length;
+    assertEqual(priorityHits, 1, 'exactly one priority line (no duplicate)');
+    assert(result.content.includes('priority: 10'), 'new value present');
+    assert(/\r\n/.test(result.content), 'CRLF line endings preserved');
+    assert(result.content.includes('status: active'), 'untouched field preserved');
+});
+
+test('updateFrontmatterFields: block scalar header is not overwritten', () => {
+    const input = '---\nsummary: |\n  line one\n  line two\n---\n\nbody';
+    const result = updateFrontmatterFields(input, { summary: 'replaced' });
+    assert(result.skipped.includes('summary'), 'block-scalar key reported as skipped');
+    assert(!result.applied.includes('summary'), 'block-scalar key NOT applied');
+    assert(result.content.includes('summary: |'), 'block-scalar header preserved');
+    assert(result.content.includes('line one'), 'block-scalar body preserved');
+});
+
+test('updateFrontmatterFields: folded block scalar (>) is not overwritten', () => {
+    const input = '---\nsummary: >\n  folded line\n---\n\nbody';
+    const result = updateFrontmatterFields(input, { summary: 'replaced' });
+    assert(result.skipped.includes('summary'), 'folded-scalar key reported as skipped');
+    assert(result.content.includes('summary: >'), 'folded-scalar header preserved');
+});
+
+test('updateFrontmatterFields: hyphenated key updates in place, no duplicate', () => {
+    const input = '---\nrefine-keys: oldval\n---\n\nbody';
+    const result = updateFrontmatterFields(input, { 'refine-keys': 'newval' });
+    assert(result.applied.includes('refine-keys'), 'hyphenated key applied');
+    const hits = (result.content.match(/^refine-keys:/gm) || []).length;
+    assertEqual(hits, 1, 'exactly one refine-keys line');
+    assert(result.content.includes('refine-keys: newval'), 'value updated');
+});
+
+test('updateFrontmatterFields: dotted key updates in place, no duplicate', () => {
+    const input = '---\nx.y: oldval\n---\n\nbody';
+    const result = updateFrontmatterFields(input, { 'x.y': 'newval' });
+    assert(result.applied.includes('x.y'), 'dotted key applied');
+    const hits = (result.content.match(/^x\.y:/gm) || []).length;
+    assertEqual(hits, 1, 'exactly one x.y line');
+});
+
+test('updateFrontmatterFields: inline-flow array refused not silently rewritten', () => {
+    const input = '---\nkeys: [one, two, three]\n---\n\nbody';
+    const result = updateFrontmatterFields(input, { keys: 'flat' });
+    assert(result.skipped.includes('keys'), 'inline-flow array reported as skipped');
+    assert(result.content.includes('[one, two, three]'), 'inline-flow array preserved');
+});
+
+test('updateFrontmatterFields: NaN/Infinity numeric values are skipped not corrupted', () => {
+    const input = '---\nweight: 1\n---\n\nbody';
+    const nanResult = updateFrontmatterFields(input, { weight: NaN });
+    assert(nanResult.skipped.includes('weight'), 'NaN reported as skipped');
+    assert(!nanResult.applied.includes('weight'), 'NaN NOT applied');
+    assert(nanResult.content.includes('weight: 1'), 'original value preserved');
+    const infResult = updateFrontmatterFields(input, { weight: Infinity });
+    assert(infResult.skipped.includes('weight'), 'Infinity reported as skipped');
+});
+
+test('updateFrontmatterFields: new field with NaN refused, no corruption', () => {
+    const input = '---\na: 1\n---\n\nbody';
+    const result = updateFrontmatterFields(input, { newField: NaN });
+    assert(result.skipped.includes('newField'), 'NaN new field skipped');
+    assert(!result.content.includes('newField'), 'no malformed line emitted');
+});
+
+test('convertWiEntry: compress option annotates frontmatter and shrinks body', () => {
+    const wi = { comment: 'CavemanTest', key: ['c'], content: 'The protagonist is a hero who really, basically saves the day.' };
+    const plain = convertWiEntry(wi, 'lorebook');
+    const compressed = convertWiEntry(wi, 'lorebook', { compress: true });
+    assert(!plain.content.includes('compress:'), 'no annotation when omitted');
+    assert(compressed.content.includes('compress: caveman'), 'caveman annotation added');
+    assert(compressed.content.length < plain.content.length, 'compressed body is shorter');
 });
 
 // ============================================================================
@@ -1600,12 +2488,24 @@ test('buildExemptionPolicy: pins are in forceInject', () => {
     assert(!policy.forceInject.has(':B'), 'non-pinned B should NOT be in forceInject');
 });
 
-test('buildExemptionPolicy: bootstrap and seed entries ARE in forceInject (exempt from contextual gating)', () => {
+test('buildExemptionPolicy: seed always in forceInject; bootstrap gen-scoped to bootstrapActive', () => {
+    // Stages H-3 / gotcha #60: bootstrap exemption is gen-scoped. Mirrors
+    // helpers.js:isForceInjected. Default bootstrapActive=false is conservative.
     const vault = [makeEntry('Boot', { bootstrap: true }), makeEntry('Seed', { seed: true }), makeEntry('Normal')];
-    const policy = buildExemptionPolicy(vault, [], []);
-    assert(policy.forceInject.has(':Boot'), 'bootstrap should be in forceInject (exempt from gating)');
-    assert(policy.forceInject.has(':Seed'), 'seed should be in forceInject (exempt from gating)');
-    assert(!policy.forceInject.has(':Normal'), 'normal should NOT be in forceInject');
+
+    const policyDefault = buildExemptionPolicy(vault, [], []);
+    assert(!policyDefault.forceInject.has(':Boot'), 'default: bootstrap NOT in forceInject (bootstrapActive defaults to false)');
+    assert(policyDefault.forceInject.has(':Seed'), 'seed always in forceInject');
+    assert(!policyDefault.forceInject.has(':Normal'), 'normal never in forceInject');
+
+    const policyActive = buildExemptionPolicy(vault, [], [], true);
+    assert(policyActive.forceInject.has(':Boot'), 'bootstrap IS in forceInject when bootstrapActive=true');
+    assert(policyActive.forceInject.has(':Seed'), 'seed still in forceInject');
+    assert(!policyActive.forceInject.has(':Normal'), 'normal still NOT in forceInject');
+
+    const policyInactive = buildExemptionPolicy(vault, [], [], false);
+    assert(!policyInactive.forceInject.has(':Boot'), 'bootstrap NOT in forceInject when bootstrapActive=false');
+    assert(policyInactive.forceInject.has(':Seed'), 'seed still in forceInject');
 });
 
 test('buildExemptionPolicy: blocks stored lowercase in policy', () => {
@@ -1640,7 +2540,7 @@ test('applyPinBlock: pinned entries added with constant=true and priority=10', (
     const pinned = result.find(e => e.title === 'B');
     assert(pinned.constant === true, 'pinned entry should have constant=true');
     assertEqual(pinned.priority, 10, 'pinned entry should have priority=10');
-    assertEqual(matchedKeys.get('B'), '(pinned)', 'matchedKeys should record pin');
+    assertEqual(matchedKeys.get(':B'), '(pinned)', 'matchedKeys should record pin (trackerKey ":B" for empty vault)');
 });
 
 test('applyPinBlock: pinned entry already in results gets constant+priority override', () => {
@@ -2961,11 +3861,12 @@ test('categorizeRejections: warmupFailed', () => {
 });
 
 test('categorizeRejections: excludes injected titles from all groups', () => {
+    // BUG-AUDIT v2.5: injectedKeys is now a Set of trackerKey-shape strings (':title' when no vault).
     const trace = {
         gatedOut: [{ title: 'A', requires: [], excludes: [] }],
         cooldownRemoved: [{ title: 'B', reason: 'Cooldown active' }],
     };
-    const groups = categorizeRejections(trace, new Set(['A', 'B']));
+    const groups = categorizeRejections(trace, new Set([':a', ':b']));
     assertEqual(groups.length, 0);
 });
 
@@ -5079,7 +5980,7 @@ test('matchEntries: constants always matched regardless of keywords', () => {
     const settings = makeSettings({ scanDepth: 5 });
     const { matched, matchedKeys } = matchEntriesPure(chat, entries, { settings });
     assert(matched.some(e => e.title === 'ConstantLore'), 'constant always matched');
-    assertEqual(matchedKeys.get('ConstantLore'), '(constant)', 'reason is (constant)');
+    assertEqual(matchedKeys.get(':ConstantLore'), '(constant)', 'reason is (constant) — keyed by trackerKey (:title for no-vault)');
 });
 
 test('matchEntries: bootstrap entries matched when chat is short', () => {
@@ -5170,7 +6071,7 @@ test('matchEntries: cascade links pull in linked entries', () => {
     const { matched, matchedKeys } = matchEntriesPure(chat, entries, { settings });
     assert(matched.some(e => e.title === 'Dragon'), 'primary match');
     assert(matched.some(e => e.title === 'Sword'), 'cascade linked');
-    assert(matchedKeys.get('Sword').includes('cascade from'), 'reason shows cascade');
+    assert(matchedKeys.get(':Sword').includes('cascade from'), 'reason shows cascade');
 });
 
 test('matchEntries: BUG-035 cascade links skip warmup', () => {
@@ -5212,7 +6113,7 @@ test('matchEntries: recursive scanning finds entries in matched content', () => 
     const { matched, matchedKeys } = matchEntriesPure(chat, entries, { settings });
     assert(matched.some(e => e.title === 'Dragon'), 'primary match');
     assert(matched.some(e => e.title === 'Sword'), 'found via recursion');
-    assert(matchedKeys.get('Sword').includes('recursion'), 'reason shows recursion');
+    assert(matchedKeys.get(':Sword').includes('recursion'), 'reason shows recursion');
 });
 
 test('matchEntries: excludeRecursion flag respected', () => {
@@ -5235,7 +6136,7 @@ test('matchEntries: character context scan', () => {
     const settings = makeSettings({ scanDepth: 5, characterContextScan: true });
     const { matched, matchedKeys } = matchEntriesPure(chat, entries, { settings, characterName: 'Eris' });
     assert(matched.some(e => e.title === 'Eris'), 'active character matched');
-    assertEqual(matchedKeys.get('Eris'), '(active character)', 'reason shows active character');
+    assertEqual(matchedKeys.get(':Eris'), '(active character)', 'reason shows active character');
 });
 
 test('matchEntries: sorted by priority', () => {
@@ -5329,6 +6230,39 @@ test('buildCandidateManifest: custom field annotations', () => {
     const { manifest } = buildCandidateManifest(candidates, false, settings);
     assert(manifest.includes('Era: medieval'), 'era annotation');
     assert(manifest.includes('Location: mountain'), 'location annotation');
+});
+
+test('buildCandidateManifest: aiManifestIncludeFields whitelist prunes fields', () => {
+    const candidates = [makeEntry('Dragon', {
+        summary: 'A dragon', tokenEstimate: 50,
+        customFields: { era: ['medieval'], location: 'mountain' },
+    })];
+    const settings = makeSettings({ aiManifestIncludeFields: ['era'] });
+    const { manifest } = buildCandidateManifest(candidates, false, settings);
+    assert(manifest.includes('Era: medieval'), 'era kept (in whitelist)');
+    assert(!manifest.includes('Location: mountain'), 'location pruned (not in whitelist)');
+});
+
+test('buildCandidateManifest: empty aiManifestIncludeFields includes everything', () => {
+    const candidates = [makeEntry('Dragon', {
+        summary: 'A dragon', tokenEstimate: 50,
+        customFields: { era: ['medieval'], location: 'mountain' },
+    })];
+    const settings = makeSettings({ aiManifestIncludeFields: [] });
+    const { manifest } = buildCandidateManifest(candidates, false, settings);
+    assert(manifest.includes('Era: medieval'), 'era kept');
+    assert(manifest.includes('Location: mountain'), 'location kept');
+});
+
+test('buildCandidateManifest: whitelist with no matches drops field block entirely', () => {
+    const candidates = [makeEntry('Dragon', {
+        summary: 'A dragon', tokenEstimate: 50,
+        customFields: { era: ['medieval'] },
+    })];
+    const settings = makeSettings({ aiManifestIncludeFields: ['faction'] });
+    const { manifest } = buildCandidateManifest(candidates, false, settings);
+    assert(!manifest.includes('Era:'), 'era pruned (not in whitelist)');
+    assert(!manifest.includes('Faction:'), 'no faction (none on entry)');
 });
 
 test('buildCandidateManifest: decay STALE hint', () => {
@@ -5672,4 +6606,4 @@ test('uiCascadeState: every entry has a reason field', () => {
 // Results
 // ============================================================================
 
-summary();
+await summary();

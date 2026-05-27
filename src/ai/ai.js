@@ -26,16 +26,53 @@ const AI_PREFILTER_MAX_TOKENS = 512;
 /** Reset on chat change to avoid cross-chat throttle penalty. */
 export function resetAiThrottle() { _lastAiCallTimestamp = 0; }
 
+// Shared circuit-breaker exclusion classifier lives in a pure module so it can be
+// regression-tested without ST globals. Re-export here so existing call sites
+// (`import { ..., isExcludedFromBreaker } from './ai.js'`) keep working without a
+// churn-only diff across scribe / auto-suggest / summarize / commands-ai. Imported
+// locally too — `aiSearch`'s catch block uses it directly (module-graph test
+// requires re-exported names to also be locally bound when used in the body).
+import { isExcludedFromBreaker } from './breaker-pure.js';
+export { isExcludedFromBreaker };
+
+/**
+ * Return the model name for the currently-selected AI Search connection profile.
+ *
+ * L3 fix (v2.5): distinguishes three outcomes so callers / diagnostics can tell
+ * them apart:
+ *   - `''`   : no profile selected, OR profile exists but has an empty `model`
+ *              field (an empty string IS a valid "model unknown" state for a
+ *              profile, and the sole caller in settings-ui.js only branches on
+ *              truthiness so this remains the safe default).
+ *   - `null` : profile id was set but the profile could not be resolved by the
+ *              Connection Manager — either it was deleted/renamed, or CMRS
+ *              threw. Caller can treat this as "stale profile reference" if it
+ *              wants to surface a richer warning; existing truthy-check callers
+ *              continue to render the same fallback as `''`.
+ *
+ * Pre-fix the two error branches both returned `''` so a missing-profile bug
+ * was indistinguishable from a profile that simply has no model field — making
+ * Connection-Manager drift hard to diagnose. The diagnostic warn is now
+ * unconditional (was debug-only) since this only fires on the user-initiated
+ * "Test connection" path, never in the hot path.
+ *
+ * @returns {string|null}
+ */
 export function getProfileModelHint() {
     const settings = getSettings();
     if (!settings.aiSearchProfileId) return '';
+    let profile;
     try {
-        const profile = ConnectionManagerRequestService.getProfile(settings.aiSearchProfileId);
-        return profile.model || '';
+        profile = ConnectionManagerRequestService.getProfile(settings.aiSearchProfileId);
     } catch (err) {
-        if (settings.debugMode) console.debug('[DLE] Could not read profile model hint:', err.message);
-        return '';
+        console.warn('[DLE] getProfileModelHint: Connection Manager threw while resolving profile id', settings.aiSearchProfileId, '—', err?.message || err);
+        return null;
     }
+    if (!profile) {
+        console.warn('[DLE] getProfileModelHint: profile id', settings.aiSearchProfileId, 'not found in Connection Manager (deleted or renamed?)');
+        return null;
+    }
+    return profile.model || '';
 }
 
 /**
@@ -165,6 +202,17 @@ export async function callViaProfile(systemPrompt, userMessage, maxTokens, timeo
         // and the debug-preview slice downstream. Issue #24.
         return cmrsResultToText(result);
     } catch (err) {
+        // ST's CMRS catch (shared.js:473) wraps every throw as
+        // `new Error('API request failed', { cause: <original> })`. That strips
+        // err.name='AbortError' from fetch cancels, so the timeout/userAbort
+        // classification below would silently fail and we'd mis-label cancels
+        // as generic errors (losing userAborted/timedOut). Unwrap once at the
+        // top of the catch so the rest of this handler sees the real cause.
+        // BUG-249 source-trace verdict: signal IS honored by CMRS → fetch; this
+        // wrapper is the only thing that ever made it look otherwise.
+        if (err?.message === 'API request failed' && err.cause) {
+            err = err.cause;
+        }
         const profileLabel = resolvedProfileId ? ` [profile: ${resolvedProfileId}]` : '';
         const modelLabel = resolvedModel ? ` [model: ${resolvedModel}]` : '';
         // Either signal can win the race; prefer controller-side reason, fall back to external.
@@ -275,20 +323,21 @@ export async function callAI(systemPrompt, userMessage, connectionConfig) {
     };
     let result;
     try {
+        // M3 (2026-05-22): Explicit mode whitelist. `inherit` must be resolved by
+        // `resolveConnectionConfig` upstream — `callAI` must never see it. Throw
+        // loudly if the upstream invariant breaks, rather than silently falling
+        // through to the proxy branch with an empty proxyUrl (would trip the
+        // breaker on the second call). See docs/ai-subsystem.md §1.
         if (mode === 'profile') {
             result = await callViaProfile(systemPrompt, userMessage, maxTokens, timeout, profileId, model, signal, jsonSchema, disableThinkingOnClaude);
+        } else if (mode === 'proxy') {
+            // v2.5 dead-head: Custom Proxy mode removed. proxy-api.js is retained for
+            // rollback safety, but every dispatch site refuses with a clear error.
+            // `callProxyViaCorsBridge` import is preserved so tests can still exercise
+            // the pure scrubber / validator helpers in that module.
+            throw new Error('Custom Proxy mode was removed in v2.5. Pick a Connection Profile in DLE Settings → Connection → AI Connections.');
         } else {
-            if (!model) throw new Error('Proxy mode requires a model name. Set one in AI Search settings → Model Override.');
-            result = await callProxyViaCorsBridge(
-                proxyUrl,
-                model,
-                systemPrompt,
-                userMessage,
-                maxTokens,
-                timeout,
-                cacheHints,
-                signal,
-            );
+            throw new Error(`callAI: unknown connection mode "${mode}" (expected 'profile' or 'proxy' — 'inherit' must be resolved by resolveConnectionConfig upstream)`);
         }
         _callEntry.durationMs = Date.now() - _callStart;
         _callEntry.status = 'ok';
@@ -390,6 +439,17 @@ Example: ["Characters - Inner Circle", "Locations - Districts", "Lore - Magic Sy
         return null;
     }
 
+    // AI-audit H1: every non-error early-return below MUST release the probe slot,
+    // or a HALF-OPEN circuit stays occupied for the full AI_PROBE_TIMEOUT (60s) and
+    // blocks recovery. Tracked via a flag so the catch block can still skip release
+    // for `throttled` errors (which should leave the slot to its actual owner).
+    let _probeReleased = false;
+    const _releaseProbeOnce = () => {
+        if (!_probeReleased) {
+            _probeReleased = true;
+            releaseHalfOpenProbe();
+        }
+    };
     try {
         const result = await callAI(categoryPrompt, categoryUserMessage, {
             caller: 'hierarchicalPreFilter',
@@ -416,7 +476,7 @@ Example: ["Characters - Inner Circle", "Locations - Districts", "Lore - Magic Sy
         notifyAiStatsUpdated();
 
         let parsed = extractAiResponseClient(responseText);
-        if (!parsed) return null;
+        if (!parsed) { _releaseProbeOnce(); return null; }
 
         // BUG-027: Handle object-shaped responses (e.g. {"categories": [...]}).
         if (!Array.isArray(parsed) && typeof parsed === 'object') {
@@ -429,17 +489,18 @@ Example: ["Characters - Inner Circle", "Locations - Districts", "Lore - Magic Sy
                 parsed = arrayValue;
             } else {
                 if (settings.debugMode) console.warn('[DLE] Hierarchical response: unexpected object format, skipping');
+                _releaseProbeOnce();
                 return null;
             }
         }
-        if (!Array.isArray(parsed) || parsed.length === 0) return null;
+        if (!Array.isArray(parsed) || parsed.length === 0) { _releaseProbeOnce(); return null; }
 
         // parsed should be an array of category name strings
         const selectedCategories = new Set(
             parsed.map(item => (typeof item === 'string' ? item : item.title || item.name || item.category || item.label || '').toLowerCase()).filter(Boolean),
         );
 
-        if (selectedCategories.size === 0) return null;
+        if (selectedCategories.size === 0) { _releaseProbeOnce(); return null; }
 
         // BUG-385: Exact case-insensitive match — substring matching let generic
         // category names like "lore" or "l" match every category in the vault.
@@ -487,6 +548,7 @@ Example: ["Characters - Inner Circle", "Locations - Districts", "Lore - Magic Sy
         const minRetention = 1 - (settings.hierarchicalAggressiveness ?? 0.8);
         if (effectiveFiltered < selectable.length * minRetention) {
             if (settings.debugMode) console.log('[DLE] Hierarchical pre-filter too aggressive, using full manifest');
+            _releaseProbeOnce();
             return null;
         }
 
@@ -496,12 +558,13 @@ Example: ["Characters - Inner Circle", "Locations - Districts", "Lore - Magic Sy
         }
 
         // Release without recording — aiSearch() probes independently.
-        releaseHalfOpenProbe();
+        _releaseProbeOnce();
 
         return filteredResult;
     } catch (err) {
         // Release without record — pre-filter is optional and shouldn't cascade to the breaker.
-        if (!err.throttled) releaseHalfOpenProbe();
+        // Throttled errors keep the slot for the real owner (we never actually held it).
+        if (!err.throttled) _releaseProbeOnce();
         if (settings.debugMode) console.warn('[DLE] Hierarchical pre-filter failed:', err.message);
         return null;
     }
@@ -571,11 +634,14 @@ export async function aiSearch(chat, candidateManifest, candidateHeader, snapsho
     // BUG-019: aiConfidenceThreshold in cache key.
     // BUG-020: Hash prompt content (not length) so meaningful edits invalidate.
     // BUG-021: manifestSummaryMode + summaryLength in cache key.
+    // AI M2: aiSearchProxyUrl + aiSearchMaxTokens in cache key — without them,
+    // switching proxy endpoint or shrinking maxTokens would serve stale results
+    // from a different endpoint or a higher-cap call.
     const promptHash = simpleHash(settings.aiSearchSystemPrompt || '');
     // BUG-AUDIT (Fix 3): cache-shape version forces old caches to miss + rewrite in
     // the new vaultSource-aware shape. Bump on any cache-record shape change.
     const CACHE_SHAPE_VERSION = 'v2';
-    const settingsKey = `${CACHE_SHAPE_VERSION}|${settings.aiSearchMode}|${settings.aiSearchScanDepth}|${settings.maxEntries}|${settings.unlimitedEntries}|${promptHash}|${settings.aiSearchConnectionMode}|${settings.aiSearchProfileId}|${settings.aiSearchModel}|${settings.aiConfidenceThreshold || 'low'}|${settings.manifestSummaryMode || 'prefer_summary'}|${settings.aiSearchManifestSummaryLength || 600}`;
+    const settingsKey = `${CACHE_SHAPE_VERSION}|${settings.aiSearchMode}|${settings.aiSearchScanDepth}|${settings.maxEntries}|${settings.unlimitedEntries}|${promptHash}|${settings.aiSearchConnectionMode}|${settings.aiSearchProfileId}|${settings.aiSearchModel}|${settings.aiSearchProxyUrl || ''}|${settings.aiSearchMaxTokens || ''}|${settings.aiConfidenceThreshold || 'low'}|${settings.manifestSummaryMode || 'prefer_summary'}|${settings.aiSearchManifestSummaryLength || 600}`;
     const manifestHash = simpleHash(settingsKey + candidateManifest);
     const chatHash = simpleHash(chatContext);
     // Defer split until after the exact-match check.
@@ -883,6 +949,11 @@ export async function aiSearch(chat, candidateManifest, candidateHeader, snapsho
         const results = [];
         const indexToSearch = candidateEntries || snapshot || vaultIndex;
         const matchedAiTitles = new Set();
+        // BUG-AUDIT v2.5: walking indexToSearch linearly means same-titled cross-vault
+        // entries BOTH get pushed when the AI picks that title. The XML manifest cannot
+        // currently disambiguate by vault (would require prompt-format change in all
+        // 6 locales — deferred). The safe behavior is to surface every vault's version
+        // rather than silently dropping one. See docs/gotchas.md #48.
         for (const entry of indexToSearch) {
             const aiResult = aiResultMap.get(entry.title.toLowerCase());
             if (aiResult) {
@@ -982,7 +1053,9 @@ export async function aiSearch(chat, candidateManifest, candidateHeader, snapsho
     } catch (err) {
         // BUG-005/BUG-252: timeouts come as AbortError (profile) or message-match (proxy);
         // user aborts are distinct from timeouts (both skip the breaker, but user-abort
-        // shouldn't log "timed out").
+        // shouldn't log "timed out"). Logging branches stay here so the messages match
+        // the failure mode; the breaker-trip decision is delegated to the shared
+        // `isExcludedFromBreaker()` helper so every wrapper agrees on what counts.
         const isUserAbort = err.userAborted === true || err.name === 'AbortError' && /aborted by user/i.test(err.message || '');
         const isTimeout = !isUserAbort && (err.timedOut === true || err.name === 'AbortError' || /timed?\s*out/i.test(err.message));
         // BUG-020: classify HTTP — auth and 429 are transient (no breaker trip);
@@ -990,7 +1063,7 @@ export async function aiSearch(chat, candidateManifest, candidateHeader, snapsho
         const status = Number(err.status) || Number((err.message || '').match(/\b(4\d\d|5\d\d)\b/)?.[1]) || 0;
         const isRateLimit = status === 429 || /rate.?limit|too many requests/i.test(err.message || '');
         const isAuthError = status === 401 || status === 403 || /unauthoriz|forbidden|invalid api key|auth/i.test(err.message || '');
-        if (!err.throttled && !isTimeout && !isUserAbort && !isRateLimit && !isAuthError) recordAiFailure();
+        if (!isExcludedFromBreaker(err)) recordAiFailure();
         if (isUserAbort) {
             if (settings.debugMode) console.debug('[DLE] AI search aborted by user');
         } else if (isTimeout) {

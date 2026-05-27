@@ -9,6 +9,7 @@ Code-level reference for Claude Code. Covers the full lifecycle from Obsidian fe
 - `src/vault/obsidian-api.js` — HTTP fetch layer, circuit breaker, connection diagnostics
 - `src/vault/bm25.js` — BM25 fuzzy search index (pure functions)
 - `src/vault/vault-pure.js` — pure derived-state helpers (computeEntityDerivedState, deduplicateMultiVault, detectCrossVaultDuplicates)
+- `src/vault/vault-incremental.js` — P3 incremental derived-state helpers (incrementalMentionWeights, incrementalBM25Update, incrementalEntityRegexes, diffEntries, shouldUseIncremental). Pure (no ST imports).
 - `src/vault/sync.js` — sync polling loop (setupSyncPolling, showChangesToast)
 - `src/vault/import.js` — World Info import bridge
 - `core/pipeline.js` — parseVaultFile (frontmatter parsing, tag classification)
@@ -43,6 +44,12 @@ All vault-aware code iterates `settings.vaults.filter(v => v.enabled)`. Vault or
 ### `getPrimaryVault(settings)` (settings.js:getPrimaryVault())
 
 Returns first enabled vault, or `vaults[0]`, or a fallback object `{ name: 'Default', host: '127.0.0.1', port: 27124, apiKey: '', https: true, enabled: false }`.
+
+### `resolveWriteVault(toolKey, settings, overrideName?)` (settings.js)
+
+Per-tool write destination. `toolKey` is `'librarian' | 'scribe' | 'autoSuggest'`. Precedence: `overrideName` (per-write picker) > `settings[{tool}WriteVaultId]` (configured default, a vault `name` string) > primary. Each step falls through cleanly if the named vault is missing or disabled — never throws. Use this instead of `getPrimaryVault()` at any AI-driven write site so the user can route Scribe / Auto Lorebook / Librarian writes to different vaults.
+
+Settings keys: `librarianWriteVaultId`, `scribeWriteVaultId`, `autoSuggestWriteVaultId`. Value is the target `vault.name`; empty string means "use primary." Librarian additionally exposes a per-write picker in its review popup (visible only when 2+ vaults are enabled) which feeds `overrideName`.
 
 ### Field definitions source
 
@@ -148,7 +155,7 @@ Keyed by `"host:port"` string (e.g. `"127.0.0.1:27123"`). Each vault gets indepe
 
 ### CORS proxy usage
 
-DLE does NOT use ST's CORS proxy for Obsidian connections. The Obsidian Local REST API plugin has built-in CORS support. The CORS proxy (`enableCorsProxy: true` in ST's config.yaml) is used only for AI search connections in proxy mode, not vault fetching.
+DLE does NOT use ST's CORS proxy for Obsidian connections. The Obsidian Local REST API plugin has built-in CORS support. CORS proxy (`enableCorsProxy: true` in ST's `config.yaml`) is still required for Obsidian vault fetching if you use HTTPS with a self-signed cert (some browser/cert-store combinations route through the bridge to bypass cert errors). **AI features no longer use CORS proxy as of v2.5** (Custom Proxy mode dead-headed; Connection Profile uses CMRS server-side and bypasses the bridge entirely — see `docs/gotchas.md` #68). Pre-v2.5, the CORS proxy was used by AI search and Librarian in proxy mode; that path is now unreachable in production but the code is preserved for rollback.
 
 ### `diagnoseFetchFailure()` (obsidian-api.js:diagnoseFetchFailure())
 
@@ -203,9 +210,17 @@ Pipeline.js extracts these frontmatter fields (with type coercion):
 ### Token estimation
 
 `tokenEstimate` is initially set to `0` in `parseVaultFile()`. Actual estimation happens later:
-- **buildIndex():** `await getTokenCountAsync(entry.content)` with fallback `Math.ceil(content.length / 4.0)`. When the tokenizer is unavailable and the fallback is used, a warning is logged.
-- **buildIndexWithReuse():** Same for newly-parsed entries; reused entries keep their existing estimate.
+- **buildIndex():** `await getTokenCountAsync(entry.content)` with fallback `Math.ceil(content.length / 4.0)` — wrapped in `Promise.all(entries.map(async ...))` so tokenization runs in parallel. When the tokenizer is unavailable and the fallback is used, a warning is logged.
+- **buildIndexWithReuse():** Same for newly-parsed entries; reused entries keep their existing estimate. **The reuse-path tokenization is intentionally serial inside the for-loop** (one `await getTokenCountAsync` per file). This is acceptable in the steady state because reuse-sync only re-tokenizes the small set of *modified* files (cache hits skip the await). It is NOT acceptable when every file needs re-parsing — see V-H4 below.
 - **Merge dedup:** `Math.ceil(mergedContent.length / 4.0)` (rough estimate, not tokenizer).
+
+### V-H4: fieldDefsChanged delegates to buildIndex (2026-05-22)
+
+When `parseFieldDefinitionYaml` returns a different definition set than what's currently committed (`fieldDefsChanged === true`), the reuse-sync cache check (`existing._contentHash === fileHash && !fieldDefsChanged`) fails for every file. Every entry then goes down the re-parse + serial `await getTokenCountAsync` path, blocking the UI for several seconds on a 500-entry vault.
+
+`buildIndex()` does the same work but tokenizes in parallel via `Promise.all`. So when `fieldDefsChanged === true`, `buildIndexWithReuse()` now returns early with `_reuseResult = false` — the caller's standard fallback (`ensureIndexFresh` and `setupSyncPolling` both check the reuse-path result and invoke `buildIndex` when it's false) takes over and gets the parallel tokenization for free. The `finally` block clears the build lock so `buildIndex` can acquire it cleanly.
+
+Regression guards: `test/vault.test.mjs` section M (M1-M6) — source-code assertions on the early-return position, structure, and fallback contract.
 
 ---
 
@@ -251,11 +266,13 @@ Strips `requires[]`, `excludes[]`, and `cascadeLinks[]` references that don't ma
 
 **Gotcha:** The `_original*` fields are included in the IndexedDB cache save (cache.js:saveIndexToCache(), explicit `_original*` allowlist in the private-field filter). This means cached entries retain the broken-ref information across reloads.
 
-### `computeDerivedIndexFields(entries, settings)` (vault.js:computeDerivedIndexFields())
+### `computeDerivedIndexFields(entries, settings, previousEntries?)` (vault.js:computeDerivedIndexFields())
 
-Shared between `finalizeIndex()` and `hydrateFromCache()` (BUG-370).
+Shared between `finalizeIndex()` and `hydrateFromCache()` (BUG-370). Optional third arg `previousEntries` enables the incremental path (P3).
 
 **mentionWeights** (vault.js: mentionWeights block inside computeDerivedIndexFields()): Cross-entry mention frequency table. Key format: `"sourceName\0targetTitle"`, value: match count. Uses precompiled combined regexes per target entry for O(N x total_content) instead of O(N x M x content) (BUG-374). Short names (<=3 chars) use `\b` word boundaries.
+
+**P3 incremental path (2026-05-22):** When `previousEntries` is supplied AND `shouldUseIncremental(changed, total) === true` (default threshold: 50% of total), `incrementalMentionWeights()` from `src/vault/vault-incremental.js` updates the prior Map by purging dirty rows/columns and recomputing only the affected source×target pairs. Output is byte-equivalent to the full path — pinned by `test/vault.test.mjs` section L (L1-L3, L11). The same `previousEntries` triggers incremental BM25 (`incrementalBM25Update`) and incremental entity regexes (`incrementalEntityRegexes`) in `finalizeIndex` itself.
 
 **folderList** (vault.js: folderList block inside computeDerivedIndexFields()): Array of `{path, entryCount}` sorted by count descending. Includes all ancestor folders (e.g. entry in `A/B/C` counts toward `A`, `A/B`, and `A/B/C`).
 
@@ -454,7 +471,7 @@ Handles three ST World Info JSON formats:
 
 Returns `{entries: object[], source: string}`. Filters out null/non-object entries.
 
-### `convertWiEntry(wiEntry, lorebookTag)` (src/helpers.js:convertWiEntry())
+### `convertWiEntry(wiEntry, lorebookTag, options?)` (src/helpers.js:convertWiEntry())
 
 Maps a single ST World Info entry to `{filename, content}` (Obsidian markdown with frontmatter).
 
@@ -464,19 +481,59 @@ Maps a single ST World Info entry to `{filename, content}` (Obsidian markdown wi
 - Position: maps ST's 5-value enum `{0: 'after', 1: 'before', 2: 'before', 3: 'after', 4: 'in_chat'}` (lossy).
 - Content: `wiEntry.content` as markdown body after frontmatter.
 
-### `importEntries(entries, folder, onProgress)` (import.js:importEntries())
+**`options.compress`** (#18) — when truthy (or `'caveman'`), pipe the body through `compressCaveman()` before writing and annotate frontmatter with `compress: caveman`. Other strings are passed through `resolveCompressMode` for forward compatibility, but only modes in `APPLIED_COMPRESS_MODES` (currently just `'caveman'`) actually transform and annotate — unknown modes log a warning and leave the body untouched rather than emit a misleading annotation.
+
+### `importEntries(entries, folder, onProgress, options?)` (import.js:importEntries())
 
 Writes entries to the primary vault one at a time.
 
-**Dedup logic:** Before writing, checks if file already exists via `obsidianFetch` GET. If it does, tries suffixes: `_imported`, `_imported_2`, ... up to `_imported_20` (MAX_DEDUP_ATTEMPTS). Each suffix existence-check is a separate Obsidian fetch.
+**Dedup logic:** Before writing, checks if file already exists via `obsidianFetch` GET. If it does, tries suffixes: `_imported`, `_imported_2`, ... up to `_imported_20` (`MAX_DEDUP_ATTEMPTS`, module-scoped in `import.js`). Each suffix existence-check is a separate Obsidian fetch. The walk is extracted into `_findUniquePath(vault, filename, folder)` (private) so both `importEntries` and `upsertConvertedEntry` share the same behavior.
 
 **Error handling:**
-- AbortError on dedup check -> skip entry (FIX-M6), not use undefined path.
-- Network error on existence check -> skip entry with error message.
+- AbortError on dedup check → skip entry (FIX-M6), not use undefined path.
+- Network error on existence check → skip entry with error message.
+- Cap exhausted (>20 dedup attempts) → skip entry.
 - Returns `{imported, failed, renamed, errors}`.
+
+**V-C2 (2026-05-22):** `_findUniquePath` previously returned the candidate path "assume free" when the existence-check `obsidianFetch` threw a non-Abort error. If the file actually existed, the caller's `writeNote` then silently overwrote real vault content. The helper now delegates to `classifyDedupProbe(fetchResult, err)` in `src/vault/vault-pure.js` — any error (Abort or otherwise) yields `{accept:false, taken:false}`, so the helper returns `null` and the caller skips with a "dedup check failed" error message. See gotchas.md #49.
+
+**`options.compress`** (#18) — forwarded into `convertWiEntry`. Defaults to `settings.importCompressByDefault`.
 
 **State read:** `getSettings()`, `getPrimaryVault(settings)`.
 **State written:** None (writes directly to Obsidian vault via API).
+
+### `upsertConvertedEntry(wiEntry, folder, options?)` (import.js:upsertConvertedEntry())
+
+PR #28.2 — Single-entry convert-and-upsert. Designed for companion-extension integration that wants to push one entry without running the full batch flow.
+
+**Vault selection:** `options.vault` if given, else `resolveWriteVault('autoSuggest', settings)`. Returns `{ok:false, error: 'No vault configured…'}` when host/port/apiKey not all set.
+
+**Collision policy** (`options.policy`, default `'rename'`):
+- `'rename'` — find unique `_imported[_N]` suffix via `_findUniquePath`.
+- `'replace'` — overwrite existing file. Destructive — companion callers should confirm.
+- `'skip'` — bail with `{ok:true, action:'skipped'}`.
+
+**Returns** `{ok, action: 'created'|'replaced'|'renamed'|'skipped'|null, path, error?}`.
+
+**`options.compress`** — forwarded into `convertWiEntry`, defaults to `settings.importCompressByDefault`.
+
+### `updateEntryFields(host, port, apiKey, filename, updates, useHttps?)` (obsidian-api.js:updateEntryFields())
+
+Surgical frontmatter-field update. Reads the file via REST, hands the content to `updateFrontmatterFields()` (in `src/helpers.js`), writes back. Body and untouched frontmatter fields preserved byte-for-byte.
+
+**Scope (v1):**
+- Scalar values only (string / number / boolean). Arrays / objects refused, reported via `skipped`.
+- `null` value deletes an existing field (or is silently skipped for new fields).
+- New fields appended before the closing `---`.
+- Refuses to overwrite block scalars (`|`, `>`) — would orphan body lines and silently corrupt.
+- Refuses to overwrite inline-flow arrays (`[a, b]`) — same data-loss risk.
+- CRLF input handled (strips `\r` before key matching so Windows-authored files don't grow duplicate keys on every update).
+- Hyphenated / dotted keys (`refine-keys`, `x.y`) match the read-side parser.
+- `NaN` / `±Infinity` refused (returned in `skipped`) rather than emitted as malformed YAML.
+
+**Returns** `{ok, applied: string[], skipped: string[], error?}`. No-op write (no mtime touch) when `applied.length === 0`.
+
+**Does NOT create the file if missing** — returns `ok:false` with a 404 message. Caller should use `writeNote` or `upsertConvertedEntry` when create-or-update is wanted.
 
 ### Progress callback
 
@@ -494,9 +551,9 @@ Writes entries to the primary vault one at a time.
 
 4. **Field definitions are loaded independently by both build paths** (`buildIndex()` and `buildIndexWithReuse()` — each has its own field-definitions load block). Both defer publishing to state until parsing is complete.
 
-5. **`skipCacheSave`** is set to `true` when any vault fetch partially failed (in `buildIndex()`, passed into `finalizeIndex()` as `vaultFetchFailed`). This prevents caching a truncated index over a previously-good one.
+5. **`skipCacheSave`** is set to `true` when any vault fetch partially failed (in `buildIndex()`, passed into `finalizeIndex()` as `vaultFetchFailed`). This prevents caching a truncated index over a previously-good one. **V-C1 (2026-05-22):** `buildIndexWithReuse()` now mirrors this — `anyVaultFailed` is sticky across the vault loop and passed as `skipCacheSave: anyVaultFailed` to `finalizeIndex()`. Earlier code passed no `skipCacheSave` at all on the reuse path, so a partial listing or high per-file failure rate silently truncated IDB on next save (which then dropped trackers on next hydrate via analytics-prune). The shared classifier `classifyReuseFetch(data)` in `src/vault/vault-pure.js` codifies the contract (see gotchas.md #48).
 
-6. **BUG-366/367 carry-forward guards** in both `buildIndex()` and `buildIndexWithReuse()`: if a vault returns partial results or zero files but previously had entries, the prior entries for that vault are carried forward instead of being silently dropped.
+6. **BUG-366/367 carry-forward guards** in both `buildIndex()` and `buildIndexWithReuse()`: if a vault returns partial results or zero files but previously had entries, the prior entries for that vault are carried forward instead of being silently dropped. **V-C1 extension:** `buildIndexWithReuse()` also carries forward on `data.partial === true` (previously only `buildIndex()` did this) and flags `anyVaultFailed`/`failedVaultNames` so the snapshot-patch and cache-skip branches downstream both see the failure.
 
 7. **`ensureIndexFresh()` respects three rebuild trigger modes** (vault.js:ensureIndexFresh()): `ttl` (default, time-based), `generation` (every N generations), `manual` (only if index empty). The `generation` mode uses `generationCount` / `lastIndexGenerationCount` from state.js.
 

@@ -205,8 +205,8 @@ function buildToolInstructions(settings, maxSearches, maxFlags) {
 // Chat Messages Builder
 // ════════════════════════════════════════════════════════════════════════════
 
-/** G5: count-based cap. */
-const MAX_HISTORY_MESSAGES = 40;
+/** G5: count-based cap. Fallback when no settings override is provided. */
+const DEFAULT_AGENTIC_HISTORY_MESSAGES = 40;
 
 /**
  * @param {Array} chatArray - ST's chat[]
@@ -222,9 +222,11 @@ export function buildChatMessages(chatArray, pipelineContext, injectedTitles, se
         { role: 'system', content: systemPrompt },
     ];
 
+    const rawCap = Number(settings?.librarianAgenticHistoryMessages);
+    const historyCap = Number.isFinite(rawCap) && rawCap >= 1 ? rawCap : DEFAULT_AGENTIC_HISTORY_MESSAGES;
     const history = [];
     let count = 0;
-    for (let i = chatArray.length - 1; i >= 0 && count < MAX_HISTORY_MESSAGES; i--) {
+    for (let i = chatArray.length - 1; i >= 0 && count < historyCap; i--) {
         const msg = chatArray[i];
 
         if (msg?.is_system) continue;

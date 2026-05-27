@@ -11,7 +11,67 @@ import { vaultIndex, fieldDefinitions, folderList, notifyGatingChanged, notifyPi
 import { DEFAULT_FIELD_DEFINITIONS } from '../fields.js';
 import { classifyError } from '../../core/utils.js';
 import { ensureIndexFresh } from '../vault/vault.js';
-import { normalizePinBlock, matchesPinBlock } from '../helpers.js';
+import { normalizePinBlock, matchesPinBlock, fuzzyTitleMatchAll } from '../helpers.js';
+
+/**
+ * Resolve a user-typed entry name against a candidate set. Exact (case-insensitive)
+ * match wins immediately. Otherwise tries fuzzy: 0 matches → toast + null; 1 →
+ * info toast + use; 2+ → modal picker, returns null on cancel.
+ *
+ * Used by /dle-pin, /dle-unpin, /dle-block, /dle-unblock so a typo or partial
+ * name no longer drops on the floor with "Couldn't find X" — common enough to
+ * be frustrating.
+ *
+ * @param {string} name - raw user input
+ * @param {Array<{title: string}>} candidates - objects with a .title field
+ * @param {object} opts
+ * @param {string} opts.commandLabel - shown in the picker title ("Pin", "Block", etc.)
+ * @returns {Promise<object|null>} - the resolved candidate (full object), or null
+ */
+async function resolveEntryByName(name, candidates, { commandLabel }) {
+    const exact = candidates.find(c => c.title.toLowerCase() === name.toLowerCase());
+    if (exact) return exact;
+
+    const titles = candidates.map(c => c.title);
+    const matches = fuzzyTitleMatchAll(name, titles, 0.6);
+    if (matches.length === 0) {
+        toastr.warning(`No entry matching "${name}".`, 'DeepLore Enhanced');
+        return null;
+    }
+    if (matches.length === 1) {
+        const match = candidates.find(c => c.title === matches[0].title);
+        toastr.info(`Matched "${match.title}" (${Math.round(matches[0].similarity * 100)}%).`, 'DeepLore Enhanced');
+        return match;
+    }
+
+    const top = matches.slice(0, 10);
+    const html = `<div class="dle-popup">
+        <h3>${escapeHtml(commandLabel)}: pick an entry</h3>
+        <p class="dle-text-xs dle-muted">No exact match for "${escapeHtml(name)}". Found ${matches.length} similar:</p>
+        <ol class="dle-fuzzy-picker-list">
+            ${top.map(m => `<li><button type="button" class="menu_button dle-fuzzy-pick" data-title="${escapeHtml(m.title)}">${escapeHtml(m.title)} <span class="dle-dimmed">(${Math.round(m.similarity * 100)}%)</span></button></li>`).join('')}
+        </ol>
+        ${matches.length > 10 ? `<p class="dle-text-xs dle-muted">…and ${matches.length - 10} more (not shown).</p>` : ''}
+    </div>`;
+
+    let picked = null;
+    await callGenericPopup(html, POPUP_TYPE.TEXT, '', {
+        wide: true,
+        // Scope queries to this popup's dialog so a stacked popup doesn't
+        // cross-fire (global document.querySelector* would pick up sibling popups).
+        onOpen: (popup) => {
+            popup.dlg.querySelectorAll('.dle-fuzzy-pick').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    picked = btn.getAttribute('data-title');
+                    popup.okButton?.click();
+                });
+            });
+        },
+    });
+
+    if (!picked) return null;
+    return candidates.find(c => c.title === picked) || null;
+}
 
 export function registerGatingCommands() {
     // ── Per-Chat Pin/Block ──
@@ -26,8 +86,8 @@ export function registerGatingCommands() {
                 console.error('[DLE] ensureIndexFresh failed in /dle-pin:', err);
                 return '';
             }
-            const entry = vaultIndex.find(e => e.title.toLowerCase() === name.toLowerCase());
-            if (!entry) { toastr.warning(`Couldn't find "${name}" in your lore.`, 'DeepLore Enhanced'); return ''; }
+            const entry = await resolveEntryByName(name, vaultIndex, { commandLabel: 'Pin' });
+            if (!entry) return '';
             if (!chat_metadata.deeplore_pins) chat_metadata.deeplore_pins = [];
             if (chat_metadata.deeplore_pins.some(p => matchesPinBlock(p, entry))) {
                 toastr.info(`"${entry.title}" is already pinned.`, 'DeepLore Enhanced'); return '';
@@ -59,8 +119,12 @@ export function registerGatingCommands() {
             if (!chat_metadata.deeplore_pins || chat_metadata.deeplore_pins.length === 0) {
                 toastr.info('No pinned entries.', 'DeepLore Enhanced'); return '';
             }
-            const idx = chat_metadata.deeplore_pins.findIndex(p => normalizePinBlock(p).title.toLowerCase() === name.toLowerCase());
-            if (idx === -1) { toastr.info(`"${name}" is not pinned.`, 'DeepLore Enhanced'); return ''; }
+            // Build {title} shape that resolveEntryByName understands so fuzzy / picker fires.
+            const pinSet = chat_metadata.deeplore_pins.map(p => ({ ...normalizePinBlock(p), _raw: p }));
+            const chosen = await resolveEntryByName(name, pinSet, { commandLabel: 'Unpin' });
+            if (!chosen) return '';
+            const idx = chat_metadata.deeplore_pins.indexOf(chosen._raw);
+            if (idx === -1) { toastr.info(`"${chosen.title}" is not pinned.`, 'DeepLore Enhanced'); return ''; }
             const removedItem = chat_metadata.deeplore_pins.splice(idx, 1)[0];
             const removed = normalizePinBlock(removedItem).title;
             saveMetadataDebounced();
@@ -88,8 +152,8 @@ export function registerGatingCommands() {
                 console.error('[DLE] ensureIndexFresh failed in /dle-block:', err);
                 return '';
             }
-            const entry = vaultIndex.find(e => e.title.toLowerCase() === name.toLowerCase());
-            if (!entry) { toastr.warning(`Couldn't find "${name}" in your lore.`, 'DeepLore Enhanced'); return ''; }
+            const entry = await resolveEntryByName(name, vaultIndex, { commandLabel: 'Block' });
+            if (!entry) return '';
             if (!chat_metadata.deeplore_blocks) chat_metadata.deeplore_blocks = [];
             if (chat_metadata.deeplore_blocks.some(b => matchesPinBlock(b, entry))) {
                 toastr.info(`"${entry.title}" is already blocked.`, 'DeepLore Enhanced'); return '';
@@ -121,8 +185,11 @@ export function registerGatingCommands() {
             if (!chat_metadata.deeplore_blocks || chat_metadata.deeplore_blocks.length === 0) {
                 toastr.info('No blocked entries.', 'DeepLore Enhanced'); return '';
             }
-            const idx = chat_metadata.deeplore_blocks.findIndex(b => normalizePinBlock(b).title.toLowerCase() === name.toLowerCase());
-            if (idx === -1) { toastr.info(`"${name}" is not blocked.`, 'DeepLore Enhanced'); return ''; }
+            const blockSet = chat_metadata.deeplore_blocks.map(b => ({ ...normalizePinBlock(b), _raw: b }));
+            const chosen = await resolveEntryByName(name, blockSet, { commandLabel: 'Unblock' });
+            if (!chosen) return '';
+            const idx = chat_metadata.deeplore_blocks.indexOf(chosen._raw);
+            if (idx === -1) { toastr.info(`"${chosen.title}" is not blocked.`, 'DeepLore Enhanced'); return ''; }
             const removedItem = chat_metadata.deeplore_blocks.splice(idx, 1)[0];
             const removed = normalizePinBlock(removedItem).title;
             saveMetadataDebounced();

@@ -68,11 +68,13 @@ Three tools in OpenAI function calling format:
 
 ### Provider Format Handling (agentic-api.js)
 
-`callWithTools()` dispatches based on the Librarian's resolved connection mode (`resolveConnectionConfig('librarian')`):
-- **Proxy mode** (`mode === 'proxy'`): calls `callWithToolsViaProxy()` which sends directly to an Anthropic-compatible proxy (e.g. claude-code-proxy) via ST's CORS bridge. Tools are converted from OpenAI to Anthropic format (`toAnthropicTools`). Messages with `role: 'system'` are extracted into the `system` field. Response is raw Anthropic JSON — existing parsers handle it natively.
-- **Profile mode** (default): wraps `ConnectionManagerRequestService.sendRequest()` using the active connection profile (`getActiveProfileId()`).
+> **DEPRECATED v2.5**: Custom Proxy mode dead-headed. Dispatch throws. Connection Profile is canonical. See gotcha #68.
 
-`isToolCallingSupported()` returns `true` in proxy mode (Anthropic API always supports tools). `getProviderFormat()` returns `'claude'` in proxy mode. `getActiveMaxTokens()` uses the Librarian's configured `maxTokens` in proxy mode.
+`callWithTools()` dispatches based on the Librarian's resolved connection mode (`resolveConnectionConfig('librarian')`):
+- **Proxy mode** (`mode === 'proxy'`) **— DEPRECATED v2.5**: previously called `callWithToolsViaProxy()` which sent directly to an Anthropic-compatible proxy (e.g. claude-code-proxy) via ST's CORS bridge. Tools were converted from OpenAI to Anthropic format (`toAnthropicTools`). Messages with `role: 'system'` were extracted into the `system` field. Response was raw Anthropic JSON — existing parsers handle it natively. Code paths preserved for rollback; dispatch now throws in production.
+- **Profile mode** (default and only supported path as of v2.5): wraps `ConnectionManagerRequestService.sendRequest()` using the Librarian's configured profile (`connConfig.profileId`, resolved from `librarianProfileId` or the inherited aiSearch profile). Does NOT silently fall back to ST's globally-active profile — if Librarian's profile is unset, `callWithTools()` throws a hard "Librarian needs a profile in AI Connections settings." error so the user fixes it rather than getting silent active-profile inheritance (#27 sym 2).
+
+`isToolCallingSupported()` returns `true` in proxy mode (Anthropic API always supports tools). `getProviderFormat()` returns `'claude'` in proxy mode. `getActiveMaxTokens()` uses the Librarian's configured `maxTokens` in proxy mode. (All proxy-mode helpers DEPRECATED v2.5 — preserved for rollback only.)
 
 Four provider response formats are handled:
 
@@ -118,7 +120,7 @@ Google Gemini `tool_choice` normalization (G6): string values mapped to `{ mode:
 
 **File:** `src/librarian/librarian-tools.js: searchLoreAction()`
 
-### `searchLoreAction(args) -> Promise<string>`
+### `searchLoreAction(args) -> Promise<{ text: string, titles: string[] }>`
 
 **Input shape:**
 ```js
@@ -133,12 +135,21 @@ Queries are trimmed, filtered, capped to 4 (in `searchLoreAction()` input normal
 2. Increment `loreGapSearchCount` IMMEDIATELY (in `searchLoreAction()`, right after the max-searches guard) -- before any await -- to prevent race when AI sends multiple concurrent search_lore calls.
 3. Await `buildPromise` if vault index still loading.
 4. BM25 search via `queryBM25(fuzzySearchIndex, query, librarianMaxResults, fuzzySearchMinScore)`.
-5. Filter out already-injected titles (`lastInjectionSources`) and `guide` entries (in `searchLoreAction()` per-query BM25 hit filter).
+5. Filter out already-injected titles (from `getCurrentVerdict()?.injectedSources` — verdict store) and `guide` entries (in `searchLoreAction()` per-query BM25 hit filter).
 6. Select single best hit (highest BM25 score across all queries), return full content.
 7. Resolve up to 3 linked entries from best hit's `resolvedLinks` -- manifest/summary format only.
 8. Report other match counts across remaining queries.
 
-**Return format:** Markdown sections separated by `---`. Best hit gets full `### Title\n{content}`, linked entries get XML `<entry>` manifest, no-result queries get plain text.
+**Return shape (CRIT-LIB-2, 2026-05-22):**
+```js
+{
+  text:   string,    // Markdown payload for the LLM (### Title\n{content} + manifest + counts)
+  titles: string[],  // Authoritative matched entry titles (best hit + linked)
+  toString():    string,  // Returns .text — keeps string-coercion call sites working
+  [Symbol.toPrimitive](): string,  // Same
+}
+```
+**Consumer contract:** callers that need the matched-entry list (e.g. `agentic-loop.js` Activity dropdown) MUST read `.titles` directly. NEVER regex `### (.+)` headings out of `.text` — vault content is freeform Markdown and entries routinely have their own `### Section` subheadings; regex-extraction inflates counts and pollutes the dropdown with section names that aren't entries. The string-coercion overrides exist for backward compatibility with legacy call sites that template-interpolated the result. Error/empty-result paths return `{ text: '<message>', titles: [] }`. See `docs/gotchas.md` #66.
 
 **Side effects:**
 
@@ -254,11 +265,13 @@ Guide modes prepend `buildLibrarianBootstrapSystemPrompt()` (from librarian-prom
 
 Outer loop (tool_call -> re-enter AI) with inner loop (validation retries).
 
-**Caps:**
-- `MAX_VALIDATION_RETRIES = 3`
-- `MAX_TOOL_CALLS_PER_TURN = 10`
-- `MAX_AGENTIC_ITERATIONS = 15` (BUG-232)
-- `MAX_HISTORY_MESSAGES = 10`
+**Caps (all user-tunable via Librarian Advanced Budgets — defaults shown):**
+- `librarianMaxValidationRetries` (default 3): inner validation-retry loop bound
+- `librarianMaxToolCallsPerTurn` (default 10): per-turn search+flag cap before forced finalize
+- Outer iteration cap = per-turn cap + 5 (BUG-232 safety net, derived not configured)
+- `librarianSessionHistoryMessages` (default 10): Emma's own session history window for `buildUserPromptFromHistory()`
+- `librarianAgenticHistoryMessages` (default 40): writing-AI grounding window in `buildChatMessages()`
+- `librarianSessionToolCallCap` (default `null` = unlimited): session-wide ceiling on total search+flag calls since page load. When hit, forces finalize with a distinct session-cap nudge string. Counted off `librarianSessionStats.searchCalls + flagCalls`.
 
 **Epoch guards (BUG-273):** Snapshots `chatEpoch` at entry. Re-checks after every `await callAI()` (both success and error paths) and at top of each loop iteration. On mismatch, restores history from snapshot and returns.
 

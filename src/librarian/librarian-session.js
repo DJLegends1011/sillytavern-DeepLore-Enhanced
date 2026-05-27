@@ -7,7 +7,7 @@ import { buildAiChatContext } from '../../core/utils.js';
 import { callAI, buildCandidateManifest } from '../ai/ai.js';
 import { queryBM25 } from '../vault/bm25.js';
 import { getSettings, resolveConnectionConfig } from '../../settings.js';
-import { vaultIndex, fuzzySearchIndex, loreGaps, setLoreGaps, chatEpoch } from '../state.js';
+import { vaultIndex, fuzzySearchIndex, loreGaps, setLoreGaps, chatEpoch, librarianSessionStats } from '../state.js';
 import { validateSessionResponse, parseSessionResponse } from '../helpers.js';
 import { executeToolCall, buildToolsPromptSection } from './librarian-chat-tools.js';
 import { pushEvent } from '../diagnostics/interceptors.js';
@@ -63,19 +63,44 @@ export function pickFlavorIntro() {
     return EMMA_FLAVOR_INTROS[Math.floor(Math.random() * EMMA_FLAVOR_INTROS.length)];
 }
 
-const MAX_VALIDATION_RETRIES = 3;
-const MAX_TOOL_CALLS_PER_TURN = 10;
-const MAX_HISTORY_MESSAGES = 10;
+// User-tunable budgets, surfaced in Librarian settings → Advanced Budgets accordion.
+// Read at call time so users can adjust mid-session and the change takes effect on
+// the next loop iteration without a reload.
+function getMaxValidationRetries() {
+    const v = Number(getSettings().librarianMaxValidationRetries);
+    return Number.isFinite(v) && v >= 0 ? v : 3;
+}
+function getMaxToolCallsPerTurn() {
+    const v = Number(getSettings().librarianMaxToolCallsPerTurn);
+    return Number.isFinite(v) && v >= 1 ? v : 10;
+}
+function getSessionHistoryMessages() {
+    const v = Number(getSettings().librarianSessionHistoryMessages);
+    return Number.isFinite(v) && v >= 1 ? v : 10;
+}
+function getSessionToolCallCap() {
+    const raw = getSettings().librarianSessionToolCallCap;
+    if (raw == null || raw === '') return Infinity;
+    const v = Number(raw);
+    // 0 means unlimited per UI tooltip — would otherwise trip forced-finalize on every iteration.
+    if (!Number.isFinite(v) || v <= 0) return Infinity;
+    return v;
+}
 // BUG-232: hard cap on outer agentic-loop iterations (one iteration = one AI call).
 // Prevents unbounded looping when the AI ignores the budget-reached nudge and keeps
-// returning tool_call actions. Slack covers MAX_TOOL_CALLS_PER_TURN + budget nudge
-// + final response + buffer.
-const MAX_AGENTIC_ITERATIONS = MAX_TOOL_CALLS_PER_TURN + 5;
+// returning tool_call actions. Slack covers per-turn budget + budget nudge
+// + final response + buffer. Derived from the user-tunable per-turn cap so a
+// raised per-turn cap doesn't immediately re-trip this safety net.
+function getMaxAgenticIterations() {
+    return getMaxToolCallsPerTurn() + 5;
+}
 // Configurable via settings; these are fallback defaults.
-function getManifestMaxChars() { return getSettings().librarianManifestMaxChars || 8000; }
-function getRelatedMaxChars() { return getSettings().librarianRelatedEntriesMaxChars || 4000; }
-function getDraftMaxChars() { return getSettings().librarianDraftMaxChars || 4000; }
-function getChatContextMaxChars() { return getSettings().librarianChatContextMaxChars || 4000; }
+// Audit S1-13: use ?? not || so a user-set 0 (valid per the min:0 constraint) isn't
+// silently rewritten to the default.
+function getManifestMaxChars() { return getSettings().librarianManifestMaxChars ?? 8000; }
+function getRelatedMaxChars() { return getSettings().librarianRelatedEntriesMaxChars ?? 4000; }
+function getDraftMaxChars() { return getSettings().librarianDraftMaxChars ?? 4000; }
+function getChatContextMaxChars() { return getSettings().librarianChatContextMaxChars ?? 4000; }
 
 // ════════════════════════════════════════════════════════════════════════════
 // Session Factory
@@ -169,11 +194,14 @@ export function createSession(entryPoint, options = {}) {
 
 // ════════════════════════════════════════════════════════════════════════════
 // Session Persistence (BUG-043: now in chat_metadata so session is per-chat,
-// not browser-global. Legacy localStorage key is migrated once on load.)
+// not browser-global. Legacy localStorage key is migrated once on load. The
+// pure decision helper + storage-key constants live in librarian-session-pure.js
+// so the migration can be regression-tested without ST globals.)
 // ════════════════════════════════════════════════════════════════════════════
 
-const SESSION_METADATA_KEY = 'deeplore_librarian_session';
-const LEGACY_STORAGE_KEY = 'deeplore_librarian_session';
+import { SESSION_METADATA_KEY, LEGACY_STORAGE_KEY, planSessionLoad } from './librarian-session-pure.js';
+const _planSessionLoadPure = planSessionLoad;
+export { planSessionLoad };
 
 function getChatMetadata() {
     try {
@@ -225,19 +253,20 @@ export function saveSessionState(session, expectedEpoch) {
 export function loadSessionState() {
     try {
         const md = getChatMetadata();
-        if (md && md[SESSION_METADATA_KEY]) {
-            return md[SESSION_METADATA_KEY];
-        }
-        // Legacy migration: browser-global draft → current chat, once.
-        const raw = localStorage.getItem(LEGACY_STORAGE_KEY);
-        if (raw) {
-            const parsed = JSON.parse(raw);
+        const raw = (() => { try { return localStorage.getItem(LEGACY_STORAGE_KEY); } catch { return null; } })();
+        const plan = _planSessionLoadPure(md, raw);
+        if (plan.action === 'load') return plan.data;
+        if (plan.action === 'migrate') {
             if (md) {
-                md[SESSION_METADATA_KEY] = parsed;
+                md[SESSION_METADATA_KEY] = plan.data;
                 saveMetadataDebounced();
             }
-            localStorage.removeItem(LEGACY_STORAGE_KEY);
-            return parsed;
+            try { localStorage.removeItem(LEGACY_STORAGE_KEY); } catch { /* noop */ }
+            return plan.data;
+        }
+        if (plan.action === 'discard') {
+            // Corrupt legacy entry — evict so we don't retry on every popup open.
+            try { localStorage.removeItem(LEGACY_STORAGE_KEY); } catch { /* noop */ }
         }
         return null;
     } catch (e) {
@@ -739,13 +768,14 @@ export async function sendMessage(session, userMessage, options = {}) {
         // ignoring the budget-reached nudge.
         outerIterations++;
         pushEvent('librarian', { surface: 'session', action: 'iteration', outerIteration: outerIterations, toolCallCount });
-        if (outerIterations > MAX_AGENTIC_ITERATIONS) {
+        const iterCap = getMaxAgenticIterations();
+        if (outerIterations > iterCap) {
             pushEvent('librarian', { surface: 'session', action: 'exit', reason: 'iter_cap', outerIteration: outerIterations, toolCallCount });
             return {
                 parsed: null,
                 valid: false,
                 exhausted: true,
-                lastErrors: [`Agentic loop iteration cap reached (${MAX_AGENTIC_ITERATIONS}) — AI kept requesting tool calls after budget exhausted`],
+                lastErrors: [`Agentic loop iteration cap reached (${iterCap}) — AI kept requesting tool calls after budget exhausted`],
             };
         }
 
@@ -760,7 +790,8 @@ export async function sendMessage(session, userMessage, options = {}) {
         let validParsed = null;
 
         // Inner loop: validation retries for this AI call.
-        for (let attempt = 0; attempt < MAX_VALIDATION_RETRIES; attempt++) {
+        const maxValidationRetries = getMaxValidationRetries();
+        for (let attempt = 0; attempt < maxValidationRetries; attempt++) {
             if (signal?.aborted) {
                 return abortReturn();
             }
@@ -890,17 +921,24 @@ export async function sendMessage(session, userMessage, options = {}) {
 
             session.messages.push({ role: 'tool_result', content: results.join('\n\n---\n\n') });
 
-            if (toolCallCount >= MAX_TOOL_CALLS_PER_TURN) {
-                pushEvent('librarian', { surface: 'session', action: 'forced_finalize', outerIteration: outerIterations, toolCallCount });
+            const perTurnCap = getMaxToolCallsPerTurn();
+            const sessionCap = getSessionToolCallCap();
+            // Tool count across the whole Emma session (page-load lifetime). Tracks
+            // search + flag tool invocations counted by incrementStats() in librarian-tools.js.
+            const sessionTotal = (librarianSessionStats.searchCalls || 0) + (librarianSessionStats.flagCalls || 0);
+            const perTurnHit = toolCallCount >= perTurnCap;
+            const sessionHit = sessionTotal >= sessionCap;
+            if (perTurnHit || sessionHit) {
+                const reason = sessionHit && !perTurnHit ? 'session_cap' : 'per_turn_cap';
+                pushEvent('librarian', { surface: 'session', action: 'forced_finalize', outerIteration: outerIterations, toolCallCount, sessionTotal, reason });
+                const nudge = sessionHit && !perTurnHit
+                    ? `[SYSTEM: Session-wide tool-call cap reached (${sessionTotal}/${sessionCap}). Provide your final response now — no more tool calls.]`
+                    : '[SYSTEM: Tool call limit reached. Provide your final response now — no more tool calls.]';
                 // BUG-319: synthetic:true so regenerateResponse doesn't mistake the
                 // budget-nudge for the user's real prompt when walking history backwards.
                 // Role stays 'user' for buildUserPromptFromHistory rendering (ST chat
                 // has no in-turn 'system'), but `synthetic` is the source of truth.
-                session.messages.push({
-                    role: 'user',
-                    content: '[SYSTEM: Tool call limit reached. Provide your final response now — no more tool calls.]',
-                    synthetic: true,
-                });
+                session.messages.push({ role: 'user', content: nudge, synthetic: true });
             }
 
             continue;
@@ -933,7 +971,7 @@ function buildUserPromptFromHistory(messages, editorNote) {
     // BUG-317: slice cannot start on a tool_result — that would orphan it from
     // its triggering assistant tool_call and let the model hallucinate calls it
     // never made. Bump the cut forward past any leading tool_result(s).
-    let start = Math.max(0, messages.length - MAX_HISTORY_MESSAGES);
+    let start = Math.max(0, messages.length - getSessionHistoryMessages());
     while (start < messages.length && messages[start].role === 'tool_result') {
         start++;
     }

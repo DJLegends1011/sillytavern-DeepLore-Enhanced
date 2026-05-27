@@ -1709,6 +1709,92 @@ button.dle-browse-block.dle-block-active {
     color: var(--dle-error);
 }
 
+/* --- Browse batch toolbar (#13 folder grouping + #26 batch optimize) --- */
+.dle-browse-batch-toolbar {
+    display: flex;
+    align-items: center;
+    gap: var(--dle-space-1);
+    padding: 2px 0;
+    flex-wrap: wrap;
+}
+.dle-browse-batch-toolbar .menu_button {
+    padding: 2px 8px;
+    font-size: var(--dle-text-xs);
+    min-height: 26px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+.dle-browse-batch-toolbar .dle-toolbar-label {
+    font-size: var(--dle-text-xs);
+}
+.dle-browse-group-toggle[data-pressed="true"],
+.dle-browse-select-toggle[data-pressed="true"] {
+    background: var(--dle-bg-hover);
+    color: var(--dle-accent);
+    border-color: var(--dle-accent);
+}
+.dle-browse-optimize-selected {
+    margin-left: auto;
+}
+.dle-browse-optimize-selected:not([hidden]) {
+    background: var(--dle-accent);
+    color: var(--dle-on-accent, #fff);
+}
+
+/* Folder header rows (only present when grouping is on) */
+.dle-browse-folder-header {
+    display: flex;
+    align-items: center;
+    gap: var(--dle-space-1);
+    height: 32px; /* MUST match BROWSE_ROW_HEIGHT */
+    padding: 0 var(--dle-space-2);
+    box-sizing: border-box;
+    background: color-mix(in srgb, var(--SmartThemeQuoteColor, #444) 8%, transparent);
+    border-left: 3px solid var(--dle-accent);
+    cursor: pointer;
+    user-select: none;
+    font-weight: 600;
+    font-size: var(--dle-text-sm);
+}
+.dle-browse-folder-header:hover {
+    background: var(--dle-bg-hover);
+}
+.dle-browse-folder-caret {
+    transition: transform 120ms ease;
+    opacity: 0.7;
+    width: 12px;
+    text-align: center;
+}
+.dle-browse-folder-header[data-expanded="true"] .dle-browse-folder-caret {
+    transform: rotate(90deg);
+}
+.dle-browse-folder-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.dle-browse-folder-count {
+    font-size: var(--dle-text-xs);
+    color: var(--dle-text-muted);
+    font-weight: normal;
+}
+.dle-browse-folder-select {
+    flex-shrink: 0;
+}
+
+/* Row selection checkbox (visible only in select mode) */
+.dle-browse-row-select {
+    flex-shrink: 0;
+    margin-right: 4px;
+    cursor: pointer;
+}
+.dle-browse-entry.dle-browse-selected {
+    background: color-mix(in srgb, var(--dle-accent) 12%, transparent);
+}
+
 /* --- Contextual Gating --- */
 .dle-gating-fields-container {
     display: flex;
@@ -5134,26 +5220,6 @@ button.dle-chip-x:focus-visible { outline: 2px solid var(--dle-accent); outline-
 }
 
 /* ============================================================================
- * Tool Call Messages — Hidden (consolidated into reply dropdown)
- * ST creates separate .toolCall messages for each tool invocation.
- * We hide these entirely and show a single "Consulted lore vault" dropdown
- * on the assistant reply message instead (injected by librarian-ui.js).
- * ============================================================================ */
-
-/* Hide tool-call system messages only when DLE is actively rendering a
-   consulted-vault dropdown in the same chat. The :has() guard scopes the
-   override to chats DLE is participating in, so other extensions that emit
-   .smallSysMes.toolCall messages are not affected. */
-#chat:has(.dle-librarian-details) .mes.smallSysMes.toolCall {
-    display: none;
-}
-
-/* Hide empty intermediate "Thought for some time" messages before tool calls */
-#chat:has(.dle-librarian-details) .mes.reasoning:has(+ .mes.smallSysMes.toolCall) {
-    display: none;
-}
-
-/* ============================================================================
  * Librarian "Consulted Lore Vault" Dropdown
  * Mirrors ST's native .mes_reasoning_details "Thought for X seconds" pattern.
  * ============================================================================ */
@@ -5656,6 +5722,19 @@ button.dle-browse-copy-title-btn:focus-visible {
 }
 .dle-why-clear-filter-pill:focus-visible {
     outline: 2px solid var(--dle-accent);
+    outline-offset: 2px;
+}
+
+/* v2.5: proxy mode migration — pulse-glow attention on the migrated feature's
+   accordion when the post-migration popup opens Settings. 4 pulses × 1.2s ≈ 5s,
+   matched by the 6s setTimeout in _maybeShowProxyDeprecationNotice. */
+@keyframes dle-pulse-attention-kf {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(255, 165, 0, 0); }
+    50% { box-shadow: 0 0 0 8px rgba(255, 165, 0, 0.6); }
+}
+.dle-pulse-attention {
+    animation: dle-pulse-attention-kf 1.2s ease-in-out 4;
+    outline: 2px solid orange;
     outline-offset: 2px;
 }
 

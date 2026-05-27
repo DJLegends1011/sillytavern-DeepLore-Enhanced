@@ -54,11 +54,44 @@ No getter functions exist — other modules `import { vaultIndex } from './state
 | `lastIndexGenerationCount` | `number` | Chat (→0) | vault.js | generation-based rebuild trigger |
 
 ### Injection Tracking
+
+**Verdict store** (`src/verdict/verdict-store.js`, 2026-05-22) replaces four racing globals
+(`lastInjectionSources`, `lastInjectionEpoch`, `previousSources`, `lastPipelineTrace`).
+A verdict is one authoritative per-turn record carrying `injectedSources`, full pipeline
+`trace`, `perEntry` aggregation, `chatId` + `msgIdx` for cross-chat staleness detection,
+and `epoch`/`lockEpoch` tags. Storage: in-memory ring buffer (cap 50) + IndexedDB spill
+(per-chat, **soft cap 200 — actually 200+9** worst-case between sampled prune scans;
+Wave C P1 perf fix 2026-05-22). Never written to `chat_metadata` — chat files stay clean.
+`pruneCurrentChat` runs the actual IDB scan every 10th `writeVerdict` (counter-gated +
+bounded `openKeyCursor` scoped to the current chatId, key-only walk, no value
+deserialization). 90% of generations no-op the scan. See `docs/gotchas.md` #52.
+
+**Verdict APIs (verdict-store.js):**
+| API | Use |
+|---|---|
+| `writeVerdict(v)` | Pipeline writes one verdict at commit (replaces 4× setLast*). |
+| `getCurrent()` | Newest verdict (any chat in ring). |
+| `getCurrentForChat(chatId)` | Newest for a specific chat. |
+| `getPrevious()` | Second-newest for the current chat (replaces `previousSources` diff anchor). |
+| `getByMessage(msgIdx, chatId?)` | Verdict-by-message lookup; falls back to IDB. |
+| `setCurrentChatId(chatId)` | Rebind scope on CHAT_CHANGED. |
+| `clearRing()` | Drop in-memory ring only (sync, no IDB touch). **Use on CHAT_CHANGED** so the destination chat's IDB rows survive for hydrate. |
+| `clearChatIdb(chatId)` | Drop IDB rows for one chat (e.g. user deletes chat). Ring untouched. |
+| `clearChat(chatId)` | Drop ring + IDB records for a chat. `null` = wipe everything (nuke-from-orbit only; **never** call on CHAT_CHANGED — it deletes every chat's persisted verdicts). |
+| `hydrateChat(chatId)` | Pull recent IDB records for resume-after-reload. |
+| `onVerdictChanged(cb)` | Observer; fires on every write / clear / hydrate. |
+
+**Verdict shape (per record):** `genId`, `chatId`, `msgIdx`, `epoch`, `lockEpoch`, `ts`,
+`injectedSources[]`, `trace` (full pipeline trace — keywordMatched, aiSelected, gatedOut,
+budgetCut, injected, all stage `*Ms` timings, fuzzyStats, etc.), `perEntry[]` (one row per
+candidate seen this turn with `finalState`, reason chain, confidence, tokens).
+
+**`trace.keywordMatched` / `aiSelected` and removal-stage arrays now carry `vaultSource`**
+(2026-05-22) so `perEntry` aggregation can distinguish multi-vault same-title entries
+under `multiVaultConflictResolution='all'` (CLAUDE.md trackerKey invariant).
+
 | Variable | Type | Reset scope | Writers | Readers |
 |---|---|---|---|---|
-| `lastInjectionSources` | `array\|null` | Chat (→null) | onGenerate commit, CHAT_CHANGED | Cartographer |
-| `lastInjectionEpoch` | `number` | Chat (→-1) | onGenerate, CHAT_CHANGED | Cartographer epoch guard |
-| `previousSources` | `array\|null` | Chat (→null) | cartographer.js, CHAT_CHANGED | Cartographer diff display |
 | `cooldownTracker` | `Map<trackerKey, remaining>` | Chat (cleared) | trackGeneration, decrementTrackers, CHAT_CHANGED | matching, cooldown stage |
 | `decayTracker` | `Map<trackerKey, gensSince>` | Chat (cleared) | trackGeneration, decrementTrackers, CHAT_CHANGED | matching decay boost |
 | `consecutiveInjections` | `Map<trackerKey, count>` | Chat (cleared) | trackGeneration, CHAT_CHANGED | decay calculation |
@@ -67,9 +100,6 @@ No getter functions exist — other modules `import { vaultIndex } from './state
 | `perSwipeInjectedKeys` | `Map<swipeKey, Set<trackerKey>>` | Chat (hydrated) | onGenerate stage 9, CHAT_CHANGED | swipe rollback |
 | `lastGenerationTrackerSnapshot` | `object\|null` | Chat (→null) | onGenerate swipe phase, CHAT_CHANGED | swipe rollback |
 | `lastWarningRatio` | `number` | Chat (→0) | onGenerate context warning | warning dedup |
-| `lastPipelineTrace` | `object\|null` | Chat (→null) | onGenerate trace publish, CHAT_CHANGED | /dle-inspect, drawer |
-
-**`lastPipelineTrace` shape note:** Contains `genId` (6-char string or `null`) and 10 `*Ms` timing fields (all `number|null`): `ensureIndexFreshMs`, `pinBlockMs`, `contextualGatingMs`, `reinjectionCooldownMs`, `requiresExcludesMs`, `stripDedupMs`, `formatGroupMs`, `trackGenerationMs`, `recordAnalyticsMs`, `perChatCountsMs`. Set by `onGenerate()` in `index.js` via `performance.now()` bookends around each stage call. No new state variables — these are fields on the existing trace object initialized in `runPipeline()` (`src/pipeline/pipeline.js`).
 
 ### Scribe State
 | Variable | Type | Reset scope | Writers | Readers |
@@ -101,6 +131,11 @@ No getter functions exist — other modules `import { vaultIndex } from './state
 | `lastHealthResult` | `{errors, warnings}\|null` | Session | /dle-health command | settings badge |
 | `claudeAutoEffortBad` | `boolean` | Session | init pre-flight | drawer chip, settings banner |
 | `claudeAutoEffortDetail` | `object\|null` | Session | init pre-flight | toast message |
+| `ds.browseRowModel` | `Array<{type:'header'\|'entry'...}>` | Chat (→[]) | `renderBrowseTab()` | `renderBrowseWindow()` virtual scroll |
+| `ds.browseFolderGrouping` | `boolean` | Session (NOT reset on CHAT_CHANGED — UI pref) | group-toggle button | `renderBrowseTab()` row-model builder |
+| `ds.browseExpandedFolders` | `Set<string>` | Session (NOT reset on CHAT_CHANGED) | group toggle (seed), folder-header click | `buildBrowseRowModel()` |
+| `ds.browseSelectMode` | `boolean` | Chat (→false) | select-toggle button, CHAT_CHANGED | renderer (shows row checkboxes) |
+| `ds.browseSelected` | `Set<string>` (trackerKey-keyed) | Chat (→clear) | row checkbox, folder select-all, CHAT_CHANGED | toolbar count, `runBatchOptimize()` |
 
 ### AI Circuit Breaker State
 | Variable | Type | Scope |
@@ -110,6 +145,20 @@ No getter functions exist — other modules `import { vaultIndex } from './state
 | `aiCircuitOpenedAt` | `number` (ms) | Session |
 | `aiCircuitHalfOpenProbe` | `boolean` (private) | Session |
 | `aiCircuitProbeTimestamp` | `number` (private) | Session |
+
+### i18n State (`src/i18n/i18n.js`, 2026-05-22)
+| Variable | Type | Scope | Writers | Readers |
+|---|---|---|---|---|
+| `_dleDict` | `object\|null` | Session | `initDleI18n()` | `tr()` lookups |
+| `_enFallbackDict` | `object\|null` | Session | `initDleI18n()` | `tr()` fallback |
+| `_dleLocale` | `string\|null` | Session | `initDleI18n()` | `getI18nStats()` |
+| `_initPromise` | `Promise\|null` | Session | `initDleI18n()` (dedupe) | concurrent init |
+| `_aiPromptLocale` | `string\|null` | Session | `setAiPromptLocale()` (test/debug) | `getEffectiveAiPromptLocale()` |
+| **Setting** `aiPromptLocale` | `string` (locale code or `''`) | Settings (persisted) | Settings UI / `/dle` cmds | `getEffectiveAiPromptLocale(settingValue)` |
+
+Init order matters: `initDleI18n()` runs in `index.js` jQuery handler **before** any HTML template render, so ST's MutationObserver picks up `data-i18n` attrs on first insertion. Concurrent callers get the same `_initPromise` — no duplicate fetches.
+
+Pure helpers (`src/i18n/i18n-pure.js`) carry no state — they're imported by `i18n.js` and tested independently in `test/i18n.test.mjs`.
 
 **`pushEventSafe()`** (state.js): Lazy-loaded wrapper for `pushEvent()` from `src/diagnostics/interceptors.js`. Used by the circuit breaker state machine so that open/close transitions push to the `eventBuffer` without creating a hard import dependency from state.js on the diagnostics module. Called from `recordAiFailure()` (on CLOSED -> OPEN) and `recordAiSuccess()` (on OPEN -> CLOSED).
 
@@ -248,8 +297,16 @@ All registered via `_registerEs()` in `init()`. Full list:
 | `CONNECTION_PROFILE_UPDATED` | `_onProfileUpdated` — invalidate settings cache |
 | `SETTINGS_UPDATED` | Invalidate settings cache (inline in `init()`) |
 | `MESSAGE_EDITED` | Remove AI notes from edited message (inline in `init()`) |
-| `CHAT_CHANGED` | Full reset sequence (see above — inline in `init()`) |
+| `CHAT_CHANGED` | Full reset sequence (see above — inline in `init()`). **Early-registered stub** at top of `_doInit()` (`_earlyChatChangedStub`) captures events that fire before the real `_realCcHandler` registers; `_installRealChatChangedHandler` drains the queued chatId once. See gotchas #59 (BOOT-MED-3). |
 | `APP_READY` | `_wizardOnce` (first-run wizard) + `_autoConnectOnce` (auto-connect), both `{ once: true }` |
+
+**Boot-time module-scope vars (`index.js`, Boot-MED-1/3, 2026-05-22):**
+| Variable | Purpose |
+|---|---|
+| `_dleInitialized` | True only AFTER `_doInit()` resolves all awaits. Guards true re-init (BUG-063). |
+| `_dleInitInProgress` | Promise sentinel during `_doInit()` execution. Second jQuery dispatch awaits this instead of tearing down the still-initializing first instance. Cleared in `finally`. |
+| `_realChatChangedHandler` | Set by `_installRealChatChangedHandler`. While `null`, the early stub queues events; once set, the stub becomes a trampoline that forwards directly. |
+| `_pendingChatChanged` / `_pendingChatChangedFired` | Single-slot queue for CHAT_CHANGED events that fire during init's awaits. Drained exactly once at `_installRealChatChangedHandler`. |
 
 ---
 

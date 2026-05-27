@@ -10,10 +10,10 @@ import {
 } from '../../../../../../script.js';
 import { escapeHtml } from '../../../../../utils.js';
 import { callGenericPopup, POPUP_TYPE } from '../../../../../popup.js';
-import { getSettings, getPrimaryVault, resolveConnectionConfig } from '../../settings.js';
+import { getSettings, resolveConnectionConfig, resolveWriteVault } from '../../settings.js';
 import { writeNote } from '../vault/obsidian-api.js';
 import { buildAiChatContext, yamlEscape, classifyError } from '../../core/utils.js';
-import { callAI } from './ai.js';
+import { callAI, isExcludedFromBreaker } from './ai.js';
 import { extractAiResponseClient, stripObsidianSyntax } from '../helpers.js';
 import { getWriterVisibleEntries, chatEpoch, tryAcquireHalfOpenProbe, recordAiSuccess, recordAiFailure } from '../state.js';
 import { ensureIndexFresh, buildIndex } from '../vault/vault.js';
@@ -80,13 +80,17 @@ export async function callAutoSuggest(systemPrompt, userMessage, toolKey = 'auto
             recordAiSuccess();
             return { text: response, usage: null };
         } catch (err) {
-            // BUG-252: user aborts and timeouts must not trip the breaker.
-            if (!err.throttled && !err.userAborted && !err.timedOut) recordAiFailure();
+            // BUG-252 + Wave-B contract: shared classifier covers throttled / userAborted /
+            // timedOut PLUS HTTP 401/403 (auth) and 429 (rate-limit). See scribe.js.
+            if (!isExcludedFromBreaker(err)) recordAiFailure();
             throw err;
         } finally {
             if (onStop) { try { eventSource.removeListener(event_types.GENERATION_STOPPED, onStop); } catch { /* noop */ } }
         }
-    } else if (mode === 'profile' || mode === 'proxy') {
+    } else if (mode === 'profile') {
+        // v2.5 dead-head: 'proxy' removed from the dispatch whitelist. callAI's
+        // proxy branch throws a migration error; the unknown-mode `else` below
+        // also throws clearly if a legacy 'proxy' value slips through here.
         // S4-2: mutation gate (see above).
         if (!tryAcquireHalfOpenProbe()) throw new Error('AI circuit breaker is open — skipping auto-suggest');
         try {
@@ -94,7 +98,8 @@ export async function callAutoSuggest(systemPrompt, userMessage, toolKey = 'auto
             recordAiSuccess();
             return result;
         } catch (err) {
-            if (!err.throttled && !err.userAborted && !err.timedOut) recordAiFailure();
+            // Wave-B contract: shared classifier — see scribe.js.
+            if (!isExcludedFromBreaker(err)) recordAiFailure();
             throw err;
         }
     }
@@ -184,7 +189,7 @@ ${safeContent}`;
 async function writeSuggestionToVault(s, settings) {
     try {
         const { filename, fileContent } = _buildSuggestionFile(s, settings);
-        const suggestVault = getPrimaryVault(settings);
+        const suggestVault = resolveWriteVault('autoSuggest', settings);
         const data = await writeNote(suggestVault.host, suggestVault.port, suggestVault.apiKey, filename, fileContent, !!suggestVault.https);
         if (data?.ok) return { ok: true, title: s.title, filename };
         return { ok: false, title: s.title, filename, error: data?.error || 'unknown' };
@@ -339,7 +344,7 @@ summary: "${(s.summary || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"').replac
 ${safeContent}`;
 
                     try {
-                        const suggestVault = getPrimaryVault(settings);
+                        const suggestVault = resolveWriteVault('autoSuggest', settings);
                         const data = await writeNote(suggestVault.host, suggestVault.port, suggestVault.apiKey, filename, fileContent, !!suggestVault.https);
                         if (data.ok) {
                             card.classList.add('dle-suggest-card--accepted');

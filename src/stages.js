@@ -3,7 +3,7 @@
  * Pure(ish) — each stage takes explicit inputs, no implicit global reads.
  */
 import { trackerKey } from './state.js';
-import { normalizePinBlock, matchesPinBlock } from './helpers.js';
+import { normalizePinBlock, matchesPinBlock, comparePriority } from './helpers.js';
 import { evaluateOperator } from './fields.js';
 
 /** Lazy debugMode read — avoids importing settings.js (ST globals break tests). */
@@ -19,19 +19,37 @@ function _isDebug() {
  * gating. forceInject skips contextual gating, requires/excludes, reinjection
  * cooldown, and strip dedup. Only budget limits can exclude a forceInject entry.
  *
+ * **Bootstrap exemption is gen-scoped.** Bootstrap entries are designed to seed
+ * lore during the first few generations of a chat. They MUST only bypass gating
+ * while `bootstrapActive === true` (chat short enough per `newChatThreshold`).
+ * Once bootstrap deactivates, a bootstrap-tagged entry that reaches a stage via
+ * cascade-link / AI selection / pin must be gated like any other entry — see
+ * `helpers.js:isForceInjected` (the canonical truth-source mirrored here). The
+ * pre-pipeline `alwaysInject` filter in `pipeline.js` already honors this; the
+ * post-pipeline stages would silently bypass gating without the third arg.
+ * See gotcha #60.
+ *
  * @param {Array} vaultSnapshot - All vault entries
  * @param {Array} pins - Per-chat pins (strings or {title, vaultSource})
  * @param {Array} blocks - Per-chat blocks
+ * @param {boolean} [bootstrapActive=false] - When true, bootstrap entries join
+ *   forceInject. When false (default), they're gated normally. Default false is
+ *   deliberately conservative — accidentally bypassing gating is the bug; the
+ *   normal flow always passes the real value.
  * @returns {{ forceInject: Set<string>, pins: Array<{title:string, vaultSource:string|null}>, blocks: Array<{title:string, vaultSource:string|null}> }}
  */
-export function buildExemptionPolicy(vaultSnapshot, pins, blocks) {
-    // BUG-AUDIT-9: seed/bootstrap are also exempt from contextual gating —
-    // they're designed to be always-available in their scenarios.
+export function buildExemptionPolicy(vaultSnapshot, pins, blocks, bootstrapActive = false) {
+    // BUG-AUDIT-9: seed is exempt from contextual gating — designed to be
+    // always-available across the entire chat.
+    // Bootstrap is gen-scoped via bootstrapActive (gotcha #60); mirrors
+    // helpers.js:isForceInjected so pre- and post-pipeline filters agree.
     // BUG-399: forceInject keyed by trackerKey so multi-vault duplicates don't
     // collapse — vault-A's constant "Castle" no longer exempts vault-B's "Castle".
     const forceInject = new Set();
     for (const entry of vaultSnapshot) {
-        if (entry.constant || entry.seed || entry.bootstrap) forceInject.add(trackerKey(entry));
+        if (entry.constant || entry.seed || (bootstrapActive && entry.bootstrap)) {
+            forceInject.add(trackerKey(entry));
+        }
     }
     // H23: backward compat with bare-string pin/block items.
     const normalizedPins = (pins || []).map(normalizePinBlock);
@@ -98,7 +116,9 @@ export function applyPinBlock(entries, vaultSnapshot, policy, matchedKeys) {
                 if (!resultIdx.has(k)) {
                     resultIdx.set(k, result.length);
                     result.push({ ...entry, constant: true, priority: 10, ...cloneFields });
-                    matchedKeys.set(entry.title, '(pinned)');
+                    // BUG-AUDIT v2.5: matchedKeys keyed by trackerKey (vaultSource:title)
+                    // so same-titled cross-vault pins don't overwrite each other.
+                    matchedKeys.set(trackerKey(entry), '(pinned)');
                     addedCount++;
                 } else {
                     const idx = resultIdx.get(k);
@@ -140,9 +160,18 @@ export function applyContextualGating(entries, context, policy, debugMode, setti
 
     const fallbackTolerance = (settings && settings.contextualGatingTolerance) || 'strict';
 
-    // Only apply gating if at least one context dimension is set.
+    // Only apply gating if at least one context dimension is set, OR any enabled
+    // gating rule uses an existence operator. `exists`/`not_exists` evaluate entry
+    // shape (does the entry have a value for this field?), they do NOT compare
+    // against active context — so the "no context anywhere" short-circuit would
+    // otherwise skip them entirely. M-7 (2026-05-22): a vault that relies on
+    // `not_exists` to mark "incomplete entries to drop" used to silently pass
+    // every entry when the user hadn't set any other context, because the
+    // short-circuit fired before the per-entry loop ran. Including existence
+    // rules in `hasAnyContext` lets the loop run and evaluate them properly.
     const hasAnyContext = fieldDefs.some(fd => {
         if (!fd.gating || !fd.gating.enabled) return false;
+        if (fd.gating.operator === 'exists' || fd.gating.operator === 'not_exists') return true;
         const val = context[fd.contextKey];
         return val != null && val !== '' && (!Array.isArray(val) || val.length > 0);
     });
@@ -266,11 +295,19 @@ export function applyReinjectionCooldown(entries, policy, injectionHistory, gene
  * @param {boolean} debugMode
  * @returns {{ result: Array, removed: Array }}
  */
-export function applyRequiresExcludesGating(entries, policy, debugMode) {
-    // BUG-029: descending by priority-number (higher number = lower priority,
-    // processed first). Higher-priority entries are checked last, so their
-    // excludes-targets may already be gone — the higher-priority entry survives.
-    let result = [...entries].sort((a, b) => (b.priority || 50) - (a.priority || 50) || a.title.localeCompare(b.title));
+export function applyRequiresExcludesGating(entries, policy, debugMode, priorityReversed = false) {
+    // BUG-029: order so HIGHER-priority entries are processed LAST (so their
+    // excludes-targets may already be gone — the high-priority entry survives).
+    // Default: lower priority-number = higher importance → descending raw.
+    // #16 reversed: higher priority-number = higher importance → ascending raw.
+    // comparePriority returns the "important-first" ordering; negate to get "important-last".
+    // BUG-AUDIT v2.5: secondary tiebreak by vaultSource keeps sort deterministic across vaults
+    // when two entries share the same title — without it, two "Castle"s would sort in load order.
+    let result = [...entries].sort((a, b) =>
+        -comparePriority(a, b, priorityReversed)
+        || a.title.localeCompare(b.title)
+        || (a.vaultSource || '').localeCompare(b.vaultSource || ''),
+    );
     let changed = true;
     let iterations = 0;
     const MAX_ITERATIONS = 10;
@@ -332,10 +369,15 @@ export function applyRequiresExcludesGating(entries, policy, debugMode) {
             removed.map(e => ({ title: e.title, requires: e.requires, excludes: e.excludes })));
     }
 
-    // BUG-012: re-sort ascending before returning. The descending iteration order
-    // is an internal detail of the excludes-resolution loop; downstream consumers
-    // (formatAndGroup budget cap) need ascending so important entries survive truncation.
-    result.sort((a, b) => (a.priority || 50) - (b.priority || 50) || a.title.localeCompare(b.title));
+    // BUG-012: re-sort "important first" before returning. The reversed iteration
+    // order is an internal detail of the excludes-resolution loop; downstream
+    // consumers (formatAndGroup budget cap) need important-first so they survive truncation.
+    // BUG-AUDIT v2.5: vaultSource tiebreak for cross-vault same-title determinism.
+    result.sort((a, b) =>
+        comparePriority(a, b, priorityReversed)
+        || a.title.localeCompare(b.title)
+        || (a.vaultSource || '').localeCompare(b.vaultSource || ''),
+    );
 
     return { result, removed };
 }
@@ -361,6 +403,16 @@ export function applyStripDedup(entries, policy, injectionLog, lookbackDepth, de
             entryCount: entries.length,
         });
     }
+    // M-4 (2026-05-22): `arr.slice(-0)` returns the entire array because `-0 === 0`,
+    // so a `lookbackDepth=0` call would silently dedup against EVERY historical log
+    // entry — the opposite of "no lookback". The settings UI clamps to min 1, but
+    // this function is exported and called from `index.js`, the `/dle-why` slash
+    // command, and external callers that may not respect the UI minimum. Treat
+    // `<= 0` as "dedup disabled" to match the semantic the name implies.
+    if (lookbackDepth <= 0) {
+        if (debugMode) console.debug('[DLE][DIAG] strip-dedup-fn-early-return — lookbackDepth <= 0, dedup disabled');
+        return entries;
+    }
     if (!injectionLog || injectionLog.length === 0) {
         if (debugMode) console.debug('[DLE][DIAG] strip-dedup-fn-early-return — log empty or missing, returning all entries');
         return entries;
@@ -369,7 +421,11 @@ export function applyStripDedup(entries, policy, injectionLog, lookbackDepth, de
     const recentEntries = new Set();
     const recentLogs = injectionLog.slice(-lookbackDepth);
     for (const logEntry of recentLogs.flatMap(l => l.entries || [])) {
-        recentEntries.add(`${logEntry.title}|${logEntry.pos}|${logEntry.depth}|${logEntry.role}|${logEntry.contentHash || ''}`);
+        // BUG-AUDIT v2.5: include vaultSource in the dedup key so a "Castle" entry
+        // injected from vault A doesn't suppress a same-titled but different "Castle"
+        // from vault B on the next turn. Legacy log entries without vaultSource use
+        // '' which matches new single-vault entries (backward compatible).
+        recentEntries.add(`${logEntry.vaultSource || ''}:${logEntry.title}|${logEntry.pos}|${logEntry.depth}|${logEntry.role}|${logEntry.contentHash || ''}`);
     }
 
     if (debugMode) {
@@ -388,7 +444,23 @@ export function applyStripDedup(entries, policy, injectionLog, lookbackDepth, de
             if (debugMode) console.debug(`[DLE][DIAG] strip-dedup-entry-check EXEMPT "${e.title}" (forceInject)`);
             return true;
         }
-        const key = `${e.title}|${e.injectionPosition ?? defaultSettings.injectionPosition}|${e.injectionDepth ?? defaultSettings.injectionDepth}|${e.injectionRole ?? defaultSettings.injectionRole}|${e._contentHash || ''}`;
+        // Audit S3-3: defaultSettings is optional — null-guard the fallback reads.
+        const ds = defaultSettings || {};
+        // M-3 (2026-05-22): cross-entry collisions on an empty `_contentHash` are
+        // already prevented because the dedup key includes
+        // `vaultSource:title|pos|depth|role` — two distinct entries differ at the
+        // title portion long before the hash slot matters. The original spec
+        // (and an earlier patch attempt) called for a per-entry `_no_hash_*`
+        // sentinel, but that breaks the legitimate same-entry case where a
+        // parse-failure window logged `contentHash: ''` and the current gen
+        // still has no `_contentHash` — same canonical entry, no hash either
+        // side, should dedup. So the read side mirrors the log-write side
+        // symmetrically with `|| ''`. The regression test `M-3-1` in
+        // `regression.test.mjs` guards the cross-entry case (different titles
+        // with empty hash do NOT collide), which is the real risk this fix
+        // protects against.
+        // BUG-AUDIT v2.5: vaultSource prefix matches the log-write side above.
+        const key = `${e.vaultSource || ''}:${e.title}|${e.injectionPosition ?? ds.injectionPosition}|${e.injectionDepth ?? ds.injectionDepth}|${e.injectionRole ?? ds.injectionRole}|${e._contentHash || ''}`;
         const matched = recentEntries.has(key);
         if (debugMode) {
             console.debug(`[DLE][DIAG] strip-dedup-entry-check "${e.title}" — ${matched ? 'STRIPPED' : 'KEPT'}`, { key });

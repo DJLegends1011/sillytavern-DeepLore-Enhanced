@@ -392,8 +392,19 @@ export function formatAndGroup(entries, settings, promptTagPrefix) {
                     tokenEstimate: Math.ceil(truncatedContent.length / charsPerToken),
                     _truncated: true,
                     _originalTokens: entry.tokenEstimate,
-                    // Distinct hash so strip-dedup doesn't match the pre-truncation entry.
-                    _contentHash: typeof entry._contentHash === 'string' ? entry._contentHash + '_trunc' : '',
+                    // M-8 (2026-05-22): keep the PRE-truncation hash so strip-dedup
+                    // matches by canonical content identity, not by truncated-vs-full
+                    // shape. The old `_trunc` suffix produced asymmetric dedup —
+                    // gen 1 injects "Castle" at 500 tokens (hash X), gen 2's smaller
+                    // budget truncates "Castle" to 200 tokens (hash X_trunc), the
+                    // dedup key mismatches X, and the same entry gets re-injected
+                    // back-to-back even though it carries identical canonical
+                    // content from the author's perspective. Truncation is a
+                    // presentation-layer concession to the budget; it must not
+                    // change the entry's dedup identity. `_truncated` and
+                    // `_originalTokens` still record that this version was cut
+                    // for any UI/analytics that need to display the fact.
+                    _contentHash: typeof entry._contentHash === 'string' ? entry._contentHash : '',
                 };
                 accepted.push({
                     entry: truncatedEntry,

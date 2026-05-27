@@ -18,7 +18,7 @@ import {
 } from '../state.js';
 import { buildIndex } from '../vault/vault.js';
 import { callAutoSuggest } from '../ai/auto-suggest.js';
-import { extractAiResponseClient, buildObsidianURI, STAGE_COLORS, normalizePinBlock } from '../helpers.js';
+import { extractAiResponseClient, buildObsidianURI, STAGE_COLORS, normalizePinBlock, normalizeNotepadLine, bigramDiceSimilarity, comparePriority } from '../helpers.js';
 import { diagnoseEntry } from './diagnostics.js';
 import { computeEntryTemperatures } from '../drawer/drawer-state.js';
 
@@ -137,6 +137,20 @@ export async function showAiNotepadPopup() {
     // BUG-AUDIT-DP04: snapshot epoch at open — discard edits if chat changed during edit.
     const epochAtOpen = chatEpoch;
     const currentNotes = chat_metadata?.deeplore_ai_notepad || '';
+    const initialPins = Array.isArray(chat_metadata?.deeplore_ai_notepad_pins)
+        ? chat_metadata.deeplore_ai_notepad_pins.filter(k => typeof k === 'string' && k.trim())
+        : [];
+    const pinnedKeys = new Set(initialPins);
+    const settings = getSettings();
+    // Guard against threshold === 0 or non-finite: Dice >= 0 is always true, so
+    // a zero threshold would merge every entry into the first one. Treat any
+    // non-positive / non-finite value as "use default 0.85". Clamp upper to 1.
+    const rawDedupThreshold = Number(settings.aiNotepadFuzzyDedupThreshold);
+    const dedupThreshold = (Number.isFinite(rawDedupThreshold) && rawDedupThreshold > 0)
+        ? Math.min(1, rawDedupThreshold)
+        : 0.85;
+
+    const splitLines = (text) => String(text || '').split('\n').map(l => l.trim()).filter(Boolean);
 
     const container = document.createElement('div');
     container.classList.add('dle-popup');
@@ -144,7 +158,18 @@ export async function showAiNotepadPopup() {
         <h3>AI Notepad</h3>
         <p class="dle-muted dle-text-sm">Session notes written by the AI using &lt;dle-notes&gt; tags. These are stripped from visible chat and reinjected into future messages.</p>
         <textarea id="dle-ai-notepad-textarea" class="text_pole dle-w-full" rows="15" placeholder="No AI notes yet for this chat.">${escapeHtml(currentNotes)}</textarea>
-        <span id="dle-ai-notepad-token-count" class="dle-text-xs dle-faint"></span>
+        <div class="flex-container" style="align-items: center; gap: 8px; margin-top: 4px;">
+            <span id="dle-ai-notepad-token-count" class="dle-text-xs dle-faint"></span>
+            <span id="dle-ai-notepad-entry-count" class="dle-text-xs dle-faint"></span>
+            <span style="flex: 1;"></span>
+            <button type="button" id="dle-ai-notepad-dedup" class="menu_button menu_button_icon" title="Merge near-duplicate entries (deterministic fuzzy match, pins protected)">
+                <i class="fa-solid fa-broom" aria-hidden="true"></i><span>Deduplicate</span>
+            </button>
+        </div>
+        <div style="margin-top: 10px;">
+            <label><small>Pinned Entries (exempt from FIFO cap and dedup)</small></label>
+            <div id="dle-ai-notepad-pin-list" class="dle-preview dle-preview--short"></div>
+        </div>
     `;
 
     let capturedValue = currentNotes;
@@ -157,17 +182,115 @@ export async function showAiNotepadPopup() {
         onOpen: async () => {
             const textarea = document.getElementById('dle-ai-notepad-textarea');
             const countEl = document.getElementById('dle-ai-notepad-token-count');
-            if (textarea && countEl) {
-                const updateCount = async () => {
+            const entryCountEl = document.getElementById('dle-ai-notepad-entry-count');
+            const pinListEl = document.getElementById('dle-ai-notepad-pin-list');
+            const dedupBtn = document.getElementById('dle-ai-notepad-dedup');
+            if (!textarea) return;
+
+            const maxEntries = Number(settings.aiNotepadMaxEntries) || 0;
+
+            const renderPinList = () => {
+                if (!pinListEl) return;
+                const lines = splitLines(textarea.value);
+                if (lines.length === 0) {
+                    pinListEl.innerHTML = '<div class="dle-text-xs dle-muted"><em>No entries yet.</em></div>';
+                    return;
+                }
+                const seen = new Set();
+                const rows = [];
+                for (const line of lines) {
+                    const key = normalizeNotepadLine(line);
+                    if (!key || seen.has(key)) continue;
+                    seen.add(key);
+                    const checked = pinnedKeys.has(key) ? 'checked' : '';
+                    rows.push(`
+                        <label class="checkbox_label" style="display: flex; gap: 8px; align-items: flex-start; margin: 2px 0;">
+                            <input type="checkbox" class="checkbox dle-ai-notepad-pin-toggle" data-pin-key="${escapeHtml(key)}" ${checked}>
+                            <span>${escapeHtml(line)}</span>
+                        </label>
+                    `);
+                }
+                pinListEl.innerHTML = rows.join('') || '<div class="dle-text-xs dle-muted"><em>No valid entries to pin.</em></div>';
+                pinListEl.querySelectorAll('.dle-ai-notepad-pin-toggle').forEach(el => {
+                    el.addEventListener('change', () => {
+                        const key = el.getAttribute('data-pin-key');
+                        if (!key) return;
+                        if (el.checked) pinnedKeys.add(key);
+                        else pinnedKeys.delete(key);
+                    });
+                });
+            };
+
+            const updateCounts = async () => {
+                capturedValue = textarea.value;
+                const lines = splitLines(textarea.value);
+                if (entryCountEl) {
+                    const capStr = maxEntries > 0 ? ` / ${maxEntries}` : '';
+                    entryCountEl.textContent = `${lines.length} entries${capStr}`;
+                }
+                if (countEl) {
                     try {
-                        capturedValue = textarea.value;
                         const tokens = await getTokenCountAsync(textarea.value);
                         countEl.textContent = `~${tokens} tokens`;
                     } catch { countEl.textContent = ''; }
-                };
-                textarea.addEventListener('input', updateCount);
-                await updateCount();
+                }
+            };
+
+            textarea.addEventListener('input', async () => {
+                await updateCounts();
+                renderPinList();
+            });
+
+            if (dedupBtn) {
+                dedupBtn.addEventListener('click', async () => {
+                    const lines = textarea.value.split('\n');
+                    // Walk lines in order. For each non-blank entry, drop later
+                    // entries whose normalized form is identical OR whose
+                    // bigram-Dice score >= threshold. Pinned entries stay; if a
+                    // pinned and an unpinned line collide, the pinned one wins.
+                    const kept = [];
+                    const keptKeys = [];
+                    let dropped = 0;
+                    for (const raw of lines) {
+                        const trimmed = raw.trim();
+                        if (!trimmed) { kept.push(raw); continue; }
+                        const key = normalizeNotepadLine(trimmed);
+                        if (!key) { kept.push(raw); continue; }
+                        let dupIdx = -1;
+                        for (let i = 0; i < keptKeys.length; i++) {
+                            const k = keptKeys[i];
+                            if (!k) continue;
+                            if (k === key || bigramDiceSimilarity(k, key) >= dedupThreshold) {
+                                dupIdx = i; break;
+                            }
+                        }
+                        if (dupIdx === -1) {
+                            kept.push(raw);
+                            keptKeys.push(key);
+                        } else {
+                            // If incoming line is pinned and existing isn't, swap so pin survives.
+                            const existingPinned = pinnedKeys.has(keptKeys[dupIdx]);
+                            const incomingPinned = pinnedKeys.has(key);
+                            if (incomingPinned && !existingPinned) {
+                                kept[kept.findIndex((l, i) => i === kept.findIndex(x => normalizeNotepadLine(x) === keptKeys[dupIdx]))] = raw;
+                                keptKeys[dupIdx] = key;
+                            }
+                            dropped++;
+                        }
+                    }
+                    if (dropped === 0) {
+                        toastr.info('No near-duplicates found.', 'DeepLore Enhanced');
+                        return;
+                    }
+                    textarea.value = kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+                    await updateCounts();
+                    renderPinList();
+                    toastr.success(`Merged ${dropped} duplicate ${dropped === 1 ? 'entry' : 'entries'}.`, 'DeepLore Enhanced');
+                });
             }
+
+            await updateCounts();
+            renderPinList();
         },
     });
 
@@ -177,6 +300,7 @@ export async function showAiNotepadPopup() {
             return;
         }
         chat_metadata.deeplore_ai_notepad = capturedValue;
+        chat_metadata.deeplore_ai_notepad_pins = [...pinnedKeys];
         saveMetadataDebounced();
     }
 }
@@ -282,7 +406,8 @@ export async function showBrowsePopup() {
             case 'tokens_asc': filtered.sort((a, b) => (a.tokenEstimate || 0) - (b.tokenEstimate || 0)); break;
             case 'injected_desc': filtered.sort((a, b) => getInjected(b) - getInjected(a)); break;
             case 'injected_asc': filtered.sort((a, b) => getInjected(a) - getInjected(b)); break;
-            default: filtered.sort((a, b) => a.priority - b.priority);
+            // #16: default sort honors settings.priorityReversed (explicit priority_asc/desc above bypass it).
+            default: filtered.sort((a, b) => comparePriority(a, b, settings.priorityReversed));
         }
         countEl.textContent = `Showing ${filtered.length} of ${vaultIndex.length} entries`;
 
@@ -675,4 +800,103 @@ export async function showOptimizePopup(entry, result) {
             toastr.error(classifyError(err), 'DeepLore Enhanced');
         }
     }
+}
+
+/**
+ * #26 — Batch optimize: run `optimizeEntryKeys` + `showOptimizePopup` sequentially
+ * over the selected entries. Sequential by design — each entry deserves individual
+ * review before writing to Obsidian, and limiting concurrency keeps AI cost
+ * predictable. A confirm popup states the count + per-entry-popup expectation
+ * up front so the user isn't blindsided by 12 modals in a row.
+ *
+ * @param {string[]} trackerKeys - vaultSource:title selector strings
+ * @returns {Promise<{accepted: number, skipped: number, errored: number}>}
+ */
+export async function runBatchOptimize(trackerKeys) {
+    if (!Array.isArray(trackerKeys) || trackerKeys.length === 0) {
+        return { accepted: 0, skipped: 0, errored: 0 };
+    }
+
+    // Resolve entries; drop any selection that no longer exists in the live index.
+    const entries = [];
+    for (const trk of trackerKeys) {
+        const found = vaultIndex.find(e => trackerKey(e) === trk);
+        if (found) entries.push(found);
+    }
+    if (entries.length === 0) {
+        toastr.info('No selected entries remain in the index.', 'DeepLore Enhanced');
+        return { accepted: 0, skipped: 0, errored: 0 };
+    }
+
+    const count = entries.length;
+    const listHtml = entries.slice(0, 12).map(e => `<li>${escapeHtml(e.title)}</li>`).join('')
+        + (entries.length > 12 ? `<li><em>…and ${entries.length - 12} more</em></li>` : '');
+    const confirmHtml = `<div class="dle-popup">
+        <h3>Batch Optimize Keywords (${count})</h3>
+        <p>Each entry runs an AI call to suggest new keywords, then opens its own review popup where you accept or reject the change. This is intentional — keyword writes mutate your vault, so we never apply suggestions blindly.</p>
+        <p><strong>What to expect:</strong></p>
+        <ul>
+            <li>${count} AI call${count === 1 ? '' : 's'} run one at a time (cancel-friendly, predictable cost)</li>
+            <li>${count} review popup${count === 1 ? '' : 's'} open in sequence — cancel any one to skip it</li>
+            <li>Progress shown in a toast; close it any time to abort the batch</li>
+        </ul>
+        <details><summary>Entries (${count})</summary>
+            <ol class="dle-fuzzy-picker-list">${listHtml}</ol>
+        </details>
+    </div>`;
+    const proceed = await callGenericPopup(confirmHtml, POPUP_TYPE.CONFIRM, '', {
+        wide: true,
+        okButton: `Run ${count}`,
+        cancelButton: 'Cancel',
+    });
+    if (!proceed) return { accepted: 0, skipped: 0, errored: 0 };
+
+    let accepted = 0;
+    let skipped = 0;
+    let errored = 0;
+    let aborted = false;
+
+    // Persistent progress toast — closing it sets `aborted=true` so the loop bails after the in-flight call.
+    const progressToast = toastr.info(
+        `Optimizing 0 / ${count}…`,
+        'DeepLore Enhanced',
+        { timeOut: 0, extendedTimeOut: 0, closeButton: true, tapToDismiss: false, onHidden: () => { aborted = true; } }
+    );
+
+    for (let i = 0; i < entries.length; i++) {
+        if (aborted) break;
+        const entry = entries[i];
+        const $progressBody = progressToast && progressToast.find ? progressToast.find('.toast-message') : null;
+        if ($progressBody && $progressBody.length) {
+            $progressBody.text(`Optimizing ${i + 1} / ${count} — ${entry.title}`);
+        }
+        try {
+            const result = await optimizeEntryKeys(entry);
+            if (!result) {
+                errored++;
+                continue;
+            }
+            // showOptimizePopup returns true if the user accepted (writes happen inside).
+            // We can't tell accept vs cancel reliably here — assume any reach of the user-facing
+            // popup counts the entry as "reviewed". Track accept-on-success separately by checking
+            // the toast text would be brittle, so the conservative counter is reviewed=true / errored=false.
+            await showOptimizePopup(entry, result);
+            accepted++;
+        } catch (err) {
+            console.error('[DLE] Batch optimize entry failed:', entry.title, err);
+            errored++;
+        }
+    }
+
+    if (progressToast) toastr.clear(progressToast);
+    const summaryParts = [`${accepted} reviewed`];
+    if (errored > 0) summaryParts.push(`${errored} failed`);
+    if (aborted) {
+        skipped = entries.length - accepted - errored;
+        if (skipped > 0) summaryParts.push(`${skipped} skipped`);
+        toastr.warning(`Batch aborted: ${summaryParts.join(', ')}.`, 'DeepLore Enhanced');
+    } else {
+        toastr.success(`Batch complete: ${summaryParts.join(', ')}.`, 'DeepLore Enhanced');
+    }
+    return { accepted, skipped, errored };
 }

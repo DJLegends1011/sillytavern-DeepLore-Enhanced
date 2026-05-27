@@ -15,6 +15,7 @@ import {
 
 import { RingBuffer, safeStringify } from '../src/diagnostics/ring-buffer.js';
 import { makeCtx, scrubString, scrubDeep } from '../src/diagnostics/scrubber.js';
+import { createPseudonymContext, pseudonymizeTrace } from '../src/diagnostics/pseudonymize-trace.js';
 
 
 // ============================================================================
@@ -872,7 +873,263 @@ test('scrubDeep: additional sensitive field names', () => {
 
 
 // ============================================================================
+//  F. pseudonymizeTrace — Trace-level Scrubbing (gotchas.md #19 regression)
+// ============================================================================
+
+section('F. pseudonymizeTrace — Trace-level Scrubbing');
+
+test('F1: matchedBy is scrubbed (raw keyword does not survive)', () => {
+    const ctx = createPseudonymContext();
+    const trace = {
+        keywordMatched: [
+            { title: 'Alpha', vaultSource: 'V1', matchedBy: 'secret_keyword_alpha' },
+            { title: 'Beta', vaultSource: 'V1', matchedBy: 'kept_kw_beta' },
+        ],
+    };
+    const out = pseudonymizeTrace(trace, ctx);
+    const serialized = JSON.stringify(out);
+    assert(!serialized.includes('secret_keyword_alpha'), 'raw secret_keyword_alpha must not appear in output');
+    assert(!serialized.includes('kept_kw_beta'), 'raw kept_kw_beta must not appear in output');
+    // Each matchedBy is itself a pseudonym (uses title map)
+    assertMatch(out.keywordMatched[0].matchedBy, /^<title-\d+>$/, 'matchedBy replaced with title pseudonym');
+    assertMatch(out.keywordMatched[1].matchedBy, /^<title-\d+>$/, 'second matchedBy pseudonymized too');
+});
+
+test('F2: AI reason is scrubbed (vault term replaced with pseudonym)', () => {
+    const ctx = createPseudonymContext();
+    const trace = {
+        aiSelected: [
+            { title: 'Alice', vaultSource: 'MainVault', reason: 'Selected because vault keyword Alice appears' },
+        ],
+    };
+    const out = pseudonymizeTrace(trace, ctx);
+    const r = out.aiSelected[0].reason;
+    assert(!r.includes('Alice'), 'raw title "Alice" must not appear in AI reason');
+    assertMatch(r, /<title-\d+>/, 'AI reason should contain title pseudonym');
+    assertMatch(r, /Selected because vault keyword/, 'non-sensitive prose preserved');
+});
+
+test('F3: entry title is scrubbed (CHARACTER_SECRET_NAME replaced)', () => {
+    const ctx = createPseudonymContext();
+    const trace = {
+        injected: [{ title: 'CHARACTER_SECRET_NAME', vaultSource: '' }],
+    };
+    const out = pseudonymizeTrace(trace, ctx);
+    assertMatch(out.injected[0].title, /^<title-\d+>$/, 'title pseudonymized');
+    const serialized = JSON.stringify(out);
+    assert(!serialized.includes('CHARACTER_SECRET_NAME'), 'raw title must not appear anywhere in output');
+});
+
+test('F4: vaultSource is scrubbed (multi-vault project name does not leak)', () => {
+    const ctx = createPseudonymContext();
+    const trace = {
+        injected: [{ title: 'Some Entry', vaultSource: 'Private Lore Vault' }],
+        keywordMatched: [{ title: 'Other Entry', vaultSource: 'Private Lore Vault', matchedBy: 'kw' }],
+        aiSelected: [{ title: 'Some Entry', vaultSource: 'Different Vault Name', reason: 'picked' }],
+    };
+    const out = pseudonymizeTrace(trace, ctx);
+    const serialized = JSON.stringify(out);
+    assert(!serialized.includes('Private Lore Vault'), 'raw vaultSource "Private Lore Vault" must not appear');
+    assert(!serialized.includes('Different Vault Name'), 'raw vaultSource "Different Vault Name" must not appear');
+    assertMatch(out.injected[0].vaultSource, /^<vault-\d+>$/, 'vaultSource has <vault-N> shape');
+    assertMatch(out.aiSelected[0].vaultSource, /^<vault-\d+>$/, 'aiSelected vaultSource also pseudonymized');
+    // Cardinality preserved — same vaultSource in injected + keywordMatched gets SAME pseudonym
+    assertEqual(out.injected[0].vaultSource, out.keywordMatched[0].vaultSource,
+        'same raw vaultSource yields same pseudonym (cardinality preserved)');
+    // Different raw vaultSource gets different pseudonym
+    assertNotEqual(out.injected[0].vaultSource, out.aiSelected[0].vaultSource,
+        'different raw vaultSource yields different pseudonyms');
+});
+
+test('F4b: empty vaultSource (single-vault) passes through unchanged', () => {
+    const ctx = createPseudonymContext();
+    const trace = { injected: [{ title: 'T', vaultSource: '' }] };
+    const out = pseudonymizeTrace(trace, ctx);
+    assertEqual(out.injected[0].vaultSource, '', 'empty vaultSource preserved (not pseudonymized)');
+});
+
+test('F5: schema preserved (all input keys present + types preserved, non-leaky added keys ok)', () => {
+    const ctx = createPseudonymContext();
+    const trace = {
+        keywordMatched: [{ title: 'A', vaultSource: 'V', matchedBy: 'kw', extraField: 42 }],
+        aiSelected: [{ title: 'A', vaultSource: 'V', reason: 'r', confidence: 0.9 }],
+        injected: [{ title: 'A', vaultSource: 'V', tokenEstimate: 100 }],
+        budgetCut: [],
+        someTopLevelMeta: 'metadata',
+    };
+    const out = pseudonymizeTrace(trace, ctx);
+    // Top-level keys preserved
+    assertEqual(Object.keys(out).sort(), Object.keys(trace).sort(), 'top-level keys preserved');
+    // Per-entry: every INPUT key must be present in output (subset check).
+    // Output may have added `title`/`filename: null` if input omitted them — that's safe (null is not a content leak).
+    for (const key of Object.keys(trace.keywordMatched[0])) {
+        assert(key in out.keywordMatched[0], `keywordMatched entry must retain input key '${key}'`);
+    }
+    for (const key of Object.keys(trace.aiSelected[0])) {
+        assert(key in out.aiSelected[0], `aiSelected entry must retain input key '${key}'`);
+    }
+    for (const key of Object.keys(trace.injected[0])) {
+        assert(key in out.injected[0], `injected entry must retain input key '${key}'`);
+    }
+    // Any added keys must be NULL (no content leak via spurious data)
+    const addedKwKeys = Object.keys(out.keywordMatched[0]).filter(k => !(k in trace.keywordMatched[0]));
+    for (const k of addedKwKeys) {
+        assertNull(out.keywordMatched[0][k], `added key '${k}' on keywordMatched must be null (no content leak)`);
+    }
+    // Types preserved (numbers stay numbers, etc.)
+    assertEqual(typeof out.keywordMatched[0].extraField, 'number', 'extraField number type preserved');
+    assertEqual(out.keywordMatched[0].extraField, 42, 'extraField value preserved');
+    assertEqual(typeof out.aiSelected[0].confidence, 'number', 'confidence number type preserved');
+    assertEqual(out.aiSelected[0].confidence, 0.9, 'confidence value preserved');
+    assertEqual(out.injected[0].tokenEstimate, 100, 'tokenEstimate value preserved');
+    assertEqual(typeof out.someTopLevelMeta, 'string', 'top-level metadata preserved');
+    assertEqual(out.someTopLevelMeta, 'metadata', 'top-level metadata value preserved');
+    // Empty arrays preserved
+    assert(Array.isArray(out.budgetCut), 'empty array key preserved as array');
+    assertEqual(out.budgetCut.length, 0, 'empty array remains empty');
+});
+
+test('F6: pseudonym map is stable (same trace twice → same pseudonyms)', () => {
+    const ctx = createPseudonymContext();
+    const trace = {
+        injected: [
+            { title: 'Alice', vaultSource: 'Vault1' },
+            { title: 'Bob', vaultSource: 'Vault2' },
+        ],
+    };
+    const out1 = pseudonymizeTrace(trace, ctx);
+    const out2 = pseudonymizeTrace(trace, ctx);
+    assertEqual(out1.injected[0].title, out2.injected[0].title, 'Alice pseudonym stable across two calls');
+    assertEqual(out1.injected[1].title, out2.injected[1].title, 'Bob pseudonym stable across two calls');
+    assertEqual(out1.injected[0].vaultSource, out2.injected[0].vaultSource, 'vault1 pseudonym stable across two calls');
+});
+
+test('F6b: pseudonym map is fresh per context (no cross-export correlation)', () => {
+    const ctxA = createPseudonymContext();
+    const ctxB = createPseudonymContext();
+    const trace = { injected: [{ title: 'Alice', vaultSource: 'Vault1' }] };
+    const outA = pseudonymizeTrace(trace, ctxA);
+    // Pollute ctxB with a different title first so counter differs
+    pseudonymizeTrace({ injected: [{ title: 'Padding', vaultSource: 'PadVault' }] }, ctxB);
+    const outB = pseudonymizeTrace(trace, ctxB);
+    // Both contexts pseudonymize Alice, but the numeric suffixes can differ
+    // The IMPORTANT property: each ctx is independent — no shared map state.
+    assertMatch(outA.injected[0].title, /^<title-\d+>$/, 'ctxA pseudonymizes Alice');
+    assertMatch(outB.injected[0].title, /^<title-\d+>$/, 'ctxB pseudonymizes Alice');
+    // ctxB had padding first, so Alice gets title-2 there; ctxA had no padding
+    assertNotEqual(outA.injected[0].title, outB.injected[0].title,
+        'independent contexts produce independent pseudonym numbering');
+});
+
+test('F7: round-trip safety — safeStringify produces no raw content leakage', () => {
+    const ctx = createPseudonymContext();
+    const trace = {
+        keywordMatched: [{ title: 'TopSecretTitle', vaultSource: 'PrivateProject', matchedBy: 'CodewordX' }],
+        aiSelected: [{ title: 'TopSecretTitle', vaultSource: 'PrivateProject',
+            reason: 'Picked TopSecretTitle from PrivateProject because CodewordX matched' }],
+        injected: [{ title: 'TopSecretTitle', vaultSource: 'PrivateProject', tokenEstimate: 50 }],
+    };
+    const out = pseudonymizeTrace(trace, ctx);
+    const json = safeStringify([out]);
+    assert(!json.includes('TopSecretTitle'), 'safeStringify output must not contain raw title');
+    assert(!json.includes('PrivateProject'), 'safeStringify output must not contain raw vaultSource');
+    assert(!json.includes('CodewordX'), 'safeStringify output must not contain raw matchedBy keyword');
+    // Confirm it DOES contain the pseudonyms (sanity — we didn't just nuke everything)
+    assertMatch(json, /<title-\d+>/, 'safeStringify output contains title pseudonym');
+    assertMatch(json, /<vault-\d+>/, 'safeStringify output contains vault pseudonym');
+});
+
+test('F8: matchedBy with character-name keyword does not leak the name', () => {
+    // The keyword trigger IS often the character/location name (e.g. "Alice").
+    const ctx = createPseudonymContext();
+    const trace = {
+        keywordMatched: [{ title: 'Alice Entry', vaultSource: 'V', matchedBy: 'Alice' }],
+    };
+    const out = pseudonymizeTrace(trace, ctx);
+    const json = JSON.stringify(out);
+    assert(!json.includes('"Alice"'), 'raw character name "Alice" must not appear as bare string');
+    assert(!json.includes('Alice Entry'), 'raw title "Alice Entry" must not appear');
+});
+
+test('F9: input trace is NOT mutated (output is a copy)', () => {
+    const ctx = createPseudonymContext();
+    const original = {
+        injected: [{ title: 'Original', vaultSource: 'OrigVault', matchedBy: 'origKw' }],
+    };
+    const beforeSnap = JSON.stringify(original);
+    pseudonymizeTrace(original, ctx);
+    const afterSnap = JSON.stringify(original);
+    assertEqual(beforeSnap, afterSnap, 'input trace must not be mutated');
+    assertEqual(original.injected[0].title, 'Original', 'original.title still raw');
+    assertEqual(original.injected[0].vaultSource, 'OrigVault', 'original.vaultSource still raw');
+    assertEqual(original.injected[0].matchedBy, 'origKw', 'original.matchedBy still raw');
+});
+
+test('F10: all entry array keys are scrubbed (not just injected)', () => {
+    const ctx = createPseudonymContext();
+    const trace = {
+        keywordMatched: [{ title: 'KM', vaultSource: 'V1', matchedBy: 'kmKw' }],
+        aiSelected: [{ title: 'AI', vaultSource: 'V2', reason: 'aiR' }],
+        gatedOut: [{ title: 'GO', vaultSource: 'V3' }],
+        contextualGatingRemoved: [{ title: 'CGR', vaultSource: 'V4' }],
+        cooldownRemoved: [{ title: 'CR', vaultSource: 'V5' }],
+        warmupFailed: [{ title: 'WF', vaultSource: 'V6' }],
+        refineKeyBlocked: [{ title: 'RKB', vaultSource: 'V7' }],
+        stripDedupRemoved: [{ title: 'SDR', vaultSource: 'V8' }],
+        budgetCut: [{ title: 'BC', vaultSource: 'V9' }],
+        injected: [{ title: 'INJ', vaultSource: 'V10' }],
+    };
+    const out = pseudonymizeTrace(trace, ctx);
+    const json = JSON.stringify(out);
+    // None of the raw titles should appear
+    for (const t of ['KM', 'AI', 'GO', 'CGR', 'CR', 'WF', 'RKB', 'SDR', 'BC', 'INJ']) {
+        assert(!json.includes(`"title":"${t}"`), `raw title "${t}" must not appear in pseudonymized output`);
+    }
+    // None of the raw vaultSources should appear
+    for (let i = 1; i <= 10; i++) {
+        assert(!json.includes(`"vaultSource":"V${i}"`), `raw vaultSource "V${i}" must not appear`);
+    }
+});
+
+test('F11: null/undefined/non-object trace handled defensively (no throw)', () => {
+    const ctx = createPseudonymContext();
+    let threw = false;
+    try {
+        assertEqual(pseudonymizeTrace(null, ctx), null, 'null input returns null');
+        assertEqual(pseudonymizeTrace(undefined, ctx), undefined, 'undefined input returns undefined');
+        assertEqual(pseudonymizeTrace('string', ctx), 'string', 'non-object input returns as-is');
+        assertEqual(pseudonymizeTrace(42, ctx), 42, 'number input returns as-is');
+    } catch {
+        threw = true;
+    }
+    assert(!threw, 'pseudonymizeTrace must not throw on edge inputs');
+});
+
+test('F12: trace with no entry-array keys returns shallow copy unchanged', () => {
+    const ctx = createPseudonymContext();
+    const trace = { someUnrelatedKey: 'value', count: 5 };
+    const out = pseudonymizeTrace(trace, ctx);
+    assertEqual(out.someUnrelatedKey, 'value', 'unrelated string preserved');
+    assertEqual(out.count, 5, 'unrelated number preserved');
+    // It IS a copy though
+    assert(out !== trace, 'output is a different object reference (shallow copy)');
+});
+
+test('F13: ctx omitted → fresh context created (function still scrubs)', () => {
+    let threw = false;
+    let out;
+    try {
+        out = pseudonymizeTrace({ injected: [{ title: 'X', vaultSource: 'Y' }] });
+    } catch {
+        threw = true;
+    }
+    assert(!threw, 'pseudonymizeTrace works without explicit ctx');
+    assertMatch(out.injected[0].title, /^<title-\d+>$/, 'still scrubs without ctx');
+});
+
+
+// ============================================================================
 //  Summary
 // ============================================================================
 
-summary('Diagnostics Tests');
+await summary('Diagnostics Tests');

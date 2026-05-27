@@ -8,6 +8,7 @@
  */
 
 import { buildScanText } from '../../core/utils.js';
+import { comparePriority, hasWarmup } from '../helpers.js';
 import { testEntryMatch, testPrimaryMatchOnly, countKeywordOccurrences } from '../../core/matching.js';
 import { vaultIndex, cooldownTracker, trackerKey, fuzzySearchIndex } from '../state.js';
 import { queryBM25 } from '../vault/bm25.js';
@@ -33,11 +34,15 @@ export function matchEntries(chat, snapshot = null, { settings, characterName } 
     /** @type {Array<{title: string, primaryKey: string, refineKeys: string[]}>} */
     const refineKeyBlocked = [];
 
+    // BUG-AUDIT v2.5: matchedKeys keyed by trackerKey(entry) (vaultSource:title) so
+    // same-titled cross-vault entries don't collide on Map.set/.get. Reads at consumer
+    // sites (index.js, pipeline.js, commands-pipeline.js) use matchedKeys.get(trackerKey(e)).
+
     // Constants always, regardless of scan depth.
     for (const entry of entries) {
         if (entry.constant) {
             matchedSet.add(entry);
-            matchedKeys.set(entry.title, '(constant)');
+            matchedKeys.set(trackerKey(entry), '(constant)');
         }
     }
 
@@ -46,7 +51,7 @@ export function matchEntries(chat, snapshot = null, { settings, characterName } 
         for (const entry of entries) {
             if (entry.bootstrap && !matchedSet.has(entry)) {
                 matchedSet.add(entry);
-                matchedKeys.set(entry.title, '(bootstrap)');
+                matchedKeys.set(trackerKey(entry), '(bootstrap)');
             }
         }
     }
@@ -74,27 +79,28 @@ export function matchEntries(chat, snapshot = null, { settings, characterName } 
                 // Primary hit but refine keys blocked.
                 const primaryHit = testPrimaryMatchOnly(entry, scanText, settings);
                 if (primaryHit) {
-                    refineKeyBlocked.push({ title: entry.title, primaryKey: primaryHit, refineKeys: [...entry.refineKeys] });
+                    refineKeyBlocked.push({ title: entry.title, vaultSource: entry.vaultSource || '', primaryKey: primaryHit, refineKeys: [...entry.refineKeys] });
                 }
             }
             if (key) {
-                if (entry.warmup !== null) {
+                // M-6: hasWarmup unifies the three match paths (primary, recursion, BM25).
+                if (hasWarmup(entry)) {
                     const occurrences = countKeywordOccurrences(entry, scanText, settings);
                     if (occurrences < entry.warmup) {
-                        warmupFailed.push({ title: entry.title, needed: entry.warmup, found: occurrences });
+                        warmupFailed.push({ title: entry.title, vaultSource: entry.vaultSource || '', needed: entry.warmup, found: occurrences });
                         continue;
                     }
                 }
 
                 // probability=0 = never fires (distinct from null = always).
                 if (entry.probability === 0) {
-                    probabilitySkipped.push({ title: entry.title, probability: 0, roll: 0 });
+                    probabilitySkipped.push({ title: entry.title, vaultSource: entry.vaultSource || '', probability: 0, roll: 0 });
                     continue;
                 }
                 if (entry.probability !== null && entry.probability < 1.0) {
                     const roll = Math.random();
                     if (roll > entry.probability) {
-                        probabilitySkipped.push({ title: entry.title, probability: entry.probability, roll });
+                        probabilitySkipped.push({ title: entry.title, vaultSource: entry.vaultSource || '', probability: entry.probability, roll });
                         continue;
                     }
                 }
@@ -105,30 +111,52 @@ export function matchEntries(chat, snapshot = null, { settings, characterName } 
                 }
 
                 matchedSet.add(entry);
-                matchedKeys.set(entry.title, key);
+                matchedKeys.set(trackerKey(entry), key);
             }
         }
 
-        const titleMap = new Map(entries.map(e => [e.title.toLowerCase(), e]));
+        // BUG-AUDIT v2.5: same title can exist in multiple vaults; key the lookup map
+        // by title.toLowerCase() → array of entries so cascade_links and
+        // characterContextScan don't silently drop one vault's entry to last-vault-wins.
+        // User-authored cascade_links/character names are bare titles (no vault prefix),
+        // so we union across all same-titled entries instead of trying to disambiguate.
+        const titleMap = new Map();
+        for (const e of entries) {
+            const k = e.title.toLowerCase();
+            if (!titleMap.has(k)) titleMap.set(k, []);
+            titleMap.get(k).push(e);
+        }
 
         if (settings.characterContextScan && activeCharName) {
             const nameLower = activeCharName.toLowerCase();
-            const charEntry = titleMap.get(nameLower) || entries.find(e =>
+            const charEntries = titleMap.get(nameLower) || entries.filter(e =>
                 e.keys.some(k => k.toLowerCase() === nameLower)
             );
-            if (charEntry && !matchedSet.has(charEntry)) {
-                matchedSet.add(charEntry);
-                matchedKeys.set(charEntry.title, '(active character)');
+            for (const charEntry of charEntries) {
+                if (!matchedSet.has(charEntry)) {
+                    matchedSet.add(charEntry);
+                    matchedKeys.set(trackerKey(charEntry), '(active character)');
+                }
             }
         }
 
         // Cascade links: same gates as direct matches except warmup.
+        // M-5 (2026-05-22): track cascade-pulled entries with excludeRecursion=true
+        // separately. They still belong in matchedSet (they ARE matched and will be
+        // injected), but their content must NOT seed the recursion text scan —
+        // author intent for `excludeRecursion: true` is "never use this entry's
+        // content for scanning." The downstream L172 filter (`!e.excludeRecursion`)
+        // already catches this, but the explicit cascade-side filter is
+        // defense-in-depth so a future refactor of the recursion text gathering
+        // cannot silently leak cascade-pulled excluded content for one step.
+        const cascadeExcludedFromRecursion = new Set();
         const cascadeSource = [...matchedSet];
         for (const entry of cascadeSource) {
             if (!entry.cascadeLinks || entry.cascadeLinks.length === 0) continue;
             for (const linkTitle of entry.cascadeLinks) {
-                const linked = titleMap.get(linkTitle.toLowerCase());
-                if (linked && !matchedSet.has(linked)) {
+                const linkedCandidates = titleMap.get(linkTitle.toLowerCase()) || [];
+                for (const linked of linkedCandidates) {
+                    if (matchedSet.has(linked)) continue;
                     if (linked.cooldown !== null) {
                         const remaining = cooldownTracker.get(trackerKey(linked));
                         if (remaining !== undefined && remaining > 0) continue;
@@ -138,14 +166,22 @@ export function matchEntries(chat, snapshot = null, { settings, characterName } 
                     // BUG-035: cascade is an explicit author relationship, not a keyword
                     // trigger — warmup doesn't apply.
                     matchedSet.add(linked);
-                    matchedKeys.set(linked.title, `(cascade from: ${entry.title})`);
+                    matchedKeys.set(trackerKey(linked), `(cascade from: ${entry.title})`);
+                    if (linked.excludeRecursion) cascadeExcludedFromRecursion.add(linked);
                 }
             }
         }
 
         if (settings.recursiveScan && settings.maxRecursionSteps > 0) {
             let step = 0;
-            let newlyMatched = new Set(matchedSet);
+            // M-5: exclude cascade-pulled excludeRecursion entries from the initial
+            // recursion seed. The L172 `!e.excludeRecursion` filter inside the loop
+            // is the authoritative gate; this is belt-and-suspenders.
+            let newlyMatched = new Set();
+            for (const m of matchedSet) {
+                if (cascadeExcludedFromRecursion.has(m)) continue;
+                newlyMatched.add(m);
+            }
 
             while (newlyMatched.size > 0 && step < settings.maxRecursionSteps) {
                 step++;
@@ -174,13 +210,14 @@ export function matchEntries(chat, snapshot = null, { settings, characterName } 
                         }
                         if (entry.probability === 0) continue;
                         if (entry.probability !== null && entry.probability < 1.0 && Math.random() > entry.probability) continue;
-                        if (entry.warmup !== null) {
+                        // M-6: hasWarmup unifies the three match paths (primary, recursion, BM25).
+                        if (hasWarmup(entry)) {
                             const occurrences = countKeywordOccurrences(entry, recursionText, settings);
                             if (occurrences < entry.warmup) continue;
                         }
                         matchedSet.add(entry);
                         newlyMatched.add(entry);
-                        matchedKeys.set(entry.title, `${key} (recursion step ${step})`);
+                        matchedKeys.set(trackerKey(entry), `${key} (recursion step ${step})`);
                     }
                 }
             }
@@ -203,7 +240,8 @@ export function matchEntries(chat, snapshot = null, { settings, characterName } 
             if (remaining !== undefined && remaining > 0) continue;
 
             // BUG-AUDIT-8: BM25 fuzzy matches must also honor warmup.
-            if (entry.warmup && entry.warmup >= 1) {
+            // M-6: hasWarmup unifies the three match paths (primary, recursion, BM25).
+            if (hasWarmup(entry)) {
                 const scanText = getScanText(entry.scanDepth ?? settings.scanDepth);
                 const occurrences = countKeywordOccurrences(entry, scanText, settings);
                 if (occurrences < entry.warmup) continue;
@@ -213,29 +251,33 @@ export function matchEntries(chat, snapshot = null, { settings, characterName } 
             if (entry.probability !== null && entry.probability < 1.0 && Math.random() > entry.probability) continue;
 
             matchedSet.add(entry);
-            matchedKeys.set(entry.title, `(fuzzy, score: ${result.score.toFixed(1)})`);
+            matchedKeys.set(trackerKey(entry), `(fuzzy, score: ${result.score.toFixed(1)})`);
             fuzzyStats.matched++;
         }
     }
 
-    // Priority ascending = higher priority.
-    const matched = [...matchedSet].sort((a, b) => a.priority - b.priority || a.title.localeCompare(b.title));
+    // Default: priority ascending = higher priority. #16: settings.priorityReversed flips.
+    const matched = [...matchedSet].sort((a, b) => comparePriority(a, b, settings.priorityReversed) || a.title.localeCompare(b.title));
 
     // Tiebreak within priority group using hit count.
     if (settings.keywordOccurrenceWeighting) {
         // BUG-AUDIT-H13: use the memo, not a fresh buildScanText.
+        // BUG-AUDIT v2.5: key occurrence cache by trackerKey so same-titled cross-vault
+        // entries don't share a cache slot (their content/scan-depth may differ).
         const scanText = getScanText(settings.scanDepth);
         const occurrenceCache = new Map();
         const getCachedCount = (entry) => {
-            let count = occurrenceCache.get(entry.title);
+            const ck = trackerKey(entry);
+            let count = occurrenceCache.get(ck);
             if (count === undefined) {
                 count = countKeywordOccurrences(entry, scanText, settings);
-                occurrenceCache.set(entry.title, count);
+                occurrenceCache.set(ck, count);
             }
             return count;
         };
         matched.sort((a, b) => {
-            if (a.priority !== b.priority) return a.priority - b.priority;
+            const pri = comparePriority(a, b, settings.priorityReversed);
+            if (pri !== 0) return pri;
             return getCachedCount(b) - getCachedCount(a) || a.title.localeCompare(b.title);
         });
     }

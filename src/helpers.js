@@ -2,8 +2,176 @@
  * DeepLore Enhanced — Pure helpers (no ST imports). Browser + Node testable.
  */
 import { yamlEscape } from '../core/utils.js';
+import { compressCaveman, resolveCompressMode, APPLIED_COMPRESS_MODES } from './caveman.js';
 
 export const MAX_PRIORITY_VALUE = 999;
+
+/**
+ * Update Existing Entries — surgical frontmatter-field update.
+ *
+ * Changes specific scalar fields in a markdown file's YAML frontmatter
+ * without disturbing other fields, comments, array fields, or the body.
+ * Preserves the original quoting / spacing of fields not touched, which
+ * means round-trip-safe even for entries that use unusual YAML styles.
+ *
+ * Scope (v1):
+ *   - Scalar values only (strings, numbers, booleans). Array / nested-object
+ *     fields are not supported; pass them through `convertWiEntry` or rewrite
+ *     the whole file instead.
+ *   - To DELETE a field, pass `null` as the value.
+ *   - New fields (not present in the original frontmatter) are appended
+ *     immediately before the closing `---`.
+ *   - When the file has no frontmatter at all, an empty block is created.
+ *
+ * @param {string} content - full markdown (frontmatter + body)
+ * @param {Record<string, string|number|boolean|null>} updates - field → new value (null = delete)
+ * @returns {{ content: string, applied: string[], skipped: string[] }}
+ *   `applied` = field names whose value was changed.
+ *   `skipped` = field names refused (non-scalar value, or new field with null value).
+ */
+export function updateFrontmatterFields(content, updates) {
+    const applied = [];
+    const skipped = [];
+    if (!updates || typeof updates !== 'object') {
+        return { content, applied, skipped };
+    }
+
+    // Validate value types up-front so we don't half-apply.
+    const isScalar = (v) => v === null || typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean';
+    for (const [k, v] of Object.entries(updates)) {
+        if (!isScalar(v)) skipped.push(k);
+    }
+    const validUpdates = Object.fromEntries(
+        Object.entries(updates).filter(([k]) => !skipped.includes(k)),
+    );
+
+    // Strip BOM the same way parseFrontmatter does.
+    const cleaned = content.charCodeAt(0) === 0xFEFF ? content.slice(1) : content;
+    const fmMatch = cleaned.match(/^(---\r?\n)([\s\S]*?)(\r?\n---[ \t]*\r?\n?)([\s\S]*)$/);
+
+    let openDelim, fmBody, closeDelim, body;
+    if (fmMatch) {
+        openDelim = fmMatch[1];
+        fmBody = fmMatch[2];
+        closeDelim = fmMatch[3];
+        body = fmMatch[4];
+    } else {
+        // No frontmatter — create a minimal block. New fields will append below.
+        openDelim = '---\n';
+        fmBody = '';
+        closeDelim = '\n---\n';
+        body = cleaned;
+    }
+
+    // Strip trailing \r BEFORE matching so CRLF-authored files don't
+    // silently fall through the in-place loop's key regex (which would
+    // otherwise duplicate every key on every write — Windows-authored
+    // entries grow on each update). Reassemble with the file's detected
+    // line ending so the write round-trips cleanly.
+    const usesCRLF = /\r\n/.test(fmBody);
+    const fmLines = fmBody.split(/\r?\n/);
+
+    const serializeValue = (v) => {
+        if (typeof v === 'boolean') return String(v);
+        if (typeof v === 'number') {
+            // NaN / ±Infinity are not valid YAML scalars and would silently corrupt
+            // the file if emitted as empty strings. Caller's value is rejected via
+            // `skipped` instead — see in-place loop's serialize-and-validate path.
+            if (!Number.isFinite(v)) return null;
+            return String(v);
+        }
+        return yamlEscape(String(v));
+    };
+
+    // Detect block-scalar headers ("|", ">", with optional chomp/indent indicators).
+    // Overwriting the header would orphan the indented body lines as dangling YAML,
+    // silently corrupting the file when read by a strict parser.
+    const BLOCK_SCALAR_VALUE = /^[|>][-+]?\d*\s*$/;
+
+    // First pass: in-place replacement for existing scalar keys.
+    // Key regex allows hyphens and dots (refine-keys, x.y) — same chars that
+    // `parseFrontmatter` already accepts on the read side. Anything narrower
+    // would silently duplicate hyphenated/dotted keys on each update.
+    const KEY_RE = /^([A-Za-z_][A-Za-z0-9_.\-]*)\s*:\s*(.*)$/;
+    const remainingNew = new Map(Object.entries(validUpdates));
+    for (let i = 0; i < fmLines.length; i++) {
+        const line = fmLines[i];
+        const m = line.match(KEY_RE);
+        if (!m) continue;
+        const key = m[1];
+        const rawValue = m[2];
+        if (!remainingNew.has(key)) continue;
+        // Skip if this key heads a block scalar (|, >) — overwriting the header
+        // would leave the body lines as untyped dangling YAML.
+        if (BLOCK_SCALAR_VALUE.test(rawValue)) { skipped.push(key); remainingNew.delete(key); continue; }
+        // Skip if this key heads an array block — either flow style (`[a, b]`
+        // detected via rawValue) or block style (next non-blank line is `  - …`).
+        let isArray = /^\[.*\]\s*$/.test(rawValue);
+        if (!isArray) {
+            for (let j = i + 1; j < fmLines.length; j++) {
+                const peek = fmLines[j];
+                if (peek.trim() === '') continue;
+                if (/^\s+-\s+/.test(peek)) isArray = true;
+                break;
+            }
+        }
+        if (isArray) { skipped.push(key); remainingNew.delete(key); continue; }
+
+        const newValue = remainingNew.get(key);
+        const serialized = serializeValue(newValue);
+        if (serialized === null && newValue !== null) {
+            // serializeValue rejected the value (NaN/Infinity). Skip rather than
+            // emit a malformed line.
+            skipped.push(key);
+            remainingNew.delete(key);
+            continue;
+        }
+        remainingNew.delete(key);
+        if (newValue === null) {
+            fmLines.splice(i, 1);
+            i--;
+        } else {
+            fmLines[i] = `${key}: ${serialized}`;
+        }
+        applied.push(key);
+    }
+
+    // Second pass: append new fields (non-null only — can't "delete a key that
+    // wasn't there"). Insert before the trailing blank line if one exists so
+    // the block stays visually tidy.
+    for (const [key, value] of remainingNew) {
+        if (value === null) { skipped.push(key); continue; }
+        const serialized = serializeValue(value);
+        if (serialized === null) { skipped.push(key); continue; } // NaN/Infinity refused
+        // Drop a single trailing blank line, append field, restore blank
+        // line — this keeps the block visually flush against `---`.
+        while (fmLines.length && fmLines[fmLines.length - 1].trim() === '') fmLines.pop();
+        fmLines.push(`${key}: ${serialized}`);
+        applied.push(key);
+    }
+
+    const newFmBody = fmLines.join(usesCRLF ? '\r\n' : '\n');
+    return { content: openDelim + newFmBody + closeDelim + body, applied, skipped };
+}
+
+/**
+ * #16 — Reverse-priority comparator. By default lower priority number = higher
+ * importance (Obsidian/WI convention). When `reversed` is true, flip so higher
+ * number wins. Applies to pipeline budget allocation, Librarian view order,
+ * and Cartographer display. Browse popup's explicit `priority_asc/desc`
+ * dropdown bypasses this — user-typed sort always wins literal.
+ *
+ * Default priority value 50 matches what callers already coalesced inline.
+ *
+ * @param {{priority?: number}} a
+ * @param {{priority?: number}} b
+ * @param {boolean} reversed
+ * @returns {number}
+ */
+export function comparePriority(a, b, reversed) {
+    const diff = (a.priority || 50) - (b.priority || 50);
+    return reversed ? -diff : diff;
+}
 
 /**
  * Sanitize a title for use as an Obsidian vault filename.
@@ -56,24 +224,56 @@ export function cmrsResultToText(result) {
     const text = typeof rawContent === 'string'
         ? rawContent
         : (rawContent == null ? '' : JSON.stringify(rawContent));
-    const usage = result?.usage || {};
+    // PR #28.3 clean-fix half: Gemini reports token usage as
+    // `usageMetadata.{promptTokenCount, candidatesTokenCount}` instead of OAI-style
+    // `usage.{prompt_tokens, completion_tokens}`. Without these aliases, all Gemini
+    // calls show 0/0 in DLE stats. Credit Ryah (PR #28). See PR-28.3-VERDICT.md.
+    //
+    // L1 fix (v2.5): defensive cascade for nested usage shapes. CMRS occasionally
+    // un-flattens (or future custom-proxy paths may surface) Gemini envelopes
+    // where the usage block sits one level deeper, or where the SDK surfaces a
+    // candidates[] array carrying its own usageMetadata. Cascade order (return
+    // first non-null match), most-flat-to-most-nested:
+    //   1. result.usage                       — OAI standard, already-normalized
+    //   2. result.usageMetadata               — Gemini flat (current CMRS shape)
+    //   3. result.response.usage              — wrapped OAI (SDK passthrough)
+    //   4. result.response.usageMetadata      — wrapped Gemini
+    //   5. result.candidates[0].usageMetadata — Gemini per-candidate fallback
+    const usage = result?.usage
+        || result?.usageMetadata
+        || result?.response?.usage
+        || result?.response?.usageMetadata
+        || result?.candidates?.[0]?.usageMetadata
+        || {};
     return {
         text,
         usage: {
-            input_tokens: usage.input_tokens || usage.prompt_tokens || 0,
-            output_tokens: usage.output_tokens || usage.completion_tokens || 0,
+            input_tokens: usage.input_tokens || usage.prompt_tokens || usage.promptTokenCount || 0,
+            output_tokens: usage.output_tokens || usage.completion_tokens || usage.candidatesTokenCount || 0,
         },
     };
 }
 
 /**
  * Extract a JSON array from AI response text. Handles direct JSON, code-fenced
- * JSON, and raw arrays via bracket-balancing.
- * @param {string} text
+ * JSON, dangling closing fences (Gemini quirk), and raw arrays via
+ * bracket-balancing. Also accepts a pre-parsed array input to short-circuit
+ * the string path.
+ *
+ * PR #28.3 partial port (credit Ryah, PR #28):
+ *   - Dangling-fence strip: defense-in-depth for the direct-parse path. NOTE:
+ *     this does NOT close the json_schema Gemini breaker-trip bug — by the time
+ *     text reaches DLE in that flow, ST has already replaced the content with
+ *     `'{}'` (tryParse failed on the fence upstream). That bug needs an upstream
+ *     ST fix or a larger DLE workaround. See audit/v2.5-prep/PR-28.3-VERDICT.md.
+ *   - Pre-parsed array input acceptance: forward-compatible with callers that
+ *     skip the stringify step.
+ *
+ * @param {string|Array} text
  * @returns {Array|null}
  */
 export function extractAiResponseClient(text) {
-    if (!text || typeof text !== 'string') return null;
+    if (text == null) return null;
 
     /** BUG-046: usable result arrays have at least one usable element (or are empty). */
     function isValidResultArray(val) {
@@ -85,11 +285,28 @@ export function extractAiResponseClient(text) {
         );
     }
 
+    // PR #28.3: short-circuit when caller already has the parsed object. The
+    // ai.js BUG-383 unwrap handles non-array objects with known wrapper keys, so
+    // we just return what we got and let the caller figure out the shape.
+    if (typeof text === 'object') {
+        if (isValidResultArray(text)) return text;
+        return null;
+    }
+    if (typeof text !== 'string') return null;
+
+    // PR #28.3: Gemini sometimes appends a stray ``` after the JSON payload
+    // (no matching opener). Plain JSON.parse fails on the extra chars; without
+    // this strip, json_schema-flow responses come back as '{}' and aiSearch
+    // trips the breaker. The fenced-content regex below catches matched pairs;
+    // this handles the dangling-closer case.
+    const stripDanglingFence = (s) => s.replace(/^\s*`{3,}\s*$/gm, '').trim();
+    const cleaned = stripDanglingFence(text);
+
     try {
-        const parsed = JSON.parse(text);
+        const parsed = JSON.parse(cleaned);
         if (isValidResultArray(parsed)) return parsed;
     } catch { /* noop */ }
-    const fenceMatch = text.match(/`{3,}(?:json)?\s*([\s\S]*?)`{3,}/);
+    const fenceMatch = cleaned.match(/`{3,}(?:json)?\s*([\s\S]*?)`{3,}/);
     if (fenceMatch) {
         try {
             const parsed = JSON.parse(fenceMatch[1]);
@@ -97,13 +314,14 @@ export function extractAiResponseClient(text) {
         } catch { /* noop */ }
     }
     // Bracket-balanced extraction — non-greedy regex fails on nested arrays
-    // like ["a", ["b"]]. Prefer largest (outer) match.
+    // like ["a", ["b"]]. Prefer largest (outer) match. Walk `cleaned` so any
+    // stripped dangling fence is consistent across all parse paths.
     const candidates = [];
-    for (let i = 0; i < text.length; i++) {
-        if (text[i] === '[') {
+    for (let i = 0; i < cleaned.length; i++) {
+        if (cleaned[i] === '[') {
             let depth = 1, inStr = false, inSingleStr = false, escape = false;
-            for (let j = i + 1; j < text.length && depth > 0; j++) {
-                const c = text[j];
+            for (let j = i + 1; j < cleaned.length && depth > 0; j++) {
+                const c = cleaned[j];
                 if (escape) { escape = false; continue; }
                 if (c === '\\') { escape = true; continue; }
                 if (c === '"' && !inSingleStr) { inStr = !inStr; continue; }
@@ -112,7 +330,7 @@ export function extractAiResponseClient(text) {
                 if (c === '[') depth++;
                 else if (c === ']') depth--;
                 if (depth === 0) {
-                    candidates.push(text.substring(i, j + 1));
+                    candidates.push(cleaned.substring(i, j + 1));
                     break;
                 }
             }
@@ -197,7 +415,17 @@ export function clusterEntries(entries) {
 export function buildCategoryManifest(clusters) {
     const lines = [];
     for (const [category, entries] of clusters) {
-        const samples = entries.slice(0, 5).map(e => e.title).join(', ');
+        // BUG-AUDIT v2.5: when two entries in the same sample slice share a title,
+        // suffix the second occurrence with @vaultSource so the AI sees them as
+        // distinct. Bare title appears for the first/only occurrence (backward
+        // compatible — single-vault setups never trigger the suffix).
+        const seen = new Map();
+        const samples = entries.slice(0, 5).map(e => {
+            const lower = e.title.toLowerCase();
+            const count = (seen.get(lower) || 0) + 1;
+            seen.set(lower, count);
+            return count > 1 && e.vaultSource ? `${e.title}@${e.vaultSource}` : e.title;
+        }).join(', ');
         const more = entries.length > 5 ? ` (+${entries.length - 5} more)` : '';
         lines.push(`[${category}] (${entries.length} entries): ${samples}${more}`);
     }
@@ -223,9 +451,16 @@ export function buildObsidianURI(vaultName, filename) {
  * Convert a SillyTavern World Info entry into an Obsidian note with frontmatter.
  * @param {object} wiEntry
  * @param {string} lorebookTag
+ * @param {object} [options]
+ * @param {boolean|string} [options.compress] - #18: when truthy (or 'caveman'),
+ *   pass the body through `compressCaveman()` before writing and annotate the
+ *   frontmatter with `compress: caveman`. Forward-compat values pass through
+ *   unmodified (annotation only) so future modes like `ai-summary` can be
+ *   wired up without churning callers.
  * @returns {{filename: string, content: string}}
  */
-export function convertWiEntry(wiEntry, lorebookTag) {
+export function convertWiEntry(wiEntry, lorebookTag, options = {}) {
+    const compressMode = resolveCompressMode(options.compress);
     // Title from `comment` (ST convention) or joined keys. Strip newlines to
     // prevent H1 injection.
     // BUG-008: older ST exports use a comma-separated string for `key`.
@@ -293,6 +528,12 @@ export function convertWiEntry(wiEntry, lorebookTag) {
         fm.push(`group_weight: ${Number(wiEntry.groupWeight)}`);
     }
     fm.push(`summary: "Imported from SillyTavern World Info"`);
+    // Only annotate the compress flag for modes this build can actually apply.
+    // Annotating an unknown mode (e.g. 'ai-summary') would let the frontmatter
+    // claim the body is compressed when in fact it's still raw, which would
+    // double-compress on a future re-import or confuse readers.
+    const willApplyCompression = compressMode && APPLIED_COMPRESS_MODES.has(compressMode);
+    if (willApplyCompression) fm.push(`compress: ${compressMode}`);
     fm.push('---');
 
     // Sanitize against YAML / control sequence injection.
@@ -300,6 +541,15 @@ export function convertWiEntry(wiEntry, lorebookTag) {
     content = content.replace(/^---$/gm, '- - -');
     content = content.replace(/%%deeplore-exclude%%[\s\S]*?%%\/deeplore-exclude%%/g, '');
     content = stripObsidianSyntax(content);
+    // #18: compression runs at import time only. Stored form is compressed;
+    // read-path treats it as the authoritative body.
+    if (willApplyCompression && compressMode === 'caveman') {
+        content = compressCaveman(content);
+    } else if (compressMode && !willApplyCompression) {
+        // User asked for a mode we don't know how to apply. Warn instead of
+        // silently storing an annotation that lies about transform state.
+        console.warn(`[DLE] convertWiEntry: unknown compress mode "${compressMode}" — body stored uncompressed, no annotation written.`);
+    }
     const fullContent = `${fm.join('\n')}\n\n# ${title}\n\n${content}`;
 
     return { filename: `${safeTitle}.md`, content: fullContent };
@@ -428,91 +678,97 @@ export function computeSourcesDiff(currentSources, previousSources) {
 /**
  * Parse a pipeline trace and categorize rejected entries by stage.
  * Handles mixed trace field shapes (string arrays, object arrays).
- * @param {object|null} trace - lastPipelineTrace
- * @param {Set<string>} injectedTitles - actually-injected titles
- * @returns {Array<{ stage: string, label: string, icon: string, entries: Array<{title: string, reason: string}> }>}
+ *
+ * BUG-AUDIT v2.5: `injectedKeys` is a Set of trackerKey-shape strings
+ * (`vaultSource:title.toLowerCase()`) so same-titled entries from different
+ * vaults don't collide. Output entries carry `vaultSource` for the same reason.
+ *
+ * @param {object|null} trace - pipeline trace (entries carry vaultSource per #46 contract)
+ * @param {Set<string>} injectedKeys - trackerKey-shape Set of currently-injected entries
+ * @returns {Array<{ stage: string, label: string, icon: string, entries: Array<{title: string, vaultSource: string, reason: string}> }>}
  */
-export function categorizeRejections(trace, injectedTitles) {
+export function categorizeRejections(trace, injectedKeys) {
     if (!trace) return [];
     const groups = [];
+    const k = (e) => `${e.vaultSource || ''}:${(e.title || '').toLowerCase()}`;
 
     if (trace.gatedOut?.length > 0) {
         const entries = trace.gatedOut
-            .filter(e => !injectedTitles.has(e.title))
+            .filter(e => !injectedKeys.has(k(e)))
             .map(e => {
                 const parts = [];
                 if (e.requires?.length) parts.push(`needs: ${e.requires.join(', ')}`);
                 if (e.excludes?.length) parts.push(`blocked by: ${e.excludes.join(', ')}`);
-                return { title: e.title, reason: parts.join('; ') || 'requires/excludes' };
+                return { title: e.title, vaultSource: e.vaultSource || '', reason: parts.join('; ') || 'requires/excludes' };
             });
         if (entries.length > 0) groups.push({ stage: 'gated_out', label: 'Blocked by dependencies', icon: 'fa-lock', entries });
     }
 
     if (trace.contextualGatingRemoved?.length > 0) {
         const entries = trace.contextualGatingRemoved
-            .filter(e => !injectedTitles.has(e.title))
-            .map(e => ({ title: e.title, reason: e.reason || 'Filtered by era/location/scene/character' }));
+            .filter(e => !injectedKeys.has(k(e)))
+            .map(e => ({ title: e.title, vaultSource: e.vaultSource || '', reason: e.reason || 'Filtered by era/location/scene/character' }));
         if (entries.length > 0) groups.push({ stage: 'contextual_gating', label: 'Filtered by context', icon: 'fa-filter', entries });
     }
 
     // Candidates that made it to manifest but AI didn't pick.
     if (trace.keywordMatched?.length > 0 && trace.aiSelected) {
-        const aiSelectedTitles = new Set(trace.aiSelected.map(m => m.title));
+        const aiSelectedKeys = new Set(trace.aiSelected.map(k));
         // Entries already attributed to another stage shouldn't double-count here.
-        const accountedTitles = new Set([
-            ...(trace.gatedOut || []).map(e => e.title),
-            ...(trace.contextualGatingRemoved || []).map(e => e.title),
-            ...(trace.cooldownRemoved || []).map(e => e.title),
-            ...(trace.stripDedupRemoved || []).map(e => e.title),
-            ...(trace.probabilitySkipped || []).map(e => e.title),
-            ...(trace.warmupFailed || []).map(e => e.title),
-            ...(trace.budgetCut || []).map(e => e.title),
+        const accountedKeys = new Set([
+            ...(trace.gatedOut || []).map(k),
+            ...(trace.contextualGatingRemoved || []).map(k),
+            ...(trace.cooldownRemoved || []).map(k),
+            ...(trace.stripDedupRemoved || []).map(k),
+            ...(trace.probabilitySkipped || []).map(k),
+            ...(trace.warmupFailed || []).map(k),
+            ...(trace.budgetCut || []).map(k),
         ]);
         const entries = trace.keywordMatched
-            .filter(m => !aiSelectedTitles.has(m.title) && !injectedTitles.has(m.title) && !accountedTitles.has(m.title))
-            .map(m => ({ title: m.title, reason: 'AI did not select' }));
+            .filter(m => !aiSelectedKeys.has(k(m)) && !injectedKeys.has(k(m)) && !accountedKeys.has(k(m)))
+            .map(m => ({ title: m.title, vaultSource: m.vaultSource || '', reason: 'AI did not select' }));
         if (entries.length > 0) groups.push({ stage: 'ai_rejected', label: 'AI Rejected', icon: 'fa-robot', entries });
     }
 
     if (trace.cooldownRemoved?.length > 0) {
         const entries = trace.cooldownRemoved
-            .filter(e => !injectedTitles.has(e.title))
-            .map(e => ({ title: e.title, reason: e.reason || 'Cooldown active' }));
+            .filter(e => !injectedKeys.has(k(e)))
+            .map(e => ({ title: e.title, vaultSource: e.vaultSource || '', reason: e.reason || 'Cooldown active' }));
         if (entries.length > 0) groups.push({ stage: 'cooldown', label: 'Cooldown Active', icon: 'fa-clock', entries });
     }
 
     if (trace.budgetCut?.length > 0) {
         const entries = trace.budgetCut
-            .filter(e => !injectedTitles.has(e.title))
-            .map(e => ({ title: e.title, reason: `Over budget${e.tokens ? ` (${e.tokens} tok)` : ''}` }));
+            .filter(e => !injectedKeys.has(k(e)))
+            .map(e => ({ title: e.title, vaultSource: e.vaultSource || '', reason: `Over budget${e.tokens ? ` (${e.tokens} tok)` : ''}` }));
         if (entries.length > 0) groups.push({ stage: 'budget_cut', label: 'Over budget', icon: 'fa-scissors', entries });
     }
 
     if (trace.stripDedupRemoved?.length > 0) {
         const entries = trace.stripDedupRemoved
-            .filter(e => !injectedTitles.has(e.title))
-            .map(e => ({ title: e.title, reason: e.reason || 'Already in context' }));
+            .filter(e => !injectedKeys.has(k(e)))
+            .map(e => ({ title: e.title, vaultSource: e.vaultSource || '', reason: e.reason || 'Already in context' }));
         if (entries.length > 0) groups.push({ stage: 'strip_dedup', label: 'Already Injected', icon: 'fa-copy', entries });
     }
 
     if (trace.probabilitySkipped?.length > 0) {
         const entries = trace.probabilitySkipped
-            .filter(e => !injectedTitles.has(e.title))
-            .map(e => ({ title: e.title, reason: 'Probability skipped' }));
+            .filter(e => !injectedKeys.has(k(e)))
+            .map(e => ({ title: e.title, vaultSource: e.vaultSource || '', reason: 'Probability skipped' }));
         if (entries.length > 0) groups.push({ stage: 'probability_skipped', label: 'Probability Skipped', icon: 'fa-dice', entries });
     }
 
     if (trace.warmupFailed?.length > 0) {
         const entries = trace.warmupFailed
-            .filter(e => !injectedTitles.has(e.title))
-            .map(e => ({ title: e.title, reason: 'Warmup not met' }));
+            .filter(e => !injectedKeys.has(k(e)))
+            .map(e => ({ title: e.title, vaultSource: e.vaultSource || '', reason: 'Warmup not met' }));
         if (entries.length > 0) groups.push({ stage: 'warmup_failed', label: 'Warmup Not Met', icon: 'fa-temperature-low', entries });
     }
 
     if (trace.refineKeyBlocked?.length > 0) {
         const entries = trace.refineKeyBlocked
-            .filter(e => !injectedTitles.has(e.title))
-            .map(e => ({ title: e.title, reason: `Matched "${e.primaryKey}" but refine keys [${e.refineKeys.join(', ')}] not found` }));
+            .filter(e => !injectedKeys.has(k(e)))
+            .map(e => ({ title: e.title, vaultSource: e.vaultSource || '', reason: `Matched "${e.primaryKey}" but refine keys [${e.refineKeys.join(', ')}] not found` }));
         if (entries.length > 0) groups.push({ stage: 'refine_key_blocked', label: 'Refine Key Blocked', icon: 'fa-filter-circle-xmark', entries });
     }
 
@@ -642,6 +898,31 @@ export function isForceInjected(entry, context = {}) {
 }
 
 /**
+ * M-6 (2026-05-22): canonical predicate for "this entry has an active warmup
+ * gate." All three match paths in `src/pipeline/match.js` (primary keyword
+ * scan, recursive scan, BM25 fuzzy supplement) MUST use this helper rather
+ * than ad-hoc shape checks. Before this consolidation, the primary + recursion
+ * paths used `entry.warmup !== null` while the BM25 path used
+ * `entry.warmup && entry.warmup >= 1` — those diverge on NaN, on accidental
+ * `0`, on `''`, on `false`, on negative numbers, and on undefined. The
+ * frontmatter parser only ever emits `null` or a positive integer for
+ * `warmup`, but vault cache hydration, manual `chat_metadata` edits, and
+ * future field-definitions changes can all surface other shapes — pinning
+ * one predicate prevents the three paths from drifting.
+ *
+ * Contract: returns true iff `entry.warmup` is a positive finite number.
+ * Everything else (null, undefined, 0, negative, NaN, Infinity, non-number)
+ * is treated as "no warmup gate."
+ *
+ * @param {{ warmup?: any }} entry
+ * @returns {boolean}
+ */
+export function hasWarmup(entry) {
+    const w = entry?.warmup;
+    return typeof w === 'number' && Number.isFinite(w) && w > 0;
+}
+
+/**
  * Best fuzzy match (bigram Dice coefficient) for an AI-returned title.
  * @param {string} aiTitle
  * @param {string[]} candidateTitles
@@ -665,11 +946,75 @@ export function fuzzyTitleMatch(aiTitle, candidateTitles, threshold = 0.6) {
     return bestScore >= threshold ? { title: bestTitle, similarity: bestScore } : null;
 }
 
+/**
+ * All-results variant of fuzzyTitleMatch — returns every candidate that scores
+ * at or above the threshold, sorted descending by similarity. Used by slash
+ * commands (`/dle-pin`, `/dle-block`, etc.) to surface multiple plausible
+ * matches via a tie-break picker when the user typed something ambiguous.
+ *
+ * @param {string} query
+ * @param {string[]} candidateTitles
+ * @param {number} [threshold=0.6]
+ * @returns {Array<{title: string, similarity: number}>} — empty array if none match
+ */
+export function fuzzyTitleMatchAll(query, candidateTitles, threshold = 0.6) {
+    const qBigrams = bigrams(String(query || '').toLowerCase());
+    if (qBigrams.size === 0) return [];
+
+    const matches = [];
+    for (const candidate of candidateTitles) {
+        const cBigrams = bigrams(String(candidate).toLowerCase());
+        if (cBigrams.size === 0) continue;
+        let overlap = 0;
+        for (const bg of qBigrams) { if (cBigrams.has(bg)) overlap++; }
+        const score = (2 * overlap) / (qBigrams.size + cBigrams.size);
+        if (score >= threshold) matches.push({ title: candidate, similarity: score });
+    }
+    matches.sort((a, b) => b.similarity - a.similarity);
+    return matches;
+}
+
 /** @param {string} str @returns {Set<string>} */
 function bigrams(str) {
     const set = new Set();
     for (let i = 0; i < str.length - 1; i++) set.add(str.slice(i, i + 2));
     return set;
+}
+
+/**
+ * Bigram-Dice similarity between two strings, in [0, 1]. Pairwise score used
+ * where consumers need a similarity number for one specific pair (e.g. AI
+ * Notepad manual dedup), as opposed to fuzzyTitleMatch's best-of-many search.
+ *
+ * Returns 0 when either side has no bigrams (empty/one-char strings).
+ */
+export function bigramDiceSimilarity(a, b) {
+    if (!a || !b) return 0;
+    const aBg = bigrams(String(a).toLowerCase());
+    const bBg = bigrams(String(b).toLowerCase());
+    if (aBg.size === 0 || bBg.size === 0) return 0;
+    let overlap = 0;
+    for (const bg of aBg) if (bBg.has(bg)) overlap++;
+    return (2 * overlap) / (aBg.size + bBg.size);
+}
+
+/**
+ * Normalize an AI-Notepad line into a comparison key. Strips bullet markers,
+ * checkbox prefixes, numbered-list prefixes, punctuation, and case so
+ * semantically-equal notes ("- The party met Alia." vs "* the party met alia.")
+ * collapse to the same key. Used for pin matching and dedup grouping.
+ */
+export function normalizeNotepadLine(line) {
+    if (!line) return '';
+    return String(line)
+        .replace(/^\s*[-*+•]\s+/, '')
+        .replace(/^\s*\[[ xX]\]\s+/, '')
+        .replace(/^\s*\d+[.)]\s+/, '')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
 }
 
 /**

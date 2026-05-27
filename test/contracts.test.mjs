@@ -984,10 +984,11 @@ test('F26: categorizeRejections groups gated out entries', () => {
 });
 
 test('F27: categorizeRejections excludes already-injected entries', () => {
+    // BUG-AUDIT v2.5: injectedKeys is now a Set of trackerKey-shape strings (':title' when no vault).
     const trace = {
         gatedOut: [{ title: 'Injected', requires: ['Needed'], excludes: [] }],
     };
-    const injected = new Set(['Injected']);
+    const injected = new Set([':injected']);
     const result = categorizeRejections(trace, injected);
     assertEqual(result.length, 0, 'injected entries should be excluded from rejection groups');
 });
@@ -1046,4 +1047,4 @@ test('F35: formatRelativeTime future timestamp returns "just now"', () => {
 // Summary
 // ============================================================================
 
-summary('Contract Tests');
+await summary('Contract Tests');

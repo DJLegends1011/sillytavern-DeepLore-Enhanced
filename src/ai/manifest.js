@@ -52,8 +52,14 @@ export function buildCandidateManifest(candidates, excludeBootstrap = false, set
             }
             let fieldsHint = '';
             if (entry.customFields) {
+                // Custom Fields in AI Manifest: respect aiManifestIncludeFields whitelist
+                // when populated (empty array = include all). Lets the user prune the
+                // manifest for token control without dropping custom-field support entirely.
+                const includeList = Array.isArray(s.aiManifestIncludeFields) ? s.aiManifestIncludeFields : [];
+                const includeSet = includeList.length > 0 ? new Set(includeList) : null;
                 const pairs = Object.entries(entry.customFields)
-                    .filter(([, v]) => v != null && v !== '' && (!Array.isArray(v) || v.length > 0))
+                    .filter(([k, v]) => v != null && v !== '' && (!Array.isArray(v) || v.length > 0))
+                    .filter(([k]) => !includeSet || includeSet.has(k))
                     .map(([k, v]) => `${fieldLabelMap.get(k) || k}: ${Array.isArray(v) ? v.join(', ') : v}`);
                 if (pairs.length > 0) fieldsHint = `\n[${pairs.join(' | ')}]`;
             }

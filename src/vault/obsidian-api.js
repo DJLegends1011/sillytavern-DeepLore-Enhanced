@@ -4,6 +4,7 @@
  */
 
 import { pushEvent, abortWith } from '../diagnostics/interceptors.js';
+import { updateFrontmatterFields } from '../helpers.js';
 
 const DEFAULT_TIMEOUT = 30000;
 const OBSIDIAN_BATCH_SIZE = 50;
@@ -596,6 +597,57 @@ export async function writeNote(host, port, apiKey, filename, content, useHttps 
             return { ok: true };
         }
         return { ok: false, error: `HTTP ${result.status}: ${(result.data || '').substring(0, 200)}` };
+    } catch (err) {
+        return { ok: false, error: err.message };
+    }
+}
+
+/**
+ * Update Existing Entries — read a vault file, surgically patch the requested
+ * scalar frontmatter fields, write the merged result back. Body and untouched
+ * frontmatter fields are preserved byte-for-byte (no YAML re-serialization).
+ *
+ * Returns `{ ok, applied, skipped, error? }`. `applied`/`skipped` are passed
+ * through from `updateFrontmatterFields`; callers can surface them to the user.
+ *
+ * Does NOT create the file if missing — returns ok:false with status 404.
+ * Caller wraps in `upsertConvertedEntry` or `writeNote` when full-write is wanted.
+ *
+ * @param {string} host
+ * @param {number} port
+ * @param {string} apiKey
+ * @param {string} filename
+ * @param {Record<string, string|number|boolean|null>} updates
+ * @param {boolean} [useHttps=false]
+ * @returns {Promise<{ok: boolean, applied?: string[], skipped?: string[], error?: string}>}
+ */
+export async function updateEntryFields(host, port, apiKey, filename, updates, useHttps = false) {
+    try {
+        const normalizedPath = validateVaultPath(filename);
+        const readResult = await obsidianFetch({
+            host,
+            port,
+            apiKey,
+            https: useHttps,
+            path: `/vault/${encodeVaultPath(normalizedPath)}`,
+            method: 'GET',
+            accept: 'text/markdown',
+        });
+        if (readResult.status === 404) {
+            return { ok: false, error: 'File not found (use writeNote / upsertConvertedEntry to create)' };
+        }
+        if (readResult.status !== 200) {
+            return { ok: false, error: `HTTP ${readResult.status} on read` };
+        }
+        const original = String(readResult.data || '');
+        const { content, applied, skipped } = updateFrontmatterFields(original, updates);
+        if (applied.length === 0) {
+            // No-op write avoids touching mtime when nothing actually changed.
+            return { ok: true, applied: [], skipped };
+        }
+        const writeResult = await writeNote(host, port, apiKey, normalizedPath, content, useHttps);
+        if (!writeResult.ok) return { ok: false, applied: [], skipped, error: writeResult.error };
+        return { ok: true, applied, skipped };
     } catch (err) {
         return { ok: false, error: err.message };
     }

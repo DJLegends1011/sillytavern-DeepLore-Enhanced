@@ -5,9 +5,10 @@ import { escapeHtml } from '../../../../../utils.js';
 import { callGenericPopup, POPUP_TYPE } from '../../../../../popup.js';
 import { SlashCommandParser } from '../../../../../slash-commands/SlashCommandParser.js';
 import { SlashCommand } from '../../../../../slash-commands/SlashCommand.js';
-import { ARGUMENT_TYPE } from '../../../../../slash-commands/SlashCommandArgument.js';
+import { SlashCommandArgument, ARGUMENT_TYPE } from '../../../../../slash-commands/SlashCommandArgument.js';
+import { SlashCommandEnumValue } from '../../../../../slash-commands/SlashCommandEnumValue.js';
 import { parseFrontmatter, simpleHash, classifyError } from '../../core/utils.js';
-import { getSettings, getPrimaryVault } from '../../settings.js';
+import { getSettings, resolveWriteVault } from '../../settings.js';
 import { fetchScribeNotes } from '../vault/obsidian-api.js';
 import {
     vaultIndex, aiSearchStats, indexTimestamp, trackerKey,
@@ -89,6 +90,12 @@ export function registerAdminCommands() {
             await showAiNotepadPopup();
             return '';
         },
+        unnamedArgumentList: [SlashCommandArgument.fromProps({
+            description: 'optional subcommand',
+            typeList: [ARGUMENT_TYPE.STRING],
+            isRequired: false,
+            enumProvider: () => [new SlashCommandEnumValue('clear', 'wipe AI Notepad for this chat')],
+        })],
         helpString: 'View or clear AI-written session notes. Usage: /dle-ai-notepad [clear]',
         returns: ARGUMENT_TYPE.STRING,
     }));
@@ -145,7 +152,10 @@ export function registerAdminCommands() {
             toastr.info('Fetching session notes...', 'DeepLore Enhanced', { timeOut: 2000 });
 
             try {
-                const histVault = getPrimaryVault(settings);
+                // Scribe writes go to the per-tool configured vault (#32). Reading
+                // history from the primary vault here would silently show "no notes"
+                // whenever the user routes Scribe to a non-primary vault.
+                const histVault = resolveWriteVault('scribe', settings);
                 const data = await fetchScribeNotes(histVault.host, histVault.port, histVault.apiKey, settings.scribeFolder, !!histVault.https);
                 if (!data.ok) throw new Error(data.error || 'Failed to fetch notes');
 
@@ -241,7 +251,11 @@ export function registerAdminCommands() {
         callback: async () => {
             const settings = getSettings();
             const analytics = settings.analyticsData || {};
-            const titles = Object.keys(analytics).sort((a, b) => (analytics[b].injected || 0) - (analytics[a].injected || 0));
+            // Audit DIAG-03: `_librarian` (and any future `_`-prefixed meta bucket)
+            // is internal state, not an entry — skip it in the user-facing table.
+            const titles = Object.keys(analytics)
+                .filter(k => !k.startsWith('_'))
+                .sort((a, b) => (analytics[b].injected || 0) - (analytics[a].injected || 0));
 
             const plainLines = ['Entry Analytics', '', 'Entry\tMatched\tInjected\tLast Used'];
             for (const title of titles) {
@@ -510,6 +524,15 @@ export function registerAdminCommands() {
             toastr.success(`Debug mode ${settings.debugMode ? 'ON' : 'OFF'}`, 'DeepLore Enhanced');
             return '';
         },
+        unnamedArgumentList: [SlashCommandArgument.fromProps({
+            description: 'optional explicit state',
+            typeList: [ARGUMENT_TYPE.STRING],
+            isRequired: false,
+            enumProvider: () => [
+                new SlashCommandEnumValue('on', 'force debug logging on'),
+                new SlashCommandEnumValue('off', 'force debug logging off'),
+            ],
+        })],
         helpString: 'Toggle debug logging. Usage: /dle-debug [on|off]',
         returns: ARGUMENT_TYPE.STRING,
     }));
@@ -540,6 +563,11 @@ export function registerAdminCommands() {
             });
             return '';
         },
+        unnamedArgumentList: [SlashCommandArgument.fromProps({
+            description: 'how many entries to show (1-500, default 50)',
+            typeList: [ARGUMENT_TYPE.NUMBER],
+            isRequired: false,
+        })],
         helpString: 'Show recent DLE console log entries. Usage: /dle-logs [count]',
         returns: ARGUMENT_TYPE.STRING,
     }));

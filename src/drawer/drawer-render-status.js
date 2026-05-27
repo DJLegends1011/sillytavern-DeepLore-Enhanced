@@ -1,13 +1,22 @@
-import { chat_metadata } from '../../../../../../script.js';
+import { chat_metadata, getCurrentChatId } from '../../../../../../script.js';
 import { escapeHtml } from '../../../../../utils.js';
 import { getSettings } from '../../settings.js';
 import {
-    vaultIndex, lastInjectionSources, lastPipelineTrace,
+    vaultIndex,
     indexing, indexEverLoaded, computeOverallStatus,
     vaultAvgTokens, claudeAutoEffortBad, claudeAutoEffortDetail,
     pipelinePhase,
     suppressNextAgenticLoop,
 } from '../state.js';
+import { getCurrentForChat as getCurrentVerdictForChat } from '../verdict/verdict-store.js';
+
+// Local helper — UI consumers must read the CURRENT CHAT's verdict, not the
+// ring-global newest. See docs/gotchas.md #46 ("UI consumer rule").
+function _currentVerdictForChat() {
+    let cid = null;
+    try { cid = getCurrentChatId() ?? null; } catch { cid = null; }
+    return getCurrentVerdictForChat(cid);
+}
 import { getCircuitState } from '../vault/obsidian-api.js';
 import { ds, MODE_LABELS, MODE_DESCRIPTIONS, STATUS_CLASSES, STATUS_DESCRIPTIONS, announceToScreenReader, formatTokensCompact } from './drawer-state.js';
 
@@ -112,8 +121,9 @@ export function renderStatusZone() {
         $drawer.find('.dle-pipeline-label').text('Connecting to Obsidian…');
     }
 
-    // Stat values get a flash animation on change. lastPipelineTrace is the fallback when
-    // lastInjectionSources has been cleared by CHARACTER_MESSAGE_RENDERED — trace persists until CHAT_CHANGED.
+    // Stat values get a flash animation on change. Verdict store holds the authoritative
+    // trace + injected sources together — no fallback needed.
+    const _statusVerdict = _currentVerdictForChat();
     const entryCount = indexing ? '…' : vaultIndex.length;
     const $entries = $drawer.find('[data-stat="entries"]');
     if ($entries.text() !== String(entryCount)) {
@@ -141,7 +151,7 @@ export function renderStatusZone() {
 
     // Token bar. When unlimited budget: bar shows proportion of total vault being injected
     // (used / total vault tokens) so users still see relative scale; floor at 1% so the bar is visible.
-    const trace = lastPipelineTrace;
+    const trace = _statusVerdict?.trace ?? null;
     const budget = settings.unlimitedBudget ? 0 : (settings.maxTokensBudget || 0);
     const used = trace?.totalTokens || 0;
     const totalVaultTokens = vaultIndex.length * (vaultAvgTokens || 200);
@@ -164,7 +174,7 @@ export function renderStatusZone() {
     $drawer.find('.dle-token-bar-label').text(budgetLabel);
     let breakdownParts = [];
     if (trace?.injected?.length) {
-        const src = lastInjectionSources || [];
+        const src = _statusVerdict?.injectedSources || [];
         const srcMap = new Map(src.map(s => [s.title, (s.matchedBy || '').toLowerCase()]));
         let constTokens = 0, keywordTokens = 0, aiTokens = 0, pinTokens = 0, otherTokens = 0;
         for (const e of trace.injected) {
@@ -189,7 +199,7 @@ export function renderStatusZone() {
             : 'Lore budget: waiting for first generation';
     $barContainer.attr('title', tokenTitle);
 
-    const injectedNum = lastInjectionSources?.length ?? lastPipelineTrace?.injected?.length ?? 0;
+    const injectedNum = _statusVerdict?.injectedSources?.length ?? _statusVerdict?.trace?.injected?.length ?? 0;
     const maxEntries = settings.unlimitedEntries ? 0 : (settings.maxEntries || 0);
     const entriesPct = maxEntries
         ? Math.min(100, Math.round((injectedNum / maxEntries) * 100))
@@ -261,8 +271,9 @@ export function updateTabBadges() {
     const $drawer = ds.$drawer;
     if (!$drawer) return;
 
-    // Sources get cleared after message render → fall back to lastPipelineTrace.
-    const injCount = lastInjectionSources?.length ?? lastPipelineTrace?.injected?.length ?? 0;
+    // Verdict store holds injectedSources + trace together; either path resolves count.
+    const _badgeVerdict = _currentVerdictForChat();
+    const injCount = _badgeVerdict?.injectedSources?.length ?? _badgeVerdict?.trace?.injected?.length ?? 0;
     $drawer.find('[data-badge="injection"]').text(injCount || '');
 
     const browseTotal = vaultIndex?.length || 0;

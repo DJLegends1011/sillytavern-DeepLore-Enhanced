@@ -6,10 +6,25 @@
  * before being included in the export.
  */
 
+import { getCurrentChatId } from '../../../../../../script.js';
 import * as state from '../state.js';
 import { getSettings, resolveConnectionConfig } from '../../settings.js';
 import { runHealthCheck } from '../ui/diagnostics.js';
 import { getAllCircuitStates } from '../vault/obsidian-api.js';
+import { getCurrentForChat as getCurrentVerdictForChat, _debugRingSnapshot } from '../verdict/verdict-store.js';
+
+// Diagnostic snapshot reads the CURRENT CHAT's verdict so "what's DLE's current
+// state" reflects the chat the user is in, not whatever was last written to ring.
+// See docs/gotchas.md #46 ("UI consumer rule").
+function _currentVerdictForChat() {
+    let cid = null;
+    try { cid = getCurrentChatId() ?? null; } catch { cid = null; }
+    return getCurrentVerdictForChat(cid);
+}
+import {
+    createPseudonymContext,
+    pseudonymizeTrace as pseudonymizeTracePure,
+} from './pseudonymize-trace.js';
 
 // DLE version — fetched once from manifest.json and cached.
 let _cachedDleVersion = null;
@@ -56,28 +71,26 @@ function resetMaskCaches() {
     _decolideIdx = 0;
 }
 
-// Title pseudonymizer — fresh per snapshot, cardinality preserved so "entry X
-// was selected → entry X hit cooldown" is still traceable.
-let _titleMap, _titleCounter;
+// Per-snapshot pseudonym context — fresh per snapshot, cardinality preserved
+// so "entry X was selected → entry X hit cooldown" is still traceable.
+// Title and vaultSource pseudonymization are pure (extracted to
+// `./pseudonymize-trace.js` for unit-testability without ST imports).
+let _pseudoCtx;
 function pseudonymizeTitle(title) {
     if (!title) return null;
-    let p = _titleMap.get(title);
+    let p = _pseudoCtx.titleMap.get(title);
     if (!p) {
-        p = `<title-${++_titleCounter}>`;
-        _titleMap.set(title, p);
+        p = `<title-${++_pseudoCtx.titleCounter}>`;
+        _pseudoCtx.titleMap.set(title, p);
     }
     return p;
 }
-
-// vaultSource is the user's project/story name — leaks PII like titles do.
-// Same cardinality-preserving pattern. Empty (single-vault) passes through.
-let _vaultSourceMap, _vaultSourceCounter;
 function pseudonymizeVaultSource(vs) {
     if (!vs) return vs;
-    let p = _vaultSourceMap.get(vs);
+    let p = _pseudoCtx.vaultSourceMap.get(vs);
     if (!p) {
-        p = `<vault-${++_vaultSourceCounter}>`;
-        _vaultSourceMap.set(vs, p);
+        p = `<vault-${++_pseudoCtx.vaultSourceCounter}>`;
+        _pseudoCtx.vaultSourceMap.set(vs, p);
     }
     return p;
 }
@@ -131,34 +144,14 @@ function mapToObj(m, maxEntries = 200) {
     return out;
 }
 
-/** Pseudonymize entry titles within a pipeline trace object (shallow copy). */
+/**
+ * Pseudonymize a pipeline trace using the per-snapshot context. Thin wrapper
+ * around the pure `pseudonymizeTracePure()` — extracted so it can be
+ * unit-tested without ST imports. See `./pseudonymize-trace.js` for the
+ * scrubbing contract and gotchas.md #19 regression coverage.
+ */
 function pseudonymizeTrace(trace) {
-    if (!trace || typeof trace !== 'object') return trace;
-    const copy = { ...trace };
-    const entryArrayKeys = [
-        'keywordMatched', 'aiSelected', 'gatedOut', 'contextualGatingRemoved',
-        'cooldownRemoved', 'warmupFailed', 'refineKeyBlocked', 'stripDedupRemoved',
-        'budgetCut', 'injected',
-    ];
-    for (const key of entryArrayKeys) {
-        if (!Array.isArray(copy[key])) continue;
-        copy[key] = copy[key].map(e => {
-            if (!e || typeof e !== 'object') return e;
-            const out = { ...e, title: pseudonymizeTitle(e.title), filename: pseudonymizeTitle(e.filename) };
-            // Keyword triggers are often character/location names.
-            if (out.matchedBy) out.matchedBy = pseudonymizeTitle(out.matchedBy);
-            // AI reasons may embed character names — replace any known title.
-            if (typeof out.reason === 'string') {
-                for (const [real, pseudo] of _titleMap.entries()) {
-                    if (out.reason.includes(real)) {
-                        out.reason = out.reason.replaceAll(real, pseudo);
-                    }
-                }
-            }
-            return out;
-        });
-    }
-    return copy;
+    return pseudonymizeTracePure(trace, _pseudoCtx);
 }
 
 /** Inventory of installed third-party extensions, if available via getContext(). */
@@ -346,10 +339,7 @@ function connectionSnapshot() {
  */
 export function captureStateSnapshot() {
     // Fresh pseudonym/mask tables per snapshot — no cross-export correlation.
-    _titleMap = new Map();
-    _titleCounter = 0;
-    _vaultSourceMap = new Map();
-    _vaultSourceCounter = 0;
+    _pseudoCtx = createPseudonymContext();
     resetMaskCaches();
 
     const snap = {
@@ -454,11 +444,21 @@ export function captureStateSnapshot() {
             lastScribeChatLength: state.lastScribeChatLength ?? null,
             hasLastScribeSummary: !!state.lastScribeSummary,
             perSwipeInjectedKeysCount: state.perSwipeInjectedKeys?.size ?? 0,
-            lastPipelineTrace: pseudonymizeTrace(state.lastPipelineTrace),
-            // Count + epoch — verifies pipeline output vs actual injection.
-            lastInjectionSourceCount: Array.isArray(state.lastInjectionSources) ? state.lastInjectionSources.length : 0,
-            lastInjectionEpoch: state.lastInjectionEpoch ?? null,
-            injectionEpochMatchesChatEpoch: state.lastInjectionEpoch === state.chatEpoch,
+            verdict: (() => {
+                const v = _currentVerdictForChat();
+                return v ? {
+                    genId: v.genId,
+                    msgIdx: v.msgIdx,
+                    epoch: v.epoch,
+                    lockEpoch: v.lockEpoch,
+                    ts: v.ts,
+                    injectedSourceCount: v.injectedSources?.length ?? 0,
+                    perEntryCount: v.perEntry?.length ?? 0,
+                    epochMatchesChatEpoch: v.epoch === state.chatEpoch,
+                    trace: pseudonymizeTrace(v.trace),
+                } : null;
+            })(),
+            verdictRingDepth: _debugRingSnapshot().length,
         };
     } catch (e) { snap.pipeline = { __error: String(e) }; }
 

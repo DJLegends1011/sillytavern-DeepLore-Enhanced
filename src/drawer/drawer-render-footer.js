@@ -1,15 +1,50 @@
-import { amount_gen } from '../../../../../../script.js';
+import { amount_gen, getCurrentChatId } from '../../../../../../script.js';
 import { getSettings } from '../../settings.js';
 import {
-    vaultIndex, lastPipelineTrace, librarianChatStats,
-    aiSearchStats, isAiCircuitOpen, indexEverLoaded, indexTimestamp, lastHealthResult,
+    vaultIndex, librarianChatStats,
+    aiSearchStats, isAiCircuitOpen, aiCircuitOpenedAt, resetAiCircuitBreaker,
+    indexEverLoaded, indexTimestamp, lastHealthResult,
 } from '../state.js';
+import { getCurrentForChat as getCurrentVerdictForChat } from '../verdict/verdict-store.js';
+
+// Local helper — UI consumers must read the CURRENT CHAT's verdict, not the
+// ring-global newest. See docs/gotchas.md #46 ("UI consumer rule").
+function _currentVerdictForChat() {
+    let cid = null;
+    try { cid = getCurrentChatId() ?? null; } catch { cid = null; }
+    return getCurrentVerdictForChat(cid);
+}
 import { getCircuitState } from '../vault/obsidian-api.js';
 import { ds, formatTokensCompact, activityLog, announceToScreenReader } from './drawer-state.js';
+import { callGenericPopup, POPUP_TYPE } from '../../../../../popup.js';
+
+const AI_CIRCUIT_COOLDOWN_MS = 30_000; // mirror state.js — drawer doesn't import the constant directly
 
 // ════════════════════════════════════════════════════════════════════════════
 // Footer Zone — Health Icons + AI Stats + Context Bar
 // ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * PR #28.1 — Footer reset button click handler. Confirmation popup first;
+ * on confirm, calls state.resetAiCircuitBreaker() and surfaces a toast.
+ * Re-renders the footer so the button hides on success.
+ */
+async function handleResetClick(e) {
+    e?.preventDefault?.();
+    const confirmed = await callGenericPopup(
+        'Reset AI breaker?<br><br><span class="dle-text-xs dle-muted">Pending cooldown will be discarded. Next AI call attempts immediately.</span>',
+        POPUP_TYPE.CONFIRM, '', {},
+    );
+    if (!confirmed) return;
+    const result = resetAiCircuitBreaker();
+    if (result.wasOpen) {
+        toastr.success(result.hadPendingCooldown ? 'AI breaker reset — pending cooldown discarded.' : 'AI breaker reset.', 'DeepLore Enhanced');
+    } else {
+        toastr.info('AI breaker was already closed.', 'DeepLore Enhanced');
+    }
+    // Re-render so the conditional button hides without waiting for the next event.
+    try { renderFooter(); } catch { /* drawer may be teardown-mid */ }
+}
 
 export function renderFooter() {
     const $drawer = ds.$drawer;
@@ -121,9 +156,10 @@ export function renderFooter() {
     }
 
     const $pipe = $footer.find('[data-health="pipeline"]');
-    if (lastPipelineTrace) {
-        const entryCount = lastPipelineTrace.injected?.length || 0;
-        const hasResults = entryCount > 0 || lastPipelineTrace.totalTokens > 0;
+    const _footerTrace = _currentVerdictForChat()?.trace ?? null;
+    if (_footerTrace) {
+        const entryCount = _footerTrace.injected?.length || 0;
+        const hasResults = entryCount > 0 || _footerTrace.totalTokens > 0;
         if (hasResults) {
             $pipe.removeClass('dle-health-warn dle-health-error').addClass('dle-health-ok');
             $pipe.attr('aria-label', `Lore selection: last run found ${entryCount} entries — click for details`).attr('title', `Lore selection: last run found ${entryCount} entries — click for details`);
@@ -160,9 +196,20 @@ export function renderFooter() {
     }
 
     const $ai = $footer.find('[data-health="ai"]');
-    if (isAiCircuitOpen()) {
+    const $reset = $footer.find('#dle-reset-ai-breaker');
+    const breakerOpen = isAiCircuitOpen();
+    if (breakerOpen) {
         $ai.removeClass('dle-health-ok dle-health-warn').addClass('dle-health-error');
-        $ai.attr('aria-label', 'AI search: temporarily paused after repeated failures').attr('title', 'AI search: temporarily paused after repeated failures — will retry automatically');
+        const remainingMs = Math.max(0, AI_CIRCUIT_COOLDOWN_MS - (Date.now() - aiCircuitOpenedAt));
+        const remainingSec = Math.ceil(remainingMs / 1000);
+        const cooldownNote = remainingMs > 0 ? ` (retry in ~${remainingSec}s)` : ' (ready for probe — next call attempts)';
+        $ai.attr('aria-label', `AI search: temporarily paused${cooldownNote}`).attr('title', `AI search: temporarily paused${cooldownNote} — click reset button to clear immediately`);
+        // PR #28.1: surface reset button only while breaker open.
+        if ($reset.length) {
+            $reset.removeClass('dle-hidden');
+            $reset.attr('title', `Reset AI breaker — discard pending cooldown${remainingMs > 0 ? ` (${remainingSec}s left)` : ''}`);
+            $reset.off('click.dleReset').on('click.dleReset', handleResetClick);
+        }
     } else if (aiSearchStats.calls > 0) {
         $ai.removeClass('dle-health-warn dle-health-error').addClass('dle-health-ok');
         $ai.attr('aria-label', `AI search: OK (${aiSearchStats.calls} calls this session) — click for details`).attr('title', `AI search: OK (${aiSearchStats.calls} calls this session) — click for details`);
@@ -172,6 +219,10 @@ export function renderFooter() {
     } else {
         $ai.removeClass('dle-health-ok dle-health-warn dle-health-error');
         $ai.attr('aria-label', 'AI search: disabled').attr('title', 'AI search: disabled — enable in DeepLore settings');
+    }
+    if (!breakerOpen && $reset.length) {
+        $reset.addClass('dle-hidden');
+        $reset.off('click.dleReset');
     }
 
     // ── AI stats ──
