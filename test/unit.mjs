@@ -15,7 +15,7 @@ import {
     truncateToSentence, simpleHash, escapeRegex, escapeXml,
     buildScanText, buildAiChatContext, validateSettings, yamlEscape,
 } from '../core/utils.js';
-import { testEntryMatch, countKeywordOccurrences, applyGating, resolveLinks, formatAndGroup, clearScanTextCache } from '../core/matching.js';
+import { testEntryMatch, countKeywordOccurrences, applyGating, resolveLinks, formatAndGroup, clearScanTextCache, applySelectiveLogic } from '../core/matching.js';
 import { parseVaultFile, clearPrompts } from '../core/pipeline.js';
 import { takeIndexSnapshot, detectChanges } from '../core/sync.js';
 
@@ -1840,10 +1840,11 @@ test('convertWiEntry: case_sensitive + match_whole_words snake-case emission', (
     assert(out.content.includes('match_whole_words: true'), 'matchWholeWords → match_whole_words');
 });
 
-test('convertWiEntry: selectiveLogic NOT in round-trip table (handled native Wave 3)', () => {
+test('convertWiEntry: selectiveLogic 3 (AND_ALL) emits selective_logic: and_all', () => {
+    // Wave 3 — native enforcement. selectiveLogic IS imported, just not as
+    // round-trip preservation. 0/AND_ANY is implicit default → omitted.
     const out = convertWiEntry({ comment: 'A', key: ['a'], selectiveLogic: 3, content: 'c' }, 'lorebook');
-    assert(!out.content.includes('selective_logic:'), 'selective_logic should not appear (Wave 3 owns it natively)');
-    assert(!out.content.includes('selectiveLogic:'), 'camel form also absent');
+    assert(out.content.includes('selective_logic: and_all'), 'AND_ALL must emit native frontmatter');
 });
 
 test('convertWiEntry: automationId string gets quoted by yamlEscape if needed', () => {
@@ -1986,6 +1987,160 @@ test('convertWiEntry: all 18 Tier C fields land when set non-default', () => {
         assert(out.content.includes(line), `missing: ${line}`);
     }
     assert(Object.keys(report.roundTripped).length === 18, 'all 18 fields counted');
+});
+
+// ============================================================================
+// Wave 3 (WI parity) — selectiveLogic native enforcement (4 modes)
+// ============================================================================
+// Pure helper applySelectiveLogic is the single source of truth — pin the
+// predicate so future refine-gate sites can't diverge across the 4 modes.
+
+test('applySelectiveLogic: empty refine_keys passes for all 4 modes', () => {
+    for (const logic of ['and_any', 'and_all', 'not_all', 'not_any']) {
+        assert(applySelectiveLogic(0, 0, logic) === true, `${logic} vacuously satisfied`);
+    }
+});
+
+test('applySelectiveLogic: and_any (default) — ≥1 match passes', () => {
+    assert(applySelectiveLogic(0, 3, 'and_any') === false, '0/3 blocks');
+    assert(applySelectiveLogic(1, 3, 'and_any') === true, '1/3 passes');
+    assert(applySelectiveLogic(3, 3, 'and_any') === true, '3/3 passes');
+});
+
+test('applySelectiveLogic: and_all — all must match', () => {
+    assert(applySelectiveLogic(0, 3, 'and_all') === false, '0/3 blocks');
+    assert(applySelectiveLogic(2, 3, 'and_all') === false, 'partial blocks');
+    assert(applySelectiveLogic(3, 3, 'and_all') === true, '3/3 passes');
+});
+
+test('applySelectiveLogic: not_all — at least one miss passes', () => {
+    assert(applySelectiveLogic(0, 3, 'not_all') === true, '0/3 passes');
+    assert(applySelectiveLogic(2, 3, 'not_all') === true, 'partial passes');
+    assert(applySelectiveLogic(3, 3, 'not_all') === false, '3/3 blocks (full match)');
+});
+
+test('applySelectiveLogic: not_any — zero matches passes', () => {
+    assert(applySelectiveLogic(0, 3, 'not_any') === true, '0/3 passes');
+    assert(applySelectiveLogic(1, 3, 'not_any') === false, 'any match blocks');
+    assert(applySelectiveLogic(3, 3, 'not_any') === false, 'full match blocks');
+});
+
+test('applySelectiveLogic: unknown logic falls back to and_any', () => {
+    assert(applySelectiveLogic(0, 3, 'gibberish') === false, 'unknown → and_any (block on 0)');
+    assert(applySelectiveLogic(1, 3, undefined) === true, 'undefined → and_any (pass on 1)');
+});
+
+test('testEntryMatch: legacy entry without selectiveLogic uses and_any (regression guard)', () => {
+    // Pre-Wave-3 entries have no selectiveLogic field. Behavior must be unchanged.
+    const entry = {
+        title: 'Legacy', vaultSource: '', keys: ['castle'],
+        refineKeys: ['knight', 'sword'],
+        // no selectiveLogic — should default to and_any
+    };
+    const settings = { caseSensitive: false, matchWholeWords: false };
+    // 1 refine matches (knight) → and_any default → passes
+    assert(testEntryMatch(entry, 'the castle knight stands guard', settings) === 'castle', 'pre-Wave-3 and_any behavior preserved');
+    // 0 refine matches → and_any default → blocks
+    assert(testEntryMatch(entry, 'the castle stands alone', settings) === null, 'pre-Wave-3 block behavior preserved');
+});
+
+test('testEntryMatch: and_all gates correctly', () => {
+    const entry = {
+        title: 'Strict', vaultSource: '', keys: ['castle'],
+        refineKeys: ['knight', 'sword'],
+        selectiveLogic: 'and_all',
+    };
+    const settings = { caseSensitive: false, matchWholeWords: false };
+    // Partial: knight present, sword absent → and_all blocks
+    assert(testEntryMatch(entry, 'castle knight', settings) === null, 'partial blocks');
+    // Full: both present → passes
+    assert(testEntryMatch(entry, 'castle knight with sword', settings) === 'castle', 'full match passes');
+    // None: blocks
+    assert(testEntryMatch(entry, 'castle alone', settings) === null, 'no match blocks');
+});
+
+test('testEntryMatch: not_all gates correctly', () => {
+    const entry = {
+        title: 'AntiFull', vaultSource: '', keys: ['castle'],
+        refineKeys: ['knight', 'sword'],
+        selectiveLogic: 'not_all',
+    };
+    const settings = { caseSensitive: false, matchWholeWords: false };
+    assert(testEntryMatch(entry, 'castle alone', settings) === 'castle', '0 refine matches passes');
+    assert(testEntryMatch(entry, 'castle knight', settings) === 'castle', 'partial passes');
+    assert(testEntryMatch(entry, 'castle knight sword', settings) === null, 'full match blocks');
+});
+
+test('testEntryMatch: not_any gates correctly', () => {
+    const entry = {
+        title: 'Anti', vaultSource: '', keys: ['castle'],
+        refineKeys: ['knight', 'sword'],
+        selectiveLogic: 'not_any',
+    };
+    const settings = { caseSensitive: false, matchWholeWords: false };
+    assert(testEntryMatch(entry, 'castle alone', settings) === 'castle', '0 matches passes');
+    assert(testEntryMatch(entry, 'castle knight', settings) === null, '1 match blocks');
+    assert(testEntryMatch(entry, 'castle knight sword', settings) === null, 'full match blocks');
+});
+
+test('parseVaultFile: reads selective_logic frontmatter', () => {
+    const file = {
+        filename: 'test.md',
+        content: '---\ntags:\n  - lorebook\nkeys:\n  - x\nselective_logic: and_all\n---\nbody',
+    };
+    const tagConfig = { lorebookTag: 'lorebook', constantTag: '', neverInsertTag: '', seedTag: '', bootstrapTag: '' };
+    const entry = parseVaultFile(file, tagConfig);
+    assert(entry.selectiveLogic === 'and_all', 'and_all read into VaultEntry');
+});
+
+test('parseVaultFile: missing selective_logic defaults to and_any', () => {
+    const file = {
+        filename: 'test.md',
+        content: '---\ntags:\n  - lorebook\nkeys:\n  - x\n---\nbody',
+    };
+    const tagConfig = { lorebookTag: 'lorebook', constantTag: '', neverInsertTag: '', seedTag: '', bootstrapTag: '' };
+    const entry = parseVaultFile(file, tagConfig);
+    assert(entry.selectiveLogic === 'and_any', 'default is and_any (regression-safe for legacy entries)');
+});
+
+test('parseVaultFile: invalid selective_logic emits W_INVALID + falls back', () => {
+    const file = {
+        filename: 'test.md',
+        content: '---\ntags:\n  - lorebook\nkeys:\n  - x\nselective_logic: gibberish\n---\nbody',
+    };
+    const tagConfig = { lorebookTag: 'lorebook', constantTag: '', neverInsertTag: '', seedTag: '', bootstrapTag: '' };
+    const entry = parseVaultFile(file, tagConfig);
+    assert(entry.selectiveLogic === 'and_any', 'fall back to and_any');
+    const invalidWarn = (entry._parserWarnings || []).find(w => w.code === 'W_INVALID' && w.field === 'selective_logic');
+    assert(invalidWarn, 'W_INVALID warning emitted');
+});
+
+test('convertWiEntry: selectiveLogic 0 (AND_ANY) omitted as implicit default', () => {
+    const out = convertWiEntry({ comment: 'A', key: ['a'], selectiveLogic: 0, content: 'c' }, 'lorebook');
+    assert(!out.content.includes('selective_logic:'), 'default value not emitted');
+});
+
+test('convertWiEntry: selectiveLogic ST enum → snake name mapping', () => {
+    // ST: 0=AND_ANY, 1=NOT_ALL, 2=NOT_ANY, 3=AND_ALL
+    const not_all = convertWiEntry({ comment: 'A', key: ['a'], selectiveLogic: 1, content: 'c' }, 'lorebook');
+    assert(not_all.content.includes('selective_logic: not_all'), '1 → not_all');
+    const not_any = convertWiEntry({ comment: 'B', key: ['b'], selectiveLogic: 2, content: 'c' }, 'lorebook');
+    assert(not_any.content.includes('selective_logic: not_any'), '2 → not_any');
+    const and_all = convertWiEntry({ comment: 'C', key: ['c'], selectiveLogic: 3, content: 'c' }, 'lorebook');
+    assert(and_all.content.includes('selective_logic: and_all'), '3 → and_all');
+});
+
+test('convertWiEntry: invalid selectiveLogic int omitted, bumps skipped', () => {
+    const report = { nativeApplied: {}, roundTripped: {}, skipped: {} };
+    const out = convertWiEntry({ comment: 'A', key: ['a'], selectiveLogic: 99, content: 'c' }, 'lorebook', { report });
+    assert(!out.content.includes('selective_logic:'), 'invalid int omitted');
+    assert(report.skipped.invalid_selective_logic === 1, 'invalid_selective_logic counter bumped');
+});
+
+test('convertWiEntry: selectiveLogic 0 counted as selective_logic_default', () => {
+    const report = { nativeApplied: {}, roundTripped: {}, skipped: {} };
+    convertWiEntry({ comment: 'A', key: ['a'], selectiveLogic: 0, content: 'c' }, 'lorebook', { report });
+    assert(report.nativeApplied.selective_logic_default === 1, 'default-value counter visible to report');
 });
 
 // ============================================================================

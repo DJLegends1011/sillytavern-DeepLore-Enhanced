@@ -4,6 +4,25 @@ Core stage functions live in `src/stages.js`. **Stages 1–5 and the Tracking Fu
 
 ---
 
+## Selective Logic (refine-key gate)
+
+Refine keys gate the primary-key match in `testEntryMatch` (`core/matching.js`). Pre-Wave-3 the gate was hardcoded AND_ANY (`cached.refine.some(...)`). Wave 3 made the four ST `selectiveLogic` modes native:
+
+| `selective_logic` | ST enum | Semantics |
+|-------------------|---------|-----------|
+| `and_any` (default) | 0 AND_ANY | primary AND ≥1 refine key in scan text |
+| `not_all` | 1 NOT_ALL | primary AND at least one refine key MISSING |
+| `not_any` | 2 NOT_ANY | primary AND zero refine keys in scan text |
+| `and_all` | 3 AND_ALL | primary AND ALL refine keys in scan text |
+
+Empty `refine_keys` array passes for all four modes (vacuously satisfied).
+
+The pure predicate `applySelectiveLogic(matchedCount, total, logic)` in `core/matching.js` is the single source of truth — pin the predicate so future refine-gate sites can't diverge across modes (matches the M-6 `hasWarmup` invariant). Today only `testEntryMatch` calls it, but recursion and BM25 paths both consume `testEntryMatch`, so all three keyword sites are covered transitively. BM25 fuzzy matches bypass refine keys entirely (TF-IDF scoring is content-wide, not keyword-based) — that's an intentional architectural carve-out, not a `selective_logic` exception.
+
+Parser validates `frontmatter.selective_logic` against the four-name enum; unknown values fall back to `and_any` and emit `W_INVALID` via `/dle-lint`. Importer (`src/helpers.js:convertWiEntry`) maps ST's integer enum 0..3 to the snake name; mode 0 is the implicit default and is omitted from emitted frontmatter to keep vault entries clean.
+
+---
+
 ## ExemptionPolicy
 
 ```javascript

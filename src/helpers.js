@@ -590,6 +590,27 @@ export function convertWiEntry(wiEntry, lorebookTag, options = {}) {
         }
     }
 
+    // Wave 3 (WI parity) — native selective_logic enforcement. Map ST's integer
+    // enum to the snake_case symbolic name the parser + applySelectiveLogic gate
+    // both consume. Mode 0 (AND_ANY) is the implicit default — omit to keep the
+    // vault entry clean. Invalid integers (out of 0..3 or non-number) bump
+    // skipped.invalid_selective_logic and emit nothing rather than lie.
+    if (wiEntry.selectiveLogic != null) {
+        const SL_NAMES = ['and_any', 'not_all', 'not_any', 'and_all'];
+        const slIdx = typeof wiEntry.selectiveLogic === 'number' ? wiEntry.selectiveLogic : null;
+        const slName = slIdx != null && slIdx >= 0 && slIdx < SL_NAMES.length ? SL_NAMES[slIdx] : null;
+        if (slName && slName !== 'and_any') {
+            fm.push(`selective_logic: ${slName}`);
+            bump('nativeApplied', 'selective_logic');
+        } else if (slName === 'and_any') {
+            // Implicit default — count under nativeApplied for the report's "we saw
+            // selectiveLogic and chose to omit because it's default" signal.
+            bump('nativeApplied', 'selective_logic_default');
+        } else {
+            bump('skipped', 'invalid_selective_logic');
+        }
+    }
+
     // C.3: round-trip-only — parseVaultFile emits W_NOT_IMPLEMENTED for these so
     // /dle-lint surfaces them. (BUG-047 sticky, BUG-048 delay, BUG-052 group*)
     if (wiEntry.sticky != null && wiEntry.sticky !== 0) fm.push(`sticky: ${Number(wiEntry.sticky)}`);

@@ -104,6 +104,7 @@ const CANONICAL_FM_LOOKUP = {
     character_present: 'character_present',
     graph: 'graph',
     excluderecursion: 'excludeRecursion',
+    selective_logic: 'selective_logic',
 };
 
 /**
@@ -299,6 +300,26 @@ export function parseVaultFile(file, tagConfig, fieldDefinitions, options = {}) 
     const summary = (typeof frontmatter.summary === 'string' || typeof frontmatter.summary === 'number')
         ? String(frontmatter.summary).trim() : '';
 
+    // Wave 3 (WI parity) — native selective_logic enforcement. Validate enum;
+    // unknown values fall back to 'and_any' (current behavior) so a typo doesn't
+    // silently break matching. W_INVALID surfaces the typo via /dle-lint.
+    const SELECTIVE_LOGIC_VALUES = ['and_any', 'and_all', 'not_all', 'not_any'];
+    let selectiveLogic = 'and_any';
+    if (frontmatter.selective_logic != null) {
+        const raw = String(frontmatter.selective_logic).toLowerCase().trim();
+        if (SELECTIVE_LOGIC_VALUES.includes(raw)) {
+            selectiveLogic = raw;
+        } else {
+            warnings.push({
+                code: 'W_INVALID',
+                severity: 'warn',
+                field: 'selective_logic',
+                message: `Invalid selective_logic "${frontmatter.selective_logic}". Falling back to 'and_any'. Valid: ${SELECTIVE_LOGIC_VALUES.join(', ')}.`,
+                suggestedFix: `Set selective_logic to one of: ${SELECTIVE_LOGIC_VALUES.join(', ')}, or omit for default 'and_any'.`,
+            });
+        }
+    }
+
     const customFields = extractCustomFields(frontmatter, fieldDefinitions || []);
 
     // C.3: round-trip-safe preservation of WI fields DLE has BUG numbers for
@@ -387,6 +408,7 @@ export function parseVaultFile(file, tagConfig, fieldDefinitions, options = {}) 
         vaultSource: '',
         customFields,
         graph: frontmatter.graph !== false,
+        selectiveLogic,
         _parserWarnings: warnings.length > 0 ? warnings : undefined,
     };
 }

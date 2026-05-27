@@ -159,22 +159,60 @@ export function testEntryMatch(entry, scanText, settings, trace = null) {
         return null;
     }
 
-    // Refine keys: if non-empty, at least one must also match (AND_ANY mode)
+    // Refine keys: gate is parameterized by entry.selectiveLogic (Wave 3 WI parity).
+    // Legacy entries without selectiveLogic default to 'and_any' — the pre-Wave-3
+    // behavior. All four ST selectiveLogic modes are honored:
+    //   and_any (default) — ≥1 refine key must match
+    //   and_all           — all refine keys must match
+    //   not_any           — zero refine keys may match (any hit blocks the entry)
+    //   not_all           — at least one refine key must miss (full match blocks)
+    // Empty refine_keys = no gate regardless of mode (vacuously satisfied for all
+    // four). The match path is shared across primary, recursion, and BM25 keyword
+    // pre-validation sites via testEntryMatch; future refine-gate sites MUST route
+    // through applySelectiveLogic (matches the M-6 hasWarmup invariant — pin the
+    // predicate so the 4 modes can't diverge across paths).
     if (cached.refine.length > 0) {
-        const hasRefine = cached.refine.some(item => {
+        const matched = cached.refine.filter(item => {
             if (settings.matchWholeWords) {
                 if (item.isMultiWord) return haystack.includes(item.rKey);
                 return item.regex.test(haystack);
             }
             return haystack.includes(item.rKey);
-        });
-        if (!hasRefine) {
-            if (trace) trace.push({ title: entry.title, vaultSource: entry.vaultSource, result: 'refine-blocked', primaryMatched: primaryMatch, refineKeys: cached.refine.map(r => r.rKey), reason: `primary matched "${primaryMatch}" but no refine_keys present in scan text` });
+        }).length;
+        const total = cached.refine.length;
+        const logic = entry.selectiveLogic || 'and_any';
+        if (!applySelectiveLogic(matched, total, logic)) {
+            if (trace) trace.push({ title: entry.title, vaultSource: entry.vaultSource, result: 'refine-blocked', primaryMatched: primaryMatch, refineKeys: cached.refine.map(r => r.rKey), reason: `selective_logic=${logic} blocked (${matched}/${total} refine keys matched)` });
             return null;
         }
     }
     if (trace) trace.push({ title: entry.title, vaultSource: entry.vaultSource, result: 'match', primaryMatched: primaryMatch, refineKeys: cached.refine.map(r => r.rKey), reason: null });
     return primaryMatch;
+}
+
+/**
+ * Pure predicate for the selective_logic gate. Single source of truth so all
+ * refine-key gate sites (today: testEntryMatch only) cannot diverge across
+ * the 4 modes. Mirrors ST's selectiveLogic enum:
+ *   0 AND_ANY → 'and_any' (primary AND any refine)
+ *   1 NOT_ALL → 'not_all' (primary AND NOT all refines)
+ *   2 NOT_ANY → 'not_any' (primary AND no refine)
+ *   3 AND_ALL → 'and_all' (primary AND all refines)
+ *
+ * @param {number} matchedCount - how many refine keys hit the scan text
+ * @param {number} total - total refine keys on the entry
+ * @param {'and_any'|'and_all'|'not_all'|'not_any'} logic
+ * @returns {boolean} true = entry passes the refine gate (still match)
+ */
+export function applySelectiveLogic(matchedCount, total, logic) {
+    if (total === 0) return true; // vacuously satisfied for all 4 modes
+    switch (logic) {
+        case 'and_all': return matchedCount === total;
+        case 'not_all': return matchedCount < total;
+        case 'not_any': return matchedCount === 0;
+        case 'and_any':
+        default:        return matchedCount > 0;
+    }
 }
 
 /**
