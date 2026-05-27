@@ -478,10 +478,17 @@ Maps a single ST World Info entry to `{filename, content}` (Obsidian markdown wi
 - Title: from `wiEntry.comment` or first key or `Entry_<uid>`.
 - Filename: sanitized title + `.md`.
 - Keys: from `wiEntry.key` (handles both array and comma-separated string formats, BUG-008).
-- Position: maps ST's 5-value enum `{0: 'after', 1: 'before', 2: 'before', 3: 'after', 4: 'in_chat'}` (lossy).
+- Position: maps ST's 5-value enum `{0: 'after', 1: 'before', 2: 'before', 3: 'after', 4: 'in_chat'}` (lossy). Original ST value preserved as `# original_st_position: N` comment.
 - Content: `wiEntry.content` as markdown body after frontmatter.
 
+**Tier A native fields (Wave 1, WI parity):** ST fields DLE supports natively are emitted as canonical frontmatter so authorial intent survives the import:
+- `wiEntry.disable === true` → `enabled: false` (parser then skips the entry at load time per `parseVaultFile:191`). **Pre-Wave-1 these silently became active entries** — the most damaging silent downgrade in the importer.
+- `wiEntry.excludeRecursion` (or snake `exclude_recursion`) → `excludeRecursion: true` (camelCase is the grandfathered canonical form — see `CANONICAL_FM_LOOKUP` in `core/pipeline.js`).
+- `wiEntry.role` ∈ {0,1,2} → `role: system|user|assistant`. Unknown integers omit the line rather than emit a lie; the report's `skipped.invalid_role` counter is bumped instead.
+
 **`options.compress`** (#18) — when truthy (or `'caveman'`), pipe the body through `compressCaveman()` before writing and annotate frontmatter with `compress: caveman`. Other strings are passed through `resolveCompressMode` for forward compatibility, but only modes in `APPLIED_COMPRESS_MODES` (currently just `'caveman'`) actually transform and annotate — unknown modes log a warning and leave the body untouched rather than emit a misleading annotation.
+
+**`options.report`** (Wave 1+) — optional accumulator shaped `{nativeApplied:{}, roundTripped:{}, skipped:{}}`. When passed, the converter mutates `report.<bucket>[field]++` in place. `importEntries` and `upsertConvertedEntry` thread their own accumulator through and return it on the result object so the import-report popup (Wave 5) can render per-field counts without re-parsing emitted YAML.
 
 ### `importEntries(entries, folder, onProgress, options?)` (import.js:importEntries())
 
@@ -493,7 +500,7 @@ Writes entries to the primary vault one at a time.
 - AbortError on dedup check → skip entry (FIX-M6), not use undefined path.
 - Network error on existence check → skip entry with error message.
 - Cap exhausted (>20 dedup attempts) → skip entry.
-- Returns `{imported, failed, renamed, errors}`.
+- Returns `{imported, failed, renamed, errors, report}`. The `report` accumulator (Wave 1) carries per-field counts of native applications, round-tripped fields, and skip reasons — consumed by the import-report popup (Wave 5).
 
 **V-C2 (2026-05-22):** `_findUniquePath` previously returned the candidate path "assume free" when the existence-check `obsidianFetch` threw a non-Abort error. If the file actually existed, the caller's `writeNote` then silently overwrote real vault content. The helper now delegates to `classifyDedupProbe(fetchResult, err)` in `src/vault/vault-pure.js` — any error (Abort or otherwise) yields `{accept:false, taken:false}`, so the helper returns `null` and the caller skips with a "dedup check failed" error message. See gotchas.md #49.
 
@@ -513,7 +520,7 @@ PR #28.2 — Single-entry convert-and-upsert. Designed for companion-extension i
 - `'replace'` — overwrite existing file. Destructive — companion callers should confirm.
 - `'skip'` — bail with `{ok:true, action:'skipped'}`.
 
-**Returns** `{ok, action: 'created'|'replaced'|'renamed'|'skipped'|null, path, error?}`.
+**Returns** `{ok, action: 'created'|'replaced'|'renamed'|'skipped'|null, path, report?, error?}`. The `report` accumulator (Wave 1) is present on every successful return so single-entry callers can show the same field-application summary as batch imports.
 
 **`options.compress`** — forwarded into `convertWiEntry`, defaults to `settings.importCompressByDefault`.
 

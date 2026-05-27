@@ -1744,6 +1744,85 @@ test('convertWiEntry: depth only included when > 0', () => {
 });
 
 // ============================================================================
+// Wave 1 (WI parity) — Tier A native ports
+// ============================================================================
+// Guard against the silent-downgrade regression: ST WI fields that DLE supports
+// natively MUST land as native frontmatter, not vanish into the void. Pre-Wave-1
+// these all silently dropped — `disable: true` was the worst (disabled entries
+// imported as active). The report accumulator is also asserted because the
+// import-report popup (Wave 5) depends on accurate counts.
+
+test('convertWiEntry: disable=true emits enabled: false (silent-downgrade fix)', () => {
+    const result = convertWiEntry({ comment: 'A', key: ['a'], disable: true, content: 'c' }, 'lorebook');
+    assert(result.content.includes('enabled: false'), 'disabled WI entry must emit enabled: false');
+});
+
+test('convertWiEntry: disable=false omits enabled (no noise on default)', () => {
+    const result = convertWiEntry({ comment: 'A', key: ['a'], disable: false, content: 'c' }, 'lorebook');
+    assert(!result.content.includes('enabled:'), 'default-enabled entry should not write the field');
+});
+
+test('convertWiEntry: excludeRecursion=true emits frontmatter (camelCase)', () => {
+    const result = convertWiEntry({ comment: 'A', key: ['a'], excludeRecursion: true, content: 'c' }, 'lorebook');
+    assert(result.content.includes('excludeRecursion: true'), 'excludeRecursion must round-trip native (parser already honors it)');
+});
+
+test('convertWiEntry: exclude_recursion snake alias also accepted', () => {
+    const result = convertWiEntry({ comment: 'A', key: ['a'], exclude_recursion: true, content: 'c' }, 'lorebook');
+    assert(result.content.includes('excludeRecursion: true'), 'snake_case input still produces canonical camelCase frontmatter');
+});
+
+test('convertWiEntry: role 0/1/2 maps to system/user/assistant', () => {
+    const sys = convertWiEntry({ comment: 'S', key: ['s'], role: 0, content: 'c' }, 'lorebook');
+    assert(sys.content.includes('role: system'), 'role 0 → system');
+    const usr = convertWiEntry({ comment: 'U', key: ['u'], role: 1, content: 'c' }, 'lorebook');
+    assert(usr.content.includes('role: user'), 'role 1 → user');
+    const asst = convertWiEntry({ comment: 'A', key: ['a'], role: 2, content: 'c' }, 'lorebook');
+    assert(asst.content.includes('role: assistant'), 'role 2 → assistant');
+});
+
+test('convertWiEntry: invalid role index omitted (no lie)', () => {
+    const out = convertWiEntry({ comment: 'A', key: ['a'], role: 99, content: 'c' }, 'lorebook');
+    assert(!out.content.includes('role:'), 'unknown role enum must not emit anything');
+});
+
+test('convertWiEntry: role null omitted', () => {
+    const out = convertWiEntry({ comment: 'A', key: ['a'], role: null, content: 'c' }, 'lorebook');
+    assert(!out.content.includes('role:'), 'null role omitted');
+});
+
+test('convertWiEntry: report accumulator counts Tier A applications', () => {
+    const report = { nativeApplied: {}, roundTripped: {}, skipped: {} };
+    convertWiEntry({ comment: 'A', key: ['a'], disable: true, excludeRecursion: true, role: 0, content: 'c' }, 'lorebook', { report });
+    assert(report.nativeApplied.enabled === 1, 'enabled counter bumped');
+    assert(report.nativeApplied.excludeRecursion === 1, 'excludeRecursion counter bumped');
+    assert(report.nativeApplied.role === 1, 'role counter bumped');
+});
+
+test('convertWiEntry: report accumulator records invalid role under skipped', () => {
+    const report = { nativeApplied: {}, roundTripped: {}, skipped: {} };
+    convertWiEntry({ comment: 'A', key: ['a'], role: 99, content: 'c' }, 'lorebook', { report });
+    assert(report.skipped.invalid_role === 1, 'invalid_role skip counter bumped');
+    assert(!report.nativeApplied.role, 'role counter NOT bumped on invalid input');
+});
+
+test('convertWiEntry: report accumulator aggregates across multiple calls', () => {
+    const report = { nativeApplied: {}, roundTripped: {}, skipped: {} };
+    convertWiEntry({ comment: 'A', key: ['a'], disable: true, content: 'c' }, 'lorebook', { report });
+    convertWiEntry({ comment: 'B', key: ['b'], disable: true, content: 'c' }, 'lorebook', { report });
+    convertWiEntry({ comment: 'C', key: ['c'], disable: true, content: 'c' }, 'lorebook', { report });
+    assert(report.nativeApplied.enabled === 3, 'counter accumulates across batch');
+});
+
+test('convertWiEntry: omitting report leaves no side effects', () => {
+    // Sanity — callers that don't care about the report shouldn't hit a TypeError.
+    let threw = false;
+    try { convertWiEntry({ comment: 'A', key: ['a'], disable: true, content: 'c' }, 'lorebook'); }
+    catch { threw = true; }
+    assert(!threw, 'optional report must remain optional');
+});
+
+// ============================================================================
 // Tests: #18 caveman-compress import (src/caveman.js + convertWiEntry hook)
 // ============================================================================
 

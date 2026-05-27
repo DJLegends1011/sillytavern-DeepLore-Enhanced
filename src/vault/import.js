@@ -89,10 +89,17 @@ export async function importEntries(entries, folder, onProgress, options = {}) {
     let failed = 0;
     const errors = [];
 
+    // Wave 1 (WI parity): accumulator threaded into convertWiEntry. Buckets:
+    //   nativeApplied[field] — Tier A fields emitted as native frontmatter
+    //   roundTripped[field]  — Tier C fields preserved without enforcement (Wave 2)
+    //   skipped[reason]      — fields refused (e.g. invalid_role)
+    // Returned to caller so the import-report popup (Wave 5) can render counts.
+    const report = { nativeApplied: {}, roundTripped: {}, skipped: {} };
+
     let renamed = 0;
     for (const wiEntry of entries) {
         try {
-            const { filename, content } = convertWiEntry(wiEntry, lorebookTag, { compress });
+            const { filename, content } = convertWiEntry(wiEntry, lorebookTag, { compress, report });
             let fullPath = folder ? `${folder}/${filename}` : filename;
 
             // Check existence to avoid silent overwrites.
@@ -139,7 +146,7 @@ export async function importEntries(entries, folder, onProgress, options = {}) {
         if (onProgress) onProgress(imported + failed, entries.length);
     }
 
-    return { imported, failed, renamed, errors };
+    return { imported, failed, renamed, errors, report };
 }
 
 /**
@@ -172,8 +179,9 @@ export async function upsertConvertedEntry(wiEntry, folder, options = {}) {
     const compress = options.compress ?? settings.importCompressByDefault;
 
     let filename, content;
+    const report = { nativeApplied: {}, roundTripped: {}, skipped: {} };
     try {
-        ({ filename, content } = convertWiEntry(wiEntry, settings.lorebookTag, { compress }));
+        ({ filename, content } = convertWiEntry(wiEntry, settings.lorebookTag, { compress, report }));
     } catch (err) {
         return { ok: false, action: null, path: '', error: `convert failed: ${err.message}` };
     }
@@ -195,7 +203,7 @@ export async function upsertConvertedEntry(wiEntry, folder, options = {}) {
     }
 
     if (existed) {
-        if (policy === 'skip') return { ok: true, action: 'skipped', path: fullPath };
+        if (policy === 'skip') return { ok: true, action: 'skipped', path: fullPath, report };
         if (policy === 'rename') {
             const candidatePath = await _findUniquePath(targetVault, filename, folder);
             if (!candidatePath) {
@@ -212,7 +220,7 @@ export async function upsertConvertedEntry(wiEntry, folder, options = {}) {
         return { ok: false, action: null, path: fullPath, error: result.error };
     }
     const action = existed ? (policy === 'replace' ? 'replaced' : 'renamed') : 'created';
-    return { ok: true, action, path: fullPath };
+    return { ok: true, action, path: fullPath, report };
 }
 
 /**

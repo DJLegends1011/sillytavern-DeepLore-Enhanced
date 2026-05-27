@@ -457,10 +457,20 @@ export function buildObsidianURI(vaultName, filename) {
  *   frontmatter with `compress: caveman`. Forward-compat values pass through
  *   unmodified (annotation only) so future modes like `ai-summary` can be
  *   wired up without churning callers.
+ * @param {object} [options.report] - Wave 1+: optional accumulator. When provided,
+ *   the converter mutates `report.nativeApplied[field]++`, `report.roundTripped[field]++`,
+ *   and `report.skipped[reason]++` in place so `importEntries` can build a structured
+ *   per-import summary without re-parsing what it just emitted.
  * @returns {{filename: string, content: string}}
  */
 export function convertWiEntry(wiEntry, lorebookTag, options = {}) {
     const compressMode = resolveCompressMode(options.compress);
+    const report = options.report || null;
+    const bump = (bucket, field) => {
+        if (!report) return;
+        if (!report[bucket]) report[bucket] = {};
+        report[bucket][field] = (report[bucket][field] || 0) + 1;
+    };
     // Title from `comment` (ST convention) or joined keys. Strip newlines to
     // prevent H1 injection.
     // BUG-008: older ST exports use a comma-separated string for `key`.
@@ -517,6 +527,33 @@ export function convertWiEntry(wiEntry, lorebookTag, options = {}) {
         fm.push(`probability: ${(wiEntry.probability / 100).toFixed(2)}`);
     }
     if (wiEntry.scanDepth) fm.push(`scanDepth: ${wiEntry.scanDepth}`);
+
+    // Wave 1 (WI parity) — Tier A: ST fields DLE supports natively but the
+    // importer used to drop on the floor. Most important: `disable: true`
+    // entries were getting imported as active, silently flipping authorial
+    // intent. excludeRecursion + role are honored by the pipeline already
+    // (core/pipeline.js:245 / line 285) but had no import-side emission.
+    if (wiEntry.disable) {
+        fm.push('enabled: false');
+        bump('nativeApplied', 'enabled');
+    }
+    if (wiEntry.excludeRecursion || wiEntry.exclude_recursion) {
+        fm.push('excludeRecursion: true');
+        bump('nativeApplied', 'excludeRecursion');
+    }
+    if (wiEntry.role != null) {
+        const roleNames = ['system', 'user', 'assistant'];
+        const idx = typeof wiEntry.role === 'number' ? wiEntry.role : null;
+        const roleName = idx != null && idx >= 0 && idx < roleNames.length ? roleNames[idx] : null;
+        if (roleName) {
+            fm.push(`role: ${roleName}`);
+            bump('nativeApplied', 'role');
+        } else {
+            // Unknown role index — don't lie. Skip emission, record for the report.
+            bump('skipped', 'invalid_role');
+        }
+    }
+
     // C.3: round-trip-only — parseVaultFile emits W_NOT_IMPLEMENTED for these so
     // /dle-lint surfaces them. (BUG-047 sticky, BUG-048 delay, BUG-052 group*)
     if (wiEntry.sticky != null && wiEntry.sticky !== 0) fm.push(`sticky: ${Number(wiEntry.sticky)}`);
