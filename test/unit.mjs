@@ -2208,6 +2208,143 @@ test('convertWiEntry: EM subheader present regardless of emHandling option', () 
 });
 
 // ============================================================================
+// Wave 5 (WI parity) — Import report popup pure helpers
+// ============================================================================
+
+const { buildImportReport, renderImportReportHtml } = await import('../src/ui/wi-import-report-pure.js');
+
+test('buildImportReport: empty result yields zero-count report', () => {
+    const r = buildImportReport({ imported: 0, failed: 0, renamed: 0, errors: [], report: {} }, 'WI', '');
+    assert(r.imported === 0 && r.failed === 0 && r.renamed === 0, 'all zeros');
+    assert(r.nativeApplied.length === 0, 'no native fields');
+    assert(r.roundTripped.length === 0, 'no round-trip fields');
+    assert(r.hasAnyEm === false, 'no EM');
+    assert(r.source === 'WI');
+});
+
+test('buildImportReport: missing report object treated as empty (defensive)', () => {
+    const r = buildImportReport({ imported: 5 }, 'X', 'Folder');
+    assert(r.imported === 5);
+    assert(r.folder === 'Folder');
+    assert(r.nativeApplied.length === 0, 'no crash on missing report');
+});
+
+test('buildImportReport: sorts buckets by count descending', () => {
+    const r = buildImportReport({
+        imported: 10, failed: 0, renamed: 0, errors: [],
+        report: {
+            nativeApplied: { role: 3, enabled: 7, excludeRecursion: 1 },
+            roundTripped: { vectorized: 5, case_sensitive: 2 },
+            skipped: {},
+        },
+    }, 'WI', '');
+    assert(r.nativeApplied[0].field === 'enabled' && r.nativeApplied[0].count === 7, 'enabled top');
+    assert(r.nativeApplied[1].field === 'role', 'role second');
+    assert(r.nativeApplied[2].field === 'excludeRecursion', 'excludeRecursion third');
+    assert(r.roundTripped[0].field === 'vectorized', 'vectorized top of round-trip');
+});
+
+test('buildImportReport: zero-count buckets filtered out', () => {
+    const r = buildImportReport({
+        imported: 1, report: {
+            nativeApplied: { enabled: 5, role: 0, excludeRecursion: 0 },
+        },
+    }, 'WI', '');
+    assert(r.nativeApplied.length === 1, 'zero-count entries dropped');
+    assert(r.nativeApplied[0].field === 'enabled');
+});
+
+test('buildImportReport: EM counts aggregate', () => {
+    const r = buildImportReport({
+        imported: 10, report: {
+            emAppended: 3, emSkipped: 1,
+            emEntries: [
+                { title: 'A', filename: 'A.md', position: 5, action: 'appended' },
+                { title: 'B', filename: 'B.md', position: 6, action: 'skipped' },
+            ],
+        },
+    }, 'WI', '');
+    assert(r.emAppended === 3);
+    assert(r.emSkipped === 1);
+    assert(r.hasAnyEm === true, 'hasAnyEm true when either > 0');
+    assert(r.emEntries.length === 2);
+});
+
+test('buildImportReport: hasAnyEm false only when both zero', () => {
+    const r1 = buildImportReport({ imported: 0, report: { emAppended: 0, emSkipped: 0 } }, 'WI', '');
+    assert(r1.hasAnyEm === false);
+    const r2 = buildImportReport({ imported: 0, report: { emAppended: 0, emSkipped: 1 } }, 'WI', '');
+    assert(r2.hasAnyEm === true, 'skipped alone still shows section');
+});
+
+test('renderImportReportHtml: zero-state has no field sections', () => {
+    const r = buildImportReport({ imported: 0, report: {} }, 'WI', '');
+    const html = renderImportReportHtml(r);
+    assert(html.includes('Imported 0 entries'));
+    assert(!html.includes('Native fields applied'), 'no native section');
+    assert(!html.includes('Round-tripped'), 'no round-trip section');
+    assert(!html.includes('Example Messages'), 'no EM section');
+});
+
+test('renderImportReportHtml: escapes HTML in source + folder + entry titles', () => {
+    const r = buildImportReport({
+        imported: 1, report: {
+            emAppended: 1,
+            emEntries: [{ title: '<script>alert(1)</script>', filename: 'x.md', position: 5, action: 'appended' }],
+        },
+    }, '<bad>', 'fold"er');
+    const html = renderImportReportHtml(r);
+    assert(!html.includes('<script>alert(1)</script>'), 'XSS string not rendered raw');
+    assert(html.includes('&lt;script&gt;'), 'angle brackets escaped');
+    assert(html.includes('&lt;bad&gt;'), 'source escaped');
+    assert(html.includes('fold&quot;er'), 'folder quote escaped');
+});
+
+test('renderImportReportHtml: shows skip-EM button only when emAppended > 0', () => {
+    const r1 = buildImportReport({ imported: 1, report: { emAppended: 2 } }, 'WI', '');
+    assert(renderImportReportHtml(r1).includes('Skip Example Messages on future imports'), 'button shown');
+    const r2 = buildImportReport({ imported: 1, report: { emSkipped: 2 } }, 'WI', '');
+    assert(!renderImportReportHtml(r2).includes('Skip Example Messages on future imports'), 'button hidden when nothing appended (already opted out)');
+});
+
+test('renderImportReportHtml: truncates long error list', () => {
+    const errs = Array.from({ length: 30 }, (_, i) => `err-${i}`);
+    const r = buildImportReport({ imported: 0, errors: errs, report: {} }, 'WI', '');
+    const html = renderImportReportHtml(r);
+    assert(html.includes('Errors (30)'), 'total count visible');
+    assert(html.includes('err-0'), 'first error shown');
+    assert(html.includes('and 10 more'), 'overflow message shown');
+    assert(!html.includes('err-29'), '21st+ errors not rendered inline');
+});
+
+test('renderImportReportHtml: emEntries list hidden above 20 entries (avoid wall of text)', () => {
+    const emEntries = Array.from({ length: 25 }, (_, i) => ({ title: `T${i}`, filename: `T${i}.md`, position: 5, action: 'appended' }));
+    const r = buildImportReport({ imported: 25, report: { emAppended: 25, emEntries } }, 'WI', '');
+    const html = renderImportReportHtml(r);
+    assert(html.includes('25 appended as subheader'), 'count shown');
+    assert(!html.includes('<details>'), 'no per-entry details when over cap');
+});
+
+test('renderImportReportHtml: folder label vs vault root', () => {
+    const r1 = buildImportReport({ imported: 1, report: {} }, 'WI', 'My/Folder');
+    assert(renderImportReportHtml(r1).includes('folder <code>My/Folder/</code>'));
+    const r2 = buildImportReport({ imported: 1, report: {} }, 'WI', '');
+    assert(renderImportReportHtml(r2).includes('vault root'));
+});
+
+test('renderImportReportHtml: marks skipped entries in the list', () => {
+    const r = buildImportReport({
+        imported: 1, report: {
+            emSkipped: 1,
+            emEntries: [{ title: 'Alpha', filename: 'Alpha.md', position: 5, action: 'skipped' }],
+        },
+    }, 'WI', '');
+    const html = renderImportReportHtml(r);
+    assert(html.includes('Alpha'));
+    assert(html.includes('(skipped)'), 'skipped tag shown');
+});
+
+// ============================================================================
 // Tests: #18 caveman-compress import (src/caveman.js + convertWiEntry hook)
 // ============================================================================
 
