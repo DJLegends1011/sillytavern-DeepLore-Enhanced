@@ -7,6 +7,42 @@ import { compressCaveman, resolveCompressMode, APPLIED_COMPRESS_MODES } from './
 export const MAX_PRIORITY_VALUE = 999;
 
 /**
+ * Wave 2 (WI parity) — Tier C round-trip preservation table.
+ * Pairs are [ST wiEntry key, vault frontmatter key (snake_case)].
+ *
+ * These ST World Info fields land in the vault frontmatter as-is so /dle-lint
+ * can surface them via W_WI_ROUND_TRIP, but DLE does not act on them at the
+ * pipeline level (no enforcement). selectiveLogic is intentionally absent —
+ * handled with native enforcement in Wave 3.
+ *
+ * Keep this table aligned with WI_ROUND_TRIP_FIELDS in core/pipeline.js (parser
+ * side). A drift between the two is the regression class to guard against —
+ * a field that's emitted on import but not flagged by the parser will appear
+ * to "vanish" to authors reading /dle-lint output, which is exactly the silent
+ * downgrade we built this contract to kill.
+ */
+export const WI_ROUND_TRIP_FIELDS = [
+    ['vectorized', 'vectorized'],
+    ['selective', 'selective'],
+    ['useProbability', 'use_probability'],
+    ['preventRecursion', 'prevent_recursion'],
+    ['delayUntilRecursion', 'delay_until_recursion'],
+    ['groupOverride', 'group_override'],
+    ['useGroupScoring', 'use_group_scoring'],
+    ['caseSensitive', 'case_sensitive'],
+    ['matchWholeWords', 'match_whole_words'],
+    ['automationId', 'automation_id'],
+    ['addMemo', 'add_memo'],
+    ['displayIndex', 'display_index'],
+    ['matchPersonaDescription', 'match_persona_description'],
+    ['matchCharacterDescription', 'match_character_description'],
+    ['matchCharacterPersonality', 'match_character_personality'],
+    ['matchCharacterDepthPrompt', 'match_character_depth_prompt'],
+    ['matchScenario', 'match_scenario'],
+    ['matchCreatorNotes', 'match_creator_notes'],
+];
+
+/**
  * Update Existing Entries — surgical frontmatter-field update.
  *
  * Changes specific scalar fields in a markdown file's YAML frontmatter
@@ -563,6 +599,35 @@ export function convertWiEntry(wiEntry, lorebookTag, options = {}) {
     }
     if (wiEntry.groupWeight != null && Number(wiEntry.groupWeight) !== 100) {
         fm.push(`group_weight: ${Number(wiEntry.groupWeight)}`);
+    }
+
+    // Wave 2 (WI parity) — Tier C round-trip preservation. ST fields DLE does
+    // NOT enforce, but which we preserve verbatim so /dle-lint surfaces them
+    // and authors can see what ST had originally configured. Snake_case in the
+    // vault for readability; parser (core/pipeline.js) emits W_WI_ROUND_TRIP for
+    // these to distinguish from W_NOT_IMPLEMENTED (planned-to-implement fields).
+    // selectiveLogic is intentionally absent — handled native in Wave 3.
+    //
+    // Skip-default policy: omit when null/undefined/false/0/'' so vault entries
+    // stay quiet unless ST exported something the user actually set.
+    for (const [wiKey, fmKey] of WI_ROUND_TRIP_FIELDS) {
+        const raw = wiEntry[wiKey];
+        if (raw == null || raw === false || raw === 0 || raw === '') continue;
+        if (typeof raw === 'string') {
+            fm.push(`${fmKey}: ${yamlEscape(raw)}`);
+        } else if (typeof raw === 'number') {
+            if (!Number.isFinite(raw)) continue;
+            fm.push(`${fmKey}: ${raw}`);
+        } else if (typeof raw === 'boolean') {
+            fm.push(`${fmKey}: true`);
+        } else {
+            // Arrays/objects: stringify defensively rather than dropping silently.
+            // ST shouldn't emit these for any WI_ROUND_TRIP_FIELDS member today,
+            // but if a future ST adds e.g. a tag-list field we'd rather preserve
+            // it (visible via /dle-lint) than lose it.
+            fm.push(`${fmKey}: ${yamlEscape(JSON.stringify(raw))}`);
+        }
+        bump('roundTripped', fmKey);
     }
     fm.push(`summary: "Imported from SillyTavern World Info"`);
     // Only annotate the compress flag for modes this build can actually apply.

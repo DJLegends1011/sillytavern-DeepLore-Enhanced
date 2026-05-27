@@ -1823,6 +1823,172 @@ test('convertWiEntry: omitting report leaves no side effects', () => {
 });
 
 // ============================================================================
+// Wave 2 (WI parity) — Tier C round-trip preservation (snake_case)
+// ============================================================================
+// Guards every WI_ROUND_TRIP_FIELDS member emits as snake_case frontmatter and
+// counts under report.roundTripped. Aligned table in core/pipeline.js is
+// covered by the no-silent-drop guard in regression.test.mjs (Wave 7).
+
+test('convertWiEntry: vectorized true emits snake_case', () => {
+    const out = convertWiEntry({ comment: 'A', key: ['a'], vectorized: true, content: 'c' }, 'lorebook');
+    assert(out.content.includes('vectorized: true'), 'vectorized round-trips');
+});
+
+test('convertWiEntry: case_sensitive + match_whole_words snake-case emission', () => {
+    const out = convertWiEntry({ comment: 'A', key: ['a'], caseSensitive: true, matchWholeWords: true, content: 'c' }, 'lorebook');
+    assert(out.content.includes('case_sensitive: true'), 'caseSensitive → case_sensitive');
+    assert(out.content.includes('match_whole_words: true'), 'matchWholeWords → match_whole_words');
+});
+
+test('convertWiEntry: selectiveLogic NOT in round-trip table (handled native Wave 3)', () => {
+    const out = convertWiEntry({ comment: 'A', key: ['a'], selectiveLogic: 3, content: 'c' }, 'lorebook');
+    assert(!out.content.includes('selective_logic:'), 'selective_logic should not appear (Wave 3 owns it natively)');
+    assert(!out.content.includes('selectiveLogic:'), 'camel form also absent');
+});
+
+test('convertWiEntry: automationId string gets quoted by yamlEscape if needed', () => {
+    const out = convertWiEntry({ comment: 'A', key: ['a'], automationId: 'my-hook', content: 'c' }, 'lorebook');
+    assert(out.content.includes('automation_id: my-hook'), 'plain string passes through');
+    const tricky = convertWiEntry({ comment: 'B', key: ['b'], automationId: 'has: colon', content: 'c' }, 'lorebook');
+    assert(tricky.content.includes('automation_id: "has: colon"'), 'colon-bearing string gets quoted');
+});
+
+test('convertWiEntry: displayIndex number emits bare', () => {
+    const out = convertWiEntry({ comment: 'A', key: ['a'], displayIndex: 42, content: 'c' }, 'lorebook');
+    assert(out.content.includes('display_index: 42'), 'numeric field bare-emitted');
+});
+
+test('convertWiEntry: default-valued fields skipped (no noise)', () => {
+    const out = convertWiEntry({
+        comment: 'A', key: ['a'], content: 'c',
+        vectorized: false, selective: false, useProbability: false,
+        automationId: '', displayIndex: 0, useGroupScoring: 0,
+    }, 'lorebook');
+    assert(!out.content.includes('vectorized:'), 'false bool skipped');
+    assert(!out.content.includes('selective:'), 'false bool skipped');
+    assert(!out.content.includes('automation_id:'), 'empty string skipped');
+    assert(!out.content.includes('display_index:'), 'zero number skipped');
+});
+
+test('convertWiEntry: null/undefined skipped', () => {
+    const out = convertWiEntry({
+        comment: 'A', key: ['a'], content: 'c',
+        vectorized: null, caseSensitive: undefined,
+    }, 'lorebook');
+    assert(!out.content.includes('vectorized:'), 'null skipped');
+    assert(!out.content.includes('case_sensitive:'), 'undefined skipped');
+});
+
+test('convertWiEntry: all 6 match_* scan source toggles round-trip', () => {
+    const out = convertWiEntry({
+        comment: 'A', key: ['a'], content: 'c',
+        matchPersonaDescription: true,
+        matchCharacterDescription: true,
+        matchCharacterPersonality: true,
+        matchCharacterDepthPrompt: true,
+        matchScenario: true,
+        matchCreatorNotes: true,
+    }, 'lorebook');
+    assert(out.content.includes('match_persona_description: true'));
+    assert(out.content.includes('match_character_description: true'));
+    assert(out.content.includes('match_character_personality: true'));
+    assert(out.content.includes('match_character_depth_prompt: true'));
+    assert(out.content.includes('match_scenario: true'));
+    assert(out.content.includes('match_creator_notes: true'));
+});
+
+test('convertWiEntry: report.roundTripped accumulates per-field counts', () => {
+    const report = { nativeApplied: {}, roundTripped: {}, skipped: {} };
+    convertWiEntry({
+        comment: 'A', key: ['a'], content: 'c',
+        vectorized: true, caseSensitive: true,
+    }, 'lorebook', { report });
+    convertWiEntry({
+        comment: 'B', key: ['b'], content: 'c',
+        vectorized: true,
+    }, 'lorebook', { report });
+    assert(report.roundTripped.vectorized === 2, 'vectorized counted twice across batch');
+    assert(report.roundTripped.case_sensitive === 1, 'case_sensitive counted once');
+});
+
+test('convertWiEntry: NaN / Infinity numbers skipped (defensive)', () => {
+    const out = convertWiEntry({
+        comment: 'A', key: ['a'], content: 'c',
+        displayIndex: NaN, useGroupScoring: Infinity,
+    }, 'lorebook');
+    assert(!out.content.includes('display_index:'), 'NaN skipped');
+    assert(!out.content.includes('use_group_scoring:'), 'Infinity skipped');
+});
+
+test('parseVaultFile: W_WI_ROUND_TRIP fires for round-tripped WI fields', () => {
+    // Parser must surface every Wave 2 round-trip field via /dle-lint so authors
+    // can see what survived the import. A field that emits on import but doesn't
+    // flag on parse is the silent-downgrade contract violation we built this for.
+    const file = {
+        filename: 'test.md',
+        content: '---\ntags:\n  - lorebook\nkeys:\n  - x\nvectorized: true\ncase_sensitive: true\nmatch_whole_words: true\nautomation_id: my-hook\n---\nbody',
+    };
+    const tagConfig = { lorebookTag: 'lorebook', constantTag: '', neverInsertTag: '', seedTag: '', bootstrapTag: '' };
+    const entry = parseVaultFile(file, tagConfig);
+    assert(entry !== null, 'entry parsed');
+    const codes = (entry._parserWarnings || []).map(w => w.code);
+    const fields = (entry._parserWarnings || []).filter(w => w.code === 'W_WI_ROUND_TRIP').map(w => w.field);
+    assert(codes.includes('W_WI_ROUND_TRIP'), 'W_WI_ROUND_TRIP code present');
+    assert(fields.includes('vectorized'), 'vectorized flagged');
+    assert(fields.includes('case_sensitive'), 'case_sensitive flagged');
+    assert(fields.includes('match_whole_words'), 'match_whole_words flagged');
+    assert(fields.includes('automation_id'), 'automation_id flagged');
+    assert(entry.customFields.vectorized === true, 'vectorized landed in customFields');
+    assert(entry.customFields.automation_id === 'my-hook', 'automation_id value preserved');
+});
+
+test('parseVaultFile: W_NOT_IMPLEMENTED vs W_WI_ROUND_TRIP split correctly', () => {
+    // sticky/delay/group/group_weight still emit W_NOT_IMPLEMENTED (BUG numbers);
+    // the new round-trip table emits W_WI_ROUND_TRIP. Distinct user signals.
+    const file = {
+        filename: 'test.md',
+        content: '---\ntags:\n  - lorebook\nkeys:\n  - x\nsticky: 3\nvectorized: true\n---\nbody',
+    };
+    const tagConfig = { lorebookTag: 'lorebook', constantTag: '', neverInsertTag: '', seedTag: '', bootstrapTag: '' };
+    const entry = parseVaultFile(file, tagConfig);
+    const stickyWarn = entry._parserWarnings.find(w => w.field === 'sticky');
+    const vectorWarn = entry._parserWarnings.find(w => w.field === 'vectorized');
+    assert(stickyWarn.code === 'W_NOT_IMPLEMENTED', 'sticky stays W_NOT_IMPLEMENTED');
+    assert(vectorWarn.code === 'W_WI_ROUND_TRIP', 'vectorized is W_WI_ROUND_TRIP');
+});
+
+test('convertWiEntry: all 18 Tier C fields land when set non-default', () => {
+    const wi = {
+        comment: 'KitchenSink', key: ['ks'], content: 'c',
+        vectorized: true, selective: true, useProbability: true,
+        preventRecursion: true, delayUntilRecursion: true,
+        groupOverride: true, useGroupScoring: 5,
+        caseSensitive: true, matchWholeWords: true,
+        automationId: 'auto-1', addMemo: true, displayIndex: 7,
+        matchPersonaDescription: true, matchCharacterDescription: true,
+        matchCharacterPersonality: true, matchCharacterDepthPrompt: true,
+        matchScenario: true, matchCreatorNotes: true,
+    };
+    const report = { nativeApplied: {}, roundTripped: {}, skipped: {} };
+    const out = convertWiEntry(wi, 'lorebook', { report });
+    // All 18 must surface as frontmatter lines
+    const expected = [
+        'vectorized: true', 'selective: true', 'use_probability: true',
+        'prevent_recursion: true', 'delay_until_recursion: true',
+        'group_override: true', 'use_group_scoring: 5',
+        'case_sensitive: true', 'match_whole_words: true',
+        'automation_id: auto-1', 'add_memo: true', 'display_index: 7',
+        'match_persona_description: true', 'match_character_description: true',
+        'match_character_personality: true', 'match_character_depth_prompt: true',
+        'match_scenario: true', 'match_creator_notes: true',
+    ];
+    for (const line of expected) {
+        assert(out.content.includes(line), `missing: ${line}`);
+    }
+    assert(Object.keys(report.roundTripped).length === 18, 'all 18 fields counted');
+});
+
+// ============================================================================
 // Tests: #18 caveman-compress import (src/caveman.js + convertWiEntry hook)
 // ============================================================================
 

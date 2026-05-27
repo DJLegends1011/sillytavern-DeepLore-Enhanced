@@ -301,8 +301,9 @@ export function parseVaultFile(file, tagConfig, fieldDefinitions, options = {}) 
 
     const customFields = extractCustomFields(frontmatter, fieldDefinitions || []);
 
-    // C.3: round-trip-safe preservation of WI fields DLE doesn't enforce yet.
-    // Stored in customFields, flagged via W_NOT_IMPLEMENTED so /dle-lint surfaces them.
+    // C.3: round-trip-safe preservation of WI fields DLE has BUG numbers for
+    // (planned-to-implement). Stored in customFields, flagged via W_NOT_IMPLEMENTED
+    // so /dle-lint surfaces them.
     const WI_NOT_IMPLEMENTED_FIELDS = [
         { key: 'sticky', bug: 'BUG-047' },
         { key: 'delay', bug: 'BUG-048' },
@@ -318,6 +319,35 @@ export function parseVaultFile(file, tagConfig, fieldDefinitions, options = {}) 
                 field: fieldName,
                 message: `Field '${fieldName}' preserved but not enforced yet (${bug}).`,
                 suggestedFix: `Remove '${fieldName}' if you don't need it round-tripped.`,
+            });
+        }
+    }
+
+    // Wave 2 (WI parity) — Tier C round-trip preservation. ST fields DLE has
+    // NO plan to enforce natively (e.g. vector search, ST-specific scan source
+    // toggles). Distinct from WI_NOT_IMPLEMENTED above because the user signal
+    // is different — these are "DLE intentionally ignores this" not "DLE will
+    // implement this later." Keep this list aligned with WI_ROUND_TRIP_FIELDS
+    // in src/helpers.js (importer side); drift between the two is the regression
+    // class (see gotcha #50 trackerKey rule for the analogous reviewer guardrail).
+    // selectiveLogic intentionally absent — native enforcement in Wave 3.
+    const WI_ROUND_TRIP_FIELDS = [
+        'vectorized', 'selective', 'use_probability', 'prevent_recursion',
+        'delay_until_recursion', 'group_override', 'use_group_scoring',
+        'case_sensitive', 'match_whole_words', 'automation_id', 'add_memo',
+        'display_index', 'match_persona_description', 'match_character_description',
+        'match_character_personality', 'match_character_depth_prompt',
+        'match_scenario', 'match_creator_notes',
+    ];
+    for (const fieldName of WI_ROUND_TRIP_FIELDS) {
+        if (Object.prototype.hasOwnProperty.call(frontmatter, fieldName)) {
+            customFields[fieldName] = frontmatter[fieldName];
+            warnings.push({
+                code: 'W_WI_ROUND_TRIP',
+                severity: 'warn',
+                field: fieldName,
+                message: `Field '${fieldName}' preserved from SillyTavern WI import. DLE does not act on it.`,
+                suggestedFix: `Remove '${fieldName}' if you don't need it preserved for round-trip readability.`,
             });
         }
     }

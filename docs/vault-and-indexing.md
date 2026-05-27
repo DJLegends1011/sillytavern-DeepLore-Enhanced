@@ -486,6 +486,18 @@ Maps a single ST World Info entry to `{filename, content}` (Obsidian markdown wi
 - `wiEntry.excludeRecursion` (or snake `exclude_recursion`) → `excludeRecursion: true` (camelCase is the grandfathered canonical form — see `CANONICAL_FM_LOOKUP` in `core/pipeline.js`).
 - `wiEntry.role` ∈ {0,1,2} → `role: system|user|assistant`. Unknown integers omit the line rather than emit a lie; the report's `skipped.invalid_role` counter is bumped instead.
 
+**Tier C round-trip fields (Wave 2, WI parity):** ST fields DLE has no plan to enforce, preserved verbatim so `/dle-lint` can surface them and authors can see what ST configured. Driven by `WI_ROUND_TRIP_FIELDS` table (export) in `src/helpers.js`; mirrored by parser-side table in `core/pipeline.js` emitting `W_WI_ROUND_TRIP`. All keys snake_case in the vault.
+
+Members (18 total): `vectorized`, `selective`, `use_probability`, `prevent_recursion`, `delay_until_recursion`, `group_override`, `use_group_scoring`, `case_sensitive`, `match_whole_words`, `automation_id`, `add_memo`, `display_index`, plus 6 scan-source toggles (`match_persona_description`, `match_character_description`, `match_character_personality`, `match_character_depth_prompt`, `match_scenario`, `match_creator_notes`).
+
+Distinct from `W_NOT_IMPLEMENTED` (sticky/delay/group/group_weight) — those have BUG numbers signaling "DLE plans to implement these later." `W_WI_ROUND_TRIP` means "DLE intentionally ignores this; remove if you don't need it preserved."
+
+**Drift guard:** the two tables (importer in `src/helpers.js`, parser in `core/pipeline.js`) MUST stay aligned. A field emitted on import but unflagged by the parser will look "vanished" to authors reading `/dle-lint` — exactly the silent downgrade this contract was built to kill. Reviewers reject single-table edits.
+
+Default-skip policy: values `null` / `undefined` / `false` / `0` / `''` / `NaN` / `Infinity` are omitted from the emitted YAML so vault entries stay quiet unless ST exported a user-set non-default value.
+
+`selectiveLogic` is intentionally absent — see Wave 3 (`applySelectiveLogic` native enforcement).
+
 **`options.compress`** (#18) — when truthy (or `'caveman'`), pipe the body through `compressCaveman()` before writing and annotate frontmatter with `compress: caveman`. Other strings are passed through `resolveCompressMode` for forward compatibility, but only modes in `APPLIED_COMPRESS_MODES` (currently just `'caveman'`) actually transform and annotate — unknown modes log a warning and leave the body untouched rather than emit a misleading annotation.
 
 **`options.report`** (Wave 1+) — optional accumulator shaped `{nativeApplied:{}, roundTripped:{}, skipped:{}}`. When passed, the converter mutates `report.<bucket>[field]++` in place. `importEntries` and `upsertConvertedEntry` thread their own accumulator through and return it on the result object so the import-report popup (Wave 5) can render per-field counts without re-parsing emitted YAML.
