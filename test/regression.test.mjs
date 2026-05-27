@@ -7207,5 +7207,80 @@ test('PRX-MIG-5: defaultSettings.settingsVersion is 4 (boot triggers migration f
     assertMatch(src, /settingsVersion:\s*4\b/, 'PRX-MIG-5: defaultSettings.settingsVersion is 4');
 });
 
+// ============================================================================
+// WI-PARITY (Wave 7, v2.5 WI import full-parity contract)
+// ============================================================================
+// docs/gotchas.md #69 codifies the contract: every ST WI field has a documented
+// home (no silent drops). These guards live in regression suite because the
+// drift class is invisible — a field that's emitted on import but unflagged by
+// the parser will appear "vanished" to authors reading /dle-lint output.
+
+test('WI-PARITY-1: importer and parser WI_ROUND_TRIP_FIELDS tables are aligned', async () => {
+    // The two tables MUST stay in sync. Drift = silent downgrade.
+    const { WI_ROUND_TRIP_FIELDS } = await import('../src/helpers.js');
+    const parserSrc = await import('node:fs').then(fs =>
+        fs.promises.readFile('core/pipeline.js', 'utf8'));
+    const importerFmKeys = WI_ROUND_TRIP_FIELDS.map(([, fmKey]) => fmKey);
+    for (const fmKey of importerFmKeys) {
+        assert(parserSrc.includes(`'${fmKey}'`), `WI-PARITY-1: parser missing round-trip field: ${fmKey}`);
+    }
+});
+
+test('WI-PARITY-2: convertWiEntry emits enabled:false for disable=true (silent-downgrade guard)', async () => {
+    const { convertWiEntry } = await import('../src/helpers.js');
+    const out = convertWiEntry({ comment: 'X', key: ['x'], disable: true, content: 'c' }, 'lorebook');
+    assert(out.content.includes('enabled: false'), 'WI-PARITY-2: disable=true MUST emit enabled:false');
+});
+
+test('WI-PARITY-3: applySelectiveLogic is the single source of truth (pin the predicate)', async () => {
+    const { applySelectiveLogic } = await import('../core/matching.js');
+    assert(typeof applySelectiveLogic === 'function', 'WI-PARITY-3: applySelectiveLogic must remain exported');
+    // 4-mode contract — if any return value flips, callers downstream break silently.
+    assert(applySelectiveLogic(0, 3, 'and_any') === false);
+    assert(applySelectiveLogic(3, 3, 'and_all') === true);
+    assert(applySelectiveLogic(3, 3, 'not_all') === false);
+    assert(applySelectiveLogic(0, 3, 'not_any') === true);
+});
+
+test('WI-PARITY-4: EM positions 5/6 prepend ## Example Dialogue subheader', async () => {
+    const { convertWiEntry } = await import('../src/helpers.js');
+    const em5 = convertWiEntry({ comment: 'A', key: ['a'], position: 5, content: 'line' }, 'lorebook');
+    const em6 = convertWiEntry({ comment: 'B', key: ['b'], position: 6, content: 'line' }, 'lorebook');
+    assert(em5.content.includes('## Example Dialogue'), 'WI-PARITY-4: position 5 prepends EM subheader');
+    assert(em6.content.includes('## Example Dialogue'), 'WI-PARITY-4: position 6 prepends EM subheader');
+    assert(em5._emPosition === 5, 'WI-PARITY-4: _emPosition flag preserved for I/O layer skip policy');
+});
+
+test('WI-PARITY-5: parser emits W_WI_ROUND_TRIP distinct from W_NOT_IMPLEMENTED', async () => {
+    // Different user signals: BUG-numbered fields = planned, no-BUG = intentionally ignored.
+    // Collapsing the two codes back into one would lose author-facing clarity in /dle-lint.
+    const { parseVaultFile } = await import('../core/pipeline.js');
+    const file = {
+        filename: 'test.md',
+        content: '---\ntags:\n  - lorebook\nkeys:\n  - x\nsticky: 3\nvectorized: true\n---\nbody',
+    };
+    const tagConfig = { lorebookTag: 'lorebook', constantTag: '', neverInsertTag: '', seedTag: '', bootstrapTag: '' };
+    const entry = parseVaultFile(file, tagConfig);
+    const codes = (entry._parserWarnings || []).map(w => `${w.code}:${w.field}`);
+    assert(codes.includes('W_NOT_IMPLEMENTED:sticky'), 'WI-PARITY-5: sticky stays W_NOT_IMPLEMENTED (BUG-047)');
+    assert(codes.includes('W_WI_ROUND_TRIP:vectorized'), 'WI-PARITY-5: vectorized is W_WI_ROUND_TRIP (no BUG number)');
+});
+
+test('WI-PARITY-6: importEntries report shape stable (Wave 5 popup consumer contract)', async () => {
+    // The popup builder destructures specific bucket names. Renaming any bucket
+    // here without updating wi-import-report-pure.js breaks the popup silently.
+    const { buildImportReport } = await import('../src/ui/wi-import-report-pure.js');
+    const r = buildImportReport({
+        imported: 1, failed: 0, renamed: 0, errors: [],
+        report: { nativeApplied: { enabled: 1 }, roundTripped: { vectorized: 1 }, skipped: {}, emAppended: 1, emSkipped: 0, emEntries: [] },
+    }, 'WI', '');
+    assert(Array.isArray(r.nativeApplied), 'WI-PARITY-6: nativeApplied bucket → array');
+    assert(Array.isArray(r.roundTripped), 'WI-PARITY-6: roundTripped bucket → array');
+    assert(Array.isArray(r.skipped), 'WI-PARITY-6: skipped bucket → array');
+    assert(typeof r.emAppended === 'number', 'WI-PARITY-6: emAppended → number');
+    assert(typeof r.emSkipped === 'number', 'WI-PARITY-6: emSkipped → number');
+    assert(typeof r.hasAnyEm === 'boolean', 'WI-PARITY-6: hasAnyEm → boolean');
+});
+
 await summary('Regression Tests');
 

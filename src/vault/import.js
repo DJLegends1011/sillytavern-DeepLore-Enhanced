@@ -7,6 +7,11 @@ import { getSettings, getPrimaryVault, resolveWriteVault } from '../../settings.
 import { convertWiEntry } from '../helpers.js';
 import { classifyDedupProbe } from './vault-pure.js';
 
+// Pure JSON parser re-exported from ./import-pure.js (Wave 7 — node tests pull
+// the pure module directly to avoid the settings.js → ST module chain).
+// Existing callers using import.js keep their import surface unchanged.
+export { parseWorldInfoJson } from './import-pure.js';
+
 const MAX_DEDUP_ATTEMPTS = 20;
 
 /**
@@ -259,41 +264,4 @@ export async function upsertConvertedEntry(wiEntry, folder, options = {}) {
     }
     const action = existed ? (policy === 'replace' ? 'replaced' : 'renamed') : 'created';
     return { ok: true, action, path: fullPath, report };
-}
-
-/**
- * Parse ST World Info JSON (handles both export format and embedded character card format).
- * @param {string} jsonText - Raw JSON text
- * @returns {{ entries: object[], source: string }}
- */
-export function parseWorldInfoJson(jsonText) {
-    let data;
-    try {
-        data = JSON.parse(jsonText);
-    } catch (e) {
-        throw new Error('Invalid World Info JSON: ' + e.message);
-    }
-
-    const filterValid = (arr) => arr.filter(e => e && typeof e === 'object' && !Array.isArray(e));
-
-    // Direct WI export { entries: { 0: {...}, 1: {...} } }
-    if (data.entries && typeof data.entries === 'object' && !Array.isArray(data.entries)) {
-        const entries = filterValid(Object.values(data.entries));
-        return { entries, source: data.originalData?.name || 'World Info' };
-    }
-
-    if (Array.isArray(data)) {
-        return { entries: filterValid(data), source: 'World Info Array' };
-    }
-
-    // V2 character card with embedded WI
-    if (data.data?.character_book?.entries) {
-        const raw = Array.isArray(data.data.character_book.entries)
-            ? data.data.character_book.entries
-            : Object.values(data.data.character_book.entries);
-        const entries = filterValid(raw);
-        return { entries, source: data.data?.name || 'Character Card' };
-    }
-
-    throw new Error('Unrecognized World Info format. Expected ST WI export JSON or V2 character card.');
 }
