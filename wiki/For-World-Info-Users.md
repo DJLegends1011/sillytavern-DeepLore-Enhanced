@@ -8,28 +8,32 @@ If you already use SillyTavern's built-in World Info (WI) lorebook, most concept
 
 ## Field mapping cheat sheet
 
+**v2.5 update:** DeepLore now imports every ST WI field. Some land natively (DLE acts on them), some round-trip into the vault for visibility via `/dle-lint` without enforcement. See [[#Importing your World Info JSON]] below for what each tier means.
+
 | World Info field | DeepLore equivalent | Notes |
 |---|---|---|
 | `key` (primary keys) | `keys:` (YAML list) | One trigger keyword per list item. Comma-string format from older ST exports auto-splits on import. See [[Writing Vault Entries#Keys]]. |
-| `keysecondary` (secondary keys) | `refine_keys:` | AND-ANY gating: entry activates only if at least one refine key is also present. |
+| `keysecondary` (secondary keys) | `refine_keys:` | Gating mode set by `selective_logic`. Default `and_any` matches WI's default. |
 | `comment` (entry name) | The note's filename and `# Title` | DeepLore uses the Obsidian note title as the entry title. Falls back to the first key if `comment` is empty. |
 | `content` | Everything below the frontmatter fence | Plain Markdown body. |
 | `constant` (always inject) | The `lorebook-always` tag | See [[Glossary#Constant]]. |
 | `order` | `priority:` | **Semantic flip. See gotcha 1 below.** |
-| `position` (5 ST positions) | `position:` (`before` / `after` / `in_chat`) | Lossy: ST has 5 values, DeepLore has 3. The original ST value is preserved as a YAML comment (`# original_st_position: N`) for round-tripping. |
+| `position` (7 ST positions) | `position:` (`before` / `after` / `in_chat`) | Lossy collapse. Original ST value preserved as `# original_st_position: N` YAML comment. EM positions 5/6 get special handling — see [[#Example Messages handling (v2.5)]] below. |
 | `depth` | `depth:` | Used when `position: in_chat`. |
-| `role` | `role:` (`system` / `user` / `assistant`) | Supported in DeepLore frontmatter, but the importer drops the field. Re-add manually after import if you need it. |
+| `role` | `role:` (`system` / `user` / `assistant`) | **v2.5: now native on import.** Maps ST integer enum (0/1/2) to symbolic name. |
 | `probability` | `probability:` | Auto-rescaled on import (0-100 to 0.0-1.0). See gotcha 2 below for the manual-authoring footgun. |
 | `scanDepth` (per-entry override) | `scanDepth:` | Chat messages to scan for this entry's keys. |
-| `excludeRecursion` | `excludeRecursion:` | Supported in DeepLore frontmatter, but the importer drops the field. Re-add manually after import. |
-| `disable` | `enabled: false` | Inverted sense; default is enabled. The importer drops the field, so disabled WI entries arrive enabled. |
-| `selectiveLogic` (AND_ALL / NOT_ALL / NOT_ANY) | **Not yet supported** (AND_ANY only) | Roadmap: BUG-046. NOT_ANY books are silently inverted. |
-| `sticky` (stay active N messages) | **Not yet supported** | Roadmap: BUG-047. Field preserved on import; not enforced. |
-| `delay` / `delayUntilRecursion` | **Not yet supported** | Roadmap: BUG-048. Field preserved on import; not enforced. |
-| `group` / `useGroupScoring` / `groupWeight` | **Not yet supported** | Roadmap: BUG-052. Fields preserved on import; not enforced. |
-| `caseSensitive` / `matchWholeWords` (per-entry) | **Not yet supported** (global setting only) | Roadmap: BUG-096. |
+| `excludeRecursion` | `excludeRecursion:` | **v2.5: now native on import.** Honored by the recursion pass. |
+| `disable` | `enabled: false` | **v2.5: now native on import.** Pre-v2.5 disabled WI entries silently imported as active — most damaging silent downgrade in the importer, fixed. |
+| `selectiveLogic` (AND_ALL / NOT_ALL / NOT_ANY) | `selective_logic:` (all 4 modes) | **v2.5: now native on import.** All four modes enforced by `applySelectiveLogic` gate in the primary keyword + recursion paths. BM25 fuzzy still bypasses refine keys (intentional — TF-IDF is content-wide). |
+| `sticky` (stay active N messages) | `sticky:` | Round-trip only. Preserved as frontmatter, flagged `W_NOT_IMPLEMENTED` by `/dle-lint`. Roadmap: BUG-047. |
+| `delay` | `delay:` | Round-trip only. Roadmap: BUG-048. |
+| `group` / `groupWeight` | `group:` / `group_weight:` | Round-trip only. Roadmap: BUG-052. |
+| `vectorized` | `vectorized:` | **v2.5: round-trip preservation.** DLE has no vector backend; flagged `W_WI_ROUND_TRIP` for visibility. |
+| `caseSensitive` / `matchWholeWords` (per-entry) | `case_sensitive:` / `match_whole_words:` | **v2.5: round-trip preservation.** DLE has global toggles only — per-entry overrides preserved as frontmatter for visibility, not enforced. |
+| `useProbability` / `preventRecursion` / `delayUntilRecursion` / `groupOverride` / `useGroupScoring` / `automationId` / `addMemo` / `displayIndex` | `use_probability:` / `prevent_recursion:` / `delay_until_recursion:` / `group_override:` / `use_group_scoring:` / `automation_id:` / `add_memo:` / `display_index:` | **v2.5: round-trip preservation.** No DLE equivalent. Preserved as frontmatter so authors can see what ST configured. |
+| `matchPersonaDescription` + 5 sibling scan-source toggles | `match_persona_description:` etc. | **v2.5: round-trip preservation.** DLE scans chat only. |
 | Regex key (`/pattern/flags`) | **Not yet supported** | Treated as literal string. Roadmap: BUG-045. |
-| `preventRecursion` | **Not yet supported** | Roadmap: BUG-050. Only `excludeRecursion` exists. |
 
 ---
 
@@ -85,19 +89,26 @@ DeepLore ships an importer that converts WI JSON into Markdown notes with proper
 4. The importer creates one `.md` file per entry with frontmatter filled in. Duplicate filenames get a `_imported` suffix; nothing is silently overwritten.
 5. After import, if AI search is enabled, the importer offers to generate AI summaries for each new entry (replacing the `"Imported from SillyTavern World Info"` placeholder).
 
-**What converts cleanly:** `key`, `keysecondary`, `comment`, `position` plus `depth`, `scanDepth`, `constant`, `probability` (auto-rescaled), `sticky` / `delay` / `group` / `groupWeight` (preserved as YAML for round-trip).
+**v2.5: every WI field now lands.** Three tiers:
 
-**What needs manual review or re-add after import:**
+1. **Native** — DLE acts on the field directly: `key`, `keysecondary`, `comment`, `content`, `constant`, `order`→`priority`, `position` (with EM handling — see below), `depth`, `probability`, `scanDepth`, `disable`→`enabled:false`, `excludeRecursion`, `role`, `selectiveLogic` (all 4 modes).
+2. **Round-trip preserved** — landed in vault frontmatter as snake_case, flagged by `/dle-lint` (`W_NOT_IMPLEMENTED` for planned-to-implement fields like `sticky`/`delay`/`group*`, `W_WI_ROUND_TRIP` for "DLE intentionally ignores"): `vectorized`, `selective`, `use_probability`, `prevent_recursion`, `delay_until_recursion`, `group_override`, `use_group_scoring`, `case_sensitive`, `match_whole_words`, `automation_id`, `add_memo`, `display_index`, plus the 6 `match_*` scan-source toggles.
+3. **Still needs manual review** (true semantic gaps DLE can't auto-fix):
+   - `priority` (semantic flip; the import report calls it out)
+   - Regex keys (treated as literal strings — Roadmap BUG-045)
 
-- `priority` (semantic flip; the toast warns you)
-- `role` (importer drops it; re-add for in-chat injections that need a specific role)
-- `excludeRecursion` (importer drops it)
-- `disable` (importer drops it; disabled WI entries arrive enabled)
-- `selectiveLogic` (only AND_ANY works; NOT_ANY entries silently invert)
-- `sticky`, `delay`, `group*` (preserved but not enforced)
-- Regex keys (treated as literal strings)
+The post-import popup (v2.5) shows per-field counts so you can see what landed where. See [[Setup and Import#ST lorebook import bridge]] for the popup reference.
 
-See [[Setup and Import#ST lorebook import bridge]] for the full importer reference and [[Roadmap#Entry Matching & Gating]] plus the WI parity section of the Roadmap for the list of features still in flight.
+### Example Messages handling (v2.5)
+
+ST positions 5 (`before_example_messages`) and 6 (`after_example_messages`) inject sample dialogue lines adjacent to your chat's example messages. DeepLore has no equivalent slot, so:
+
+- **Default (`append`)** — convert to normal vault entry. Map injection position to `before` (pos 5) or `after` (pos 6). Prepend `## Example Dialogue\n\n` to the body so the sample lines read as flavor content inside the entry when the LLM sees it. Markdown subheader — ST does NOT parse it.
+- **Alternative (`skip`)** — drop these entries entirely on import.
+
+Most users find a single short flavor quote inside the parent character entry is enough to teach an LLM the voice; the EM slot is often noise once the model has the character description. The post-import popup explains this and offers a one-click "Skip Example Messages on future imports" button that flips the setting. Already-imported EM entries stay in the vault — `/dle-delete` them by name if you want them gone.
+
+Override per-import in `Settings → Connection → WI Import → Example Messages`, or per-call via `options.emHandling: 'append' | 'skip'` for companion-extension integrations.
 
 ---
 
