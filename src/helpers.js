@@ -526,10 +526,23 @@ export function convertWiEntry(wiEntry, lorebookTag, options = {}) {
         keys.push(...wiEntry.key.split(',').map(k => k.trim()).filter(Boolean));
     }
 
-    // ST has 5 positions, DLE has 3 — lossy. ST: 0=after_char, 1=before_char,
-    // 2=before_AN, 3=after_AN, 4=in_chat.
-    const positionMap = { 0: 'after', 1: 'before', 2: 'before', 3: 'after', 4: 'in_chat' };
+    // ST has 7 positions, DLE has 3 — lossy. ST positions:
+    //   0 after_char, 1 before_char, 2 before_AN, 3 after_AN, 4 in_chat,
+    //   5 before_example_messages, 6 after_example_messages
+    // Original ST value preserved as `# original_st_position` comment for
+    // round-trip readability.
+    //
+    // Wave 4 (WI parity): positions 5/6 (Example Messages) get mapped to
+    // before/after AND the body is prepended with a "## Example Dialogue"
+    // subheader so the LLM still sees the sample lines as flavor content
+    // inside the entry. DLE has no EM injection slot, so this is the most
+    // honest fallback — the markdown subheader is just text in the prompt,
+    // ST does not parse it specially. Per-import skip override available
+    // via options.emHandling (defaults caller-provided, falls back to 'append').
+    const positionMap = { 0: 'after', 1: 'before', 2: 'before', 3: 'after', 4: 'in_chat', 5: 'before', 6: 'after' };
     const position = positionMap[wiEntry.position] || null;
+    const isEmPosition = wiEntry.position === 5 || wiEntry.position === 6;
+    const emHandling = options.emHandling || 'append';
 
     const fm = [];
     fm.push('---');
@@ -673,9 +686,32 @@ export function convertWiEntry(wiEntry, lorebookTag, options = {}) {
         // silently storing an annotation that lies about transform state.
         console.warn(`[DLE] convertWiEntry: unknown compress mode "${compressMode}" — body stored uncompressed, no annotation written.`);
     }
+
+    // Wave 4 (WI parity): for ST Example Messages positions (5 / 6), prepend
+    // "## Example Dialogue" so the sample lines read as flavor content inside
+    // the entry body when the LLM sees it. Subheader is just markdown — ST
+    // does NOT parse it specially. The skip policy is enforced by the caller
+    // (importEntries reads settings.wiImportEmHandling and acts on the
+    // returned `_emPosition` flag); convertWiEntry stays dumb and always
+    // produces the subheader form so single-entry callers (upsertConvertedEntry,
+    // companion extensions) get the same default behavior.
+    // EM accounting (emAppended / emSkipped) is owned by the I/O layer
+    // (importEntries) — only the caller knows whether the entry will actually
+    // be written or skipped. Here we just mark the entry via _emPosition so
+    // the caller can branch.
+    if (isEmPosition) {
+        content = `## Example Dialogue\n\n${content}`;
+    }
+    void emHandling; // reserved for future per-call subheader-text override
+
     const fullContent = `${fm.join('\n')}\n\n# ${title}\n\n${content}`;
 
-    return { filename: `${safeTitle}.md`, content: fullContent };
+    return {
+        filename: `${safeTitle}.md`,
+        content: fullContent,
+        title,
+        _emPosition: isEmPosition ? wiEntry.position : null,
+    };
 }
 
 /**

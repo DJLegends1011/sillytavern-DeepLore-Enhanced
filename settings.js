@@ -278,6 +278,18 @@ export const defaultSettings = {
     // before writing to the vault. Per-import option can still override per call. Stored
     // entries are annotated with `compress: caveman` in frontmatter for audit.
     importCompressByDefault: false,
+    // Wave 4 (WI parity): how WI import handles Example Messages entries (ST
+    // position 5 = before_example_messages, 6 = after_example_messages). DLE
+    // has no EM injection slot, so:
+    //   'append' (default) — convert to normal entry, prepend "## Example
+    //     Dialogue" subheader to the body, map injection position to before/
+    //     after based on original ST value. Most natural for character entries
+    //     where a flavor quote helps the LLM nail the voice.
+    //   'skip' — drop these entries entirely. Most users find a single flavor
+    //     line inside the parent character entry is enough; ST's EM slot is
+    //     often noise once the model has the character description.
+    // Per-import override available via importEntries options.
+    wiImportEmHandling: 'append',
     // Custom Fields in AI Manifest: whitelist of custom-field names sent to the AI
     // alongside each candidate entry. Empty array = include ALL custom fields with
     // values (current behavior). Populate to prune the manifest for token control —

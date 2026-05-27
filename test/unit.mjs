@@ -2144,6 +2144,70 @@ test('convertWiEntry: selectiveLogic 0 counted as selective_logic_default', () =
 });
 
 // ============================================================================
+// Wave 4 (WI parity) — Example Messages as subheader (positions 5/6)
+// ============================================================================
+// DLE has no EM injection slot. Positions 5 (before_example_messages) and 6
+// (after_example_messages) become normal entries with "## Example Dialogue"
+// prepended to the body and injection position mapped to before/after.
+// importEntries owns the skip policy via emHandling option / setting; the
+// converter always emits the append form so single-entry callers behave
+// consistently with batch import.
+
+test('convertWiEntry: position 5 maps to before + prepends EM subheader', () => {
+    const out = convertWiEntry({ comment: 'EM5', key: ['x'], position: 5, content: 'sample line' }, 'lorebook');
+    assert(out.content.includes('position: before'), 'position 5 → before');
+    assert(out.content.includes('## Example Dialogue'), 'subheader prepended');
+    assert(out.content.includes('sample line'), 'original body preserved');
+    assert(out.content.includes('# original_st_position: 5'), 'original ST value preserved as comment');
+});
+
+test('convertWiEntry: position 6 maps to after + prepends EM subheader', () => {
+    const out = convertWiEntry({ comment: 'EM6', key: ['x'], position: 6, content: 'after-line' }, 'lorebook');
+    assert(out.content.includes('position: after'), 'position 6 → after');
+    assert(out.content.includes('## Example Dialogue'), 'subheader prepended');
+    assert(out.content.includes('# original_st_position: 6'), 'preserved comment');
+});
+
+test('convertWiEntry: position 5/6 returns _emPosition flag for caller', () => {
+    const em5 = convertWiEntry({ comment: 'A', key: ['a'], position: 5, content: 'c' }, 'lorebook');
+    assert(em5._emPosition === 5, 'position 5 → _emPosition: 5');
+    const em6 = convertWiEntry({ comment: 'B', key: ['b'], position: 6, content: 'c' }, 'lorebook');
+    assert(em6._emPosition === 6, 'position 6 → _emPosition: 6');
+    const normal = convertWiEntry({ comment: 'C', key: ['c'], position: 0, content: 'c' }, 'lorebook');
+    assert(normal._emPosition === null, 'non-EM position → _emPosition: null');
+});
+
+test('convertWiEntry: position 5/6 returns title for caller', () => {
+    const out = convertWiEntry({ comment: 'Sample Lines', key: ['x'], position: 5, content: 'c' }, 'lorebook');
+    assert(out.title === 'Sample Lines', 'title surfaced on return for report list');
+});
+
+test('convertWiEntry: non-EM position does NOT get EM subheader', () => {
+    const out = convertWiEntry({ comment: 'A', key: ['a'], position: 0, content: 'normal' }, 'lorebook');
+    assert(!out.content.includes('## Example Dialogue'), 'no subheader for non-EM');
+    assert(out.content.includes('normal'), 'body unchanged');
+});
+
+test('convertWiEntry: EM subheader survives caveman compression', () => {
+    // Compression operates on body; subheader prepending happens BEFORE the
+    // final fullContent assembly. Verify both coexist.
+    const out = convertWiEntry({ comment: 'A', key: ['a'], position: 5, content: 'The example shows the way' }, 'lorebook', { compress: 'caveman' });
+    assert(out.content.includes('## Example Dialogue'), 'subheader present');
+    assert(out.content.includes('compress: caveman'), 'compression annotated');
+    assert(!/\bthe\b/i.test(out.content.split('## Example Dialogue')[1]), 'caveman dropped articles in body');
+});
+
+test('convertWiEntry: EM subheader present regardless of emHandling option', () => {
+    // The converter always emits the append form. The skip filter lives in
+    // importEntries / upsertConvertedEntry — caller decides whether to write.
+    const append = convertWiEntry({ comment: 'A', key: ['a'], position: 5, content: 'c' }, 'lorebook', { emHandling: 'append' });
+    const skip = convertWiEntry({ comment: 'A', key: ['a'], position: 5, content: 'c' }, 'lorebook', { emHandling: 'skip' });
+    assert(append.content.includes('## Example Dialogue'), 'append emits subheader');
+    assert(skip.content.includes('## Example Dialogue'), 'skip ALSO emits subheader — filter is downstream');
+    assert(skip._emPosition === 5, 'skip still sets _emPosition flag');
+});
+
+// ============================================================================
 // Tests: #18 caveman-compress import (src/caveman.js + convertWiEntry hook)
 // ============================================================================
 

@@ -84,6 +84,12 @@ export async function importEntries(entries, folder, onProgress, options = {}) {
     const vault = getPrimaryVault(settings);
     const lorebookTag = settings.lorebookTag;
     const compress = options.compress ?? settings.importCompressByDefault;
+    // Wave 4 (WI parity): EM-position handling. 'append' (default) writes the
+    // entry with a "## Example Dialogue" subheader; 'skip' drops the entry
+    // entirely. convertWiEntry always emits the append form — the skip filter
+    // lives here so the per-import override can be applied without re-running
+    // the converter.
+    const emHandling = options.emHandling || settings.wiImportEmHandling || 'append';
 
     let imported = 0;
     let failed = 0;
@@ -93,13 +99,32 @@ export async function importEntries(entries, folder, onProgress, options = {}) {
     //   nativeApplied[field] — Tier A fields emitted as native frontmatter
     //   roundTripped[field]  — Tier C fields preserved without enforcement (Wave 2)
     //   skipped[reason]      — fields refused (e.g. invalid_role)
-    // Returned to caller so the import-report popup (Wave 5) can render counts.
-    const report = { nativeApplied: {}, roundTripped: {}, skipped: {} };
+    // Wave 4: also tracks emAppended/emSkipped counts + emEntries list so the
+    // import-report popup can offer a per-title "undo this skip / view what
+    // landed" affordance.
+    const report = {
+        nativeApplied: {}, roundTripped: {}, skipped: {},
+        emAppended: 0, emSkipped: 0, emEntries: [],
+    };
 
     let renamed = 0;
     for (const wiEntry of entries) {
         try {
-            const { filename, content } = convertWiEntry(wiEntry, lorebookTag, { compress, report });
+            const converted = convertWiEntry(wiEntry, lorebookTag, { compress, report, emHandling });
+            const { filename, content, title: entryTitle, _emPosition } = converted;
+
+            // Wave 4: skip path. Drop the EM entry before any vault I/O. Note
+            // the title so the import report can list which entries didn't land.
+            if (_emPosition != null && emHandling === 'skip') {
+                report.emSkipped++;
+                report.emEntries.push({ title: entryTitle || filename.replace(/\.md$/, ''), filename, position: _emPosition, action: 'skipped' });
+                if (onProgress) onProgress(imported + failed, entries.length);
+                continue;
+            }
+            if (_emPosition != null && emHandling === 'append') {
+                report.emAppended++;
+                report.emEntries.push({ title: entryTitle || filename.replace(/\.md$/, ''), filename, position: _emPosition, action: 'appended' });
+            }
             let fullPath = folder ? `${folder}/${filename}` : filename;
 
             // Check existence to avoid silent overwrites.
@@ -178,12 +203,25 @@ export async function upsertConvertedEntry(wiEntry, folder, options = {}) {
     }
     const compress = options.compress ?? settings.importCompressByDefault;
 
-    let filename, content;
-    const report = { nativeApplied: {}, roundTripped: {}, skipped: {} };
+    // Wave 4: single-entry callers honor emHandling too. 'append' is the
+    // default; companion extensions that want to bypass the subheader entirely
+    // can pass options.emHandling = 'skip' to short-circuit before write.
+    const emHandling = options.emHandling || settings.wiImportEmHandling || 'append';
+
+    let filename, content, _emPosition;
+    const report = { nativeApplied: {}, roundTripped: {}, skipped: {}, emAppended: 0, emSkipped: 0, emEntries: [] };
     try {
-        ({ filename, content } = convertWiEntry(wiEntry, settings.lorebookTag, { compress, report }));
+        ({ filename, content, _emPosition } = convertWiEntry(wiEntry, settings.lorebookTag, { compress, report, emHandling }));
     } catch (err) {
         return { ok: false, action: null, path: '', error: `convert failed: ${err.message}` };
+    }
+
+    if (_emPosition != null && emHandling === 'skip') {
+        report.emSkipped++;
+        return { ok: true, action: 'em-skipped', path: '', report };
+    }
+    if (_emPosition != null) {
+        report.emAppended++;
     }
 
     let fullPath = folder ? `${folder}/${filename}` : filename;
