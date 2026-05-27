@@ -478,10 +478,39 @@ Maps a single ST World Info entry to `{filename, content}` (Obsidian markdown wi
 - Title: from `wiEntry.comment` or first key or `Entry_<uid>`.
 - Filename: sanitized title + `.md`.
 - Keys: from `wiEntry.key` (handles both array and comma-separated string formats, BUG-008).
-- Position: maps ST's 5-value enum `{0: 'after', 1: 'before', 2: 'before', 3: 'after', 4: 'in_chat'}` (lossy).
+- Position: maps ST's 7-value enum `{0: 'after', 1: 'before', 2: 'before', 3: 'after', 4: 'in_chat', 5: 'before', 6: 'after'}` (lossy). Original ST value preserved as `# original_st_position: N` comment. Positions 5 (`before_example_messages`) and 6 (`after_example_messages`) trigger the Wave 4 EM handling — see below.
 - Content: `wiEntry.content` as markdown body after frontmatter.
 
+**Tier A native fields (Wave 1, WI parity):** ST fields DLE supports natively are emitted as canonical frontmatter so authorial intent survives the import:
+- `wiEntry.disable === true` → `enabled: false` (parser then skips the entry at load time per `parseVaultFile:191`). **Pre-Wave-1 these silently became active entries** — the most damaging silent downgrade in the importer.
+- `wiEntry.excludeRecursion` (or snake `exclude_recursion`) → `excludeRecursion: true` (camelCase is the grandfathered canonical form — see `CANONICAL_FM_LOOKUP` in `core/pipeline.js`).
+- `wiEntry.role` ∈ {0,1,2} → `role: system|user|assistant`. Unknown integers omit the line rather than emit a lie; the report's `skipped.invalid_role` counter is bumped instead.
+
+**Tier C round-trip fields (Wave 2, WI parity):** ST fields DLE has no plan to enforce, preserved verbatim so `/dle-lint` can surface them and authors can see what ST configured. Driven by `WI_ROUND_TRIP_FIELDS` table (export) in `src/helpers.js`; mirrored by parser-side table in `core/pipeline.js` emitting `W_WI_ROUND_TRIP`. All keys snake_case in the vault.
+
+Members (18 total): `vectorized`, `selective`, `use_probability`, `prevent_recursion`, `delay_until_recursion`, `group_override`, `use_group_scoring`, `case_sensitive`, `match_whole_words`, `automation_id`, `add_memo`, `display_index`, plus 6 scan-source toggles (`match_persona_description`, `match_character_description`, `match_character_personality`, `match_character_depth_prompt`, `match_scenario`, `match_creator_notes`).
+
+Distinct from `W_NOT_IMPLEMENTED` (sticky/delay/group/group_weight) — those have BUG numbers signaling "DLE plans to implement these later." `W_WI_ROUND_TRIP` means "DLE intentionally ignores this; remove if you don't need it preserved."
+
+**Drift guard:** the two tables (importer in `src/helpers.js`, parser in `core/pipeline.js`) MUST stay aligned. A field emitted on import but unflagged by the parser will look "vanished" to authors reading `/dle-lint` — exactly the silent downgrade this contract was built to kill. Reviewers reject single-table edits.
+
+Default-skip policy: values `null` / `undefined` / `false` / `0` / `''` / `NaN` / `Infinity` are omitted from the emitted YAML so vault entries stay quiet unless ST exported a user-set non-default value.
+
+`selectiveLogic` is intentionally absent — see Wave 3 (`applySelectiveLogic` native enforcement).
+
+**Example Messages handling (Wave 4, WI parity):** ST positions 5 / 6 (`before_example_messages` / `after_example_messages`) have no DLE equivalent. The converter:
+1. Maps position 5 → `before`, position 6 → `after` (so the entry still injects somewhere reasonable).
+2. Prepends `## Example Dialogue\n\n` to the body so the sample lines read as flavor content inside the entry when the LLM sees it. Markdown subheader — ST does not parse it.
+3. Preserves original ST value via `# original_st_position: 5` / `6` comment.
+4. Returns `_emPosition: 5 | 6 | null` and `title` on the result so `importEntries` can branch on the skip policy and build the per-entry list for the import-report popup (Wave 5).
+
+The skip policy lives at the I/O layer, not the converter — `convertWiEntry` always emits the subheader form so single-entry callers (`upsertConvertedEntry`, companion-extension integrations) behave consistently with batch import. `importEntries` reads `settings.wiImportEmHandling` (default `'append'`) plus per-call `options.emHandling` override and:
+- `'append'` → writes the entry as normal, bumps `report.emAppended++`, pushes `{title, filename, position, action:'appended'}` to `report.emEntries`.
+- `'skip'` → drops the entry before any vault I/O, bumps `report.emSkipped++`, pushes `{...action:'skipped'}`. `upsertConvertedEntry` returns `action: 'em-skipped'` on this path.
+
 **`options.compress`** (#18) — when truthy (or `'caveman'`), pipe the body through `compressCaveman()` before writing and annotate frontmatter with `compress: caveman`. Other strings are passed through `resolveCompressMode` for forward compatibility, but only modes in `APPLIED_COMPRESS_MODES` (currently just `'caveman'`) actually transform and annotate — unknown modes log a warning and leave the body untouched rather than emit a misleading annotation.
+
+**`options.report`** (Wave 1+) — optional accumulator shaped `{nativeApplied:{}, roundTripped:{}, skipped:{}}`. When passed, the converter mutates `report.<bucket>[field]++` in place. `importEntries` and `upsertConvertedEntry` thread their own accumulator through and return it on the result object so the import-report popup (Wave 5) can render per-field counts without re-parsing emitted YAML.
 
 ### `importEntries(entries, folder, onProgress, options?)` (import.js:importEntries())
 
@@ -493,7 +522,7 @@ Writes entries to the primary vault one at a time.
 - AbortError on dedup check → skip entry (FIX-M6), not use undefined path.
 - Network error on existence check → skip entry with error message.
 - Cap exhausted (>20 dedup attempts) → skip entry.
-- Returns `{imported, failed, renamed, errors}`.
+- Returns `{imported, failed, renamed, errors, report}`. The `report` accumulator (Wave 1) carries per-field counts of native applications, round-tripped fields, and skip reasons — consumed by the import-report popup (Wave 5).
 
 **V-C2 (2026-05-22):** `_findUniquePath` previously returned the candidate path "assume free" when the existence-check `obsidianFetch` threw a non-Abort error. If the file actually existed, the caller's `writeNote` then silently overwrote real vault content. The helper now delegates to `classifyDedupProbe(fetchResult, err)` in `src/vault/vault-pure.js` — any error (Abort or otherwise) yields `{accept:false, taken:false}`, so the helper returns `null` and the caller skips with a "dedup check failed" error message. See gotchas.md #49.
 
@@ -513,7 +542,7 @@ PR #28.2 — Single-entry convert-and-upsert. Designed for companion-extension i
 - `'replace'` — overwrite existing file. Destructive — companion callers should confirm.
 - `'skip'` — bail with `{ok:true, action:'skipped'}`.
 
-**Returns** `{ok, action: 'created'|'replaced'|'renamed'|'skipped'|null, path, error?}`.
+**Returns** `{ok, action: 'created'|'replaced'|'renamed'|'skipped'|null, path, report?, error?}`. The `report` accumulator (Wave 1) is present on every successful return so single-entry callers can show the same field-application summary as batch imports.
 
 **`options.compress`** — forwarded into `convertWiEntry`, defaults to `settings.importCompressByDefault`.
 

@@ -949,3 +949,28 @@ Five small pipeline-stage fixes that each shut down a specific footgun. None cha
 **Cascading consequence:** `enableCorsProxy: true` in ST's `config.yaml` is **no longer required for DLE AI features** as of v2.5 (Profile mode uses CMRS which routes server-side and bypasses the CORS bridge entirely). It IS still required if you use ST's own raw-URL AI requests outside DLE. Vault fetching via Obsidian Local REST API is unaffected — Obsidian's REST plugin has built-in CORS and DLE has never used the CORS bridge for vault traffic (see `docs/vault-and-indexing.md` §3 "CORS proxy usage").
 
 **Inherit chain:** `'inherit'` mode still works (chains to aiSearch). But aiSearch's mode can no longer BE `'proxy'` post-migration, so the inherit chain always lands on `'profile'`. No special handling needed in `resolveConnectionConfig` — the impossibility is enforced at the migration boundary, not the resolve boundary.
+
+---
+
+## 69. WI import is a contract, not a best-effort transform (v2.5 WI parity)
+
+**Files:** `src/helpers.js` (convertWiEntry + WI_ROUND_TRIP_FIELDS), `src/vault/import.js` (importEntries + upsertConvertedEntry), `core/pipeline.js` (parser-side WI_ROUND_TRIP_FIELDS), `core/matching.js` (applySelectiveLogic), `src/ui/wi-import-report-pure.js` (popup builder), `src/ui/wi-import-report.js` (popup wrapper), `settings.js` (wiImportEmHandling).
+**Date:** 2026-05-27
+
+**The contract:** every ST World Info field has a documented home. No field silently drops on import. Three tiers:
+
+1. **Native** — DLE acts on the field. `disable`/`enabled:false`, `excludeRecursion`, `role` (Wave 1), plus `selective_logic` with all 4 modes enforced by `applySelectiveLogic` (Wave 3), plus EM positions 5/6 with `## Example Dialogue` subheader handling (Wave 4).
+2. **Round-trip preserved** — landed in vault frontmatter as snake_case, surfaced by `/dle-lint`. Two sub-tiers:
+   - `W_NOT_IMPLEMENTED` (BUG numbers): `sticky`, `delay`, `group`, `group_weight` — planned to implement.
+   - `W_WI_ROUND_TRIP` (Wave 2, no BUG numbers): `vectorized`, `selective`, `use_probability`, `prevent_recursion`, `delay_until_recursion`, `group_override`, `use_group_scoring`, `case_sensitive`, `match_whole_words`, `automation_id`, `add_memo`, `display_index`, + 6 `match_*` toggles. DLE intentionally ignores these.
+3. **Documented gaps** — regex keys (BUG-045) treated as literal strings.
+
+**Drift-class regression to guard:** the round-trip table appears in TWO places — importer side (`WI_ROUND_TRIP_FIELDS` in `src/helpers.js`) emits to vault frontmatter, parser side (same name, in `core/pipeline.js`) flags emitted fields via `W_WI_ROUND_TRIP`. A field emitted on import but unflagged by the parser will appear "vanished" to authors reading `/dle-lint` output — exactly the silent downgrade this contract was built to kill. **Reviewers MUST reject single-table edits.** Add to both or neither.
+
+**Pin the predicate:** `applySelectiveLogic` in `core/matching.js` is the single source of truth for the 4 refine-key gating modes. Today only `testEntryMatch` calls it (which transitively covers primary keyword + recursion paths since both route through `testEntryMatch`). Future refine-gate sites MUST route through `applySelectiveLogic` — matches the M-6 `hasWarmup` invariant. BM25 fuzzy bypasses refine keys entirely (TF-IDF is content-wide) — that's an architectural carve-out, not a `selective_logic` exception.
+
+**Wave 1 silent-downgrade fix:** pre-v2.5, `wiEntry.disable === true` silently became an active vault entry — most damaging silent downgrade in the importer. Now emits `enabled: false`, parser skips at load (`parseVaultFile:191`). `wiEntry.excludeRecursion` and `wiEntry.role` had similar drops despite DLE supporting them natively.
+
+**Wave 5 import report struct (`{nativeApplied, roundTripped, skipped, emAppended, emSkipped, emEntries}`)** is threaded through `convertWiEntry` via `options.report` (optional accumulator — harmless when omitted). `importEntries` + `upsertConvertedEntry` return it on result. Wave 5 popup consumes it. The skip policy for EM entries lives at the I/O layer (`importEntries`), not the converter — converter always emits the append form so single-entry callers (companion extensions) behave consistently with batch import.
+
+**Test:** `test/wi-import.test.mjs` (Wave 7) holds the full-parity fixture + no-silent-drop guard. Drift-class regression coverage in `test/regression.test.mjs`.

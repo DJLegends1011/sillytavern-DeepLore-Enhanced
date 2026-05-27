@@ -7,6 +7,11 @@ import { getSettings, getPrimaryVault, resolveWriteVault } from '../../settings.
 import { convertWiEntry } from '../helpers.js';
 import { classifyDedupProbe } from './vault-pure.js';
 
+// Pure JSON parser re-exported from ./import-pure.js (Wave 7 — node tests pull
+// the pure module directly to avoid the settings.js → ST module chain).
+// Existing callers using import.js keep their import surface unchanged.
+export { parseWorldInfoJson } from './import-pure.js';
+
 const MAX_DEDUP_ATTEMPTS = 20;
 
 /**
@@ -84,15 +89,54 @@ export async function importEntries(entries, folder, onProgress, options = {}) {
     const vault = getPrimaryVault(settings);
     const lorebookTag = settings.lorebookTag;
     const compress = options.compress ?? settings.importCompressByDefault;
+    // Wave 4 (WI parity): EM-position handling. 'append' (default) writes the
+    // entry with a "## Example Dialogue" subheader; 'skip' drops the entry
+    // entirely. convertWiEntry always emits the append form — the skip filter
+    // lives here so the per-import override can be applied without re-running
+    // the converter.
+    const emHandling = options.emHandling || settings.wiImportEmHandling || 'append';
 
     let imported = 0;
     let failed = 0;
     const errors = [];
 
+    // Wave 1 (WI parity): accumulator threaded into convertWiEntry. Buckets:
+    //   nativeApplied[field] — Tier A fields emitted as native frontmatter
+    //   roundTripped[field]  — Tier C fields preserved without enforcement (Wave 2)
+    //   skipped[reason]      — fields refused (e.g. invalid_role)
+    // Wave 4: also tracks emAppended/emSkipped counts + emEntries list so the
+    // import-report popup can offer a per-title "undo this skip / view what
+    // landed" affordance.
+    // Audit fix-up: emEntries was unbounded — 5k EM entries = 5k retained
+    // objects but the popup only renders the first 20. Cap pushes at 100;
+    // popup overflow indicator handles the rollup display.
+    const EM_ENTRIES_CAP = 100;
+    const report = {
+        nativeApplied: {}, roundTripped: {}, skipped: {},
+        emAppended: 0, emSkipped: 0, emEntries: [],
+    };
+    const pushEmEntry = (rec) => {
+        if (report.emEntries.length < EM_ENTRIES_CAP) report.emEntries.push(rec);
+    };
+
     let renamed = 0;
     for (const wiEntry of entries) {
         try {
-            const { filename, content } = convertWiEntry(wiEntry, lorebookTag, { compress });
+            const converted = convertWiEntry(wiEntry, lorebookTag, { compress, report, emHandling });
+            const { filename, content, title: entryTitle, _emPosition } = converted;
+
+            // Wave 4: skip path. Drop the EM entry before any vault I/O. Note
+            // the title so the import report can list which entries didn't land.
+            if (_emPosition != null && emHandling === 'skip') {
+                report.emSkipped++;
+                pushEmEntry({ title: entryTitle || filename.replace(/\.md$/, ''), filename, position: _emPosition, action: 'skipped' });
+                if (onProgress) onProgress(imported + failed, entries.length);
+                continue;
+            }
+            if (_emPosition != null && emHandling === 'append') {
+                report.emAppended++;
+                pushEmEntry({ title: entryTitle || filename.replace(/\.md$/, ''), filename, position: _emPosition, action: 'appended' });
+            }
             let fullPath = folder ? `${folder}/${filename}` : filename;
 
             // Check existence to avoid silent overwrites.
@@ -139,7 +183,7 @@ export async function importEntries(entries, folder, onProgress, options = {}) {
         if (onProgress) onProgress(imported + failed, entries.length);
     }
 
-    return { imported, failed, renamed, errors };
+    return { imported, failed, renamed, errors, report };
 }
 
 /**
@@ -171,11 +215,25 @@ export async function upsertConvertedEntry(wiEntry, folder, options = {}) {
     }
     const compress = options.compress ?? settings.importCompressByDefault;
 
-    let filename, content;
+    // Wave 4: single-entry callers honor emHandling too. 'append' is the
+    // default; companion extensions that want to bypass the subheader entirely
+    // can pass options.emHandling = 'skip' to short-circuit before write.
+    const emHandling = options.emHandling || settings.wiImportEmHandling || 'append';
+
+    let filename, content, _emPosition;
+    const report = { nativeApplied: {}, roundTripped: {}, skipped: {}, emAppended: 0, emSkipped: 0, emEntries: [] };
     try {
-        ({ filename, content } = convertWiEntry(wiEntry, settings.lorebookTag, { compress }));
+        ({ filename, content, _emPosition } = convertWiEntry(wiEntry, settings.lorebookTag, { compress, report, emHandling }));
     } catch (err) {
         return { ok: false, action: null, path: '', error: `convert failed: ${err.message}` };
+    }
+
+    if (_emPosition != null && emHandling === 'skip') {
+        report.emSkipped++;
+        return { ok: true, action: 'em-skipped', path: '', report };
+    }
+    if (_emPosition != null) {
+        report.emAppended++;
     }
 
     let fullPath = folder ? `${folder}/${filename}` : filename;
@@ -195,7 +253,7 @@ export async function upsertConvertedEntry(wiEntry, folder, options = {}) {
     }
 
     if (existed) {
-        if (policy === 'skip') return { ok: true, action: 'skipped', path: fullPath };
+        if (policy === 'skip') return { ok: true, action: 'skipped', path: fullPath, report };
         if (policy === 'rename') {
             const candidatePath = await _findUniquePath(targetVault, filename, folder);
             if (!candidatePath) {
@@ -212,42 +270,5 @@ export async function upsertConvertedEntry(wiEntry, folder, options = {}) {
         return { ok: false, action: null, path: fullPath, error: result.error };
     }
     const action = existed ? (policy === 'replace' ? 'replaced' : 'renamed') : 'created';
-    return { ok: true, action, path: fullPath };
-}
-
-/**
- * Parse ST World Info JSON (handles both export format and embedded character card format).
- * @param {string} jsonText - Raw JSON text
- * @returns {{ entries: object[], source: string }}
- */
-export function parseWorldInfoJson(jsonText) {
-    let data;
-    try {
-        data = JSON.parse(jsonText);
-    } catch (e) {
-        throw new Error('Invalid World Info JSON: ' + e.message);
-    }
-
-    const filterValid = (arr) => arr.filter(e => e && typeof e === 'object' && !Array.isArray(e));
-
-    // Direct WI export { entries: { 0: {...}, 1: {...} } }
-    if (data.entries && typeof data.entries === 'object' && !Array.isArray(data.entries)) {
-        const entries = filterValid(Object.values(data.entries));
-        return { entries, source: data.originalData?.name || 'World Info' };
-    }
-
-    if (Array.isArray(data)) {
-        return { entries: filterValid(data), source: 'World Info Array' };
-    }
-
-    // V2 character card with embedded WI
-    if (data.data?.character_book?.entries) {
-        const raw = Array.isArray(data.data.character_book.entries)
-            ? data.data.character_book.entries
-            : Object.values(data.data.character_book.entries);
-        const entries = filterValid(raw);
-        return { entries, source: data.data?.name || 'Character Card' };
-    }
-
-    throw new Error('Unrecognized World Info format. Expected ST WI export JSON or V2 character card.');
+    return { ok: true, action, path: fullPath, report };
 }

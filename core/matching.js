@@ -37,13 +37,37 @@ function clampDepth(depth, label) {
 const _regexCache = new WeakMap();
 
 // H9: cache lowercased scanText to avoid ~25MB transient allocations per-entry.
-let _lastScanText = '';
-let _lastScanTextLower = '';
+//
+// Audit fix-up (round 2): single-slot cache thrashed when entries use distinct
+// scanDepth overrides — same generation re-normalized the haystack ~10× when
+// the per-entry depth interleaved away from the global scanText. Switched to a
+// bounded LRU map keyed on raw string identity; matches the scanTextMemo over
+// in src/pipeline/match.js so each depth bucket lowers exactly once per gen.
+// Cap at 16 distinct strings — typical workloads see 1-3, mixed scanDepths up
+// to ~10. Beyond 16, oldest entry evicted (best-effort, not correctness-critical).
+const SCAN_TEXT_CACHE_CAP = 16;
+const _scanTextLowerCache = new Map();
+
+function _getLoweredScanText(scanText) {
+    const cached = _scanTextLowerCache.get(scanText);
+    if (cached !== undefined) {
+        // LRU touch — move to end so it's eviction-last.
+        _scanTextLowerCache.delete(scanText);
+        _scanTextLowerCache.set(scanText, cached);
+        return cached;
+    }
+    const lower = scanText.normalize('NFC').toLowerCase();
+    _scanTextLowerCache.set(scanText, lower);
+    if (_scanTextLowerCache.size > SCAN_TEXT_CACHE_CAP) {
+        const oldest = _scanTextLowerCache.keys().next().value;
+        _scanTextLowerCache.delete(oldest);
+    }
+    return lower;
+}
 
 /** Release the cached scan text strings after the matching phase completes. */
 export function clearScanTextCache() {
-    _lastScanText = '';
-    _lastScanTextLower = '';
+    _scanTextLowerCache.clear();
 }
 
 /**
@@ -132,16 +156,7 @@ export function testEntryMatch(entry, scanText, settings, trace = null) {
     if (entry.keys.length === 0) return null;
 
     const cached = getCachedRegexes(entry, settings);
-    let haystack;
-    if (settings.caseSensitive) {
-        haystack = scanText;
-    } else {
-        if (scanText !== _lastScanText) {
-            _lastScanTextLower = scanText.normalize('NFC').toLowerCase();
-            _lastScanText = scanText;
-        }
-        haystack = _lastScanTextLower;
-    }
+    const haystack = settings.caseSensitive ? scanText : _getLoweredScanText(scanText);
 
     let primaryMatch = null;
     for (const item of cached.primary) {
@@ -159,22 +174,87 @@ export function testEntryMatch(entry, scanText, settings, trace = null) {
         return null;
     }
 
-    // Refine keys: if non-empty, at least one must also match (AND_ANY mode)
+    // Refine keys: gate is parameterized by entry.selectiveLogic (Wave 3 WI parity).
+    // Legacy entries without selectiveLogic default to 'and_any' — the pre-Wave-3
+    // behavior. All four ST selectiveLogic modes are honored:
+    //   and_any (default) — ≥1 refine key must match
+    //   and_all           — all refine keys must match
+    //   not_any           — zero refine keys may match (any hit blocks the entry)
+    //   not_all           — at least one refine key must miss (full match blocks)
+    // Empty refine_keys = no gate regardless of mode (vacuously satisfied for all
+    // four). The match path is shared across primary, recursion, and BM25 keyword
+    // pre-validation sites via testEntryMatch; future refine-gate sites MUST route
+    // through applySelectiveLogic (matches the M-6 hasWarmup invariant — pin the
+    // predicate so the 4 modes can't diverge across paths).
     if (cached.refine.length > 0) {
-        const hasRefine = cached.refine.some(item => {
+        // Audit fix-up: short-circuit by mode instead of always counting all
+        // refine hits. Hot loop — pre-fix the .filter(...).length always
+        // evaluated every refine regex against the (large) haystack even for
+        // the default and_any case where the legacy .some() bailed at hit 1.
+        const total = cached.refine.length;
+        const logic = entry.selectiveLogic || 'and_any';
+        const test = (item) => {
             if (settings.matchWholeWords) {
                 if (item.isMultiWord) return haystack.includes(item.rKey);
                 return item.regex.test(haystack);
             }
             return haystack.includes(item.rKey);
-        });
-        if (!hasRefine) {
-            if (trace) trace.push({ title: entry.title, vaultSource: entry.vaultSource, result: 'refine-blocked', primaryMatched: primaryMatch, refineKeys: cached.refine.map(r => r.rKey), reason: `primary matched "${primaryMatch}" but no refine_keys present in scan text` });
+        };
+        let passes;
+        let matchedForTrace; // computed only if a trace collector is present
+        switch (logic) {
+            case 'and_all':
+                passes = cached.refine.every(test);
+                break;
+            case 'not_all':
+                passes = !cached.refine.every(test);
+                break;
+            case 'not_any':
+                passes = !cached.refine.some(test);
+                break;
+            case 'and_any':
+            default:
+                passes = cached.refine.some(test);
+        }
+        if (!passes) {
+            if (trace) {
+                matchedForTrace = cached.refine.filter(test).length;
+                trace.push({ title: entry.title, vaultSource: entry.vaultSource, result: 'refine-blocked', primaryMatched: primaryMatch, refineKeys: cached.refine.map(r => r.rKey), reason: `selective_logic=${logic} blocked (${matchedForTrace}/${total} refine keys matched)` });
+            }
+            // applySelectiveLogic is still the pinned predicate for any
+            // future refine-gate site — exercised in tests, used by
+            // diagnostics.js / commands-pipeline.js for user-facing copy.
+            void applySelectiveLogic;
             return null;
         }
     }
     if (trace) trace.push({ title: entry.title, vaultSource: entry.vaultSource, result: 'match', primaryMatched: primaryMatch, refineKeys: cached.refine.map(r => r.rKey), reason: null });
     return primaryMatch;
+}
+
+/**
+ * Pure predicate for the selective_logic gate. Single source of truth so all
+ * refine-key gate sites (today: testEntryMatch only) cannot diverge across
+ * the 4 modes. Mirrors ST's selectiveLogic enum:
+ *   0 AND_ANY → 'and_any' (primary AND any refine)
+ *   1 NOT_ALL → 'not_all' (primary AND NOT all refines)
+ *   2 NOT_ANY → 'not_any' (primary AND no refine)
+ *   3 AND_ALL → 'and_all' (primary AND all refines)
+ *
+ * @param {number} matchedCount - how many refine keys hit the scan text
+ * @param {number} total - total refine keys on the entry
+ * @param {'and_any'|'and_all'|'not_all'|'not_any'} logic
+ * @returns {boolean} true = entry passes the refine gate (still match)
+ */
+export function applySelectiveLogic(matchedCount, total, logic) {
+    if (total === 0) return true; // vacuously satisfied for all 4 modes
+    switch (logic) {
+        case 'and_all': return matchedCount === total;
+        case 'not_all': return matchedCount < total;
+        case 'not_any': return matchedCount === 0;
+        case 'and_any':
+        default:        return matchedCount > 0;
+    }
 }
 
 /**
@@ -189,16 +269,7 @@ export function testPrimaryMatchOnly(entry, scanText, settings) {
     if (entry.keys.length === 0) return null;
 
     const cached = getCachedRegexes(entry, settings);
-    let haystack;
-    if (settings.caseSensitive) {
-        haystack = scanText;
-    } else {
-        if (scanText !== _lastScanText) {
-            _lastScanTextLower = scanText.normalize('NFC').toLowerCase();
-            _lastScanText = scanText;
-        }
-        haystack = _lastScanTextLower;
-    }
+    const haystack = settings.caseSensitive ? scanText : _getLoweredScanText(scanText);
 
     for (const item of cached.primary) {
         if (settings.matchWholeWords) {
@@ -224,16 +295,7 @@ export function testPrimaryMatchOnly(entry, scanText, settings) {
 export function countKeywordOccurrences(entry, scanText, settings) {
     let count = 0;
     const cached = getCachedRegexes(entry, settings);
-    let text;
-    if (settings.caseSensitive) {
-        text = scanText;
-    } else {
-        if (scanText !== _lastScanText) {
-            _lastScanTextLower = scanText.normalize('NFC').toLowerCase();
-            _lastScanText = scanText;
-        }
-        text = _lastScanTextLower;
-    }
+    const text = settings.caseSensitive ? scanText : _getLoweredScanText(scanText);
     for (const item of cached.primary) {
         if (settings.matchWholeWords) {
             // BUG-044: multi-word has regexG===null; substring-count occurrences.

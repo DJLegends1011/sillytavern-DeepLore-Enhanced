@@ -7,6 +7,50 @@ import { compressCaveman, resolveCompressMode, APPLIED_COMPRESS_MODES } from './
 export const MAX_PRIORITY_VALUE = 999;
 
 /**
+ * Wave 2 (WI parity) — Tier C round-trip preservation table.
+ * Pairs are [ST wiEntry key, vault frontmatter key (snake_case)].
+ *
+ * These ST World Info fields land in the vault frontmatter as-is so /dle-lint
+ * can surface them via W_WI_ROUND_TRIP, but DLE does not act on them at the
+ * pipeline level (no enforcement). selectiveLogic is intentionally absent —
+ * handled with native enforcement in Wave 3.
+ *
+ * Keep this table aligned with WI_ROUND_TRIP_FIELDS in core/pipeline.js (parser
+ * side). A drift between the two is the regression class to guard against —
+ * a field that's emitted on import but not flagged by the parser will appear
+ * to "vanish" to authors reading /dle-lint output, which is exactly the silent
+ * downgrade we built this contract to kill.
+ */
+export const WI_ROUND_TRIP_FIELDS = [
+    ['vectorized', 'vectorized'],
+    ['selective', 'selective'],
+    ['useProbability', 'use_probability'],
+    ['preventRecursion', 'prevent_recursion'],
+    ['delayUntilRecursion', 'delay_until_recursion'],
+    ['groupOverride', 'group_override'],
+    ['useGroupScoring', 'use_group_scoring'],
+    ['caseSensitive', 'case_sensitive'],
+    ['matchWholeWords', 'match_whole_words'],
+    ['automationId', 'automation_id'],
+    ['addMemo', 'add_memo'],
+    ['displayIndex', 'display_index'],
+    ['matchPersonaDescription', 'match_persona_description'],
+    ['matchCharacterDescription', 'match_character_description'],
+    ['matchCharacterPersonality', 'match_character_personality'],
+    ['matchCharacterDepthPrompt', 'match_character_depth_prompt'],
+    ['matchScenario', 'match_scenario'],
+    ['matchCreatorNotes', 'match_creator_notes'],
+    // Audit fix-up: modern ST fields surfaced by the contract-integrity audit.
+    // Present in ST `originalWIDataKeyMap` (world-info.js lines 2607-2644) on
+    // current ST builds. Without these, the "every WI field" contract is
+    // violated for any user on a modern ST install.
+    ['triggers', 'triggers'],
+    ['ignoreBudget', 'ignore_budget'],
+    ['characterFilter', 'character_filter'],
+    ['decorators', 'decorators'],
+];
+
+/**
  * Update Existing Entries — surgical frontmatter-field update.
  *
  * Changes specific scalar fields in a markdown file's YAML frontmatter
@@ -457,16 +501,42 @@ export function buildObsidianURI(vaultName, filename) {
  *   frontmatter with `compress: caveman`. Forward-compat values pass through
  *   unmodified (annotation only) so future modes like `ai-summary` can be
  *   wired up without churning callers.
- * @returns {{filename: string, content: string}}
+ * @param {object} [options.report] - Wave 1+: optional accumulator. When provided,
+ *   the converter mutates `report.nativeApplied[field]++`, `report.roundTripped[field]++`,
+ *   and `report.skipped[reason]++` in place so `importEntries` can build a structured
+ *   per-import summary without re-parsing what it just emitted.
+ * @param {string} [options.emHandling] - Wave 4: 'append' (default) | 'skip'. Reserved
+ *   for future per-call override of the subheader text; current behavior is identical
+ *   for both modes (the I/O-layer caller enforces skip via _emPosition).
+ * @returns {{
+ *   filename: string,
+ *   content: string,
+ *   title: string,
+ *   _emPosition: number|null,
+ * }} `title` is the cleaned entry title (callers use this for the import-report
+ *   entry list). `_emPosition` is 5 or 6 when the entry was at an ST Example
+ *   Messages position, null otherwise — the I/O layer (importEntries /
+ *   upsertConvertedEntry) reads this flag to apply the skip policy without
+ *   re-running the converter.
  */
 export function convertWiEntry(wiEntry, lorebookTag, options = {}) {
     const compressMode = resolveCompressMode(options.compress);
+    const report = options.report || null;
+    const bump = (bucket, field) => {
+        if (!report) return;
+        if (!report[bucket]) report[bucket] = {};
+        report[bucket][field] = (report[bucket][field] || 0) + 1;
+    };
     // Title from `comment` (ST convention) or joined keys. Strip newlines to
     // prevent H1 injection.
     // BUG-008: older ST exports use a comma-separated string for `key`.
     const keyArray = Array.isArray(wiEntry.key) ? wiEntry.key
         : (typeof wiEntry.key === 'string' ? wiEntry.key.split(',').map(k => k.trim()).filter(Boolean) : []);
-    const title = ((wiEntry.comment || '').trim()
+    // Defensive coerce: ST occasionally exports numeric `comment` (e.g. when a
+    // tool auto-set it to the entry's UID). Bare `(wiEntry.comment || '').trim()`
+    // throws TypeError on numbers.
+    const commentStr = wiEntry.comment != null ? String(wiEntry.comment) : '';
+    const title = (commentStr.trim()
         || keyArray.join(', ').substring(0, 50)
         || `Entry_${wiEntry.uid || Date.now()}`).replace(/[\r\n]+/g, ' ');
 
@@ -480,10 +550,23 @@ export function convertWiEntry(wiEntry, lorebookTag, options = {}) {
         keys.push(...wiEntry.key.split(',').map(k => k.trim()).filter(Boolean));
     }
 
-    // ST has 5 positions, DLE has 3 — lossy. ST: 0=after_char, 1=before_char,
-    // 2=before_AN, 3=after_AN, 4=in_chat.
-    const positionMap = { 0: 'after', 1: 'before', 2: 'before', 3: 'after', 4: 'in_chat' };
+    // ST has 7 positions, DLE has 3 — lossy. ST positions:
+    //   0 after_char, 1 before_char, 2 before_AN, 3 after_AN, 4 in_chat,
+    //   5 before_example_messages, 6 after_example_messages
+    // Original ST value preserved as `# original_st_position` comment for
+    // round-trip readability.
+    //
+    // Wave 4 (WI parity): positions 5/6 (Example Messages) get mapped to
+    // before/after AND the body is prepended with a "## Example Dialogue"
+    // subheader so the LLM still sees the sample lines as flavor content
+    // inside the entry. DLE has no EM injection slot, so this is the most
+    // honest fallback — the markdown subheader is just text in the prompt,
+    // ST does not parse it specially. Per-import skip override available
+    // via options.emHandling (defaults caller-provided, falls back to 'append').
+    const positionMap = { 0: 'after', 1: 'before', 2: 'before', 3: 'after', 4: 'in_chat', 5: 'before', 6: 'after' };
     const position = positionMap[wiEntry.position] || null;
+    const isEmPosition = wiEntry.position === 5 || wiEntry.position === 6;
+    const emHandling = options.emHandling || 'append';
 
     const fm = [];
     fm.push('---');
@@ -517,6 +600,61 @@ export function convertWiEntry(wiEntry, lorebookTag, options = {}) {
         fm.push(`probability: ${(wiEntry.probability / 100).toFixed(2)}`);
     }
     if (wiEntry.scanDepth) fm.push(`scanDepth: ${wiEntry.scanDepth}`);
+    // Audit fix-up: cooldown was claimed native in FIELD_HOMES but never
+    // emitted — silent-downgrade class. Parser reads cooldown at line ~289
+    // of core/pipeline.js so the native plumbing exists; only the importer
+    // was missing the line.
+    if (wiEntry.cooldown != null && Number(wiEntry.cooldown) > 0) {
+        fm.push(`cooldown: ${Number(wiEntry.cooldown)}`);
+        bump('nativeApplied', 'cooldown');
+    }
+
+    // Wave 1 (WI parity) — Tier A: ST fields DLE supports natively but the
+    // importer used to drop on the floor. Most important: `disable: true`
+    // entries were getting imported as active, silently flipping authorial
+    // intent. excludeRecursion + role are honored by the pipeline already
+    // (core/pipeline.js:245 / line 285) but had no import-side emission.
+    if (wiEntry.disable) {
+        fm.push('enabled: false');
+        bump('nativeApplied', 'enabled');
+    }
+    if (wiEntry.excludeRecursion || wiEntry.exclude_recursion) {
+        fm.push('excludeRecursion: true');
+        bump('nativeApplied', 'excludeRecursion');
+    }
+    if (wiEntry.role != null) {
+        const roleNames = ['system', 'user', 'assistant'];
+        const idx = typeof wiEntry.role === 'number' ? wiEntry.role : null;
+        const roleName = idx != null && idx >= 0 && idx < roleNames.length ? roleNames[idx] : null;
+        if (roleName) {
+            fm.push(`role: ${roleName}`);
+            bump('nativeApplied', 'role');
+        } else {
+            // Unknown role index — don't lie. Skip emission, record for the report.
+            bump('skipped', 'invalid_role');
+        }
+    }
+
+    // Wave 3 (WI parity) — native selective_logic enforcement. Map ST's integer
+    // enum to the snake_case symbolic name the parser + applySelectiveLogic gate
+    // both consume. Mode 0 (AND_ANY) is the implicit default — omit to keep the
+    // vault entry clean. Invalid integers (out of 0..3 or non-number) bump
+    // skipped.invalid_selective_logic and emit nothing rather than lie.
+    if (wiEntry.selectiveLogic != null) {
+        const SL_NAMES = ['and_any', 'not_all', 'not_any', 'and_all'];
+        const slIdx = typeof wiEntry.selectiveLogic === 'number' ? wiEntry.selectiveLogic : null;
+        const slName = slIdx != null && slIdx >= 0 && slIdx < SL_NAMES.length ? SL_NAMES[slIdx] : null;
+        if (slName && slName !== 'and_any') {
+            fm.push(`selective_logic: ${slName}`);
+            bump('nativeApplied', 'selective_logic');
+        } else if (!slName) {
+            // Audit fix-up: only count invalid enums. Default 'and_any' is
+            // omitted silently — surfacing it as "selective_logic_default — N"
+            // in the popup leaked internal telemetry the user couldn't parse.
+            bump('skipped', 'invalid_selective_logic');
+        }
+    }
+
     // C.3: round-trip-only — parseVaultFile emits W_NOT_IMPLEMENTED for these so
     // /dle-lint surfaces them. (BUG-047 sticky, BUG-048 delay, BUG-052 group*)
     if (wiEntry.sticky != null && wiEntry.sticky !== 0) fm.push(`sticky: ${Number(wiEntry.sticky)}`);
@@ -526,6 +664,35 @@ export function convertWiEntry(wiEntry, lorebookTag, options = {}) {
     }
     if (wiEntry.groupWeight != null && Number(wiEntry.groupWeight) !== 100) {
         fm.push(`group_weight: ${Number(wiEntry.groupWeight)}`);
+    }
+
+    // Wave 2 (WI parity) — Tier C round-trip preservation. ST fields DLE does
+    // NOT enforce, but which we preserve verbatim so /dle-lint surfaces them
+    // and authors can see what ST had originally configured. Snake_case in the
+    // vault for readability; parser (core/pipeline.js) emits W_WI_ROUND_TRIP for
+    // these to distinguish from W_NOT_IMPLEMENTED (planned-to-implement fields).
+    // selectiveLogic is intentionally absent — handled native in Wave 3.
+    //
+    // Skip-default policy: omit when null/undefined/false/0/'' so vault entries
+    // stay quiet unless ST exported something the user actually set.
+    for (const [wiKey, fmKey] of WI_ROUND_TRIP_FIELDS) {
+        const raw = wiEntry[wiKey];
+        if (raw == null || raw === false || raw === 0 || raw === '') continue;
+        if (typeof raw === 'string') {
+            fm.push(`${fmKey}: ${yamlEscape(raw)}`);
+        } else if (typeof raw === 'number') {
+            if (!Number.isFinite(raw)) continue;
+            fm.push(`${fmKey}: ${raw}`);
+        } else if (typeof raw === 'boolean') {
+            fm.push(`${fmKey}: true`);
+        } else {
+            // Arrays/objects: stringify defensively rather than dropping silently.
+            // ST shouldn't emit these for any WI_ROUND_TRIP_FIELDS member today,
+            // but if a future ST adds e.g. a tag-list field we'd rather preserve
+            // it (visible via /dle-lint) than lose it.
+            fm.push(`${fmKey}: ${yamlEscape(JSON.stringify(raw))}`);
+        }
+        bump('roundTripped', fmKey);
     }
     fm.push(`summary: "Imported from SillyTavern World Info"`);
     // Only annotate the compress flag for modes this build can actually apply.
@@ -550,9 +717,37 @@ export function convertWiEntry(wiEntry, lorebookTag, options = {}) {
         // silently storing an annotation that lies about transform state.
         console.warn(`[DLE] convertWiEntry: unknown compress mode "${compressMode}" — body stored uncompressed, no annotation written.`);
     }
+
+    // Wave 4 (WI parity): for ST Example Messages positions (5 / 6), prepend
+    // "## Example Dialogue" so the sample lines read as flavor content inside
+    // the entry body when the LLM sees it. Subheader is just markdown — ST
+    // does NOT parse it specially. The skip policy is enforced by the caller
+    // (importEntries reads settings.wiImportEmHandling and acts on the
+    // returned `_emPosition` flag); convertWiEntry stays dumb and always
+    // produces the subheader form so single-entry callers (upsertConvertedEntry,
+    // companion extensions) get the same default behavior.
+    // EM accounting (emAppended / emSkipped) is owned by the I/O layer
+    // (importEntries) — only the caller knows whether the entry will actually
+    // be written or skipped. Here we just mark the entry via _emPosition so
+    // the caller can branch.
+    //
+    // Audit fix-up: idempotent prepend. If the body already starts with the
+    // subheader (re-import of a previously-imported EM entry), don't stack a
+    // second one. Re-imports normally land in a new _imported_N file via the
+    // dedup probe, but a 'replace' policy upsert could trigger this.
+    if (isEmPosition && !/^##\s+Example Dialogue\b/m.test(content.trimStart())) {
+        content = `## Example Dialogue\n\n${content}`;
+    }
+    void emHandling; // reserved for future per-call subheader-text override
+
     const fullContent = `${fm.join('\n')}\n\n# ${title}\n\n${content}`;
 
-    return { filename: `${safeTitle}.md`, content: fullContent };
+    return {
+        filename: `${safeTitle}.md`,
+        content: fullContent,
+        title,
+        _emPosition: isEmPosition ? wiEntry.position : null,
+    };
 }
 
 /**
@@ -766,9 +961,27 @@ export function categorizeRejections(trace, injectedKeys) {
     }
 
     if (trace.refineKeyBlocked?.length > 0) {
+        // Audit fix-up: drawer Why? tab reason text honors selective_logic
+        // mode. Pre-fix hardcoded "[keys] not found" lied for not_any /
+        // not_all entries (a refine MATCH was what blocked the gate).
+        const reasonFor = (e) => {
+            const logic = e.selectiveLogic || 'and_any';
+            const keysStr = e.refineKeys.join(', ');
+            switch (logic) {
+                case 'and_all':
+                    return `Matched "${e.primaryKey}" but selective_logic=and_all needs all of [${keysStr}]`;
+                case 'not_any':
+                    return `Matched "${e.primaryKey}" but selective_logic=not_any blocked — a refine key from [${keysStr}] is present`;
+                case 'not_all':
+                    return `Matched "${e.primaryKey}" but selective_logic=not_all blocked — all of [${keysStr}] matched`;
+                case 'and_any':
+                default:
+                    return `Matched "${e.primaryKey}" but refine keys [${keysStr}] not found`;
+            }
+        };
         const entries = trace.refineKeyBlocked
             .filter(e => !injectedKeys.has(k(e)))
-            .map(e => ({ title: e.title, vaultSource: e.vaultSource || '', reason: `Matched "${e.primaryKey}" but refine keys [${e.refineKeys.join(', ')}] not found` }));
+            .map(e => ({ title: e.title, vaultSource: e.vaultSource || '', reason: reasonFor(e) }));
         if (entries.length > 0) groups.push({ stage: 'refine_key_blocked', label: 'Refine Key Blocked', icon: 'fa-filter-circle-xmark', entries });
     }
 

@@ -6,6 +6,7 @@ import { SlashCommand } from '../../../../../slash-commands/SlashCommand.js';
 import { SlashCommandArgument, ARGUMENT_TYPE } from '../../../../../slash-commands/SlashCommandArgument.js';
 import { classifyError } from '../../core/utils.js';
 import { getSettings } from '../../settings.js';
+import { saveSettingsDebounced } from '../../../../../../script.js';
 import { vaultIndex, setIndexTimestamp } from '../state.js';
 import { buildIndex } from '../vault/vault.js';
 // graph.js (~3140 LOC) is lazy-loaded inline below — only paid for when /dle-graph runs.
@@ -202,13 +203,14 @@ export function registerVaultCommands() {
                 });
                 progressToast.remove();
 
-                const renamedNote = result.renamed > 0 ? ` (${result.renamed} renamed to avoid overwrite)` : '';
-                if (result.failed > 0) {
-                    toastr.warning(`Imported ${result.imported}, failed ${result.failed}${renamedNote}. Run /dle-health for diagnostics.`, 'DeepLore Enhanced');
-                    console.warn('[DLE] Import errors:', result.errors);
-                } else {
-                    toastr.success(`Imported ${result.imported} entries${renamedNote}.`, 'DeepLore Enhanced');
-                }
+                // Wave 5: structured import report popup replaces the simple
+                // success/warning toast. The popup shows per-field counts for
+                // Wave 1/2/3 native + round-trip handling, the EM section with
+                // the friendly explainer, and a "Skip EM on future imports"
+                // button that flips settings.wiImportEmHandling.
+                if (result.failed > 0) console.warn('[DLE] Import errors:', result.errors);
+                const { showImportReport } = await import('./wi-import-report.js');
+                await showImportReport(result, source, folder, { getSettings, saveSettings: saveSettingsDebounced });
 
                 // C.2: WI 'Order' → DLE 'priority' inverts semantically — WI sorts
                 // high-first, DLE sorts low-first. Priorities round-trip as raw numbers

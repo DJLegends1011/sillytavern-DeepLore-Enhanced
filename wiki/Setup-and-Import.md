@@ -48,34 +48,50 @@ Three ways to feed the importer:
 - **Browse** a local JSON file from disk.
 - **Paste** JSON text directly into the textarea.
 
-### What converts
+### What converts (v2.5: full WI field parity)
+
+**Native** — DLE acts on the field directly:
 
 - `key` to `keys` (primary keywords; comma-string format from older exports auto-split)
-- `keysecondary` to `refine_keys` (AND-ANY secondary keys)
+- `keysecondary` to `refine_keys` (gating mode set by `selective_logic` below)
 - `comment` to entry title (falls back to first key, then `Entry_<uid>`)
-- `order` to `priority` (1-100, default 50; **see semantic flip below**)
-- `position` to `position` (5 ST positions mapped to `before` / `after` / `in_chat`; the original ST value is preserved as a YAML comment)
+- `order` to `priority` (1-999, default 50; **see semantic flip below**)
+- `position` to `position` (7 ST positions mapped to `before` / `after` / `in_chat`; original ST value preserved as YAML comment; EM positions 5/6 get the subheader treatment — see below)
 - `depth` to `depth` (only when `position: in_chat`)
 - `probability` to `probability` (rescaled from 0-100 to 0.0-1.0 automatically)
 - `constant: true` to the `lorebook-always` tag
 - `scanDepth` to `scanDepth`
-- `sticky`, `delay`, `group`, `groupWeight` preserved as frontmatter for round-tripping (see [[For World Info Users]] for which of these DLE actually enforces)
+- **v2.5:** `disable: true` to `enabled: false` (pre-v2.5 disabled WI entries silently imported as active; fixed)
+- **v2.5:** `excludeRecursion` to `excludeRecursion: true`
+- **v2.5:** `role` (ST integer 0/1/2) to `role: system | user | assistant`
+- **v2.5:** `selectiveLogic` (all 4 modes: AND_ANY, AND_ALL, NOT_ALL, NOT_ANY) to `selective_logic:` with native enforcement on the keyword path
 
-### What doesn't convert
+**Round-trip preserved** — landed in vault frontmatter as snake_case, surfaced by `/dle-lint` for visibility. DLE does NOT act on these; remove the lines if you don't need them preserved:
 
-- `role` (system/user/assistant for in-chat injections) is dropped on import.
-- `excludeRecursion` is dropped on import.
-- `disable` is dropped (DLE entries default to enabled).
-- `selectiveLogic` modes other than AND_ANY are dropped (DLE is AND_ANY only).
-- Regex keys are imported as literal strings.
+- Tier "planned to implement" (`W_NOT_IMPLEMENTED`): `sticky`, `delay`, `group`, `group_weight`
+- Tier "intentionally ignored" (`W_WI_ROUND_TRIP`, **v2.5**): `vectorized`, `selective`, `use_probability`, `prevent_recursion`, `delay_until_recursion`, `group_override`, `use_group_scoring`, `case_sensitive`, `match_whole_words`, `automation_id`, `add_memo`, `display_index`, plus 6 `match_*` scan-source toggles
 
-See [[For World Info Users]] for the full field-mapping cheat sheet and the two semantic gotchas (priority order and position mapping).
+### Example Messages handling (v2.5)
 
-### After import
+ST positions 5 (`before_example_messages`) and 6 (`after_example_messages`) have no DLE equivalent. Two modes, selectable via `Settings → Connection → WI Import → Example Messages`:
 
-- The importer emits a one-shot warning toast: *"WI 'Order' is inverted in DLE Priority (lower = higher priority). Verify your entries sort as expected."* Read it.
+- **Append (default)** — convert to normal entry, prepend `## Example Dialogue\n\n` to body, map position to before/after.
+- **Skip** — drop these entries entirely.
+
+The post-import popup explains this and offers a one-click "Skip on future imports" button. See [[For World Info Users#Example Messages handling (v2.5)]] for the rationale.
+
+### What still doesn't convert
+
+- Regex keys (`/pattern/flags`) are imported as literal strings. Roadmap: BUG-045.
+
+See [[For World Info Users]] for the full field-mapping cheat sheet and the two semantic gotchas (priority order and probability scale).
+
+### After import (v2.5)
+
+- **Structured popup replaces the success/warning toast.** Shows per-field counts for native applications, round-tripped preservations, EM handling, and any errors. Includes the friendly EM explainer + opt-out button.
+- The one-shot WI Priority flip warning toast still fires (priority semantics differ across systems — review your entries' sort order after import).
 - A duplicate filename is suffixed `_imported`, `_imported_2`, and so on, up to 20 attempts. Files are never silently overwritten.
-- If AI search is enabled, the importer offers to generate AI summaries for the imported entries (replacing the default `"Imported from SillyTavern World Info"` placeholder). You review each summary before write.
+- If AI search is enabled, after the report popup the importer offers to generate AI summaries for the imported entries (replacing the default `"Imported from SillyTavern World Info"` placeholder). You review each summary before write.
 - The vault index rebuilds once at the end. Don't trigger `/dle-refresh` mid-import.
 
 **When to use it:** migrating from SillyTavern's built-in World Info to an Obsidian vault. Import once, then enrich the entries with summaries, wikilinks, and the additional frontmatter fields DLE supports. Running both extensions side by side works but doubles your maintenance and can double-inject entries.

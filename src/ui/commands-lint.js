@@ -30,6 +30,14 @@ const CODE_LABELS = {
         title: 'Imported field preserved but not enforced',
         hint: 'Field round-trips through customFields but DLE does not act on it yet.',
     },
+    W_WI_ROUND_TRIP: {
+        title: 'WI field preserved for round-trip readability',
+        hint: 'Field was imported from SillyTavern World Info. DLE does not act on it (no plan to). Remove if you don\'t need it preserved.',
+    },
+    W_INVALID: {
+        title: 'Invalid field value',
+        hint: 'Field value is not in the allowed set. Fall-back used; check the message for the valid values.',
+    },
     // ── Skip reasons ──
     SKIP_NO_FRONTMATTER: {
         title: 'Skipped — no frontmatter',

@@ -15,7 +15,7 @@ import {
     truncateToSentence, simpleHash, escapeRegex, escapeXml,
     buildScanText, buildAiChatContext, validateSettings, yamlEscape,
 } from '../core/utils.js';
-import { testEntryMatch, countKeywordOccurrences, applyGating, resolveLinks, formatAndGroup, clearScanTextCache } from '../core/matching.js';
+import { testEntryMatch, countKeywordOccurrences, applyGating, resolveLinks, formatAndGroup, clearScanTextCache, applySelectiveLogic } from '../core/matching.js';
 import { parseVaultFile, clearPrompts } from '../core/pipeline.js';
 import { takeIndexSnapshot, detectChanges } from '../core/sync.js';
 
@@ -1741,6 +1741,625 @@ test('convertWiEntry: depth only included when > 0', () => {
     assert(!noDepth.content.includes('depth:'), 'depth 0 should be omitted');
     const withDepth = convertWiEntry({ comment: 'A', key: ['a'], depth: 3, content: 'c' }, 'lorebook');
     assert(withDepth.content.includes('depth: 3'), 'depth 3 should be included');
+});
+
+// ============================================================================
+// Wave 1 (WI parity) — Tier A native ports
+// ============================================================================
+// Guard against the silent-downgrade regression: ST WI fields that DLE supports
+// natively MUST land as native frontmatter, not vanish into the void. Pre-Wave-1
+// these all silently dropped — `disable: true` was the worst (disabled entries
+// imported as active). The report accumulator is also asserted because the
+// import-report popup (Wave 5) depends on accurate counts.
+
+test('convertWiEntry: disable=true emits enabled: false (silent-downgrade fix)', () => {
+    const result = convertWiEntry({ comment: 'A', key: ['a'], disable: true, content: 'c' }, 'lorebook');
+    assert(result.content.includes('enabled: false'), 'disabled WI entry must emit enabled: false');
+});
+
+test('convertWiEntry: disable=false omits enabled (no noise on default)', () => {
+    const result = convertWiEntry({ comment: 'A', key: ['a'], disable: false, content: 'c' }, 'lorebook');
+    assert(!result.content.includes('enabled:'), 'default-enabled entry should not write the field');
+});
+
+test('convertWiEntry: excludeRecursion=true emits frontmatter (camelCase)', () => {
+    const result = convertWiEntry({ comment: 'A', key: ['a'], excludeRecursion: true, content: 'c' }, 'lorebook');
+    assert(result.content.includes('excludeRecursion: true'), 'excludeRecursion must round-trip native (parser already honors it)');
+});
+
+test('convertWiEntry: exclude_recursion snake alias also accepted', () => {
+    const result = convertWiEntry({ comment: 'A', key: ['a'], exclude_recursion: true, content: 'c' }, 'lorebook');
+    assert(result.content.includes('excludeRecursion: true'), 'snake_case input still produces canonical camelCase frontmatter');
+});
+
+test('convertWiEntry: role 0/1/2 maps to system/user/assistant', () => {
+    const sys = convertWiEntry({ comment: 'S', key: ['s'], role: 0, content: 'c' }, 'lorebook');
+    assert(sys.content.includes('role: system'), 'role 0 → system');
+    const usr = convertWiEntry({ comment: 'U', key: ['u'], role: 1, content: 'c' }, 'lorebook');
+    assert(usr.content.includes('role: user'), 'role 1 → user');
+    const asst = convertWiEntry({ comment: 'A', key: ['a'], role: 2, content: 'c' }, 'lorebook');
+    assert(asst.content.includes('role: assistant'), 'role 2 → assistant');
+});
+
+test('convertWiEntry: invalid role index omitted (no lie)', () => {
+    const out = convertWiEntry({ comment: 'A', key: ['a'], role: 99, content: 'c' }, 'lorebook');
+    assert(!out.content.includes('role:'), 'unknown role enum must not emit anything');
+});
+
+test('convertWiEntry: role null omitted', () => {
+    const out = convertWiEntry({ comment: 'A', key: ['a'], role: null, content: 'c' }, 'lorebook');
+    assert(!out.content.includes('role:'), 'null role omitted');
+});
+
+test('convertWiEntry: report accumulator counts Tier A applications', () => {
+    const report = { nativeApplied: {}, roundTripped: {}, skipped: {} };
+    convertWiEntry({ comment: 'A', key: ['a'], disable: true, excludeRecursion: true, role: 0, content: 'c' }, 'lorebook', { report });
+    assert(report.nativeApplied.enabled === 1, 'enabled counter bumped');
+    assert(report.nativeApplied.excludeRecursion === 1, 'excludeRecursion counter bumped');
+    assert(report.nativeApplied.role === 1, 'role counter bumped');
+});
+
+test('convertWiEntry: report accumulator records invalid role under skipped', () => {
+    const report = { nativeApplied: {}, roundTripped: {}, skipped: {} };
+    convertWiEntry({ comment: 'A', key: ['a'], role: 99, content: 'c' }, 'lorebook', { report });
+    assert(report.skipped.invalid_role === 1, 'invalid_role skip counter bumped');
+    assert(!report.nativeApplied.role, 'role counter NOT bumped on invalid input');
+});
+
+test('convertWiEntry: report accumulator aggregates across multiple calls', () => {
+    const report = { nativeApplied: {}, roundTripped: {}, skipped: {} };
+    convertWiEntry({ comment: 'A', key: ['a'], disable: true, content: 'c' }, 'lorebook', { report });
+    convertWiEntry({ comment: 'B', key: ['b'], disable: true, content: 'c' }, 'lorebook', { report });
+    convertWiEntry({ comment: 'C', key: ['c'], disable: true, content: 'c' }, 'lorebook', { report });
+    assert(report.nativeApplied.enabled === 3, 'counter accumulates across batch');
+});
+
+test('convertWiEntry: omitting report leaves no side effects', () => {
+    // Sanity — callers that don't care about the report shouldn't hit a TypeError.
+    let threw = false;
+    try { convertWiEntry({ comment: 'A', key: ['a'], disable: true, content: 'c' }, 'lorebook'); }
+    catch { threw = true; }
+    assert(!threw, 'optional report must remain optional');
+});
+
+// ============================================================================
+// Wave 2 (WI parity) — Tier C round-trip preservation (snake_case)
+// ============================================================================
+// Guards every WI_ROUND_TRIP_FIELDS member emits as snake_case frontmatter and
+// counts under report.roundTripped. Aligned table in core/pipeline.js is
+// covered by the no-silent-drop guard in regression.test.mjs (Wave 7).
+
+test('convertWiEntry: vectorized true emits snake_case', () => {
+    const out = convertWiEntry({ comment: 'A', key: ['a'], vectorized: true, content: 'c' }, 'lorebook');
+    assert(out.content.includes('vectorized: true'), 'vectorized round-trips');
+});
+
+test('convertWiEntry: case_sensitive + match_whole_words snake-case emission', () => {
+    const out = convertWiEntry({ comment: 'A', key: ['a'], caseSensitive: true, matchWholeWords: true, content: 'c' }, 'lorebook');
+    assert(out.content.includes('case_sensitive: true'), 'caseSensitive → case_sensitive');
+    assert(out.content.includes('match_whole_words: true'), 'matchWholeWords → match_whole_words');
+});
+
+test('convertWiEntry: selectiveLogic 3 (AND_ALL) emits selective_logic: and_all', () => {
+    // Wave 3 — native enforcement. selectiveLogic IS imported, just not as
+    // round-trip preservation. 0/AND_ANY is implicit default → omitted.
+    const out = convertWiEntry({ comment: 'A', key: ['a'], selectiveLogic: 3, content: 'c' }, 'lorebook');
+    assert(out.content.includes('selective_logic: and_all'), 'AND_ALL must emit native frontmatter');
+});
+
+test('convertWiEntry: automationId string gets quoted by yamlEscape if needed', () => {
+    const out = convertWiEntry({ comment: 'A', key: ['a'], automationId: 'my-hook', content: 'c' }, 'lorebook');
+    assert(out.content.includes('automation_id: my-hook'), 'plain string passes through');
+    const tricky = convertWiEntry({ comment: 'B', key: ['b'], automationId: 'has: colon', content: 'c' }, 'lorebook');
+    assert(tricky.content.includes('automation_id: "has: colon"'), 'colon-bearing string gets quoted');
+});
+
+test('convertWiEntry: displayIndex number emits bare', () => {
+    const out = convertWiEntry({ comment: 'A', key: ['a'], displayIndex: 42, content: 'c' }, 'lorebook');
+    assert(out.content.includes('display_index: 42'), 'numeric field bare-emitted');
+});
+
+test('convertWiEntry: default-valued fields skipped (no noise)', () => {
+    const out = convertWiEntry({
+        comment: 'A', key: ['a'], content: 'c',
+        vectorized: false, selective: false, useProbability: false,
+        automationId: '', displayIndex: 0, useGroupScoring: 0,
+    }, 'lorebook');
+    assert(!out.content.includes('vectorized:'), 'false bool skipped');
+    assert(!out.content.includes('selective:'), 'false bool skipped');
+    assert(!out.content.includes('automation_id:'), 'empty string skipped');
+    assert(!out.content.includes('display_index:'), 'zero number skipped');
+});
+
+test('convertWiEntry: null/undefined skipped', () => {
+    const out = convertWiEntry({
+        comment: 'A', key: ['a'], content: 'c',
+        vectorized: null, caseSensitive: undefined,
+    }, 'lorebook');
+    assert(!out.content.includes('vectorized:'), 'null skipped');
+    assert(!out.content.includes('case_sensitive:'), 'undefined skipped');
+});
+
+test('convertWiEntry: all 6 match_* scan source toggles round-trip', () => {
+    const out = convertWiEntry({
+        comment: 'A', key: ['a'], content: 'c',
+        matchPersonaDescription: true,
+        matchCharacterDescription: true,
+        matchCharacterPersonality: true,
+        matchCharacterDepthPrompt: true,
+        matchScenario: true,
+        matchCreatorNotes: true,
+    }, 'lorebook');
+    assert(out.content.includes('match_persona_description: true'));
+    assert(out.content.includes('match_character_description: true'));
+    assert(out.content.includes('match_character_personality: true'));
+    assert(out.content.includes('match_character_depth_prompt: true'));
+    assert(out.content.includes('match_scenario: true'));
+    assert(out.content.includes('match_creator_notes: true'));
+});
+
+test('convertWiEntry: report.roundTripped accumulates per-field counts', () => {
+    const report = { nativeApplied: {}, roundTripped: {}, skipped: {} };
+    convertWiEntry({
+        comment: 'A', key: ['a'], content: 'c',
+        vectorized: true, caseSensitive: true,
+    }, 'lorebook', { report });
+    convertWiEntry({
+        comment: 'B', key: ['b'], content: 'c',
+        vectorized: true,
+    }, 'lorebook', { report });
+    assert(report.roundTripped.vectorized === 2, 'vectorized counted twice across batch');
+    assert(report.roundTripped.case_sensitive === 1, 'case_sensitive counted once');
+});
+
+test('convertWiEntry: NaN / Infinity numbers skipped (defensive)', () => {
+    const out = convertWiEntry({
+        comment: 'A', key: ['a'], content: 'c',
+        displayIndex: NaN, useGroupScoring: Infinity,
+    }, 'lorebook');
+    assert(!out.content.includes('display_index:'), 'NaN skipped');
+    assert(!out.content.includes('use_group_scoring:'), 'Infinity skipped');
+});
+
+test('parseVaultFile: W_WI_ROUND_TRIP fires for round-tripped WI fields', () => {
+    // Parser must surface every Wave 2 round-trip field via /dle-lint so authors
+    // can see what survived the import. A field that emits on import but doesn't
+    // flag on parse is the silent-downgrade contract violation we built this for.
+    const file = {
+        filename: 'test.md',
+        content: '---\ntags:\n  - lorebook\nkeys:\n  - x\nvectorized: true\ncase_sensitive: true\nmatch_whole_words: true\nautomation_id: my-hook\n---\nbody',
+    };
+    const tagConfig = { lorebookTag: 'lorebook', constantTag: '', neverInsertTag: '', seedTag: '', bootstrapTag: '' };
+    const entry = parseVaultFile(file, tagConfig);
+    assert(entry !== null, 'entry parsed');
+    const codes = (entry._parserWarnings || []).map(w => w.code);
+    const fields = (entry._parserWarnings || []).filter(w => w.code === 'W_WI_ROUND_TRIP').map(w => w.field);
+    assert(codes.includes('W_WI_ROUND_TRIP'), 'W_WI_ROUND_TRIP code present');
+    assert(fields.includes('vectorized'), 'vectorized flagged');
+    assert(fields.includes('case_sensitive'), 'case_sensitive flagged');
+    assert(fields.includes('match_whole_words'), 'match_whole_words flagged');
+    assert(fields.includes('automation_id'), 'automation_id flagged');
+    assert(entry.customFields.vectorized === true, 'vectorized landed in customFields');
+    assert(entry.customFields.automation_id === 'my-hook', 'automation_id value preserved');
+});
+
+test('parseVaultFile: W_NOT_IMPLEMENTED vs W_WI_ROUND_TRIP split correctly', () => {
+    // sticky/delay/group/group_weight still emit W_NOT_IMPLEMENTED (BUG numbers);
+    // the new round-trip table emits W_WI_ROUND_TRIP. Distinct user signals.
+    const file = {
+        filename: 'test.md',
+        content: '---\ntags:\n  - lorebook\nkeys:\n  - x\nsticky: 3\nvectorized: true\n---\nbody',
+    };
+    const tagConfig = { lorebookTag: 'lorebook', constantTag: '', neverInsertTag: '', seedTag: '', bootstrapTag: '' };
+    const entry = parseVaultFile(file, tagConfig);
+    const stickyWarn = entry._parserWarnings.find(w => w.field === 'sticky');
+    const vectorWarn = entry._parserWarnings.find(w => w.field === 'vectorized');
+    assert(stickyWarn.code === 'W_NOT_IMPLEMENTED', 'sticky stays W_NOT_IMPLEMENTED');
+    assert(vectorWarn.code === 'W_WI_ROUND_TRIP', 'vectorized is W_WI_ROUND_TRIP');
+});
+
+test('convertWiEntry: all 22 Tier C fields land when set non-default', () => {
+    const wi = {
+        comment: 'KitchenSink', key: ['ks'], content: 'c',
+        vectorized: true, selective: true, useProbability: true,
+        preventRecursion: true, delayUntilRecursion: true,
+        groupOverride: true, useGroupScoring: 5,
+        caseSensitive: true, matchWholeWords: true,
+        automationId: 'auto-1', addMemo: true, displayIndex: 7,
+        matchPersonaDescription: true, matchCharacterDescription: true,
+        matchCharacterPersonality: true, matchCharacterDepthPrompt: true,
+        matchScenario: true, matchCreatorNotes: true,
+        // Audit fix-up: modern ST fields
+        triggers: 'regex-trigger', ignoreBudget: true,
+        characterFilter: 'char-name', decorators: '@@activate',
+    };
+    const report = { nativeApplied: {}, roundTripped: {}, skipped: {} };
+    const out = convertWiEntry(wi, 'lorebook', { report });
+    const expected = [
+        'vectorized: true', 'selective: true', 'use_probability: true',
+        'prevent_recursion: true', 'delay_until_recursion: true',
+        'group_override: true', 'use_group_scoring: 5',
+        'case_sensitive: true', 'match_whole_words: true',
+        'automation_id: auto-1', 'add_memo: true', 'display_index: 7',
+        'match_persona_description: true', 'match_character_description: true',
+        'match_character_personality: true', 'match_character_depth_prompt: true',
+        'match_scenario: true', 'match_creator_notes: true',
+        'triggers: regex-trigger', 'ignore_budget: true',
+        'character_filter: char-name', 'decorators: "@@activate"',
+    ];
+    for (const line of expected) {
+        assert(out.content.includes(line), `missing: ${line}`);
+    }
+    assert(Object.keys(report.roundTripped).length === 22, 'all 22 fields counted');
+});
+
+// ============================================================================
+// Wave 3 (WI parity) — selectiveLogic native enforcement (4 modes)
+// ============================================================================
+// Pure helper applySelectiveLogic is the single source of truth — pin the
+// predicate so future refine-gate sites can't diverge across the 4 modes.
+
+test('applySelectiveLogic: empty refine_keys passes for all 4 modes', () => {
+    for (const logic of ['and_any', 'and_all', 'not_all', 'not_any']) {
+        assert(applySelectiveLogic(0, 0, logic) === true, `${logic} vacuously satisfied`);
+    }
+});
+
+test('applySelectiveLogic: and_any (default) — ≥1 match passes', () => {
+    assert(applySelectiveLogic(0, 3, 'and_any') === false, '0/3 blocks');
+    assert(applySelectiveLogic(1, 3, 'and_any') === true, '1/3 passes');
+    assert(applySelectiveLogic(3, 3, 'and_any') === true, '3/3 passes');
+});
+
+test('applySelectiveLogic: and_all — all must match', () => {
+    assert(applySelectiveLogic(0, 3, 'and_all') === false, '0/3 blocks');
+    assert(applySelectiveLogic(2, 3, 'and_all') === false, 'partial blocks');
+    assert(applySelectiveLogic(3, 3, 'and_all') === true, '3/3 passes');
+});
+
+test('applySelectiveLogic: not_all — at least one miss passes', () => {
+    assert(applySelectiveLogic(0, 3, 'not_all') === true, '0/3 passes');
+    assert(applySelectiveLogic(2, 3, 'not_all') === true, 'partial passes');
+    assert(applySelectiveLogic(3, 3, 'not_all') === false, '3/3 blocks (full match)');
+});
+
+test('applySelectiveLogic: not_any — zero matches passes', () => {
+    assert(applySelectiveLogic(0, 3, 'not_any') === true, '0/3 passes');
+    assert(applySelectiveLogic(1, 3, 'not_any') === false, 'any match blocks');
+    assert(applySelectiveLogic(3, 3, 'not_any') === false, 'full match blocks');
+});
+
+test('applySelectiveLogic: unknown logic falls back to and_any', () => {
+    assert(applySelectiveLogic(0, 3, 'gibberish') === false, 'unknown → and_any (block on 0)');
+    assert(applySelectiveLogic(1, 3, undefined) === true, 'undefined → and_any (pass on 1)');
+});
+
+test('testEntryMatch: legacy entry without selectiveLogic uses and_any (regression guard)', () => {
+    // Pre-Wave-3 entries have no selectiveLogic field. Behavior must be unchanged.
+    const entry = {
+        title: 'Legacy', vaultSource: '', keys: ['castle'],
+        refineKeys: ['knight', 'sword'],
+        // no selectiveLogic — should default to and_any
+    };
+    const settings = { caseSensitive: false, matchWholeWords: false };
+    // 1 refine matches (knight) → and_any default → passes
+    assert(testEntryMatch(entry, 'the castle knight stands guard', settings) === 'castle', 'pre-Wave-3 and_any behavior preserved');
+    // 0 refine matches → and_any default → blocks
+    assert(testEntryMatch(entry, 'the castle stands alone', settings) === null, 'pre-Wave-3 block behavior preserved');
+});
+
+test('testEntryMatch: and_all gates correctly', () => {
+    const entry = {
+        title: 'Strict', vaultSource: '', keys: ['castle'],
+        refineKeys: ['knight', 'sword'],
+        selectiveLogic: 'and_all',
+    };
+    const settings = { caseSensitive: false, matchWholeWords: false };
+    // Partial: knight present, sword absent → and_all blocks
+    assert(testEntryMatch(entry, 'castle knight', settings) === null, 'partial blocks');
+    // Full: both present → passes
+    assert(testEntryMatch(entry, 'castle knight with sword', settings) === 'castle', 'full match passes');
+    // None: blocks
+    assert(testEntryMatch(entry, 'castle alone', settings) === null, 'no match blocks');
+});
+
+test('testEntryMatch: not_all gates correctly', () => {
+    const entry = {
+        title: 'AntiFull', vaultSource: '', keys: ['castle'],
+        refineKeys: ['knight', 'sword'],
+        selectiveLogic: 'not_all',
+    };
+    const settings = { caseSensitive: false, matchWholeWords: false };
+    assert(testEntryMatch(entry, 'castle alone', settings) === 'castle', '0 refine matches passes');
+    assert(testEntryMatch(entry, 'castle knight', settings) === 'castle', 'partial passes');
+    assert(testEntryMatch(entry, 'castle knight sword', settings) === null, 'full match blocks');
+});
+
+test('testEntryMatch: not_any gates correctly', () => {
+    const entry = {
+        title: 'Anti', vaultSource: '', keys: ['castle'],
+        refineKeys: ['knight', 'sword'],
+        selectiveLogic: 'not_any',
+    };
+    const settings = { caseSensitive: false, matchWholeWords: false };
+    assert(testEntryMatch(entry, 'castle alone', settings) === 'castle', '0 matches passes');
+    assert(testEntryMatch(entry, 'castle knight', settings) === null, '1 match blocks');
+    assert(testEntryMatch(entry, 'castle knight sword', settings) === null, 'full match blocks');
+});
+
+test('parseVaultFile: reads selective_logic frontmatter', () => {
+    const file = {
+        filename: 'test.md',
+        content: '---\ntags:\n  - lorebook\nkeys:\n  - x\nselective_logic: and_all\n---\nbody',
+    };
+    const tagConfig = { lorebookTag: 'lorebook', constantTag: '', neverInsertTag: '', seedTag: '', bootstrapTag: '' };
+    const entry = parseVaultFile(file, tagConfig);
+    assert(entry.selectiveLogic === 'and_all', 'and_all read into VaultEntry');
+});
+
+test('parseVaultFile: missing selective_logic defaults to and_any', () => {
+    const file = {
+        filename: 'test.md',
+        content: '---\ntags:\n  - lorebook\nkeys:\n  - x\n---\nbody',
+    };
+    const tagConfig = { lorebookTag: 'lorebook', constantTag: '', neverInsertTag: '', seedTag: '', bootstrapTag: '' };
+    const entry = parseVaultFile(file, tagConfig);
+    assert(entry.selectiveLogic === 'and_any', 'default is and_any (regression-safe for legacy entries)');
+});
+
+test('parseVaultFile: invalid selective_logic emits W_INVALID + falls back', () => {
+    const file = {
+        filename: 'test.md',
+        content: '---\ntags:\n  - lorebook\nkeys:\n  - x\nselective_logic: gibberish\n---\nbody',
+    };
+    const tagConfig = { lorebookTag: 'lorebook', constantTag: '', neverInsertTag: '', seedTag: '', bootstrapTag: '' };
+    const entry = parseVaultFile(file, tagConfig);
+    assert(entry.selectiveLogic === 'and_any', 'fall back to and_any');
+    const invalidWarn = (entry._parserWarnings || []).find(w => w.code === 'W_INVALID' && w.field === 'selective_logic');
+    assert(invalidWarn, 'W_INVALID warning emitted');
+});
+
+test('convertWiEntry: selectiveLogic 0 (AND_ANY) omitted as implicit default', () => {
+    const out = convertWiEntry({ comment: 'A', key: ['a'], selectiveLogic: 0, content: 'c' }, 'lorebook');
+    assert(!out.content.includes('selective_logic:'), 'default value not emitted');
+});
+
+test('convertWiEntry: selectiveLogic ST enum → snake name mapping', () => {
+    // ST: 0=AND_ANY, 1=NOT_ALL, 2=NOT_ANY, 3=AND_ALL
+    const not_all = convertWiEntry({ comment: 'A', key: ['a'], selectiveLogic: 1, content: 'c' }, 'lorebook');
+    assert(not_all.content.includes('selective_logic: not_all'), '1 → not_all');
+    const not_any = convertWiEntry({ comment: 'B', key: ['b'], selectiveLogic: 2, content: 'c' }, 'lorebook');
+    assert(not_any.content.includes('selective_logic: not_any'), '2 → not_any');
+    const and_all = convertWiEntry({ comment: 'C', key: ['c'], selectiveLogic: 3, content: 'c' }, 'lorebook');
+    assert(and_all.content.includes('selective_logic: and_all'), '3 → and_all');
+});
+
+test('convertWiEntry: invalid selectiveLogic int omitted, bumps skipped', () => {
+    const report = { nativeApplied: {}, roundTripped: {}, skipped: {} };
+    const out = convertWiEntry({ comment: 'A', key: ['a'], selectiveLogic: 99, content: 'c' }, 'lorebook', { report });
+    assert(!out.content.includes('selective_logic:'), 'invalid int omitted');
+    assert(report.skipped.invalid_selective_logic === 1, 'invalid_selective_logic counter bumped');
+});
+
+test('convertWiEntry: selectiveLogic 0 does NOT leak telemetry into report (audit fix-up)', () => {
+    // Pre-fix, mode 0 (and_any default) bumped `selective_logic_default` which
+    // then surfaced in the import-report popup as a meaningless "Native fields
+    // applied" entry. Now silently omitted.
+    const report = { nativeApplied: {}, roundTripped: {}, skipped: {} };
+    convertWiEntry({ comment: 'A', key: ['a'], selectiveLogic: 0, content: 'c' }, 'lorebook', { report });
+    assert(!report.nativeApplied.selective_logic_default, 'default-value telemetry must NOT bump the counter');
+    assert(!report.nativeApplied.selective_logic, 'default-value also not counted as applied');
+    assert(!report.skipped.invalid_selective_logic, 'default value is valid, not skipped');
+});
+
+// ============================================================================
+// Wave 4 (WI parity) — Example Messages as subheader (positions 5/6)
+// ============================================================================
+// DLE has no EM injection slot. Positions 5 (before_example_messages) and 6
+// (after_example_messages) become normal entries with "## Example Dialogue"
+// prepended to the body and injection position mapped to before/after.
+// importEntries owns the skip policy via emHandling option / setting; the
+// converter always emits the append form so single-entry callers behave
+// consistently with batch import.
+
+test('convertWiEntry: position 5 maps to before + prepends EM subheader', () => {
+    const out = convertWiEntry({ comment: 'EM5', key: ['x'], position: 5, content: 'sample line' }, 'lorebook');
+    assert(out.content.includes('position: before'), 'position 5 → before');
+    assert(out.content.includes('## Example Dialogue'), 'subheader prepended');
+    assert(out.content.includes('sample line'), 'original body preserved');
+    assert(out.content.includes('# original_st_position: 5'), 'original ST value preserved as comment');
+});
+
+test('convertWiEntry: position 6 maps to after + prepends EM subheader', () => {
+    const out = convertWiEntry({ comment: 'EM6', key: ['x'], position: 6, content: 'after-line' }, 'lorebook');
+    assert(out.content.includes('position: after'), 'position 6 → after');
+    assert(out.content.includes('## Example Dialogue'), 'subheader prepended');
+    assert(out.content.includes('# original_st_position: 6'), 'preserved comment');
+});
+
+test('convertWiEntry: position 5/6 returns _emPosition flag for caller', () => {
+    const em5 = convertWiEntry({ comment: 'A', key: ['a'], position: 5, content: 'c' }, 'lorebook');
+    assert(em5._emPosition === 5, 'position 5 → _emPosition: 5');
+    const em6 = convertWiEntry({ comment: 'B', key: ['b'], position: 6, content: 'c' }, 'lorebook');
+    assert(em6._emPosition === 6, 'position 6 → _emPosition: 6');
+    const normal = convertWiEntry({ comment: 'C', key: ['c'], position: 0, content: 'c' }, 'lorebook');
+    assert(normal._emPosition === null, 'non-EM position → _emPosition: null');
+});
+
+test('convertWiEntry: position 5/6 returns title for caller', () => {
+    const out = convertWiEntry({ comment: 'Sample Lines', key: ['x'], position: 5, content: 'c' }, 'lorebook');
+    assert(out.title === 'Sample Lines', 'title surfaced on return for report list');
+});
+
+test('convertWiEntry: non-EM position does NOT get EM subheader', () => {
+    const out = convertWiEntry({ comment: 'A', key: ['a'], position: 0, content: 'normal' }, 'lorebook');
+    assert(!out.content.includes('## Example Dialogue'), 'no subheader for non-EM');
+    assert(out.content.includes('normal'), 'body unchanged');
+});
+
+test('convertWiEntry: EM subheader survives caveman compression', () => {
+    // Compression operates on body; subheader prepending happens BEFORE the
+    // final fullContent assembly. Verify both coexist.
+    const out = convertWiEntry({ comment: 'A', key: ['a'], position: 5, content: 'The example shows the way' }, 'lorebook', { compress: 'caveman' });
+    assert(out.content.includes('## Example Dialogue'), 'subheader present');
+    assert(out.content.includes('compress: caveman'), 'compression annotated');
+    assert(!/\bthe\b/i.test(out.content.split('## Example Dialogue')[1]), 'caveman dropped articles in body');
+});
+
+test('convertWiEntry: EM subheader present regardless of emHandling option', () => {
+    // The converter always emits the append form. The skip filter lives in
+    // importEntries / upsertConvertedEntry — caller decides whether to write.
+    const append = convertWiEntry({ comment: 'A', key: ['a'], position: 5, content: 'c' }, 'lorebook', { emHandling: 'append' });
+    const skip = convertWiEntry({ comment: 'A', key: ['a'], position: 5, content: 'c' }, 'lorebook', { emHandling: 'skip' });
+    assert(append.content.includes('## Example Dialogue'), 'append emits subheader');
+    assert(skip.content.includes('## Example Dialogue'), 'skip ALSO emits subheader — filter is downstream');
+    assert(skip._emPosition === 5, 'skip still sets _emPosition flag');
+});
+
+// ============================================================================
+// Wave 5 (WI parity) — Import report popup pure helpers
+// ============================================================================
+
+const { buildImportReport, renderImportReportHtml } = await import('../src/ui/wi-import-report-pure.js');
+
+test('buildImportReport: empty result yields zero-count report', () => {
+    const r = buildImportReport({ imported: 0, failed: 0, renamed: 0, errors: [], report: {} }, 'WI', '');
+    assert(r.imported === 0 && r.failed === 0 && r.renamed === 0, 'all zeros');
+    assert(r.nativeApplied.length === 0, 'no native fields');
+    assert(r.roundTripped.length === 0, 'no round-trip fields');
+    assert(r.hasAnyEm === false, 'no EM');
+    assert(r.source === 'WI');
+});
+
+test('buildImportReport: missing report object treated as empty (defensive)', () => {
+    const r = buildImportReport({ imported: 5 }, 'X', 'Folder');
+    assert(r.imported === 5);
+    assert(r.folder === 'Folder');
+    assert(r.nativeApplied.length === 0, 'no crash on missing report');
+});
+
+test('buildImportReport: sorts buckets by count descending', () => {
+    const r = buildImportReport({
+        imported: 10, failed: 0, renamed: 0, errors: [],
+        report: {
+            nativeApplied: { role: 3, enabled: 7, excludeRecursion: 1 },
+            roundTripped: { vectorized: 5, case_sensitive: 2 },
+            skipped: {},
+        },
+    }, 'WI', '');
+    assert(r.nativeApplied[0].field === 'enabled' && r.nativeApplied[0].count === 7, 'enabled top');
+    assert(r.nativeApplied[1].field === 'role', 'role second');
+    assert(r.nativeApplied[2].field === 'excludeRecursion', 'excludeRecursion third');
+    assert(r.roundTripped[0].field === 'vectorized', 'vectorized top of round-trip');
+});
+
+test('buildImportReport: zero-count buckets filtered out', () => {
+    const r = buildImportReport({
+        imported: 1, report: {
+            nativeApplied: { enabled: 5, role: 0, excludeRecursion: 0 },
+        },
+    }, 'WI', '');
+    assert(r.nativeApplied.length === 1, 'zero-count entries dropped');
+    assert(r.nativeApplied[0].field === 'enabled');
+});
+
+test('buildImportReport: EM counts aggregate', () => {
+    const r = buildImportReport({
+        imported: 10, report: {
+            emAppended: 3, emSkipped: 1,
+            emEntries: [
+                { title: 'A', filename: 'A.md', position: 5, action: 'appended' },
+                { title: 'B', filename: 'B.md', position: 6, action: 'skipped' },
+            ],
+        },
+    }, 'WI', '');
+    assert(r.emAppended === 3);
+    assert(r.emSkipped === 1);
+    assert(r.hasAnyEm === true, 'hasAnyEm true when either > 0');
+    assert(r.emEntries.length === 2);
+});
+
+test('buildImportReport: hasAnyEm false only when both zero', () => {
+    const r1 = buildImportReport({ imported: 0, report: { emAppended: 0, emSkipped: 0 } }, 'WI', '');
+    assert(r1.hasAnyEm === false);
+    const r2 = buildImportReport({ imported: 0, report: { emAppended: 0, emSkipped: 1 } }, 'WI', '');
+    assert(r2.hasAnyEm === true, 'skipped alone still shows section');
+});
+
+test('renderImportReportHtml: zero-state has no field sections', () => {
+    const r = buildImportReport({ imported: 0, report: {} }, 'WI', '');
+    const html = renderImportReportHtml(r);
+    assert(html.includes('Imported 0 entries'));
+    assert(!html.includes('Native fields applied'), 'no native section');
+    assert(!html.includes('Round-tripped'), 'no round-trip section');
+    assert(!html.includes('Example Messages'), 'no EM section');
+});
+
+test('renderImportReportHtml: escapes HTML in source + folder + entry titles', () => {
+    const r = buildImportReport({
+        imported: 1, report: {
+            emAppended: 1,
+            emEntries: [{ title: '<script>alert(1)</script>', filename: 'x.md', position: 5, action: 'appended' }],
+        },
+    }, '<bad>', 'fold"er');
+    const html = renderImportReportHtml(r);
+    assert(!html.includes('<script>alert(1)</script>'), 'XSS string not rendered raw');
+    assert(html.includes('&lt;script&gt;'), 'angle brackets escaped');
+    assert(html.includes('&lt;bad&gt;'), 'source escaped');
+    assert(html.includes('fold&quot;er'), 'folder quote escaped');
+});
+
+test('renderImportReportHtml: shows skip-EM button only when emAppended > 0', () => {
+    const r1 = buildImportReport({ imported: 1, report: { emAppended: 2 } }, 'WI', '');
+    // Audit fix-up: label now discloses reversibility + setting path.
+    assert(renderImportReportHtml(r1).includes('dle-import-skip-em-future'), 'button shown by class');
+    assert(renderImportReportHtml(r1).includes('Always skip Example Messages on import'), 'discloses persistence');
+    assert(renderImportReportHtml(r1).includes('reversible in settings'), 'discloses how to revert');
+    const r2 = buildImportReport({ imported: 1, report: { emSkipped: 2 } }, 'WI', '');
+    assert(!renderImportReportHtml(r2).includes('dle-import-skip-em-future'), 'button hidden when nothing appended (already opted out)');
+});
+
+test('renderImportReportHtml: truncates long error list', () => {
+    const errs = Array.from({ length: 30 }, (_, i) => `err-${i}`);
+    const r = buildImportReport({ imported: 0, errors: errs, report: {} }, 'WI', '');
+    const html = renderImportReportHtml(r);
+    assert(html.includes('Errors (30)'), 'total count visible');
+    assert(html.includes('err-0'), 'first error shown');
+    assert(html.includes('and 10 more'), 'overflow message shown');
+    assert(!html.includes('err-29'), '21st+ errors not rendered inline');
+});
+
+test('renderImportReportHtml: emEntries list truncates with overflow indicator (audit fix-up)', () => {
+    // Pre-fix the list was silently hidden above 20 entries. Now shows first
+    // 20 + "and N more" matching the errors-list pattern.
+    const emEntries = Array.from({ length: 25 }, (_, i) => ({ title: `T${i}`, filename: `T${i}.md`, position: 5, action: 'appended' }));
+    const r = buildImportReport({ imported: 25, report: { emAppended: 25, emEntries } }, 'WI', '');
+    const html = renderImportReportHtml(r);
+    assert(html.includes('25 appended as subheader'), 'count shown');
+    assert(html.includes('<details>'), 'details block present');
+    assert(html.includes('T0'), 'first entry rendered');
+    assert(html.includes('T19'), '20th entry rendered');
+    assert(!html.includes('>T20<') && !html.includes('>T24<'), 'past-cap entries not rendered inline');
+    assert(html.includes('and 5 more'), 'overflow indicator shown');
+});
+
+test('renderImportReportHtml: folder label vs vault root', () => {
+    const r1 = buildImportReport({ imported: 1, report: {} }, 'WI', 'My/Folder');
+    assert(renderImportReportHtml(r1).includes('folder <code>My/Folder/</code>'));
+    const r2 = buildImportReport({ imported: 1, report: {} }, 'WI', '');
+    assert(renderImportReportHtml(r2).includes('vault root'));
+});
+
+test('renderImportReportHtml: marks skipped entries in the list', () => {
+    const r = buildImportReport({
+        imported: 1, report: {
+            emSkipped: 1,
+            emEntries: [{ title: 'Alpha', filename: 'Alpha.md', position: 5, action: 'skipped' }],
+        },
+    }, 'WI', '');
+    const html = renderImportReportHtml(r);
+    assert(html.includes('Alpha'));
+    assert(html.includes('(skipped)'), 'skipped tag shown');
 });
 
 // ============================================================================

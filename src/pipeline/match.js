@@ -76,10 +76,19 @@ export function matchEntries(chat, snapshot = null, { settings, characterName } 
 
             const key = testEntryMatch(entry, scanText, settings);
             if (!key && entry.refineKeys?.length > 0) {
-                // Primary hit but refine keys blocked.
+                // Primary hit but refine keys blocked. selectiveLogic threaded
+                // so the diagnostic surface (/dle-why, commands-pipeline.js)
+                // can render mode-aware copy instead of hard-coded AND_ANY
+                // phrasing (audit fix-up — pin-the-predicate rule, gotcha #69).
                 const primaryHit = testPrimaryMatchOnly(entry, scanText, settings);
                 if (primaryHit) {
-                    refineKeyBlocked.push({ title: entry.title, vaultSource: entry.vaultSource || '', primaryKey: primaryHit, refineKeys: [...entry.refineKeys] });
+                    refineKeyBlocked.push({
+                        title: entry.title,
+                        vaultSource: entry.vaultSource || '',
+                        primaryKey: primaryHit,
+                        refineKeys: [...entry.refineKeys],
+                        selectiveLogic: entry.selectiveLogic || 'and_any',
+                    });
                 }
             }
             if (key) {

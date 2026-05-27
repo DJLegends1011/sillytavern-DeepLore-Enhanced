@@ -6,6 +6,7 @@
 import { truncateToSentence, escapeXml } from '../../core/utils.js';
 import { fieldDefinitions, decayTracker, consecutiveInjections, trackerKey } from '../state.js';
 import { isForceInjected } from '../helpers.js';
+import { WI_PARITY_FIELD_SET } from '../../core/pipeline.js';
 
 /**
  * XML manifest of candidate entries for the AI search prompt. Filters out
@@ -55,11 +56,22 @@ export function buildCandidateManifest(candidates, excludeBootstrap = false, set
                 // Custom Fields in AI Manifest: respect aiManifestIncludeFields whitelist
                 // when populated (empty array = include all). Lets the user prune the
                 // manifest for token control without dropping custom-field support entirely.
+                //
+                // Audit fix-up: WI-parity round-trip fields (Tier C + W_NOT_IMPLEMENTED)
+                // are ALWAYS blacklisted from the manifest — they're noise to the AI
+                // selector, paid in per-gen per-entry tokens. Pre-fix, every WI-imported
+                // entry that set e.g. vectorized / case_sensitive / match_persona_description
+                // emitted those into the manifest header. If the user explicitly
+                // whitelists a field name via aiManifestIncludeFields, the whitelist
+                // wins (lets advanced users opt back in).
                 const includeList = Array.isArray(s.aiManifestIncludeFields) ? s.aiManifestIncludeFields : [];
                 const includeSet = includeList.length > 0 ? new Set(includeList) : null;
                 const pairs = Object.entries(entry.customFields)
                     .filter(([k, v]) => v != null && v !== '' && (!Array.isArray(v) || v.length > 0))
-                    .filter(([k]) => !includeSet || includeSet.has(k))
+                    .filter(([k]) => {
+                        if (includeSet) return includeSet.has(k);
+                        return !WI_PARITY_FIELD_SET.has(k);
+                    })
                     .map(([k, v]) => `${fieldLabelMap.get(k) || k}: ${Array.isArray(v) ? v.join(', ') : v}`);
                 if (pairs.length > 0) fieldsHint = `\n[${pairs.join(' | ')}]`;
             }
