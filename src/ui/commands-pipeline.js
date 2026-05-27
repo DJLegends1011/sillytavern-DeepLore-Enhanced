@@ -273,7 +273,30 @@ export function registerPipelineCommands() {
             }
             if (t.refineKeyBlocked && t.refineKeyBlocked.length > 0) {
                 plainLines.push(`Refine Key Blocked (${t.refineKeyBlocked.length}):`);
-                for (const e of t.refineKeyBlocked) plainLines.push(`  ${e.title} — matched "${e.primaryKey}" but none of [${e.refineKeys.join(', ')}] found`);
+                for (const e of t.refineKeyBlocked) {
+                    // Audit fix-up: copy buffer now honors selective_logic mode
+                    // (same fix as the HTML branch ~60 lines below). Pre-fix
+                    // this hardcoded AND_ANY phrasing lied for not_any / not_all
+                    // entries where a refine MATCH was what blocked the gate.
+                    const logic = e.selectiveLogic || 'and_any';
+                    const keysStr = e.refineKeys.join(', ');
+                    let reason;
+                    switch (logic) {
+                        case 'and_all':
+                            reason = `matched "${e.primaryKey}" but selective_logic=and_all requires all of [${keysStr}] (not enough matched)`;
+                            break;
+                        case 'not_any':
+                            reason = `matched "${e.primaryKey}" but selective_logic=not_any blocked because a refine key from [${keysStr}] appeared in the chat`;
+                            break;
+                        case 'not_all':
+                            reason = `matched "${e.primaryKey}" but selective_logic=not_all blocked because ALL of [${keysStr}] matched`;
+                            break;
+                        case 'and_any':
+                        default:
+                            reason = `matched "${e.primaryKey}" but none of [${keysStr}] found`;
+                    }
+                    plainLines.push(`  ${e.title} — ${reason}`);
+                }
                 plainLines.push('');
             }
             const plainText = plainLines.join('\n');
@@ -434,12 +457,33 @@ export function registerPipelineCommands() {
             }
 
             if (t.refineKeyBlocked && t.refineKeyBlocked.length > 0) {
+                // Audit fix-up: per-entry copy now respects selective_logic mode.
+                // Pre-fix this hard-coded AND_ANY phrasing for every entry, which
+                // was wrong (and confusing) for entries using not_any / not_all
+                // where a refine MATCH was what blocked the gate.
                 html += `<h4 class="dle-text-warning">${statusIcon(false)} Refine Key Blocked (${t.refineKeyBlocked.length})</h4><ul>`;
                 for (const e of t.refineKeyBlocked) {
-                    html += `<li>${escapeHtml(e.title)} — matched "<b>${escapeHtml(e.primaryKey)}</b>" but none of [${e.refineKeys.map(k => escapeHtml(k)).join(', ')}] found in scan text</li>`;
+                    const logic = e.selectiveLogic || 'and_any';
+                    const keysStr = e.refineKeys.map(k => escapeHtml(k)).join(', ');
+                    let reason;
+                    switch (logic) {
+                        case 'and_all':
+                            reason = `matched "<b>${escapeHtml(e.primaryKey)}</b>" but selective_logic=<b>and_all</b> requires all of [${keysStr}] (not enough matched)`;
+                            break;
+                        case 'not_any':
+                            reason = `matched "<b>${escapeHtml(e.primaryKey)}</b>" but selective_logic=<b>not_any</b> blocked because a refine key from [${keysStr}] appeared in the chat`;
+                            break;
+                        case 'not_all':
+                            reason = `matched "<b>${escapeHtml(e.primaryKey)}</b>" but selective_logic=<b>not_all</b> blocked because ALL of [${keysStr}] matched`;
+                            break;
+                        case 'and_any':
+                        default:
+                            reason = `matched "<b>${escapeHtml(e.primaryKey)}</b>" but none of [${keysStr}] found in scan text`;
+                    }
+                    html += `<li>${escapeHtml(e.title)} — ${reason}</li>`;
                 }
                 html += '</ul>';
-                html += `<p class="dle-text-xs dle-dimmed">Refine keys (AND_ANY mode): primary keyword must match AND at least one refine key must also appear.</p>`;
+                html += `<p class="dle-text-xs dle-dimmed">Refine keys gating: behavior depends on each entry's selective_logic (and_any / and_all / not_all / not_any).</p>`;
             }
 
             html += '</div>';

@@ -2,7 +2,7 @@
 import { getCurrentChatId } from '../../../../../../script.js';
 import { getSettings } from '../../settings.js';
 import { buildScanText } from '../../core/utils.js';
-import { testEntryMatch, countKeywordOccurrences } from '../../core/matching.js';
+import { testEntryMatch, countKeywordOccurrences, applySelectiveLogic } from '../../core/matching.js';
 import {
     vaultIndex, indexTimestamp, cooldownTracker, injectionHistory,
     generationCount, trackerKey,
@@ -324,15 +324,46 @@ export function diagnoseEntry(entry, chatMsgs) {
     }
 
     if (entry.refineKeys && entry.refineKeys.length > 0) {
-        const hasRefine = entry.refineKeys.some(rk => {
+        // Audit fix-up: route through applySelectiveLogic so the diagnostic
+        // matches whatever mode the entry actually uses. Pre-fix this hand-
+        // rolled AND_ANY semantics + reported "none of the refine keys were
+        // found" even for not_any/not_all entries where a refine MATCH was
+        // what blocked the entry — exactly the "pin the predicate" drift the
+        // gotchas.md #69 invariant warns about.
+        //
+        // Round-2 perf fix: hoist haystack out of the filter closure — pre-fix
+        // re-lowercased the scanText per refine key (50 refines × 50KB =
+        // 2.5MB transient allocation per diagnostic call).
+        const diagHaystack = settings.caseSensitive ? scanText : scanText.toLowerCase();
+        const matchedRefines = entry.refineKeys.filter(rk => {
             const rKey = settings.caseSensitive ? rk : rk.toLowerCase();
-            const haystack = settings.caseSensitive ? scanText : scanText.toLowerCase();
-            return haystack.includes(rKey);
+            return diagHaystack.includes(rKey);
         });
-        if (!hasRefine) {
+        const matchedCount = matchedRefines.length;
+        const total = entry.refineKeys.length;
+        const logic = entry.selectiveLogic || 'and_any';
+        const passes = applySelectiveLogic(matchedCount, total, logic);
+        if (!passes) {
             result.stage = 'refine_keys';
-            result.detail = `Primary keyword matched but none of the refine keys (${entry.refineKeys.join(', ')}) were found.`;
-            result.suggestions.push('The refine keys narrow the match — check if they are too restrictive.');
+            const matchedStr = matchedRefines.length > 0 ? `[${matchedRefines.join(', ')}]` : 'none';
+            switch (logic) {
+                case 'and_all':
+                    result.detail = `Primary keyword matched, but selective_logic=and_all requires ALL refine keys (${entry.refineKeys.join(', ')}). Only ${matchedCount}/${total} matched: ${matchedStr}.`;
+                    result.suggestions.push('All refine keys must appear in recent messages. Either add the missing keys to the chat or relax the gate to selective_logic: and_any.');
+                    break;
+                case 'not_any':
+                    result.detail = `Primary keyword matched, but selective_logic=not_any blocks when ANY refine key is present. Matched: ${matchedStr}.`;
+                    result.suggestions.push('A refine key match BLOCKS this entry (inverse gate). Remove the matching refine key, or change selective_logic if the inverse was unintended.');
+                    break;
+                case 'not_all':
+                    result.detail = `Primary keyword matched, but selective_logic=not_all blocks when ALL refine keys are present. All ${total} matched.`;
+                    result.suggestions.push('All refine keys matching BLOCKS this entry (inverse gate). Remove one of the refine keys from the chat, or change selective_logic if the inverse was unintended.');
+                    break;
+                case 'and_any':
+                default:
+                    result.detail = `Primary keyword matched but none of the refine keys (${entry.refineKeys.join(', ')}) were found.`;
+                    result.suggestions.push('The refine keys narrow the match — check if they are too restrictive.');
+            }
             return result;
         }
     }

@@ -10,6 +10,11 @@ export const RESERVED_FIELD_NAMES = new Set([
     'role', 'scandepth', 'excluderecursion', 'refine_keys', 'cascade_links',
     'cooldown', 'warmup', 'probability', 'summary', 'graph', 'enabled',
     'constant', 'seed', 'bootstrap', 'type', 'fileclass', 'status', 'aliases',
+    // Wave 3 WI parity — selective_logic is the native refine-gate mode field.
+    // Reserved so users can't shadow it via field-definitions.yaml (which would
+    // route their custom value into customFields and silently overwrite the
+    // native field after extractCustomFields runs).
+    'selective_logic',
 ]);
 
 const VALID_TYPES = new Set(['string', 'number', 'boolean']);

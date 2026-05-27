@@ -80,7 +80,11 @@
       "matchCharacterPersonality": true,
       "matchCharacterDepthPrompt": true,
       "matchScenario": true,
-      "matchCreatorNotes": true
+      "matchCreatorNotes": true,
+      "triggers": "regex-trigger",
+      "ignoreBudget": true,
+      "characterFilter": "char-name",
+      "decorators": "@@activate"
     },
     "2": {
       "uid": 2,

@@ -76,6 +76,46 @@ function _resolveRoleByName(name) {
  * `excludeRecursion` stay camelCase — the readers below use camelCase (grandfathered
  * before this alias table existed).
  */
+/**
+ * WI parity — parser-side round-trip preservation table. ST fields DLE does
+ * NOT enforce; landed in vault frontmatter as snake_case keys and flagged via
+ * `W_WI_ROUND_TRIP` for /dle-lint visibility.
+ *
+ * Module-level export so the WI-PARITY-1 drift guard (test/regression.test.mjs)
+ * can set-compare against the importer table in `src/helpers.js`
+ * (`WI_ROUND_TRIP_FIELDS`). A field appearing in one table but not the other
+ * is a silent downgrade — see docs/gotchas.md #69 for the contract.
+ *
+ * Distinct from WI_NOT_IMPLEMENTED fields (sticky/delay/group/group_weight)
+ * which carry BUG numbers signaling "planned to implement."
+ *
+ * selectiveLogic intentionally absent — native enforcement in Wave 3
+ * (selective_logic in CANONICAL_FM_LOOKUP, validated below to W_INVALID).
+ */
+export const WI_ROUND_TRIP_FIELDS = [
+    'vectorized', 'selective', 'use_probability', 'prevent_recursion',
+    'delay_until_recursion', 'group_override', 'use_group_scoring',
+    'case_sensitive', 'match_whole_words', 'automation_id', 'add_memo',
+    'display_index', 'match_persona_description', 'match_character_description',
+    'match_character_personality', 'match_character_depth_prompt',
+    'match_scenario', 'match_creator_notes',
+    // Audit fix-up: modern ST fields (originalWIDataKeyMap, world-info.js).
+    'triggers', 'ignore_budget', 'character_filter', 'decorators',
+];
+
+/**
+ * Set form of WI_ROUND_TRIP_FIELDS (+ the W_NOT_IMPLEMENTED set: sticky/delay/
+ * group/group_weight). Consumed by `src/ai/manifest.js` to BLACKLIST these
+ * fields from the manifest sent to the AI selector — pre-fix every WI-imported
+ * entry paid per-gen tokens for a noise blob of "Vectorized: true | Match
+ * Persona Description: true | …" that the AI couldn't act on. See round-2
+ * cross-feature audit + gotchas.md #69.
+ */
+export const WI_PARITY_FIELD_SET = new Set([
+    ...WI_ROUND_TRIP_FIELDS,
+    'sticky', 'delay', 'group', 'group_weight',
+]);
+
 const CANONICAL_FM_LOOKUP = {
     keys: 'keys',
     tags: 'tags',
@@ -322,6 +362,16 @@ export function parseVaultFile(file, tagConfig, fieldDefinitions, options = {}) 
 
     const customFields = extractCustomFields(frontmatter, fieldDefinitions || []);
 
+    // Audit fix-up: if the user registered any of these snake_case names as
+    // their own custom field via `field-definitions.yaml`, suppress the
+    // WI-parity flag — their custom field is the source of truth, not the WI
+    // import contract. Without this, a pre-v2.5 user with a custom field
+    // literally named `vectorized` or `case_sensitive` sees /dle-lint warnings
+    // + a misleading "imported from SillyTavern WI" message. The custom field
+    // still works (extractCustomFields ran above); we just stop lying about
+    // its provenance.
+    const userFieldNames = new Set((fieldDefinitions || []).map(f => f.name));
+
     // C.3: round-trip-safe preservation of WI fields DLE has BUG numbers for
     // (planned-to-implement). Stored in customFields, flagged via W_NOT_IMPLEMENTED
     // so /dle-lint surfaces them.
@@ -334,6 +384,7 @@ export function parseVaultFile(file, tagConfig, fieldDefinitions, options = {}) 
     for (const { key: fieldName, bug } of WI_NOT_IMPLEMENTED_FIELDS) {
         if (Object.prototype.hasOwnProperty.call(frontmatter, fieldName)) {
             customFields[fieldName] = frontmatter[fieldName];
+            if (userFieldNames.has(fieldName)) continue;
             warnings.push({
                 code: 'W_NOT_IMPLEMENTED',
                 severity: 'warn',
@@ -344,25 +395,14 @@ export function parseVaultFile(file, tagConfig, fieldDefinitions, options = {}) 
         }
     }
 
-    // Wave 2 (WI parity) — Tier C round-trip preservation. ST fields DLE has
-    // NO plan to enforce natively (e.g. vector search, ST-specific scan source
-    // toggles). Distinct from WI_NOT_IMPLEMENTED above because the user signal
-    // is different — these are "DLE intentionally ignores this" not "DLE will
-    // implement this later." Keep this list aligned with WI_ROUND_TRIP_FIELDS
-    // in src/helpers.js (importer side); drift between the two is the regression
-    // class (see gotcha #50 trackerKey rule for the analogous reviewer guardrail).
-    // selectiveLogic intentionally absent — native enforcement in Wave 3.
-    const WI_ROUND_TRIP_FIELDS = [
-        'vectorized', 'selective', 'use_probability', 'prevent_recursion',
-        'delay_until_recursion', 'group_override', 'use_group_scoring',
-        'case_sensitive', 'match_whole_words', 'automation_id', 'add_memo',
-        'display_index', 'match_persona_description', 'match_character_description',
-        'match_character_personality', 'match_character_depth_prompt',
-        'match_scenario', 'match_creator_notes',
-    ];
+    // Wave 2 (WI parity) — Tier C round-trip preservation. Snake-case keys
+    // for the parser-side flag pass. Module-level export so the WI-PARITY-1
+    // regression guard can set-compare against the importer table (src/helpers.js
+    // WI_ROUND_TRIP_FIELDS) instead of substring-grepping for the literal.
     for (const fieldName of WI_ROUND_TRIP_FIELDS) {
         if (Object.prototype.hasOwnProperty.call(frontmatter, fieldName)) {
             customFields[fieldName] = frontmatter[fieldName];
+            if (userFieldNames.has(fieldName)) continue;
             warnings.push({
                 code: 'W_WI_ROUND_TRIP',
                 severity: 'warn',

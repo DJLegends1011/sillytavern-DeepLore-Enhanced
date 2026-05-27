@@ -7201,10 +7201,10 @@ test('PRX-MIG-4: idempotent — running v4 migration twice on already-migrated s
     assertEqual(sentinelCopy.length, 2, 'PRX-MIG-4: first-run sentinel captured both keys');
 });
 
-test('PRX-MIG-5: defaultSettings.settingsVersion is 4 (boot triggers migration for v3 users)', async () => {
+test('PRX-MIG-5: defaultSettings.settingsVersion is 5 (boot triggers migration for v4 users)', async () => {
     const src = await import('node:fs').then(fs =>
         fs.promises.readFile('settings.js', 'utf8'));
-    assertMatch(src, /settingsVersion:\s*4\b/, 'PRX-MIG-5: defaultSettings.settingsVersion is 4');
+    assertMatch(src, /settingsVersion:\s*5\b/, 'PRX-MIG-5: defaultSettings.settingsVersion is 5 (bumped for wiImportEmHandling default)');
 });
 
 // ============================================================================
@@ -7215,15 +7215,21 @@ test('PRX-MIG-5: defaultSettings.settingsVersion is 4 (boot triggers migration f
 // drift class is invisible — a field that's emitted on import but unflagged by
 // the parser will appear "vanished" to authors reading /dle-lint output.
 
-test('WI-PARITY-1: importer and parser WI_ROUND_TRIP_FIELDS tables are aligned', async () => {
-    // The two tables MUST stay in sync. Drift = silent downgrade.
-    const { WI_ROUND_TRIP_FIELDS } = await import('../src/helpers.js');
-    const parserSrc = await import('node:fs').then(fs =>
-        fs.promises.readFile('core/pipeline.js', 'utf8'));
-    const importerFmKeys = WI_ROUND_TRIP_FIELDS.map(([, fmKey]) => fmKey);
-    for (const fmKey of importerFmKeys) {
-        assert(parserSrc.includes(`'${fmKey}'`), `WI-PARITY-1: parser missing round-trip field: ${fmKey}`);
-    }
+test('WI-PARITY-1: importer and parser WI_ROUND_TRIP_FIELDS tables are aligned (set-equality)', async () => {
+    // Audit fix-up: pre-fix this used substring match which (a) matched any
+    // unrelated comment / error string containing the field name, and (b) only
+    // checked one direction (parser-only fields passed silently). Now imports
+    // both module-level exports and set-equality compares. Drift in either
+    // direction fails the test loudly.
+    const { WI_ROUND_TRIP_FIELDS: importerTable } = await import('../src/helpers.js');
+    const { WI_ROUND_TRIP_FIELDS: parserTable } = await import('../core/pipeline.js');
+    const importerSet = new Set(importerTable.map(([, fmKey]) => fmKey));
+    const parserSet = new Set(parserTable);
+    const onlyImporter = [...importerSet].filter(k => !parserSet.has(k));
+    const onlyParser = [...parserSet].filter(k => !importerSet.has(k));
+    assert(onlyImporter.length === 0, `WI-PARITY-1: importer-only fields (parser won't flag via /dle-lint): ${onlyImporter.join(', ')}`);
+    assert(onlyParser.length === 0, `WI-PARITY-1: parser-only fields (importer doesn't emit them): ${onlyParser.join(', ')}`);
+    assert(importerSet.size === parserSet.size, `WI-PARITY-1: table size mismatch — importer ${importerSet.size}, parser ${parserSet.size}`);
 });
 
 test('WI-PARITY-2: convertWiEntry emits enabled:false for disable=true (silent-downgrade guard)', async () => {
@@ -7264,6 +7270,78 @@ test('WI-PARITY-5: parser emits W_WI_ROUND_TRIP distinct from W_NOT_IMPLEMENTED'
     const codes = (entry._parserWarnings || []).map(w => `${w.code}:${w.field}`);
     assert(codes.includes('W_NOT_IMPLEMENTED:sticky'), 'WI-PARITY-5: sticky stays W_NOT_IMPLEMENTED (BUG-047)');
     assert(codes.includes('W_WI_ROUND_TRIP:vectorized'), 'WI-PARITY-5: vectorized is W_WI_ROUND_TRIP (no BUG number)');
+});
+
+test('WI-PARITY-7: AI manifest blacklists WI parity round-trip fields by default (audit fix-up #1)', async () => {
+    // Pre-fix, every WI-imported entry's vectorized/case_sensitive/match_*/etc.
+    // landed in the AI selector manifest as token-burning noise. Guard: when
+    // aiManifestIncludeFields whitelist is empty, WI-parity fields must NOT
+    // appear in the manifest output.
+    const { buildCandidateManifest } = await import('../src/ai/manifest.js');
+    const entry = {
+        title: 'Test', vaultSource: '', tokenEstimate: 100, summary: 'A test entry.',
+        keys: [], tags: [], constant: false, seed: false, bootstrap: false, links: [],
+        resolvedLinks: [], requires: [], excludes: [], cascadeLinks: [], refineKeys: [],
+        cooldown: null, warmup: null, probability: null, injectionPosition: null,
+        injectionDepth: null, injectionRole: null, scanDepth: null,
+        customFields: { vectorized: true, case_sensitive: true, match_persona_description: true, era: 'modern' },
+    };
+    const { manifest } = buildCandidateManifest([entry], false, { aiManifestIncludeFields: [], maxTokensBudget: 1000 });
+    assert(!manifest.includes('Vectorized'), 'WI-PARITY-7: vectorized must NOT appear in manifest');
+    assert(!manifest.includes('Case Sensitive') && !manifest.includes('case_sensitive'), 'WI-PARITY-7: case_sensitive blacklisted');
+    assert(!manifest.includes('Match Persona Description') && !manifest.includes('match_persona_description'), 'WI-PARITY-7: match_persona_description blacklisted');
+    assert(manifest.includes('era') || manifest.includes('Era'), 'WI-PARITY-7: real user custom field (era) still surfaces');
+});
+
+test('WI-PARITY-8: AI manifest whitelist override lets advanced users opt back in', async () => {
+    // Advanced users who explicitly want a WI-parity field in the manifest can
+    // whitelist it via aiManifestIncludeFields — whitelist wins over blacklist.
+    const { buildCandidateManifest } = await import('../src/ai/manifest.js');
+    const entry = {
+        title: 'T', vaultSource: '', tokenEstimate: 50, summary: 'S',
+        keys: [], tags: [], constant: false, seed: false, bootstrap: false, links: [],
+        resolvedLinks: [], requires: [], excludes: [], cascadeLinks: [], refineKeys: [],
+        cooldown: null, warmup: null, probability: null, injectionPosition: null,
+        injectionDepth: null, injectionRole: null, scanDepth: null,
+        customFields: { vectorized: true, era: 'modern' },
+    };
+    const { manifest } = buildCandidateManifest([entry], false, { aiManifestIncludeFields: ['vectorized'], maxTokensBudget: 1000 });
+    assert(manifest.includes('vectorized') || manifest.includes('Vectorized'), 'WI-PARITY-8: whitelist re-opts vectorized in');
+    assert(!manifest.includes('era') && !manifest.includes('Era'), 'WI-PARITY-8: era NOT in explicit whitelist → excluded');
+});
+
+test('WI-PARITY-9: parseVaultFile suppresses W_WI_ROUND_TRIP when user field-definition shadows the name', async () => {
+    // Pre-fix, user with a custom field named e.g. `vectorized` got a confusing
+    // "imported from SillyTavern WI" lint warning even though they authored it
+    // as their own field. Fix: skip W_WI_ROUND_TRIP emission when the field name
+    // exists in fieldDefinitions.
+    const { parseVaultFile } = await import('../core/pipeline.js');
+    const file = {
+        filename: 'test.md',
+        content: '---\ntags:\n  - lorebook\nkeys:\n  - x\nvectorized: true\n---\nbody',
+    };
+    const tagConfig = { lorebookTag: 'lorebook', constantTag: '', neverInsertTag: '', seedTag: '', bootstrapTag: '' };
+    const userFieldDefs = [{ name: 'vectorized', label: 'Vectorized', type: 'boolean', multi: false }];
+    const entry = parseVaultFile(file, tagConfig, userFieldDefs);
+    const warns = (entry._parserWarnings || []).filter(w => w.code === 'W_WI_ROUND_TRIP');
+    assert(warns.length === 0, 'WI-PARITY-9: user-defined custom field suppresses WI-parity warning');
+    assert(entry.customFields.vectorized === true, 'WI-PARITY-9: value still preserved in customFields');
+});
+
+test('WI-PARITY-10: selective_logic in RESERVED_FIELD_NAMES (cannot be shadowed via field-definitions)', async () => {
+    const { RESERVED_FIELD_NAMES } = await import('../src/fields.js');
+    assert(RESERVED_FIELD_NAMES.has('selective_logic'), 'WI-PARITY-10: selective_logic reserved');
+});
+
+test('PRX-MIG-6: v5 migration sets wiImportEmHandling default for upgrading users', async () => {
+    const { runMigrations } = await import('../src/settings-migrations-pure.js');
+    const s = {}; // pre-v5 user: no wiImportEmHandling
+    runMigrations(s, 4, 5);
+    assertEqual(s.wiImportEmHandling, 'append', 'PRX-MIG-6: defensive default applied');
+    // Idempotent: re-running on v5 leaves user-set value alone.
+    const s2 = { wiImportEmHandling: 'skip' };
+    runMigrations(s2, 5, 5);
+    assertEqual(s2.wiImportEmHandling, 'skip', 'PRX-MIG-6: v5→v5 no-op preserves user choice');
 });
 
 test('WI-PARITY-6: importEntries report shape stable (Wave 5 popup consumer contract)', async () => {

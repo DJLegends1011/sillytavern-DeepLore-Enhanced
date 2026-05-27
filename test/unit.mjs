@@ -1958,7 +1958,7 @@ test('parseVaultFile: W_NOT_IMPLEMENTED vs W_WI_ROUND_TRIP split correctly', () 
     assert(vectorWarn.code === 'W_WI_ROUND_TRIP', 'vectorized is W_WI_ROUND_TRIP');
 });
 
-test('convertWiEntry: all 18 Tier C fields land when set non-default', () => {
+test('convertWiEntry: all 22 Tier C fields land when set non-default', () => {
     const wi = {
         comment: 'KitchenSink', key: ['ks'], content: 'c',
         vectorized: true, selective: true, useProbability: true,
@@ -1969,10 +1969,12 @@ test('convertWiEntry: all 18 Tier C fields land when set non-default', () => {
         matchPersonaDescription: true, matchCharacterDescription: true,
         matchCharacterPersonality: true, matchCharacterDepthPrompt: true,
         matchScenario: true, matchCreatorNotes: true,
+        // Audit fix-up: modern ST fields
+        triggers: 'regex-trigger', ignoreBudget: true,
+        characterFilter: 'char-name', decorators: '@@activate',
     };
     const report = { nativeApplied: {}, roundTripped: {}, skipped: {} };
     const out = convertWiEntry(wi, 'lorebook', { report });
-    // All 18 must surface as frontmatter lines
     const expected = [
         'vectorized: true', 'selective: true', 'use_probability: true',
         'prevent_recursion: true', 'delay_until_recursion: true',
@@ -1982,11 +1984,13 @@ test('convertWiEntry: all 18 Tier C fields land when set non-default', () => {
         'match_persona_description: true', 'match_character_description: true',
         'match_character_personality: true', 'match_character_depth_prompt: true',
         'match_scenario: true', 'match_creator_notes: true',
+        'triggers: regex-trigger', 'ignore_budget: true',
+        'character_filter: char-name', 'decorators: "@@activate"',
     ];
     for (const line of expected) {
         assert(out.content.includes(line), `missing: ${line}`);
     }
-    assert(Object.keys(report.roundTripped).length === 18, 'all 18 fields counted');
+    assert(Object.keys(report.roundTripped).length === 22, 'all 22 fields counted');
 });
 
 // ============================================================================
@@ -2137,10 +2141,15 @@ test('convertWiEntry: invalid selectiveLogic int omitted, bumps skipped', () => 
     assert(report.skipped.invalid_selective_logic === 1, 'invalid_selective_logic counter bumped');
 });
 
-test('convertWiEntry: selectiveLogic 0 counted as selective_logic_default', () => {
+test('convertWiEntry: selectiveLogic 0 does NOT leak telemetry into report (audit fix-up)', () => {
+    // Pre-fix, mode 0 (and_any default) bumped `selective_logic_default` which
+    // then surfaced in the import-report popup as a meaningless "Native fields
+    // applied" entry. Now silently omitted.
     const report = { nativeApplied: {}, roundTripped: {}, skipped: {} };
     convertWiEntry({ comment: 'A', key: ['a'], selectiveLogic: 0, content: 'c' }, 'lorebook', { report });
-    assert(report.nativeApplied.selective_logic_default === 1, 'default-value counter visible to report');
+    assert(!report.nativeApplied.selective_logic_default, 'default-value telemetry must NOT bump the counter');
+    assert(!report.nativeApplied.selective_logic, 'default-value also not counted as applied');
+    assert(!report.skipped.invalid_selective_logic, 'default value is valid, not skipped');
 });
 
 // ============================================================================
@@ -2302,9 +2311,12 @@ test('renderImportReportHtml: escapes HTML in source + folder + entry titles', (
 
 test('renderImportReportHtml: shows skip-EM button only when emAppended > 0', () => {
     const r1 = buildImportReport({ imported: 1, report: { emAppended: 2 } }, 'WI', '');
-    assert(renderImportReportHtml(r1).includes('Skip Example Messages on future imports'), 'button shown');
+    // Audit fix-up: label now discloses reversibility + setting path.
+    assert(renderImportReportHtml(r1).includes('dle-import-skip-em-future'), 'button shown by class');
+    assert(renderImportReportHtml(r1).includes('Always skip Example Messages on import'), 'discloses persistence');
+    assert(renderImportReportHtml(r1).includes('reversible in settings'), 'discloses how to revert');
     const r2 = buildImportReport({ imported: 1, report: { emSkipped: 2 } }, 'WI', '');
-    assert(!renderImportReportHtml(r2).includes('Skip Example Messages on future imports'), 'button hidden when nothing appended (already opted out)');
+    assert(!renderImportReportHtml(r2).includes('dle-import-skip-em-future'), 'button hidden when nothing appended (already opted out)');
 });
 
 test('renderImportReportHtml: truncates long error list', () => {
@@ -2317,12 +2329,18 @@ test('renderImportReportHtml: truncates long error list', () => {
     assert(!html.includes('err-29'), '21st+ errors not rendered inline');
 });
 
-test('renderImportReportHtml: emEntries list hidden above 20 entries (avoid wall of text)', () => {
+test('renderImportReportHtml: emEntries list truncates with overflow indicator (audit fix-up)', () => {
+    // Pre-fix the list was silently hidden above 20 entries. Now shows first
+    // 20 + "and N more" matching the errors-list pattern.
     const emEntries = Array.from({ length: 25 }, (_, i) => ({ title: `T${i}`, filename: `T${i}.md`, position: 5, action: 'appended' }));
     const r = buildImportReport({ imported: 25, report: { emAppended: 25, emEntries } }, 'WI', '');
     const html = renderImportReportHtml(r);
     assert(html.includes('25 appended as subheader'), 'count shown');
-    assert(!html.includes('<details>'), 'no per-entry details when over cap');
+    assert(html.includes('<details>'), 'details block present');
+    assert(html.includes('T0'), 'first entry rendered');
+    assert(html.includes('T19'), '20th entry rendered');
+    assert(!html.includes('>T20<') && !html.includes('>T24<'), 'past-cap entries not rendered inline');
+    assert(html.includes('and 5 more'), 'overflow indicator shown');
 });
 
 test('renderImportReportHtml: folder label vs vault root', () => {

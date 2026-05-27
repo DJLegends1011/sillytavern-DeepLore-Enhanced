@@ -5738,3 +5738,20 @@ button.dle-browse-copy-title-btn:focus-visible {
     outline-offset: 2px;
 }
 
+
+/* WI import report popup — responsive 2-column field list + EM explainer box */
+.dle-import-report-cols {
+    columns: 2;
+    column-gap: 2em;
+}
+@media (max-width: 600px) {
+    .dle-import-report-cols {
+        columns: 1;
+    }
+}
+.dle-import-report-em-box {
+    border: 1px solid var(--SmartThemeBorderColor, #444);
+    padding: 0.75em;
+    border-radius: 4px;
+    margin: 0.5em 0;
+}

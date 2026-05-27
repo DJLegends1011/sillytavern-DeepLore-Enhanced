@@ -105,7 +105,7 @@ test('full-parity: enabled-only Tier A subset round-trips into VaultEntry shape'
 // Tier C (Wave 2) — round-trip preservation
 // ============================================================================
 
-test('full-parity: entry 1 emits ALL 18 round-trip fields as snake_case', () => {
+test('full-parity: entry 1 emits ALL round-trip fields as snake_case', () => {
     const { entries } = parseWorldInfoJson(FIXTURE_JSON);
     const out = convertWiEntry(entries[1], 'lorebook');
     // Every snake-cased target from WI_ROUND_TRIP_FIELDS must appear.
@@ -140,7 +140,9 @@ test('full-parity: report.roundTripped counts every Tier C field once', () => {
     const { entries } = parseWorldInfoJson(FIXTURE_JSON);
     const report = { nativeApplied: {}, roundTripped: {}, skipped: {} };
     convertWiEntry(entries[1], 'lorebook', { report });
-    assert(Object.keys(report.roundTripped).length === 18, `expected 18 round-trip counters, got ${Object.keys(report.roundTripped).length}`);
+    // Entry 1 exercises all 22 Tier C fields (original 18 Wave 2 + 4 modern
+    // ST fields added during the audit fix-up).
+    assert(Object.keys(report.roundTripped).length === 22, `expected 22 round-trip counters, got ${Object.keys(report.roundTripped).length}`);
 });
 
 // ============================================================================
@@ -250,6 +252,11 @@ const FIELD_HOMES = {
     matchCharacterDepthPrompt: 'round-trip:match_character_depth_prompt',
     matchScenario: 'round-trip:match_scenario',
     matchCreatorNotes: 'round-trip:match_creator_notes',
+    // Audit fix-up: modern ST fields (originalWIDataKeyMap in world-info.js).
+    triggers: 'round-trip:triggers',
+    ignoreBudget: 'round-trip:ignore_budget',
+    characterFilter: 'round-trip:character_filter',
+    decorators: 'round-trip:decorators',
 };
 
 test('full-parity: every ST WI field in the fixture has a documented home (no silent drops)', () => {
@@ -263,6 +270,78 @@ test('full-parity: every ST WI field in the fixture has a documented home (no si
     }
     const orphans = [...seenFields].filter(f => !(f in FIELD_HOMES));
     assert(orphans.length === 0, `orphan ST fields with no documented home: ${orphans.join(', ')} — update FIELD_HOMES + decide native/round-trip/gap`);
+});
+
+// Audit fix-up: the FIELD_HOMES check above was a false positive — it only
+// verified the lookup table had the key, NOT that the importer actually emits
+// the field. That's how `cooldown` slipped past (FIELD_HOMES claimed
+// native:cooldown but convertWiEntry never wrote a `cooldown:` line). This
+// per-tier emission check closes the gap.
+
+test('full-parity emission: every native:* field round-trips into emitted frontmatter', () => {
+    // Synthesize an entry that sets every native field to a NON-default value
+    // and assert each one lands as expected frontmatter. Catches the cooldown
+    // class of silent drop where the home is documented but the line is missing.
+    const wi = {
+        comment: 'EmissionCheck',
+        key: ['ek'],
+        keysecondary: ['rk'],
+        content: 'body',
+        constant: true,
+        order: 25,
+        position: 1, // → before
+        depth: 4,
+        probability: 50,
+        scanDepth: 10,
+        disable: false, // we want the entry to land so the parser doesn't skip it
+        excludeRecursion: true,
+        role: 1,
+        selectiveLogic: 3, // and_all
+        cooldown: 7,
+    };
+    const out = convertWiEntry(wi, 'lorebook');
+    // priority + tags + content always emit; the rest are the per-field checks.
+    assert(out.content.includes('priority: 25'), 'native:order → priority emitted');
+    assert(out.content.includes('  - lorebook'), 'native:tags emitted (lorebook tag)');
+    assert(out.content.includes('  - lorebook-always'), 'native:constant → lorebook-always tag');
+    assert(out.content.includes('keys:'), 'native:keys emitted');
+    assert(out.content.includes('refine_keys:'), 'native:keysecondary → refine_keys');
+    assert(out.content.includes('position: before'), 'native:position emitted');
+    assert(out.content.includes('depth: 4'), 'native:depth emitted');
+    assert(out.content.includes('probability: 0.50'), 'native:probability emitted (rescaled)');
+    assert(out.content.includes('scanDepth: 10'), 'native:scanDepth emitted');
+    assert(out.content.includes('excludeRecursion: true'), 'native:excludeRecursion emitted');
+    assert(out.content.includes('role: user'), 'native:role emitted');
+    assert(out.content.includes('selective_logic: and_all'), 'native:selectiveLogic emitted (non-default mode)');
+    assert(out.content.includes('cooldown: 7'), 'native:cooldown emitted (audit fix-up — was silently dropped pre-fix)');
+});
+
+test('full-parity emission: disable=true emits enabled:false (silent-downgrade guard)', () => {
+    const wi = { comment: 'D', key: ['d'], content: 'c', disable: true };
+    const out = convertWiEntry(wi, 'lorebook');
+    assert(out.content.includes('enabled: false'), 'native:disable → enabled:false emitted');
+});
+
+test('full-parity emission: every round-trip:* field appears as snake_case frontmatter', () => {
+    // Set EVERY Tier C field to a truthy non-default value; assert each maps
+    // to its snake_case frontmatter key. Stronger than the W_WI_ROUND_TRIP
+    // count check because it asserts the literal emission shape.
+    const { WI_ROUND_TRIP_FIELDS: importerTable } = { WI_ROUND_TRIP_FIELDS };
+    const wi = { comment: 'AllRT', key: ['rt'], content: 'c' };
+    for (const [wiKey] of importerTable) {
+        // Set string fields to a non-empty value, bools/numbers truthy non-default.
+        if (wiKey === 'automationId' || wiKey === 'group' || wiKey === 'triggers' || wiKey === 'characterFilter' || wiKey === 'decorators') {
+            wi[wiKey] = 'val';
+        } else if (wiKey === 'displayIndex' || wiKey === 'useGroupScoring') {
+            wi[wiKey] = 5;
+        } else {
+            wi[wiKey] = true;
+        }
+    }
+    const out = convertWiEntry(wi, 'lorebook');
+    for (const [, fmKey] of importerTable) {
+        assert(out.content.includes(`${fmKey}:`), `round-trip emission missing: ${fmKey}`);
+    }
 });
 
 await summary('WI Import Full-Parity Tests');

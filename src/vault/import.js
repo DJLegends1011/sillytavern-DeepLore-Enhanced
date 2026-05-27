@@ -107,9 +107,16 @@ export async function importEntries(entries, folder, onProgress, options = {}) {
     // Wave 4: also tracks emAppended/emSkipped counts + emEntries list so the
     // import-report popup can offer a per-title "undo this skip / view what
     // landed" affordance.
+    // Audit fix-up: emEntries was unbounded — 5k EM entries = 5k retained
+    // objects but the popup only renders the first 20. Cap pushes at 100;
+    // popup overflow indicator handles the rollup display.
+    const EM_ENTRIES_CAP = 100;
     const report = {
         nativeApplied: {}, roundTripped: {}, skipped: {},
         emAppended: 0, emSkipped: 0, emEntries: [],
+    };
+    const pushEmEntry = (rec) => {
+        if (report.emEntries.length < EM_ENTRIES_CAP) report.emEntries.push(rec);
     };
 
     let renamed = 0;
@@ -122,13 +129,13 @@ export async function importEntries(entries, folder, onProgress, options = {}) {
             // the title so the import report can list which entries didn't land.
             if (_emPosition != null && emHandling === 'skip') {
                 report.emSkipped++;
-                report.emEntries.push({ title: entryTitle || filename.replace(/\.md$/, ''), filename, position: _emPosition, action: 'skipped' });
+                pushEmEntry({ title: entryTitle || filename.replace(/\.md$/, ''), filename, position: _emPosition, action: 'skipped' });
                 if (onProgress) onProgress(imported + failed, entries.length);
                 continue;
             }
             if (_emPosition != null && emHandling === 'append') {
                 report.emAppended++;
-                report.emEntries.push({ title: entryTitle || filename.replace(/\.md$/, ''), filename, position: _emPosition, action: 'appended' });
+                pushEmEntry({ title: entryTitle || filename.replace(/\.md$/, ''), filename, position: _emPosition, action: 'appended' });
             }
             let fullPath = folder ? `${folder}/${filename}` : filename;
 

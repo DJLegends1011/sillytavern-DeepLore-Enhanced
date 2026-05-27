@@ -469,6 +469,14 @@ export async function buildIndex() {
                                 title: entry.title,
                                 warnings: entry._parserWarnings,
                             });
+                            // Audit fix-up (round 2): compact the per-entry copy
+                            // to release ~50MB at 5k WI-imported entries × 22
+                            // W_WI_ROUND_TRIP objects. /dle-lint renderer
+                            // (src/ui/commands-lint.js) reconstructs message +
+                            // suggestedFix from CODE_LABELS at display time, so
+                            // only {code, field} need to round-trip into reused
+                            // entries on incremental rebuilds.
+                            entry._parserWarnings = entry._parserWarnings.map(w => ({ code: w.code, severity: w.severity, field: w.field }));
                         } else {
                             buildReport.okCount++;
                         }

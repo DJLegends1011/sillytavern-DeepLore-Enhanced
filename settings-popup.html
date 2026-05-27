@@ -336,6 +336,15 @@
                     <input id="dle-sp-import-compress-default" type="checkbox" class="checkbox">
                     <span data-i18n="dle_compress_import_label">Compress imported entries (caveman)</span>
                 </label>
+                <div class="flex-container dle-sp-indent" title="How WI 'Example Messages' positions (before_example_messages / after_example_messages) are converted. DLE has no EM slot, so 'Append' makes them regular vault entries with a '## Example Dialogue' subheader; 'Skip' drops them entirely. Per-import override available from the post-import popup.">
+                    <div class="flex1">
+                        <label for="dle-sp-wi-import-em-handling"><small data-i18n="dle_wi_em_handling_label">WI Example Messages on import</small></label>
+                        <select id="dle-sp-wi-import-em-handling" class="text_pole">
+                            <option value="append" data-i18n="dle_wi_em_handling_append">Append as subheader (default)</option>
+                            <option value="skip" data-i18n="dle_wi_em_handling_skip">Skip</option>
+                        </select>
+                    </div>
+                </div>
 
                 <label class="dle-advanced-subheader"><small data-i18n="dle_recursive_scan_label">Chain Matching</small></label>
                 <label class="checkbox_label" for="dle-sp-recursive-scan" title="Scan matched entries' content for keywords that might trigger additional entries.">

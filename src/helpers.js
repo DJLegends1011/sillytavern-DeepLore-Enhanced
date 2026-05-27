@@ -40,6 +40,14 @@ export const WI_ROUND_TRIP_FIELDS = [
     ['matchCharacterDepthPrompt', 'match_character_depth_prompt'],
     ['matchScenario', 'match_scenario'],
     ['matchCreatorNotes', 'match_creator_notes'],
+    // Audit fix-up: modern ST fields surfaced by the contract-integrity audit.
+    // Present in ST `originalWIDataKeyMap` (world-info.js lines 2607-2644) on
+    // current ST builds. Without these, the "every WI field" contract is
+    // violated for any user on a modern ST install.
+    ['triggers', 'triggers'],
+    ['ignoreBudget', 'ignore_budget'],
+    ['characterFilter', 'character_filter'],
+    ['decorators', 'decorators'],
 ];
 
 /**
@@ -497,7 +505,19 @@ export function buildObsidianURI(vaultName, filename) {
  *   the converter mutates `report.nativeApplied[field]++`, `report.roundTripped[field]++`,
  *   and `report.skipped[reason]++` in place so `importEntries` can build a structured
  *   per-import summary without re-parsing what it just emitted.
- * @returns {{filename: string, content: string}}
+ * @param {string} [options.emHandling] - Wave 4: 'append' (default) | 'skip'. Reserved
+ *   for future per-call override of the subheader text; current behavior is identical
+ *   for both modes (the I/O-layer caller enforces skip via _emPosition).
+ * @returns {{
+ *   filename: string,
+ *   content: string,
+ *   title: string,
+ *   _emPosition: number|null,
+ * }} `title` is the cleaned entry title (callers use this for the import-report
+ *   entry list). `_emPosition` is 5 or 6 when the entry was at an ST Example
+ *   Messages position, null otherwise — the I/O layer (importEntries /
+ *   upsertConvertedEntry) reads this flag to apply the skip policy without
+ *   re-running the converter.
  */
 export function convertWiEntry(wiEntry, lorebookTag, options = {}) {
     const compressMode = resolveCompressMode(options.compress);
@@ -512,7 +532,11 @@ export function convertWiEntry(wiEntry, lorebookTag, options = {}) {
     // BUG-008: older ST exports use a comma-separated string for `key`.
     const keyArray = Array.isArray(wiEntry.key) ? wiEntry.key
         : (typeof wiEntry.key === 'string' ? wiEntry.key.split(',').map(k => k.trim()).filter(Boolean) : []);
-    const title = ((wiEntry.comment || '').trim()
+    // Defensive coerce: ST occasionally exports numeric `comment` (e.g. when a
+    // tool auto-set it to the entry's UID). Bare `(wiEntry.comment || '').trim()`
+    // throws TypeError on numbers.
+    const commentStr = wiEntry.comment != null ? String(wiEntry.comment) : '';
+    const title = (commentStr.trim()
         || keyArray.join(', ').substring(0, 50)
         || `Entry_${wiEntry.uid || Date.now()}`).replace(/[\r\n]+/g, ' ');
 
@@ -576,6 +600,14 @@ export function convertWiEntry(wiEntry, lorebookTag, options = {}) {
         fm.push(`probability: ${(wiEntry.probability / 100).toFixed(2)}`);
     }
     if (wiEntry.scanDepth) fm.push(`scanDepth: ${wiEntry.scanDepth}`);
+    // Audit fix-up: cooldown was claimed native in FIELD_HOMES but never
+    // emitted — silent-downgrade class. Parser reads cooldown at line ~289
+    // of core/pipeline.js so the native plumbing exists; only the importer
+    // was missing the line.
+    if (wiEntry.cooldown != null && Number(wiEntry.cooldown) > 0) {
+        fm.push(`cooldown: ${Number(wiEntry.cooldown)}`);
+        bump('nativeApplied', 'cooldown');
+    }
 
     // Wave 1 (WI parity) — Tier A: ST fields DLE supports natively but the
     // importer used to drop on the floor. Most important: `disable: true`
@@ -615,11 +647,10 @@ export function convertWiEntry(wiEntry, lorebookTag, options = {}) {
         if (slName && slName !== 'and_any') {
             fm.push(`selective_logic: ${slName}`);
             bump('nativeApplied', 'selective_logic');
-        } else if (slName === 'and_any') {
-            // Implicit default — count under nativeApplied for the report's "we saw
-            // selectiveLogic and chose to omit because it's default" signal.
-            bump('nativeApplied', 'selective_logic_default');
-        } else {
+        } else if (!slName) {
+            // Audit fix-up: only count invalid enums. Default 'and_any' is
+            // omitted silently — surfacing it as "selective_logic_default — N"
+            // in the popup leaked internal telemetry the user couldn't parse.
             bump('skipped', 'invalid_selective_logic');
         }
     }
@@ -699,7 +730,12 @@ export function convertWiEntry(wiEntry, lorebookTag, options = {}) {
     // (importEntries) — only the caller knows whether the entry will actually
     // be written or skipped. Here we just mark the entry via _emPosition so
     // the caller can branch.
-    if (isEmPosition) {
+    //
+    // Audit fix-up: idempotent prepend. If the body already starts with the
+    // subheader (re-import of a previously-imported EM entry), don't stack a
+    // second one. Re-imports normally land in a new _imported_N file via the
+    // dedup probe, but a 'replace' policy upsert could trigger this.
+    if (isEmPosition && !/^##\s+Example Dialogue\b/m.test(content.trimStart())) {
         content = `## Example Dialogue\n\n${content}`;
     }
     void emHandling; // reserved for future per-call subheader-text override
@@ -925,9 +961,27 @@ export function categorizeRejections(trace, injectedKeys) {
     }
 
     if (trace.refineKeyBlocked?.length > 0) {
+        // Audit fix-up: drawer Why? tab reason text honors selective_logic
+        // mode. Pre-fix hardcoded "[keys] not found" lied for not_any /
+        // not_all entries (a refine MATCH was what blocked the gate).
+        const reasonFor = (e) => {
+            const logic = e.selectiveLogic || 'and_any';
+            const keysStr = e.refineKeys.join(', ');
+            switch (logic) {
+                case 'and_all':
+                    return `Matched "${e.primaryKey}" but selective_logic=and_all needs all of [${keysStr}]`;
+                case 'not_any':
+                    return `Matched "${e.primaryKey}" but selective_logic=not_any blocked — a refine key from [${keysStr}] is present`;
+                case 'not_all':
+                    return `Matched "${e.primaryKey}" but selective_logic=not_all blocked — all of [${keysStr}] matched`;
+                case 'and_any':
+                default:
+                    return `Matched "${e.primaryKey}" but refine keys [${keysStr}] not found`;
+            }
+        };
         const entries = trace.refineKeyBlocked
             .filter(e => !injectedKeys.has(k(e)))
-            .map(e => ({ title: e.title, vaultSource: e.vaultSource || '', reason: `Matched "${e.primaryKey}" but refine keys [${e.refineKeys.join(', ')}] not found` }));
+            .map(e => ({ title: e.title, vaultSource: e.vaultSource || '', reason: reasonFor(e) }));
         if (entries.length > 0) groups.push({ stage: 'refine_key_blocked', label: 'Refine Key Blocked', icon: 'fa-filter-circle-xmark', entries });
     }
 

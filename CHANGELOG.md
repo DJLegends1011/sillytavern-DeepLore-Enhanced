@@ -16,7 +16,7 @@
 
 ### New Features
 
-- **WI import: full ST World Info field parity** — every WI field now has a documented home (see `docs/gotchas.md` #69 for the contract).
+- **WI import: full ST World Info field parity** — every WI field now has a documented home (see `docs/gotchas.md` #69 for the contract). Companion-extension API additions: `convertWiEntry` return now carries `title` + `_emPosition`; `upsertConvertedEntry` returns a new `report` object + can return `action: 'em-skipped'` for Example Messages entries when `wiImportEmHandling === 'skip'`. Existing destructuring patterns (`{filename, content}` etc.) keep working — additive only.
   - **Native (DLE acts on):** `disable` → `enabled: false` (pre-fix disabled WI entries silently imported as active — the most damaging silent downgrade in the importer), `excludeRecursion`, `role` (Wave 1), plus `selective_logic` with all 4 modes enforced by new `applySelectiveLogic` gate (`and_any`, `and_all`, `not_all`, `not_any` — Wave 3), plus Example Messages positions 5/6 with `## Example Dialogue` subheader handling and configurable skip-on-import (Wave 4).
   - **Round-trip preserved** (snake_case frontmatter, surfaced by `/dle-lint` as new `W_WI_ROUND_TRIP` code): `vectorized`, `selective`, `use_probability`, `prevent_recursion`, `delay_until_recursion`, `group_override`, `use_group_scoring`, `case_sensitive`, `match_whole_words`, `automation_id`, `add_memo`, `display_index`, plus 6 `match_*` scan-source toggles (Wave 2).
   - **Structured import report popup** replaces the old success/warning toast — shows per-field counts, EM handling breakdown, friendly EM explainer with one-click "Skip on future imports" button that flips the `wiImportEmHandling` setting (Wave 5).

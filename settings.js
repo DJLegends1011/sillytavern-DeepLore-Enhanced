@@ -309,7 +309,7 @@ export const defaultSettings = {
     analyticsData: {},
     _wizardCompleted: false,
     // Increment to trigger migrations in runMigrations().
-    settingsVersion: 4,
+    settingsVersion: 5,
 };
 
 /** Per-tool settings-key map for resolveConnectionConfig(). */
