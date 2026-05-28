@@ -3,7 +3,7 @@
  */
 import { getContext } from '../../../../../extensions.js';
 import { chat_metadata } from '../../../../../../script.js';
-import { getPrompt } from '../prompts/prompt-store.js';
+import { getPrompt, resolvePromptOrOverride } from '../prompts/prompt-store.js';
 
 /**
  * Indexed-placeholder interpolation: `interp("${0} of ${1}", "A", "B")` → `"A of B"`.
@@ -119,12 +119,10 @@ export function buildSystemPromptForLoop(pipelineContext, injectedTitles, settin
         // notepadPrompt is user-configurable but trusted (settings write is out of
         // scope for prompt-injection) — no fence.
         if ((settings.aiNotepadMode || 'tag') === 'tag') {
-            // Trim-then-default matches index.js:770. Whitespace-only must fall
-            // back to default so tag-mode keeps emitting <dle-notes> blocks.
-            const notepadPrompt = settings.aiNotepadPrompt?.trim() || getPrompt('AI_NOTEPAD_PROMPT');
-            if (notepadPrompt) {
-                sections.push(notepadPrompt);
-            }
+            // Trim-then-default matches index.js notepad fallback. Whitespace-only
+            // must fall back to default so tag-mode keeps emitting <dle-notes>.
+            const notepadPrompt = resolvePromptOrOverride('AI_NOTEPAD_PROMPT', settings.aiNotepadPrompt);
+            if (notepadPrompt) sections.push(notepadPrompt);
         }
     }
 

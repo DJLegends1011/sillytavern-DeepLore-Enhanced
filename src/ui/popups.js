@@ -11,7 +11,7 @@ import { parseFrontmatter, simpleHash, buildScanText, classifyError, NO_ENTRIES_
 import { testEntryMatch } from '../../core/matching.js';
 import { getSettings, getVaultByName } from '../../settings.js';
 import { writeNote, obsidianFetch, encodeVaultPath } from '../vault/obsidian-api.js';
-import { getPrompt } from '../prompts/prompt-store.js';
+import { resolvePromptOrOverride } from '../prompts/prompt-store.js';
 import {
     vaultIndex, trackerKey, chatEpoch,
     setVaultIndex, setIndexTimestamp,
@@ -706,7 +706,7 @@ export async function optimizeEntryKeys(entry) {
         ? 'This system uses KEYWORD-ONLY matching (no AI filter). Be precise — avoid generic words.'
         : 'This system uses TWO-STAGE matching (keywords → AI filter). Be broader — the AI will refine.';
 
-    const systemPrompt = settings.optimizeKeysPrompt?.trim() || getPrompt('OPTIMIZE_KEYS_PROMPT');
+    const systemPrompt = resolvePromptOrOverride('OPTIMIZE_KEYS_PROMPT', settings.optimizeKeysPrompt);
     const userMessage = `Mode: ${modeHint}\n\nTitle: ${entry.title}\nCurrent keywords: ${entry.keys.join(', ')}\nContent:\n${entry.content.substring(0, 1500)}\n\nSuggest optimized keywords as JSON.`;
 
     const result = await callAutoSuggest(systemPrompt, userMessage, 'optimizeKeys');

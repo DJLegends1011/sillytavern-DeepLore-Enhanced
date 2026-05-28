@@ -18,7 +18,7 @@ import { extractAiResponseClient, stripObsidianSyntax } from '../helpers.js';
 import { getWriterVisibleEntries, chatEpoch, tryAcquireHalfOpenProbe, recordAiSuccess, recordAiFailure } from '../state.js';
 import { ensureIndexFresh, buildIndex } from '../vault/vault.js';
 import { pushEvent } from '../diagnostics/interceptors.js';
-import { getPrompt } from '../prompts/prompt-store.js';
+import { resolvePromptOrOverride } from '../prompts/prompt-store.js';
 
 // Auto-Suggest default prompt moved to src/i18n/prompts/en.js as
 // AUTO_SUGGEST_PROMPT and resolved at call time via
@@ -125,7 +125,7 @@ export async function runAutoSuggest() {
     const existingTitles = visibleEntries.map(e => `"${e.title.replace(/"/g, '\\"')}"`).join(', ');
     const chatContext = buildAiChatContext(chat, settings.aiSearchScanDepth || 20);
 
-    const systemPrompt = settings.autoSuggestPrompt?.trim() || getPrompt('AUTO_SUGGEST_PROMPT');
+    const systemPrompt = resolvePromptOrOverride('AUTO_SUGGEST_PROMPT', settings.autoSuggestPrompt);
     const userMessage = `## Existing lorebook entries (do NOT suggest these):\n${existingTitles}\n\n## Recent Chat:\n${chatContext}\n\nSuggest new lorebook entries as a JSON array.`;
 
     const result = await callAutoSuggest(systemPrompt, userMessage);

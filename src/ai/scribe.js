@@ -23,7 +23,7 @@ import {
 } from '../state.js';
 import { dedupError, dedupWarning } from '../toast-dedup.js';
 import { pushEvent } from '../diagnostics/interceptors.js';
-import { getPrompt } from '../prompts/prompt-store.js';
+import { resolvePromptOrOverride } from '../prompts/prompt-store.js';
 
 // Scribe default prompt moved to src/i18n/prompts/en.js as SCRIBE_PROMPT
 // and resolved at call time via getPrompt('SCRIBE_PROMPT'). See the
@@ -135,7 +135,7 @@ export async function runScribe(customPrompt) {
             return;
         }
 
-        const systemPrompt = settings.scribePrompt?.trim() || getPrompt('SCRIBE_PROMPT');
+        const systemPrompt = resolvePromptOrOverride('SCRIBE_PROMPT', settings.scribePrompt);
 
         const parts = [];
         if (lastScribeSummary) {

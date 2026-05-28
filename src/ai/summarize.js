@@ -19,7 +19,7 @@ import { tryAcquireHalfOpenProbe, recordAiSuccess, recordAiFailure } from '../st
 import { callAI, isExcludedFromBreaker } from './ai.js';
 import { classifyError } from '../../core/utils.js';
 import { parseRange, buildSummaryUserMessage, applyHideAndPrepend, rollbackById } from './summarize-pure.js';
-import { getPrompt } from '../prompts/prompt-store.js';
+import { resolvePromptOrOverride } from '../prompts/prompt-store.js';
 
 export { parseRange, buildSummaryUserMessage };
 
@@ -51,7 +51,7 @@ let _summarizing = false;
 async function callSummaryAI(userMessage, signal) {
     const settings = getSettings();
     const conn = resolveConnectionConfig('scribe');
-    const systemPrompt = settings.summarySystemPrompt?.trim() || getPrompt('SUMMARIZE_PROMPT');
+    const systemPrompt = resolvePromptOrOverride('SUMMARIZE_PROMPT', settings.summarySystemPrompt);
     // Wave-B contract: summarize was bypassing the breaker entirely. Match the
     // scribe/auto-suggest pattern — gate via tryAcquireHalfOpenProbe (the mutation
     // gate, not isAiCircuitOpen) and route the trip decision through the shared

@@ -36,7 +36,7 @@ import {
 } from './src/stages.js';
 import { clearPrompts } from './core/pipeline.js';
 import { getSettings, PROMPT_TAG_PREFIX, PROMPT_TAG, invalidateSettingsCache, resolveConnectionConfig, PROXY_DEPRECATION_MODE_KEYS } from './settings.js';
-import { getPrompt as getDlePromptForNotepad } from './src/prompts/prompt-store.js';
+import { resolvePromptOrOverride, loadPromptsForBoot } from './src/prompts/prompt-store.js';
 import {
     vaultIndex, getWriterVisibleEntries, indexEverLoaded, indexing,
     lastScribeChatLength, scribeInProgress,
@@ -1254,8 +1254,7 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
                 parts.push(`[Your previous session notes]\n${storedNotes}\n[End of session notes]`);
             }
             if (notepadMode === 'tag') {
-                const instructionPrompt = settings.aiNotepadPrompt?.trim() || getDlePromptForNotepad('AI_NOTEPAD_PROMPT');
-                parts.push(instructionPrompt);
+                parts.push(resolvePromptOrOverride('AI_NOTEPAD_PROMPT', settings.aiNotepadPrompt));
             }
             // Skip injection in extract mode with no prior notes — nothing useful to send.
             if (parts.length > 0) {
@@ -1785,28 +1784,11 @@ async function _doInit() {
         registerSlashCommands();
         setupSyncPolling(buildIndex, buildIndexWithReuse);
 
-        // Boot-time prompt cache load (Commit 5). Pulls vault overrides if a
-        // vault is enabled, otherwise falls back to the compiled-in dict at
-        // settings.aiPromptLocale. Failures stay silent at boot — UI surfaces
-        // errors when the Prompts tab opens.
-        try {
-            const settings = (await import('./settings.js')).getSettings();
-            const { loadPrompts } = await import('./src/prompts/prompt-store.js');
-            const { sanitizePromptsFolderPath } = await import('./src/prompts/prompt-validators.js');
-            const { DLE_PROMPTS_DEFAULT_DIR } = await import('./src/prompts/prompt-api.js');
-            const { getPrimaryVault } = await import('./settings.js');
-            const vault = getPrimaryVault(settings);
-            const connection = (vault && vault.enabled && vault.apiKey && vault.port) ? {
-                host: vault.host || '127.0.0.1',
-                port: vault.port,
-                apiKey: vault.apiKey,
-                useHttps: !!vault.https,
-                prefix: sanitizePromptsFolderPath(settings.promptsFolderPath) || DLE_PROMPTS_DEFAULT_DIR,
-            } : null;
-            await loadPrompts(settings.aiPromptLocale, connection);
-        } catch (err) {
-            console.warn('[DLE prompts] boot-time load failed:', err?.message);
-        }
+        // Boot-time prompt cache load. Pulls vault overrides if a vault is
+        // enabled, otherwise falls back to the compiled-in dict at
+        // settings.aiPromptLocale. Failures stay silent — the Prompts tab
+        // surfaces errors after the popup opens.
+        await loadPromptsForBoot(getSettings());
 
         // Always-on flight recorder; runs independent of debugMode.
         try {

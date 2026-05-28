@@ -4,7 +4,7 @@
 import { ConnectionManagerRequestService } from '../../../../shared.js';
 import { simpleHash, buildAiChatContext } from '../../core/utils.js';
 import { getSettings } from '../../settings.js';
-import { getPrompt } from '../prompts/prompt-store.js';
+import { resolvePromptOrOverride } from '../prompts/prompt-store.js';
 import { callProxyViaCorsBridge } from './proxy-api.js';
 import { isUnderlyingClaude } from '../librarian/agentic-api.js';
 import {
@@ -801,17 +801,11 @@ export async function aiSearch(chat, candidateManifest, candidateHeader, snapsho
         const indexToUse = snapshot || vaultIndex;
         const requestedEntries = settings.unlimitedEntries ? 0 : Math.min(settings.maxEntries * 2, indexToUse.length);
         const maxEntries = settings.unlimitedEntries ? 'as many as are relevant' : String(requestedEntries);
-        let systemPrompt;
-        if (settings.aiSearchSystemPrompt && settings.aiSearchSystemPrompt.trim()) {
-            systemPrompt = settings.aiSearchSystemPrompt.trim();
-        } else {
-            // Two-stage AI search system prompt — pulled from the editable
-            // prompts cache. Falls back to compiled-in EN dict if no vault
-            // override. {{maxEntries}} is Mustache-style (legacy contract),
-            // substituted below; the prompt-store validator only enforces
-            // ${N} placeholders, so {{maxEntries}} is invisible to it.
-            systemPrompt = getPrompt('AI_SEARCH_SYSTEM_PROMPT');
-        }
+        // Two-stage AI search system prompt — user override → vault override
+        // → compiled-in EN dict. `{{maxEntries}}` is a Mustache-style legacy
+        // placeholder substituted below; the prompt-store validator only
+        // enforces `${N}` placeholders, so `{{maxEntries}}` is invisible to it.
+        let systemPrompt = resolvePromptOrOverride('AI_SEARCH_SYSTEM_PROMPT', settings.aiSearchSystemPrompt);
         systemPrompt = systemPrompt.replace(/\{\{maxEntries\}\}/g, maxEntries);
 
         if (settings.aiSearchClaudeCodePrefix && settings.aiSearchConnectionMode === 'proxy' && !systemPrompt.startsWith('You are Claude Code')) {
