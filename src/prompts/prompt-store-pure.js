@@ -118,10 +118,12 @@ export function placeholderSetsEqual(a, b) {
  *        vault entry, not a prompt). This is a defense-in-depth check that
  *        also benefits Layer 4 of the delete cage.
  *   R3 — placeholders in body must exactly match canonical placeholders.
- *        Missing OR extra `${N}` markers fail.
+ *        Missing OR extra `${N}` markers fail. Skipped when `canonicalBody`
+ *        is null (delete-cage path where we don't trust the runtime cache).
  *
  * @param {{ frontmatter: object, body: string }} parsed
- * @param {string} canonicalBody - The compiled-in EN dict value for the same key.
+ * @param {string | null} canonicalBody - The compiled-in EN dict value for
+ *   the same key, or null to skip R3 (placeholder parity).
  * @param {string} expectedKey
  * @returns {{ ok: true } | { ok: false, reason: string }}
  */
@@ -137,32 +139,30 @@ export function validatePromptShape(parsed, canonicalBody, expectedKey) {
     if (/lorebook-/i.test(parsed.body)) {
         return { ok: false, reason: 'body contains "lorebook-" tag (looks like a vault entry, not a prompt)' };
     }
-    // R3 — placeholder parity
-    const bodyPlaceholders = extractPlaceholders(parsed.body);
-    const canonicalPlaceholders = extractPlaceholders(canonicalBody);
-    if (!placeholderSetsEqual(bodyPlaceholders, canonicalPlaceholders)) {
-        const missing = [...canonicalPlaceholders].filter(p => !bodyPlaceholders.has(p));
-        const extra = [...bodyPlaceholders].filter(p => !canonicalPlaceholders.has(p));
-        const parts = [];
-        if (missing.length) parts.push(`missing ${missing.join(', ')}`);
-        if (extra.length) parts.push(`extra ${extra.join(', ')}`);
-        return { ok: false, reason: `placeholder mismatch (${parts.join('; ')})` };
+    // R3 — placeholder parity (skipped when canonical body unavailable)
+    if (canonicalBody != null) {
+        const bodyPlaceholders = extractPlaceholders(parsed.body);
+        const canonicalPlaceholders = extractPlaceholders(canonicalBody);
+        if (!placeholderSetsEqual(bodyPlaceholders, canonicalPlaceholders)) {
+            const missing = [...canonicalPlaceholders].filter(p => !bodyPlaceholders.has(p));
+            const extra = [...bodyPlaceholders].filter(p => !canonicalPlaceholders.has(p));
+            const parts = [];
+            if (missing.length) parts.push(`missing ${missing.join(', ')}`);
+            if (extra.length) parts.push(`extra ${extra.join(', ')}`);
+            return { ok: false, reason: `placeholder mismatch (${parts.join('; ')})` };
+        }
     }
     return { ok: true };
 }
 
 /**
  * Layer 4 of the delete cage — pre-flight verification of a fetched file
- * before issuing DELETE against it. Pure: takes the raw file contents that
- * were just GET'd and the validated stem, returns ok or reason.
+ * before issuing DELETE against it. Thin wrapper over `validatePromptShape`
+ * with R3 (placeholder parity) skipped: we don't trust the runtime cache at
+ * this point, so we only enforce R1 (frontmatter key matches validated stem)
+ * and R2 (no `lorebook-` tag — vault-entry indicator).
  *
- * Two checks here (mirrors R1+R2 of validatePromptShape but does NOT require
- * a canonical body — we don't trust the runtime cache at this point):
- *   L4.R1 — frontmatter `key:` MUST equal the validated stem.
- *   L4.R2 — body MUST NOT contain a `lorebook-` tag (vault-entry indicator).
- *
- * This function is called by the I/O wrapper after the HTTP GET completes
- * and before the HTTP DELETE is issued.
+ * Called by the I/O wrapper after the HTTP GET completes, before DELETE.
  *
  * @param {string} rawContent
  * @param {string} validatedStem
@@ -173,13 +173,15 @@ export function verifyPromptFileForDeletion(rawContent, validatedStem) {
     if (!parsed.ok) {
         return { ok: false, reason: `not a valid prompt file (${parsed.reason})` };
     }
-    if (parsed.frontmatter.key !== validatedStem) {
-        return { ok: false, reason: `frontmatter key "${parsed.frontmatter.key}" does not match validated stem "${validatedStem}"` };
+    const result = validatePromptShape(parsed, null, validatedStem);
+    if (!result.ok) {
+        // Match the legacy error wording so callers/tests that grep for
+        // "does not match validated stem" still get a substring hit.
+        if (result.reason.startsWith('frontmatter key ')) {
+            return { ok: false, reason: result.reason.replace('does not match expected', 'does not match validated stem') };
+        }
     }
-    if (/lorebook-/i.test(parsed.body)) {
-        return { ok: false, reason: 'body contains "lorebook-" tag (looks like a vault entry, not a prompt)' };
-    }
-    return { ok: true };
+    return result;
 }
 
 /**
