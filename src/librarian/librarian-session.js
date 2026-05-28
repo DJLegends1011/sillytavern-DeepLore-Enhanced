@@ -24,12 +24,8 @@ function captureBrowserState() {
         };
     } catch { return { visibilityState: null, onLine: null }; }
 }
-import {
-    buildLibrarianBootstrapSystemPrompt,
-    EMMA_FIRSTRUN_GREETING,
-    EMMA_ADHOC_GREETING,
-    EMMA_AUDIT_GREETING,
-} from './librarian-prompts.js';
+import { buildLibrarianBootstrapSystemPrompt } from './librarian-prompts.js';
+import { getPrompt } from '../prompts/prompt-store.js';
 
 // ════════════════════════════════════════════════════════════════════════════
 // Emma's flavor intros (random opener for empty 'new' sessions)
@@ -156,9 +152,9 @@ export function createSession(entryPoint, options = {}) {
         guideBootstrap = buildLibrarianBootstrapSystemPrompt({
             includeFirstRunScript: mode === 'guide-firstrun',
         });
-        seededGreeting = mode === 'guide-firstrun' ? EMMA_FIRSTRUN_GREETING : EMMA_ADHOC_GREETING;
+        seededGreeting = mode === 'guide-firstrun' ? getPrompt('EMMA_FIRSTRUN_GREETING') : getPrompt('EMMA_ADHOC_GREETING');
     } else if (entryPoint === 'audit') {
-        seededGreeting = EMMA_AUDIT_GREETING;
+        seededGreeting = getPrompt('EMMA_AUDIT_GREETING');
     }
 
     // BUG-332: seed greeting as plain text. The restore replay (librarian-review.js)
