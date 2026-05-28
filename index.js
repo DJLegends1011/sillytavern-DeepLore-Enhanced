@@ -1784,6 +1784,29 @@ async function _doInit() {
         registerSlashCommands();
         setupSyncPolling(buildIndex, buildIndexWithReuse);
 
+        // Boot-time prompt cache load (Commit 5). Pulls vault overrides if a
+        // vault is enabled, otherwise falls back to the compiled-in dict at
+        // settings.aiPromptLocale. Failures stay silent at boot — UI surfaces
+        // errors when the Prompts tab opens.
+        try {
+            const settings = (await import('./settings.js')).getSettings();
+            const { loadPrompts } = await import('./src/prompts/prompt-store.js');
+            const { sanitizePromptsFolderPath } = await import('./src/prompts/prompt-validators.js');
+            const { DLE_PROMPTS_DEFAULT_DIR } = await import('./src/prompts/prompt-api.js');
+            const { getPrimaryVault } = await import('./settings.js');
+            const vault = getPrimaryVault(settings);
+            const connection = (vault && vault.enabled && vault.apiKey && vault.port) ? {
+                host: vault.host || '127.0.0.1',
+                port: vault.port,
+                apiKey: vault.apiKey,
+                useHttps: !!vault.https,
+                prefix: sanitizePromptsFolderPath(settings.promptsFolderPath) || DLE_PROMPTS_DEFAULT_DIR,
+            } : null;
+            await loadPrompts(settings.aiPromptLocale, connection);
+        } catch (err) {
+            console.warn('[DLE prompts] boot-time load failed:', err?.message);
+        }
+
         // Always-on flight recorder; runs independent of debugMode.
         try {
             const { startFlightRecorder } = await import('./src/diagnostics/flight-recorder.js');

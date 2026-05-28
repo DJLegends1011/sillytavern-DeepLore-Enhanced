@@ -61,6 +61,11 @@
                 <i class="fa-solid fa-book-bookmark" aria-hidden="true"></i><span data-i18n="dle_analytics_section_librarian">Librarian</span>
             </button>
         </div>
+        <button type="button" class="dle-settings-tab" id="dle-sp-tab-prompts" data-settings-tab="prompts" role="tab"
+                aria-selected="false" aria-controls="dle-sp-prompts">
+            <i class="fa-solid fa-comment-dots" aria-hidden="true"></i>
+            <span data-i18n="dle_tab_prompts">Prompts</span>
+        </button>
         <button type="button" class="dle-settings-tab" id="dle-sp-tab-system" data-settings-tab="system" role="tab"
                 aria-selected="false" aria-controls="dle-sp-system">
             <i class="fa-solid fa-sliders" aria-hidden="true"></i>
@@ -1216,6 +1221,61 @@
             </div>
             </div>
 
+            </div>
+        </div>
+
+        <!-- ═══════════════════════════════════════════════════════════════════
+             TAB: Prompts
+             ═══════════════════════════════════════════════════════════════════ -->
+        <div class="dle-settings-panel" id="dle-sp-prompts" data-settings-panel="prompts"
+             role="tabpanel" aria-labelledby="dle-sp-tab-prompts" hidden>
+
+            <div class="dle-settings-section">
+                <h4 data-i18n="dle_prompts_h4">Editable Prompts</h4>
+                <p class="dle-section-desc" data-i18n="dle_prompts_desc">Override DeepLore's built-in LLM prompts with files in your Obsidian vault. Edit the files in Obsidian, click Reload to pick up changes. Disabled until an Obsidian vault is connected.</p>
+
+                <div class="flex-container dle-sp-margin-top">
+                    <div class="flex1" title="The language of the built-in prompt templates. Changing this and clicking Export overwrites every file in the prompts folder with this locale's defaults." data-i18n="[title]dle_prompts_language_tooltip">
+                        <label for="dle-sp-prompts-language"><small data-i18n="dle_prompts_language_label">Prompt Language</small></label>
+                        <select id="dle-sp-prompts-language" class="text_pole">
+                            <option value="" data-i18n="dle_prompts_language_follow_ui">Follow UI language</option>
+                            <option value="en">English (en)</option>
+                            <option value="es-es">Español (es-es)</option>
+                            <option value="fr-fr">Français (fr-fr)</option>
+                            <option value="de-de">Deutsch (de-de)</option>
+                            <option value="ja-jp">日本語 (ja-jp)</option>
+                            <option value="zh-cn">简体中文 (zh-cn)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="flex-container dle-sp-margin-top">
+                    <div class="flex1" title="Path inside your Obsidian vault where prompt override files live. Default: DeepLore/prompts/. Must be relative, end with /, no traversal." data-i18n="[title]dle_prompts_folder_path_tooltip">
+                        <label for="dle-sp-prompts-folder-path"><small data-i18n="dle_prompts_folder_path_label">Prompts Folder (relative to vault root)</small></label>
+                        <input type="text" id="dle-sp-prompts-folder-path" class="text_pole" placeholder="DeepLore/prompts/" />
+                    </div>
+                </div>
+
+                <div class="flex-container dle-sp-margin-top" style="gap: 6px;">
+                    <div id="dle-sp-prompts-export" class="menu_button menu_button_icon" role="button" title="Write every prompt to your vault as an editable MD file using the selected language. Existing files are overwritten." data-i18n="[title]dle_prompts_export_tooltip">
+                        <i class="fa-solid fa-file-export" aria-hidden="true"></i>
+                        <span data-i18n="dle_prompts_export_button">Export Prompts to Vault</span>
+                    </div>
+                    <div id="dle-sp-prompts-reload" class="menu_button menu_button_icon" role="button" title="Re-read every prompt file from your vault into the runtime cache." data-i18n="[title]dle_prompts_reload_tooltip">
+                        <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
+                        <span data-i18n="dle_prompts_reload_button">Reload Prompts</span>
+                    </div>
+                    <div id="dle-sp-prompts-reset-all" class="menu_button menu_button_icon" role="button" title="Delete every prompt file from your vault folder. Each delete passes through the six-layer safety cage." data-i18n="[title]dle_prompts_reset_all_tooltip">
+                        <i class="fa-solid fa-trash" aria-hidden="true"></i>
+                        <span data-i18n="dle_prompts_reset_all_button">Reset All Prompts</span>
+                    </div>
+                    <span id="dle-sp-prompts-status" class="dle-status"></span>
+                </div>
+
+                <div id="dle-sp-prompts-grid" class="dle-sp-margin-top">
+                    <!-- Status grid rendered dynamically in Commit 6 -->
+                    <p class="dle-section-desc" data-i18n="dle_prompts_grid_placeholder"><em>Status grid renders here after the first load.</em></p>
+                </div>
             </div>
         </div>
 

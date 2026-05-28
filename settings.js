@@ -105,6 +105,11 @@ export const defaultSettings = {
     // Affects which translated default prompts the AI features use; user-overridden
     // prompt text (settings.aiSystemPrompt, scribePrompt, etc.) is unaffected.
     aiPromptLocale: '',
+    // Editable prompts (v2.5): folder inside Obsidian vault where prompt
+    // override .md files live. Default 'DeepLore/prompts/' — sibling to
+    // field-definitions.yaml. Sanitized via sanitizePromptsFolderPath() before
+    // every I/O call. Empty/null = use the default.
+    promptsFolderPath: 'DeepLore/prompts/',
     // Author's Notebook (user-written)
     notebookEnabled: false,
     notebookPosition: 1,

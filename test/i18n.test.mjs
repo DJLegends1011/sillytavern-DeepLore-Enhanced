@@ -390,7 +390,7 @@ for (const loc of TRANSLATION_LOCALES) {
         assert(data.__meta.canonical === false, 'meta canonical=false (translated)');
         assert(data.__meta.machine_translated === true, 'meta machine_translated=true');
         const keys = Object.keys(data).filter(k => k !== '__meta');
-        assertEqual(keys.length, 2277, `${loc} key count matches canonical (2277)`);
+        assertEqual(keys.length, 2292, `${loc} key count matches canonical (2292)`);
     });
 }
 
