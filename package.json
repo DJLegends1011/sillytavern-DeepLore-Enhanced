@@ -21,7 +21,8 @@
         "test:verdict": "node test/verdict.test.mjs",
         "test:i18n": "node test/i18n.test.mjs",
         "test:wi-import": "node test/wi-import.test.mjs",
-        "test:all": "node test/unit.mjs && node test/integration.mjs && node test/fields.test.mjs && node test/stages.test.mjs && node test/contracts.test.mjs && node test/diagnostics.test.mjs && node test/vault.test.mjs && node test/regression.test.mjs && node test/verdict.test.mjs && node test/i18n.test.mjs && node test/wi-import.test.mjs && node test/verify-imports.mjs",
+        "test:prompts-delete-safety": "node test/prompts-delete-safety.test.mjs",
+        "test:all": "node test/unit.mjs && node test/integration.mjs && node test/fields.test.mjs && node test/stages.test.mjs && node test/contracts.test.mjs && node test/diagnostics.test.mjs && node test/vault.test.mjs && node test/regression.test.mjs && node test/verdict.test.mjs && node test/i18n.test.mjs && node test/wi-import.test.mjs && node test/prompts-delete-safety.test.mjs && node test/verify-imports.mjs",
         "test:imports": "node test/verify-imports.mjs",
         "lint": "eslint ."
     },
