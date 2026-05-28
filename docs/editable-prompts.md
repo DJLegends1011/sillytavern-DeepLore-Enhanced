@@ -16,9 +16,11 @@ The 25 keys split into two groups (sorted in the Prompts tab UI):
 src/prompts/
 ├── deprecated-keys.js       — Allowlist for keys removed in later versions
 ├── prompt-validators.js     — L1+L2 of the delete cage (pure, no I/O)
-├── prompt-store-pure.js     — Pure helpers: parse, validate, status, hash, normalize, buildOverlay
-├── prompt-store.js          — Runtime cache Map + getPrompt() resolver (sync)
+├── prompt-store-pure.js     — Pure helpers: parse, validate (R1+R2+R3), status, hash, normalize, buildOverlay
+├── prompt-store.js          — Runtime cache + getPrompt() + resolvePromptOrOverride() + boot loader
 └── prompt-api.js            — Obsidian REST helpers + DLE_DELETE_PRIMITIVE (L3-L6)
+
+src/ui/prompts-tab.js        — Settings popup Prompts tab (handlers, status grid, bulk-delete)
 
 src/i18n/prompts/{locale}.js — Canonical prompt dicts (en is canonical; 5 machine-translated)
 
@@ -26,6 +28,8 @@ test/prompts-delete-safety.test.mjs — 225 assertions for the cage
 test/prompts-store.test.mjs         — 269 assertions for resolver + overlay + status
 test/prompts-api.test.mjs           — 40 assertions for L4 pure + L6 structural
 ```
+
+`verifyPromptFileForDeletion(rawContent, validatedStem)` is a thin wrapper over `validatePromptShape(parsed, null, validatedStem)` — same R1+R2 rules, R3 (placeholder parity) skipped because the delete-cage path doesn't trust the runtime cache.
 
 ## Vault file format
 
@@ -66,18 +70,21 @@ getPrompt(key)             // sync, called inside agentic loops + fence builders
 
 ```
 loadPrompts(locale, connection?)
-  → loadAiPromptDict(locale)        // dynamic import of src/i18n/prompts/<locale>.js
+  → getAiPromptDictForLocale(locale)  // canonical: { dict, resolvedLocale }, EN fallback
   → if connection:
-      → listPromptsFolder()         // REST: GET /vault/<prefix>/
-      → for each recognized filename:
-          → fetchPromptFile()       // REST: GET /vault/<prefix>/<stem>.md
+      → listPromptsFolder()           // REST: GET /vault/<prefix>/
+      → Promise.all(fetchPromptFile)  // REST: GET /vault/<prefix>/<stem>.md, in parallel
   → buildPromptOverlay(localeDict, overrides, KNOWN_KEYS, EnDict)
       → per key: parse → validate → success uses vault body; failure falls back + records error
   → promptCache.clear() / .set()
   → return { loaded, source, vaultCount, errors, vaultListPartial }
 ```
 
+Per-file fetches run via `Promise.all` so cold boot doesn't serialize ~30 independent GETs. The `obsidianFetch` circuit breaker is shared by host:port — concurrent failures still trip it together.
+
 `reloadPrompts()` re-runs `loadPrompts()` with the saved locale and connection. UI exposes this as the "Reload prompts" button.
+
+`resolvePromptOrOverride(key, userOverride)` is the canonical "user override → vault override → compiled-in" ladder, used by every AI caller that still honors a legacy user-prompt setting (`scribePrompt`, `aiSearchSystemPrompt`, `autoSuggestPrompt`, `optimizeKeysPrompt`, `summarySystemPrompt`, `aiNotepadPrompt`).
 
 ## Status state machine
 
@@ -111,18 +118,13 @@ bindSettingsEvents(buildIndex);
 registerSlashCommands();
 setupSyncPolling(buildIndex, buildIndexWithReuse);
 
-// Boot-time prompt cache load
-try {
-    const settings = (await import('./settings.js')).getSettings();
-    const { loadPrompts } = await import('./src/prompts/prompt-store.js');
-    // ...resolve primary vault → connection bundle...
-    await loadPrompts(settings.aiPromptLocale, connection);
-} catch (err) {
-    console.warn('[DLE prompts] boot-time load failed:', err?.message);
-}
+// Boot-time prompt cache load. One-liner — wiring lives in prompt-store.
+await loadPromptsForBoot(getSettings());
 ```
 
-Failures logged-not-thrown so a misconfigured vault never blocks extension startup. Without a connection, the cache holds only compiled-in dict — runtime is byte-identical to pre-feature behavior.
+`loadPromptsForBoot(settings)` (in `prompt-store.js`) builds the connection from `buildPromptsConnectionFromSettings`, calls `loadPrompts`, and swallows failures. Without a connection, the cache holds only compiled-in dict — runtime is byte-identical to pre-feature behavior.
+
+`buildPromptsConnectionFromSettings(settings)` is the canonical connection-shape helper. The Settings popup's `buildPromptsConnection(settings)` (in `prompts-tab.js`) is a thin UI wrapper that calls `getPrimaryVault` first so it can honor the legacy "primary or default" selection rule; both ultimately produce the same `{ host, port, apiKey, prefix, useHttps }` shape.
 
 ## Migration
 
@@ -136,7 +138,7 @@ Failures logged-not-thrown so a misconfigured vault never blocks extension start
 - `src/ui/popups.js` (Optimize Keys fallback)
 - `src/ai/summarize.js` (`/dle-summarize-range` fallback)
 
-All call sites now resolve through `getPrompt(KEY)`. The `DEFAULT_*_PROMPT` consts were removed from `settings.js` and feature modules.
+All call sites now resolve through `resolvePromptOrOverride(KEY, userOverride)` (for keys with a legacy user-prompt setting) or `getPrompt(KEY)` (for keys without). The `DEFAULT_*_PROMPT` consts were removed from `settings.js` and feature modules.
 
 The only difference between the inline strings and the EN dict values was CRLF (Windows) vs LF line endings — semantically identical for LLMs.
 
