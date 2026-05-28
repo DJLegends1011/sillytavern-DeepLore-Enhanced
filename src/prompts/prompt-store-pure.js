@@ -152,6 +152,37 @@ export function validatePromptShape(parsed, canonicalBody, expectedKey) {
 }
 
 /**
+ * Layer 4 of the delete cage — pre-flight verification of a fetched file
+ * before issuing DELETE against it. Pure: takes the raw file contents that
+ * were just GET'd and the validated stem, returns ok or reason.
+ *
+ * Two checks here (mirrors R1+R2 of validatePromptShape but does NOT require
+ * a canonical body — we don't trust the runtime cache at this point):
+ *   L4.R1 — frontmatter `key:` MUST equal the validated stem.
+ *   L4.R2 — body MUST NOT contain a `lorebook-` tag (vault-entry indicator).
+ *
+ * This function is called by the I/O wrapper after the HTTP GET completes
+ * and before the HTTP DELETE is issued.
+ *
+ * @param {string} rawContent
+ * @param {string} validatedStem
+ * @returns {{ ok: true } | { ok: false, reason: string }}
+ */
+export function verifyPromptFileForDeletion(rawContent, validatedStem) {
+    const parsed = parsePromptFile(rawContent);
+    if (!parsed.ok) {
+        return { ok: false, reason: `not a valid prompt file (${parsed.reason})` };
+    }
+    if (parsed.frontmatter.key !== validatedStem) {
+        return { ok: false, reason: `frontmatter key "${parsed.frontmatter.key}" does not match validated stem "${validatedStem}"` };
+    }
+    if (/lorebook-/i.test(parsed.body)) {
+        return { ok: false, reason: 'body contains "lorebook-" tag (looks like a vault entry, not a prompt)' };
+    }
+    return { ok: true };
+}
+
+/**
  * Status state machine from Q11 A+.
  *
  *   body_hash      |  source_hash       | Status
