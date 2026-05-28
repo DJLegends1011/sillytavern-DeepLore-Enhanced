@@ -11,6 +11,7 @@ import { parseFrontmatter, simpleHash, buildScanText, classifyError, NO_ENTRIES_
 import { testEntryMatch } from '../../core/matching.js';
 import { getSettings, getVaultByName } from '../../settings.js';
 import { writeNote, obsidianFetch, encodeVaultPath } from '../vault/obsidian-api.js';
+import { getPrompt } from '../prompts/prompt-store.js';
 import {
     vaultIndex, trackerKey, chatEpoch,
     setVaultIndex, setIndexTimestamp,
@@ -694,17 +695,9 @@ export function showSimulationPopup(timeline) {
 }
 
 // ── Optimize Keys ──
-
-export const DEFAULT_OPTIMIZE_KEYS_PROMPT = `You are a keyword optimization assistant for a lorebook system. Given an entry's title, content, and current keywords, suggest improved keywords that will trigger this entry when relevant topics come up in conversation.
-
-Guidelines:
-- Include the entry title and common aliases
-- Add thematic keywords (topics, events, emotions this entry relates to)
-- For keyword-only mode: be precise, avoid overly generic terms
-- For two-stage mode: be broader since AI will filter later
-- Return 3-10 keywords, ordered by importance
-
-Respond with a JSON object: {"suggested": ["keyword1", "keyword2", ...], "reasoning": "Brief explanation of changes"}`;
+//
+// Default prompt moved to src/i18n/prompts/en.js as OPTIMIZE_KEYS_PROMPT
+// and resolved at call time via getPrompt('OPTIMIZE_KEYS_PROMPT').
 
 export async function optimizeEntryKeys(entry) {
     const settings = getSettings();
@@ -713,7 +706,7 @@ export async function optimizeEntryKeys(entry) {
         ? 'This system uses KEYWORD-ONLY matching (no AI filter). Be precise — avoid generic words.'
         : 'This system uses TWO-STAGE matching (keywords → AI filter). Be broader — the AI will refine.';
 
-    const systemPrompt = settings.optimizeKeysPrompt?.trim() || DEFAULT_OPTIMIZE_KEYS_PROMPT;
+    const systemPrompt = settings.optimizeKeysPrompt?.trim() || getPrompt('OPTIMIZE_KEYS_PROMPT');
     const userMessage = `Mode: ${modeHint}\n\nTitle: ${entry.title}\nCurrent keywords: ${entry.keys.join(', ')}\nContent:\n${entry.content.substring(0, 1500)}\n\nSuggest optimized keywords as JSON.`;
 
     const result = await callAutoSuggest(systemPrompt, userMessage, 'optimizeKeys');

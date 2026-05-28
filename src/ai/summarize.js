@@ -19,10 +19,12 @@ import { tryAcquireHalfOpenProbe, recordAiSuccess, recordAiFailure } from '../st
 import { callAI, isExcludedFromBreaker } from './ai.js';
 import { classifyError } from '../../core/utils.js';
 import { parseRange, buildSummaryUserMessage, applyHideAndPrepend, rollbackById } from './summarize-pure.js';
+import { getPrompt } from '../prompts/prompt-store.js';
 
 export { parseRange, buildSummaryUserMessage };
 
-const DEFAULT_PROMPT = 'You are a session summarizer. Read the following chat range and write a concise prose summary that preserves: who acted, what happened, key decisions, and emotional tone. Output the summary only — no preamble, no meta-commentary, no headers.';
+// Default summarize prompt moved to src/i18n/prompts/en.js as SUMMARIZE_PROMPT
+// and resolved at call time via getPrompt('SUMMARIZE_PROMPT').
 
 /**
  * Generate a short id for the summary record. Not cryptographic — just unique
@@ -49,7 +51,7 @@ let _summarizing = false;
 async function callSummaryAI(userMessage, signal) {
     const settings = getSettings();
     const conn = resolveConnectionConfig('scribe');
-    const systemPrompt = settings.summarySystemPrompt?.trim() || DEFAULT_PROMPT;
+    const systemPrompt = settings.summarySystemPrompt?.trim() || getPrompt('SUMMARIZE_PROMPT');
     // Wave-B contract: summarize was bypassing the breaker entirely. Match the
     // scribe/auto-suggest pattern — gate via tryAcquireHalfOpenProbe (the mutation
     // gate, not isAiCircuitOpen) and route the trip decision through the shared

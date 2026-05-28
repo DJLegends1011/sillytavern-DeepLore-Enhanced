@@ -18,18 +18,11 @@ import { extractAiResponseClient, stripObsidianSyntax } from '../helpers.js';
 import { getWriterVisibleEntries, chatEpoch, tryAcquireHalfOpenProbe, recordAiSuccess, recordAiFailure } from '../state.js';
 import { ensureIndexFresh, buildIndex } from '../vault/vault.js';
 import { pushEvent } from '../diagnostics/interceptors.js';
+import { getPrompt } from '../prompts/prompt-store.js';
 
-export const DEFAULT_AUTO_SUGGEST_PROMPT = `You are a lore analyst for a roleplay session. Analyze the recent chat and identify characters, locations, items, concepts, or events that are mentioned but do NOT have an existing lorebook entry.
-
-For each suggested entry, provide:
-- "title": A short, unique title for the entry
-- "type": One of "character", "location", "lore", "organization", "story"
-- "keys": Array of 2-5 trigger keywords that would match this entry
-- "summary": A brief description of what this entry is and when to select it (for AI search)
-- "content": A 2-3 paragraph description based on what is known from the chat context
-
-Respond with a JSON array of suggested entries. If nothing new is worth creating, respond with [].
-Example: [{"title": "The Silver Crown", "type": "lore", "keys": ["silver crown", "crown"], "summary": "A magical artifact mentioned in the throne room scene.", "content": "The Silver Crown is a..."}]`;
+// Auto-Suggest default prompt moved to src/i18n/prompts/en.js as
+// AUTO_SUGGEST_PROMPT and resolved at call time via
+// getPrompt('AUTO_SUGGEST_PROMPT'). See the editable-prompts feature (v2.5).
 
 /** Route an Auto Suggest AI call by connection mode (mirrors callScribe). */
 export async function callAutoSuggest(systemPrompt, userMessage, toolKey = 'autoSuggest') {
@@ -132,7 +125,7 @@ export async function runAutoSuggest() {
     const existingTitles = visibleEntries.map(e => `"${e.title.replace(/"/g, '\\"')}"`).join(', ');
     const chatContext = buildAiChatContext(chat, settings.aiSearchScanDepth || 20);
 
-    const systemPrompt = settings.autoSuggestPrompt?.trim() || DEFAULT_AUTO_SUGGEST_PROMPT;
+    const systemPrompt = settings.autoSuggestPrompt?.trim() || getPrompt('AUTO_SUGGEST_PROMPT');
     const userMessage = `## Existing lorebook entries (do NOT suggest these):\n${existingTitles}\n\n## Recent Chat:\n${chatContext}\n\nSuggest new lorebook entries as a JSON array.`;
 
     const result = await callAutoSuggest(systemPrompt, userMessage);
