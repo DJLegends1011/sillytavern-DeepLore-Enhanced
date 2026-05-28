@@ -2229,6 +2229,47 @@ function bindPopupEvents($container) {
         invalidateSettingsCache();
         saveSettingsDebounced();
 
+        // Q10b — vault prompt overrides are user-owned files, not extension
+        // settings. Settings reset leaves them untouched by default. If any
+        // exist, offer a second confirm to also bulk-delete them through the
+        // six-layer cage (mirrors the Prompts tab "Reset All Prompts" button).
+        const connection = buildPromptsConnection(settings);
+        if (connection) {
+            // Refresh cache so the grid reflects what's actually on disk before
+            // we ask the user about it.
+            try { await loadDlePrompts(settings.aiPromptLocale, connection); } catch { /* non-fatal */ }
+            const overrideRows = getDlePromptStatusGrid().filter(r => r.source === 'vault');
+            if (overrideRows.length > 0) {
+                const alsoClear = await callGenericPopup(
+                    `<div style="text-align:center;"><p><strong>Also delete ${overrideRows.length} customized prompt file(s) from your vault?</strong></p><p>Prompt files live in your Obsidian vault, not extension settings, so they survive Reset All Settings. Delete them too?</p><p>Each delete will pass through the six-layer safety cage.</p></div>`,
+                    POPUP_TYPE.CONFIRM, '', { okButton: 'Delete prompt files', cancelButton: 'Keep prompt files' },
+                );
+                if (alsoClear) {
+                    let deleted = 0;
+                    let alreadyMissing = 0;
+                    const failures = [];
+                    for (const row of overrideRows) {
+                        const r = await deletePromptFile(
+                            connection.host, connection.port, connection.apiKey,
+                            connection.prefix, row.key, connection.useHttps,
+                        );
+                        if (r.ok) {
+                            if (r.alreadyMissing) alreadyMissing++; else deleted++;
+                        } else {
+                            failures.push({ key: row.key, error: r.error });
+                        }
+                    }
+                    try { await loadDlePrompts(settings.aiPromptLocale, connection); } catch { /* non-fatal */ }
+                    if (failures.length === 0) {
+                        toastr.success(`Deleted ${deleted} prompt file(s).`, 'DeepLore Enhanced');
+                    } else {
+                        toastr.warning(`Deleted ${deleted}, ${failures.length} failed. Check console.`, 'DeepLore Enhanced');
+                        console.warn('[DLE prompts] reset-settings prompt cleanup failures:', failures);
+                    }
+                }
+            }
+        }
+
         loadPopupSettings($container);
         toastr.success('All settings reset to defaults. Connections preserved.', 'DeepLore Enhanced');
     });
