@@ -9,7 +9,7 @@ import { callGenericPopup, POPUP_TYPE, POPUP_RESULT } from '../../../../../popup
 import { renderExtensionTemplateAsync } from '../../../../../extensions.js';
 import { accountStorage } from '../../../../../util/AccountStorage.js';
 import { buildAiChatContext } from '../../core/utils.js';
-import { getSettings, getPrimaryVault, DEFAULT_AI_SYSTEM_PROMPT, PROMPT_TAG_PREFIX, settingsConstraints, invalidateSettingsCache, defaultSettings, resolveConnectionConfig } from '../../settings.js';
+import { getSettings, getPrimaryVault, PROMPT_TAG_PREFIX, settingsConstraints, invalidateSettingsCache, defaultSettings, resolveConnectionConfig } from '../../settings.js';
 import { promptManager } from '../../../../../openai.js';
 import { testConnection, buildConnectionGuidanceHtml } from '../vault/obsidian-api.js';
 import { testProxyConnection } from '../ai/proxy-api.js';
@@ -32,6 +32,7 @@ import { matchEntries } from '../pipeline/pipeline.js';
 import { setupSyncPolling } from '../vault/sync.js';
 import { showNotebookPopup, showBrowsePopup, showAiNotepadPopup } from './popups.js';
 import {
+    getPrompt,
     loadPrompts as loadDlePrompts,
     reloadPrompts as reloadDlePrompts,
     getPromptStatusGrid as getDlePromptStatusGrid,
@@ -2065,7 +2066,10 @@ function bindPopupEvents($container) {
         else { const kr = matchEntries(chat); const nc = kr.matched.filter(e => !e.constant); if (nc.length === 0) { toastr.warning('No entries matched the current chat. Try /dle-simulate for details.', 'DeepLore Enhanced'); return; } const r = buildCandidateManifest(kr.matched); candidateManifest = r.manifest; candidateHeader = r.header; modeLabel = `Two-stage (${nc.length} candidates)`; }
         const chatContext = buildAiChatContext(chat, settings.aiSearchScanDepth);
         const maxE = settings.unlimitedEntries ? 'as many as are relevant' : String(settings.maxEntries);
-        let sp = (settings.aiSearchSystemPrompt && settings.aiSearchSystemPrompt.trim()) || DEFAULT_AI_SYSTEM_PROMPT;
+        // Preview-only AI search prompt (Settings popup). Same fallback chain
+        // as the live path in src/ai/ai.js — user override → vault override
+        // via getPrompt → compiled-in EN dict.
+        let sp = (settings.aiSearchSystemPrompt && settings.aiSearchSystemPrompt.trim()) || getPrompt('AI_SEARCH_SYSTEM_PROMPT');
         if (settings.aiSearchClaudeCodePrefix && settings.aiSearchConnectionMode === 'proxy' && !sp.startsWith('You are Claude Code')) sp = 'You are Claude Code. ' + sp;
         sp = sp.replace(/\{\{maxEntries\}\}/g, maxE);
         const hdr = candidateHeader ? `## Manifest Info\n${candidateHeader}\n\n` : '';

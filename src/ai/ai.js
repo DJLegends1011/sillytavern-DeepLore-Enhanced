@@ -3,7 +3,8 @@
  */
 import { ConnectionManagerRequestService } from '../../../../shared.js';
 import { simpleHash, buildAiChatContext } from '../../core/utils.js';
-import { getSettings, DEFAULT_AI_SYSTEM_PROMPT } from '../../settings.js';
+import { getSettings } from '../../settings.js';
+import { getPrompt } from '../prompts/prompt-store.js';
 import { callProxyViaCorsBridge } from './proxy-api.js';
 import { isUnderlyingClaude } from '../librarian/agentic-api.js';
 import {
@@ -804,7 +805,12 @@ export async function aiSearch(chat, candidateManifest, candidateHeader, snapsho
         if (settings.aiSearchSystemPrompt && settings.aiSearchSystemPrompt.trim()) {
             systemPrompt = settings.aiSearchSystemPrompt.trim();
         } else {
-            systemPrompt = DEFAULT_AI_SYSTEM_PROMPT;
+            // Two-stage AI search system prompt — pulled from the editable
+            // prompts cache. Falls back to compiled-in EN dict if no vault
+            // override. {{maxEntries}} is Mustache-style (legacy contract),
+            // substituted below; the prompt-store validator only enforces
+            // ${N} placeholders, so {{maxEntries}} is invisible to it.
+            systemPrompt = getPrompt('AI_SEARCH_SYSTEM_PROMPT');
         }
         systemPrompt = systemPrompt.replace(/\{\{maxEntries\}\}/g, maxEntries);
 
