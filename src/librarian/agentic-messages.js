@@ -3,7 +3,6 @@
  */
 import { getContext } from '../../../../../extensions.js';
 import { chat_metadata } from '../../../../../../script.js';
-import { DEFAULT_AI_NOTEPAD_PROMPT } from '../../settings.js';
 import { getPrompt } from '../prompts/prompt-store.js';
 
 /**
@@ -122,7 +121,7 @@ export function buildSystemPromptForLoop(pipelineContext, injectedTitles, settin
         if ((settings.aiNotepadMode || 'tag') === 'tag') {
             // Trim-then-default matches index.js:770. Whitespace-only must fall
             // back to default so tag-mode keeps emitting <dle-notes> blocks.
-            const notepadPrompt = settings.aiNotepadPrompt?.trim() || DEFAULT_AI_NOTEPAD_PROMPT;
+            const notepadPrompt = settings.aiNotepadPrompt?.trim() || getPrompt('AI_NOTEPAD_PROMPT');
             if (notepadPrompt) {
                 sections.push(notepadPrompt);
             }

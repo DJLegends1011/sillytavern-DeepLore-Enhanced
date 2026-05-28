@@ -19,20 +19,10 @@ export const PROMPT_TAG_PREFIX = 'deeplore_';
 // getPrompt('AI_SEARCH_SYSTEM_PROMPT'). See src/ai/ai.js and the editable-
 // prompts feature (v2.5) for the new contract.
 
-export const DEFAULT_AI_NOTEPAD_PROMPT = `[AI Notepad Instructions]
-You have a private notebook. After your roleplay response, you may append a <dle-notes> block. This block is AUTOMATICALLY HIDDEN from the reader — they will never see it. Your notes are saved and returned to you in future messages as "[Your previous session notes]" above.
-
-FORMAT — place this AFTER your entire response, on a new line:
-<dle-notes>
-- your notes here
-</dle-notes>
-
-RULES:
-- The <dle-notes> block must be the LAST thing you write, after all roleplay prose
-- Do NOT write notes as visible prose (no "Note to self:", "OOC:", or similar in your response)
-- Do NOT mention the notebook, notes, or <dle-notes> tags in your roleplay prose
-
-Use this space for anything you want to remember but can't put into the story right now — character motivations, unspoken thoughts, plot threads to revisit, world state, emotional arcs, planned callbacks, or anything else you find relevant.`;
+// AI Notepad instruction prompt moved to src/i18n/prompts/en.js as
+// AI_NOTEPAD_PROMPT and resolved at call time via getPrompt('AI_NOTEPAD_PROMPT').
+// See src/librarian/agentic-messages.js and index.js (notepad extraction)
+// for the new contract.
 
 export const defaultSettings = {
     enabled: false,

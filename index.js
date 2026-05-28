@@ -35,7 +35,8 @@ import {
     applyStripDedup, trackGeneration, decrementTrackers, recordAnalytics,
 } from './src/stages.js';
 import { clearPrompts } from './core/pipeline.js';
-import { getSettings, PROMPT_TAG_PREFIX, PROMPT_TAG, invalidateSettingsCache, resolveConnectionConfig, DEFAULT_AI_NOTEPAD_PROMPT, PROXY_DEPRECATION_MODE_KEYS } from './settings.js';
+import { getSettings, PROMPT_TAG_PREFIX, PROMPT_TAG, invalidateSettingsCache, resolveConnectionConfig, PROXY_DEPRECATION_MODE_KEYS } from './settings.js';
+import { getPrompt as getDlePromptForNotepad } from './src/prompts/prompt-store.js';
 import {
     vaultIndex, getWriterVisibleEntries, indexEverLoaded, indexing,
     lastScribeChatLength, scribeInProgress,
@@ -1253,7 +1254,7 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
                 parts.push(`[Your previous session notes]\n${storedNotes}\n[End of session notes]`);
             }
             if (notepadMode === 'tag') {
-                const instructionPrompt = settings.aiNotepadPrompt?.trim() || DEFAULT_AI_NOTEPAD_PROMPT;
+                const instructionPrompt = settings.aiNotepadPrompt?.trim() || getDlePromptForNotepad('AI_NOTEPAD_PROMPT');
                 parts.push(instructionPrompt);
             }
             // Skip injection in extract mode with no prior notes — nothing useful to send.
