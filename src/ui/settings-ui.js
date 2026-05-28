@@ -32,20 +32,17 @@ import { matchEntries } from '../pipeline/pipeline.js';
 import { setupSyncPolling } from '../vault/sync.js';
 import { showNotebookPopup, showBrowsePopup, showAiNotepadPopup } from './popups.js';
 import {
-    getPrompt,
+    resolvePromptOrOverride,
     loadPrompts as loadDlePrompts,
-    reloadPrompts as reloadDlePrompts,
     getPromptStatusGrid as getDlePromptStatusGrid,
-    getLastLoadErrors as getDlePromptErrors,
 } from '../prompts/prompt-store.js';
 import {
-    writePromptFile,
-    deletePromptFile,
-    DLE_PROMPTS_DEFAULT_DIR,
-} from '../prompts/prompt-api.js';
-import { buildPromptFileContent } from '../prompts/prompt-store-pure.js';
-import { KNOWN_PROMPT_KEYS, sanitizePromptsFolderPath } from '../prompts/prompt-validators.js';
-import * as PromptsEn from '../i18n/prompts/en.js';
+    bindPromptsTabHandlers,
+    renderPromptsGrid,
+    buildPromptsConnection,
+    bulkDeletePromptsThroughCage,
+} from './prompts-tab.js';
+import { DLE_PROMPTS_DEFAULT_DIR } from '../prompts/prompt-api.js';
 import { runHealthCheck } from './diagnostics.js';
 import { DLE_COMMANDS } from './commands-admin.js';
 
@@ -1453,7 +1450,7 @@ function loadPopupSettings($container) {
     // ran after a vault change. Safe to call even before bindPromptsTabHandlers
     // wires actions — grid markup updates either way.
     try {
-        renderPromptsGrid($container, settings);
+        renderPromptsGrid($container);
     } catch (err) {
         console.warn('[DLE prompts] grid render failed:', err?.message);
     }
@@ -2068,8 +2065,8 @@ function bindPopupEvents($container) {
         const maxE = settings.unlimitedEntries ? 'as many as are relevant' : String(settings.maxEntries);
         // Preview-only AI search prompt (Settings popup). Same fallback chain
         // as the live path in src/ai/ai.js — user override → vault override
-        // via getPrompt → compiled-in EN dict.
-        let sp = (settings.aiSearchSystemPrompt && settings.aiSearchSystemPrompt.trim()) || getPrompt('AI_SEARCH_SYSTEM_PROMPT');
+        // → compiled-in EN dict.
+        let sp = resolvePromptOrOverride('AI_SEARCH_SYSTEM_PROMPT', settings.aiSearchSystemPrompt);
         if (settings.aiSearchClaudeCodePrefix && settings.aiSearchConnectionMode === 'proxy' && !sp.startsWith('You are Claude Code')) sp = 'You are Claude Code. ' + sp;
         sp = sp.replace(/\{\{maxEntries\}\}/g, maxE);
         const hdr = candidateHeader ? `## Manifest Info\n${candidateHeader}\n\n` : '';
@@ -2235,30 +2232,15 @@ function bindPopupEvents($container) {
         // six-layer cage (mirrors the Prompts tab "Reset All Prompts" button).
         const connection = buildPromptsConnection(settings);
         if (connection) {
-            // Refresh cache so the grid reflects what's actually on disk before
-            // we ask the user about it.
             try { await loadDlePrompts(settings.aiPromptLocale, connection); } catch { /* non-fatal */ }
-            const overrideRows = getDlePromptStatusGrid().filter(r => r.source === 'vault');
-            if (overrideRows.length > 0) {
+            const overrideKeys = getDlePromptStatusGrid().filter(r => r.source === 'vault').map(r => r.key);
+            if (overrideKeys.length > 0) {
                 const alsoClear = await callGenericPopup(
-                    `<div style="text-align:center;"><p><strong>Also delete ${overrideRows.length} customized prompt file(s) from your vault?</strong></p><p>Prompt files live in your Obsidian vault, not extension settings, so they survive Reset All Settings. Delete them too?</p><p>Each delete will pass through the six-layer safety cage.</p></div>`,
+                    `<div style="text-align:center;"><p><strong>Also delete ${overrideKeys.length} customized prompt file(s) from your vault?</strong></p><p>Prompt files live in your Obsidian vault, not extension settings, so they survive Reset All Settings. Delete them too?</p><p>Each delete will pass through the six-layer safety cage.</p></div>`,
                     POPUP_TYPE.CONFIRM, '', { okButton: 'Delete prompt files', cancelButton: 'Keep prompt files' },
                 );
                 if (alsoClear) {
-                    let deleted = 0;
-                    let alreadyMissing = 0;
-                    const failures = [];
-                    for (const row of overrideRows) {
-                        const r = await deletePromptFile(
-                            connection.host, connection.port, connection.apiKey,
-                            connection.prefix, row.key, connection.useHttps,
-                        );
-                        if (r.ok) {
-                            if (r.alreadyMissing) alreadyMissing++; else deleted++;
-                        } else {
-                            failures.push({ key: row.key, error: r.error });
-                        }
-                    }
+                    const { deleted, failures } = await bulkDeletePromptsThroughCage(connection, overrideKeys);
                     try { await loadDlePrompts(settings.aiPromptLocale, connection); } catch { /* non-fatal */ }
                     if (failures.length === 0) {
                         toastr.success(`Deleted ${deleted} prompt file(s).`, 'DeepLore Enhanced');
@@ -2324,476 +2306,9 @@ function bindPopupEvents($container) {
     }
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// Prompts tab — language dropdown, folder path, Export / Reload / Reset-all.
-// Status grid rendering + per-row revert land in Commit 6.
-// ════════════════════════════════════════════════════════════════════════════
-
-/**
- * Build the vault connection bundle the prompt store uses to read/write
- * override files. Pulls from the primary enabled vault. Returns null when
- * no enabled vault exists, so the store falls back to compiled-in only.
- *
- * @param {object} settings
- * @returns {{ host: string, port: number, apiKey: string, prefix: string, useHttps: boolean } | null}
- */
-function buildPromptsConnection(settings) {
-    const vault = getPrimaryVault(settings);
-    if (!vault || !vault.enabled || !vault.apiKey || !vault.port) return null;
-    return {
-        host: vault.host || '127.0.0.1',
-        port: vault.port,
-        apiKey: vault.apiKey,
-        useHttps: !!vault.https,
-        prefix: sanitizePromptsFolderPath(settings.promptsFolderPath) || DLE_PROMPTS_DEFAULT_DIR,
-    };
-}
-
-/**
- * Render the Prompts tab status line.
- *
- * @param {JQuery} $statusEl
- * @param {string} text
- * @param {'info'|'ok'|'warn'|'err'} [tone]
- */
-function setPromptsStatus($statusEl, text, tone = 'info') {
-    $statusEl.text(text).attr('data-tone', tone);
-}
-
-/**
- * Surface the Prompts tab — wire dropdown, folder field, action buttons, and
- * status grid. Grid refreshes after every mutation (export, reload, reset,
- * per-row action).
- *
- * @param {JQuery} $container - The settings popup root.
- * @param {object} settings
- */
-function bindPromptsTabHandlers($container, settings) {
-    const $c = (sel) => $container.find(sel);
-    const $status = $c('#dle-sp-prompts-status');
-
-    // Language dropdown — wires aiPromptLocale.
-    $c('#dle-sp-prompts-language').on('change', async function () {
-        const newLocale = String($(this).val() || '');
-        const oldLocale = settings.aiPromptLocale || '';
-        if (newLocale === oldLocale) return;
-
-        const connection = buildPromptsConnection(settings);
-        // If overrides exist in the vault, warn before clobbering them with
-        // the new locale's defaults (Q3 — overwrite-all-with-confirm).
-        if (connection) {
-            const grid = getDlePromptStatusGrid();
-            const hasVaultOverrides = grid.some(r => r.source === 'vault');
-            if (hasVaultOverrides) {
-                const confirmed = await callGenericPopup(
-                    `<div style="text-align:center;"><p><strong>Switch prompt language to ${escapeHtml(newLocale || '(follow UI)')}?</strong></p><p>Every customized prompt file in your vault will be overwritten with the new locale's defaults. Your edits will be lost.</p></div>`,
-                    POPUP_TYPE.CONFIRM,
-                    '',
-                    { okButton: 'Overwrite', cancelButton: 'Cancel' },
-                );
-                if (!confirmed) {
-                    // User backed out — revert dropdown to the previous value.
-                    $(this).val(oldLocale);
-                    return;
-                }
-                // Re-export ALL prompts with the new locale dict, overwriting files.
-                setPromptsStatus($status, `Overwriting ${grid.length} prompts with ${newLocale || 'UI'} defaults…`, 'warn');
-                await exportAllPrompts(connection, newLocale);
-            }
-        }
-
-        settings.aiPromptLocale = newLocale;
-        saveSettingsDebounced();
-        const result = await loadDlePrompts(newLocale, connection);
-        const surfaced = surfacePromptLoadErrors(result);
-        setPromptsStatus($status, surfaced || `Language set to ${newLocale || 'UI'}. ${result.vaultCount} vault overrides active.`, 'ok');
-        renderPromptsGrid($container, settings);
-    });
-
-    // Folder path — sanitize on change.
-    $c('#dle-sp-prompts-folder-path').on('change', function () {
-        const raw = String($(this).val() || '').trim();
-        const sanitized = sanitizePromptsFolderPath(raw);
-        if (!sanitized) {
-            toastr.warning('Prompts folder path failed sanitization. Reverted to default.', 'DeepLore Enhanced');
-            $(this).val(DLE_PROMPTS_DEFAULT_DIR);
-            settings.promptsFolderPath = DLE_PROMPTS_DEFAULT_DIR;
-        } else {
-            settings.promptsFolderPath = sanitized;
-            $(this).val(sanitized);
-        }
-        saveSettingsDebounced();
-    });
-
-    // Export Prompts to Vault.
-    $c('#dle-sp-prompts-export').on('click', async function () {
-        if ($(this).hasClass('disabled')) return;
-        const connection = buildPromptsConnection(settings);
-        if (!connection) {
-            toastr.warning('No enabled Obsidian vault. Connect a vault on the Connection tab first.', 'DeepLore Enhanced');
-            return;
-        }
-
-        // Confirm if any vault overrides currently exist (would be overwritten).
-        const grid = getDlePromptStatusGrid();
-        const hasVaultOverrides = grid.some(r => r.source === 'vault');
-        if (hasVaultOverrides) {
-            const confirmed = await callGenericPopup(
-                `<div style="text-align:center;"><p><strong>Re-export all prompts?</strong></p><p>Every existing prompt file in your vault will be overwritten with the current language's defaults. Your edits will be lost.</p></div>`,
-                POPUP_TYPE.CONFIRM,
-                '',
-                { okButton: 'Overwrite', cancelButton: 'Cancel' },
-            );
-            if (!confirmed) return;
-        }
-
-        setPromptsStatus($status, `Exporting ${KNOWN_PROMPT_KEYS.size} prompts to vault…`, 'info');
-        $(this).addClass('disabled');
-        try {
-            const { written, failed } = await exportAllPrompts(connection, settings.aiPromptLocale);
-            const result = await loadDlePrompts(settings.aiPromptLocale, connection);
-            renderPromptsGrid($container, settings);
-            if (failed.length === 0) {
-                setPromptsStatus($status, `Exported ${written} prompts. ${result.vaultCount} active overrides.`, 'ok');
-                toastr.success(`Exported ${written} prompts to vault.`, 'DeepLore Enhanced');
-            } else {
-                setPromptsStatus($status, `Exported ${written}, failed ${failed.length}. See console.`, 'warn');
-                toastr.warning(`Exported ${written}, ${failed.length} failed. Check console.`, 'DeepLore Enhanced');
-                console.warn('[DLE prompts] export failures:', failed);
-            }
-        } catch (err) {
-            setPromptsStatus($status, `Export error: ${err.message}`, 'err');
-            console.error('[DLE prompts] export error:', err);
-        } finally {
-            $(this).removeClass('disabled');
-        }
-    });
-
-    // Reload Prompts from Vault.
-    $c('#dle-sp-prompts-reload').on('click', async function () {
-        if ($(this).hasClass('disabled')) return;
-        $(this).addClass('disabled');
-        try {
-            const connection = buildPromptsConnection(settings);
-            setPromptsStatus($status, 'Reloading prompts…', 'info');
-            const result = await loadDlePrompts(settings.aiPromptLocale, connection);
-            renderPromptsGrid($container, settings);
-            const surfaced = surfacePromptLoadErrors(result);
-            setPromptsStatus(
-                $status,
-                surfaced || `Reloaded. ${result.vaultCount} vault overrides, ${result.loaded - result.vaultCount} compiled-in.`,
-                result.errors.length > 0 ? 'warn' : 'ok',
-            );
-        } catch (err) {
-            setPromptsStatus($status, `Reload error: ${err.message}`, 'err');
-        } finally {
-            $(this).removeClass('disabled');
-        }
-    });
-
-    // Reset All Prompts — bulk delete via the cage (one call per key).
-    $c('#dle-sp-prompts-reset-all').on('click', async function () {
-        if ($(this).hasClass('disabled')) return;
-        const connection = buildPromptsConnection(settings);
-        if (!connection) {
-            toastr.warning('No enabled Obsidian vault. Connect a vault on the Connection tab first.', 'DeepLore Enhanced');
-            return;
-        }
-        const confirmed = await callGenericPopup(
-            `<div style="text-align:center;"><p><strong>Delete every prompt file from your vault folder?</strong></p><p>This cannot be undone. Each delete passes through the six-layer safety cage and only files matching known prompt keys will be removed.</p></div>`,
-            POPUP_TYPE.CONFIRM,
-            '',
-            { okButton: 'Delete All', cancelButton: 'Cancel' },
-        );
-        if (!confirmed) return;
-
-        $(this).addClass('disabled');
-        setPromptsStatus($status, 'Resetting all prompts…', 'warn');
-        let deleted = 0;
-        let alreadyMissing = 0;
-        const failures = [];
-        for (const key of KNOWN_PROMPT_KEYS) {
-            const result = await deletePromptFile(
-                connection.host, connection.port, connection.apiKey,
-                connection.prefix, key, connection.useHttps,
-            );
-            if (result.ok) {
-                if (result.alreadyMissing) alreadyMissing++;
-                else deleted++;
-            } else {
-                failures.push({ key, error: result.error });
-            }
-        }
-        const reload = await loadDlePrompts(settings.aiPromptLocale, connection);
-        renderPromptsGrid($container, settings);
-        $(this).removeClass('disabled');
-        if (failures.length === 0) {
-            setPromptsStatus($status, `Reset complete. Deleted ${deleted}, ${alreadyMissing} already missing.`, 'ok');
-            toastr.success(`Reset ${deleted} prompts.`, 'DeepLore Enhanced');
-        } else {
-            setPromptsStatus($status, `Deleted ${deleted}, ${failures.length} failed. See console.`, 'warn');
-            toastr.warning(`Deleted ${deleted}, ${failures.length} failed. Check console.`, 'DeepLore Enhanced');
-            console.warn('[DLE prompts] reset failures:', failures);
-        }
-        void reload;
-    });
-
-    // Initial grid render — uses whatever loadPrompts populated at boot
-    // (index.js init) or commit-2-style empty cache when popup opens early.
-    renderPromptsGrid($container, settings);
-}
-
-/**
- * Export every known prompt to the vault, using the current locale's dict
- * (or the EN dict for keys the locale is missing). Failures are collected
- * but never thrown.
- *
- * @param {object} connection - { host, port, apiKey, prefix, useHttps }
- * @param {string} locale
- * @returns {Promise<{ written: number, failed: Array<{ key: string, error: string }> }>}
- */
-async function exportAllPrompts(connection, locale) {
-    let dict;
-    try {
-        dict = await import(`../i18n/prompts/${(locale || 'en')}.js`);
-    } catch {
-        dict = PromptsEn;
-    }
-    let written = 0;
-    const failed = [];
-    for (const key of KNOWN_PROMPT_KEYS) {
-        const value = (dict && typeof dict[key] === 'string') ? dict[key] : PromptsEn[key];
-        if (typeof value !== 'string') {
-            failed.push({ key, error: 'no canonical value' });
-            continue;
-        }
-        const content = buildPromptFileContent({
-            key,
-            locale: locale || 'en',
-            value,
-        });
-        const writeResult = await writePromptFile(
-            connection.host, connection.port, connection.apiKey,
-            connection.prefix, key, content, connection.useHttps,
-        );
-        if (writeResult.ok) {
-            written++;
-        } else {
-            failed.push({ key, error: writeResult.error });
-        }
-    }
-    return { written, failed };
-}
-
-/**
- * Convert loadPrompts errors[] into a short toastr-friendly string. Returns
- * empty when no errors so callers can choose the success branch.
- *
- * @param {{ errors: Array<{ key: string, reason: string }> }} result
- * @returns {string}
- */
-function surfacePromptLoadErrors(result) {
-    const errs = (result && result.errors) || [];
-    if (errs.length === 0) return '';
-    return `${errs.length} prompt override(s) invalid — falling back to defaults. See Prompts tab grid for details.`;
-}
-
-// ── Prompts grid: substantive vs agentic-fragments classification (Q9) ───────
-// Substantive prompts are multi-line, user-tunable prose. Fragments are short
-// agentic-loop structural strings (fence headers, tool descriptions). Both
-// are editable, but the UI groups fragments under a collapsible section so
-// the default tab view isn't a wall of one-liners.
-function classifyPromptKey(key) {
-    if (!key.startsWith('AGENTIC_')) return 'substantive';
-    if (key === 'AGENTIC_ROLE_SECTION') return 'substantive';
-    return 'fragment';
-}
-
-const PROMPT_STATUS_BADGE = {
-    current_default: { label: 'Default', tone: 'info' },
-    stale_default: { label: 'Stale Default', tone: 'warn' },
-    customized: { label: 'Customized', tone: 'ok' },
-    customized_stale_baseline: { label: 'Customized (stale baseline)', tone: 'warn' },
-    missing: { label: 'Missing', tone: 'err' },
-};
-
-/**
- * Render the per-prompt status grid into #dle-sp-prompts-grid.
- *
- * Pulls the latest grid via getDlePromptStatusGrid(), classifies rows, and
- * emits a substantive section followed by a collapsible fragments section.
- * Action buttons (per-row revert / export / update) are wired here.
- *
- * @param {JQuery} $container - The settings popup root.
- * @param {object} settings
- */
-function renderPromptsGrid($container, settings) {
-    const $grid = $container.find('#dle-sp-prompts-grid');
-    if ($grid.length === 0) return;
-
-    const rows = getDlePromptStatusGrid();
-    const errors = getDlePromptErrors();
-    const errorMap = new Map(errors.map(e => [e.key, e.reason]));
-
-    const substantive = [];
-    const fragments = [];
-    for (const row of rows) {
-        const enriched = { ...row, error: errorMap.get(row.key) || row.error || null };
-        if (classifyPromptKey(row.key) === 'substantive') substantive.push(enriched);
-        else fragments.push(enriched);
-    }
-    substantive.sort((a, b) => a.key.localeCompare(b.key));
-    fragments.sort((a, b) => a.key.localeCompare(b.key));
-
-    const html = [];
-    html.push(`<div class="dle-prompts-grid-section">`);
-    html.push(`<h5>Substantive prompts (${substantive.length})</h5>`);
-    html.push(renderPromptRows(substantive));
-    html.push(`</div>`);
-
-    html.push(`<details class="dle-prompts-grid-section" style="margin-top: 8px;">`);
-    html.push(`<summary>Agentic-loop fragments (${fragments.length})</summary>`);
-    html.push(renderPromptRows(fragments));
-    html.push(`</details>`);
-
-    $grid.html(html.join(''));
-
-    // Per-row action handlers (delegated via the grid container).
-    $grid.off('click', '[data-prompt-action]');
-    $grid.on('click', '[data-prompt-action]', async function () {
-        const action = $(this).attr('data-prompt-action');
-        const key = $(this).attr('data-prompt-key');
-        if (!action || !key) return;
-        await handlePromptRowAction($container, settings, action, key);
-    });
-}
-
-/**
- * Render rows of the prompt grid as HTML (no actions wired yet — caller
- * binds via event delegation).
- *
- * @param {Array<{ key: string, source: string, status: string, error: string | null }>} rows
- * @returns {string}
- */
-function renderPromptRows(rows) {
-    if (rows.length === 0) return '<p class="dle-section-desc"><em>None.</em></p>';
-    const out = [];
-    out.push('<table class="dle-prompts-grid-table" style="width: 100%; border-collapse: collapse;">');
-    out.push('<thead><tr><th style="text-align:left;">Key</th><th style="text-align:left;">Source</th><th style="text-align:left;">Status</th><th style="text-align:right;">Actions</th></tr></thead>');
-    out.push('<tbody>');
-    for (const row of rows) {
-        const badge = PROMPT_STATUS_BADGE[row.status] || { label: row.status, tone: 'info' };
-        const errorIcon = row.error
-            ? `<span class="dle-prompt-row-error" title="${escapeHtml(row.error)}" style="margin-left: 4px; color: var(--SmartThemeQuoteColor, #c33);">⚠</span>`
-            : '';
-        const actions = renderPromptRowActions(row);
-        out.push(`<tr>
-            <td><code>${escapeHtml(row.key)}</code>${errorIcon}</td>
-            <td>${escapeHtml(row.source)}</td>
-            <td><span class="dle-status" data-tone="${badge.tone}">${escapeHtml(badge.label)}</span></td>
-            <td style="text-align: right;">${actions}</td>
-        </tr>`);
-    }
-    out.push('</tbody></table>');
-    return out.join('');
-}
-
-/**
- * Compute the action buttons for a single row based on source + status.
- *
- *   compiled-in + any        → "Export this one"
- *   vault + current_default  → "Revert"
- *   vault + customized       → "Revert"
- *   vault + stale_default    → "Update to latest", "Revert"
- *   vault + customized_stale → "Revert"
- *
- * @param {{ key: string, source: string, status: string }} row
- * @returns {string}
- */
-function renderPromptRowActions(row) {
-    const out = [];
-    if (row.source === 'compiled-in') {
-        out.push(`<button type="button" class="menu_button menu_button_icon" data-prompt-action="export-one" data-prompt-key="${escapeHtml(row.key)}" title="Write this prompt to your vault for editing.">
-            <i class="fa-solid fa-file-export" aria-hidden="true"></i><span>Export</span>
-        </button>`);
-        return out.join('');
-    }
-    // source === 'vault'
-    if (row.status === 'stale_default') {
-        out.push(`<button type="button" class="menu_button menu_button_icon" data-prompt-action="update-one" data-prompt-key="${escapeHtml(row.key)}" title="Replace the file with the current upstream default for this locale.">
-            <i class="fa-solid fa-arrow-up-from-bracket" aria-hidden="true"></i><span>Update</span>
-        </button> `);
-    }
-    out.push(`<button type="button" class="menu_button menu_button_icon" data-prompt-action="revert-one" data-prompt-key="${escapeHtml(row.key)}" title="Delete this prompt file from your vault. The built-in default will be used.">
-        <i class="fa-solid fa-rotate-left" aria-hidden="true"></i><span>Revert</span>
-    </button>`);
-    return out.join('');
-}
-
-/**
- * Handle a per-row action button click.
- *
- * @param {JQuery} $container
- * @param {object} settings
- * @param {string} action - 'export-one' | 'revert-one' | 'update-one'
- * @param {string} key
- */
-async function handlePromptRowAction($container, settings, action, key) {
-    const connection = buildPromptsConnection(settings);
-    if (!connection) {
-        toastr.warning('No enabled Obsidian vault. Connect a vault on the Connection tab first.', 'DeepLore Enhanced');
-        return;
-    }
-    const $status = $container.find('#dle-sp-prompts-status');
-
-    if (action === 'revert-one') {
-        const confirmed = await callGenericPopup(
-            `<div style="text-align:center;"><p><strong>Revert <code>${escapeHtml(key)}</code> to the built-in default?</strong></p><p>The vault file will be deleted via the six-layer safety cage. The built-in default takes over until you re-export.</p></div>`,
-            POPUP_TYPE.CONFIRM,
-            '',
-            { okButton: 'Revert', cancelButton: 'Cancel' },
-        );
-        if (!confirmed) return;
-        const result = await deletePromptFile(
-            connection.host, connection.port, connection.apiKey,
-            connection.prefix, key, connection.useHttps,
-        );
-        if (result.ok) {
-            setPromptsStatus($status, result.alreadyMissing ? `${key} was already missing.` : `Reverted ${key}.`, 'ok');
-        } else {
-            setPromptsStatus($status, `Revert failed: ${result.error}`, 'err');
-            return;
-        }
-    } else if (action === 'export-one' || action === 'update-one') {
-        const locale = settings.aiPromptLocale || 'en';
-        let dict;
-        try {
-            dict = await import(`../i18n/prompts/${locale}.js`);
-        } catch {
-            dict = PromptsEn;
-        }
-        const value = (dict && typeof dict[key] === 'string') ? dict[key] : PromptsEn[key];
-        if (typeof value !== 'string') {
-            setPromptsStatus($status, `Export failed: no canonical value for ${key}`, 'err');
-            return;
-        }
-        const content = buildPromptFileContent({ key, locale, value });
-        const writeResult = await writePromptFile(
-            connection.host, connection.port, connection.apiKey,
-            connection.prefix, key, content, connection.useHttps,
-        );
-        if (writeResult.ok) {
-            setPromptsStatus($status, `${action === 'update-one' ? 'Updated' : 'Exported'} ${key}.`, 'ok');
-        } else {
-            setPromptsStatus($status, `Write failed: ${writeResult.error}`, 'err');
-            return;
-        }
-    }
-
-    // Refresh cache + grid after any mutation.
-    await loadDlePrompts(settings.aiPromptLocale, connection);
-    renderPromptsGrid($container, settings);
-}
+// Prompts tab — extracted to `src/ui/prompts-tab.js`. See that module for the
+// language dropdown, folder path, Export / Reload / Reset-All buttons, the
+// status grid, and the per-row action handlers.
 
 // ── Load Settings UI (stub — extension panel is gutted) ──
 
