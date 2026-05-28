@@ -23,18 +23,11 @@ import {
 } from '../state.js';
 import { dedupError, dedupWarning } from '../toast-dedup.js';
 import { pushEvent } from '../diagnostics/interceptors.js';
+import { getPrompt } from '../prompts/prompt-store.js';
 
-export const DEFAULT_SCRIBE_PROMPT = `Summarize this roleplay session segment. Write in past tense, third person.
-
-Cover:
-- Key events and plot developments (what happened, decisions made, consequences)
-- Character dynamics (relationship shifts, emotional moments, conflicts, alliances)
-- New information revealed (world-building, backstory, secrets, lore)
-- State changes (injuries, location moves, items gained/lost, powers used)
-
-If a previous session note is provided, do NOT repeat what it already covers — only add new developments since then.
-
-Format with markdown headings and bullet points. Be specific — use character names and concrete details, not vague summaries.`;
+// Scribe default prompt moved to src/i18n/prompts/en.js as SCRIBE_PROMPT
+// and resolved at call time via getPrompt('SCRIBE_PROMPT'). See the
+// editable-prompts feature (v2.5) for the new contract.
 
 /**
  * Route a Scribe AI call by configured connection mode.
@@ -142,7 +135,7 @@ export async function runScribe(customPrompt) {
             return;
         }
 
-        const systemPrompt = settings.scribePrompt?.trim() || DEFAULT_SCRIBE_PROMPT;
+        const systemPrompt = settings.scribePrompt?.trim() || getPrompt('SCRIBE_PROMPT');
 
         const parts = [];
         if (lastScribeSummary) {
