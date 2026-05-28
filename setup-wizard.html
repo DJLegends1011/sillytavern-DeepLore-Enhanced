@@ -90,11 +90,11 @@
             <div class="dle-wizard-row">
                 <div class="dle-wizard-field" style="flex: 1;">
                     <label for="dle-wiz-port" data-i18n="dle_placeholder_port">Port</label>
-                    <input id="dle-wiz-port" class="text_pole" type="number" value="27123" />
+                    <input id="dle-wiz-port" class="text_pole" type="number" min="1" max="65535" value="27123" />
                 </div>
                 <div class="dle-wizard-field" style="flex: 2;">
                     <label for="dle-wiz-api-key" data-i18n="dle_placeholder_vault_apikey">API Key</label>
-                    <input id="dle-wiz-api-key" class="text_pole" type="password" placeholder="From Obsidian REST API plugin settings" data-i18n="[placeholder]dle_wizard_api_key_placeholder">
+                    <input id="dle-wiz-api-key" class="text_pole" type="password" autocomplete="off" data-1p-ignore data-lpignore="true" placeholder="From Obsidian REST API plugin settings" data-i18n="[placeholder]dle_wizard_api_key_placeholder">
                 </div>
             </div>
             <div class="dle-wizard-field">

@@ -251,6 +251,13 @@ export async function runAgenticLoop(options) {
                     // MED-LIB-1 (`!== 'Related entries:'` string filter that broke under
                     // localization \u2014 structured return makes it unnecessary).
                     // Reuses BM25, gap tracking, analytics from the legacy action.
+                    // Pre-call epoch/lock guard: if the chat switched during the callWithTools
+                    // await above, bail BEFORE searchLoreAction so a stale loop never mutates the
+                    // (now chat-B) loreGapSearchCount budget, Activity feed, or per-chat stats.
+                    if (epoch !== chatEpoch || lockEpoch !== generationLockEpoch) {
+                        if (debug) console.debug('[DLE] agentic SEARCH: epoch mismatch before searchLoreAction, stop loop');
+                        break;
+                    }
                     const searchResult = await searchLoreAction({ queries: tc.input.queries || [] });
                     const resultText = typeof searchResult === 'string'
                         ? searchResult
@@ -259,6 +266,14 @@ export async function runAgenticLoop(options) {
                         ? searchResult.titles
                         : [];
                     results.push({ id: tc.id, name: tc.name, result: resultText });
+
+                    // Post-await epoch/lock guard (mirror _runFlagIteration at the FLAG path):
+                    // if the chat switched or the lock rolled during the search await, stop the
+                    // loop and don't leak this stale search into the new chat's Activity dropdown.
+                    if (epoch !== chatEpoch || lockEpoch !== generationLockEpoch) {
+                        if (debug) console.debug('[DLE] agentic SEARCH: epoch mismatch after searchLoreAction, stop loop');
+                        break;
+                    }
 
                     // Contract (per CLAUDE.md): only successful-search results create dropdown
                     // records; no-result searches create gap records only (handled by

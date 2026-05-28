@@ -349,7 +349,9 @@ export async function listAllFiles(host, port, apiKey, directory = '', depth = 0
         throw new Error(`Failed to parse directory listing for "${directory || '/'}": ${e.message}`);
     }
 
-    const files = listing.files || [];
+    // Obsidian's REST API is semi-trusted (loopback): guard against a non-array `files`
+    // or non-string elements that would throw on `.endsWith` or inject junk into paths.
+    const files = (Array.isArray(listing.files) ? listing.files : []).filter(f => typeof f === 'string');
     const allFiles = [];
     const prefix = directory ? directory + '/' : '';
 

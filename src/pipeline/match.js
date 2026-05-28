@@ -129,16 +129,24 @@ export function matchEntries(chat, snapshot = null, { settings, characterName } 
         // characterContextScan don't silently drop one vault's entry to last-vault-wins.
         // User-authored cascade_links/character names are bare titles (no vault prefix),
         // so we union across all same-titled entries instead of trying to disambiguate.
-        const titleMap = new Map();
-        for (const e of entries) {
-            const k = e.title.toLowerCase();
-            if (!titleMap.has(k)) titleMap.set(k, []);
-            titleMap.get(k).push(e);
-        }
+        // Built LAZILY: only the optional characterContextScan + cascade-link paths consume
+        // it, so a default-config generation (char scan off, no cascade links) never pays the
+        // O(N) full-vault Map build that ran every generation before. Memoized — builds once.
+        let _titleMap = null;
+        const getTitleMap = () => {
+            if (_titleMap) return _titleMap;
+            _titleMap = new Map();
+            for (const e of entries) {
+                const k = e.title.toLowerCase();
+                if (!_titleMap.has(k)) _titleMap.set(k, []);
+                _titleMap.get(k).push(e);
+            }
+            return _titleMap;
+        };
 
         if (settings.characterContextScan && activeCharName) {
             const nameLower = activeCharName.toLowerCase();
-            const charEntries = titleMap.get(nameLower) || entries.filter(e =>
+            const charEntries = getTitleMap().get(nameLower) || entries.filter(e =>
                 e.keys.some(k => k.toLowerCase() === nameLower)
             );
             for (const charEntry of charEntries) {
@@ -163,7 +171,7 @@ export function matchEntries(chat, snapshot = null, { settings, characterName } 
         for (const entry of cascadeSource) {
             if (!entry.cascadeLinks || entry.cascadeLinks.length === 0) continue;
             for (const linkTitle of entry.cascadeLinks) {
-                const linkedCandidates = titleMap.get(linkTitle.toLowerCase()) || [];
+                const linkedCandidates = getTitleMap().get(linkTitle.toLowerCase()) || [];
                 for (const linked of linkedCandidates) {
                     if (matchedSet.has(linked)) continue;
                     if (linked.cooldown !== null) {
@@ -251,9 +259,17 @@ export function matchEntries(chat, snapshot = null, { settings, characterName } 
             // BUG-AUDIT-8: BM25 fuzzy matches must also honor warmup.
             // M-6: hasWarmup unifies the three match paths (primary, recursion, BM25).
             if (hasWarmup(entry)) {
-                const scanText = getScanText(entry.scanDepth ?? settings.scanDepth);
+                // Use `||` not `??`: a per-entry scanDepth of 0 ("AI-only, don't keyword-scan")
+                // would otherwise yield empty scan text → 0 occurrences → a fuzzy-matched entry
+                // is silently dropped on warmup. Fall back to the global depth so warmup can
+                // actually be evaluated for entries that matched via BM25.
+                const scanText = getScanText(entry.scanDepth || settings.scanDepth);
                 const occurrences = countKeywordOccurrences(entry, scanText, settings);
-                if (occurrences < entry.warmup) continue;
+                if (occurrences < entry.warmup) {
+                    // Mirror the primary keyword path so a BM25 warmup drop is diagnosable in /dle-why.
+                    warmupFailed.push({ title: entry.title, vaultSource: entry.vaultSource || '', needed: entry.warmup, found: occurrences });
+                    continue;
+                }
             }
 
             if (entry.probability === 0) continue;
@@ -266,7 +282,7 @@ export function matchEntries(chat, snapshot = null, { settings, characterName } 
     }
 
     // Default: priority ascending = higher priority. #16: settings.priorityReversed flips.
-    const matched = [...matchedSet].sort((a, b) => comparePriority(a, b, settings.priorityReversed) || a.title.localeCompare(b.title));
+    const matched = [...matchedSet].sort((a, b) => comparePriority(a, b, settings.priorityReversed) || a.title.localeCompare(b.title) || (a.vaultSource || '').localeCompare(b.vaultSource || ''));
 
     // Tiebreak within priority group using hit count.
     if (settings.keywordOccurrenceWeighting) {
@@ -287,7 +303,7 @@ export function matchEntries(chat, snapshot = null, { settings, characterName } 
         matched.sort((a, b) => {
             const pri = comparePriority(a, b, settings.priorityReversed);
             if (pri !== 0) return pri;
-            return getCachedCount(b) - getCachedCount(a) || a.title.localeCompare(b.title);
+            return getCachedCount(b) - getCachedCount(a) || a.title.localeCompare(b.title) || (a.vaultSource || '').localeCompare(b.vaultSource || '');
         });
     }
 

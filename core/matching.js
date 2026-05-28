@@ -418,7 +418,11 @@ export function formatAndGroup(entries, settings, promptTagPrefix) {
     // BUG-158: the `</{{title}}>` close tag is load-bearing — without it, multi-line
     // entries concatenated with `\n` bleed into each other and the model can't tell
     // where one ends and the next begins.
-    const template = settings.injectionTemplate || '<{{title}}>\n{{content}}\n</{{title}}>';
+    const DEFAULT_TEMPLATE = '<{{title}}>\n{{content}}\n</{{title}}>';
+    // A custom template missing {{content}} renders title-only lore — budget spent, model gets
+    // no body. Fall back to the default rather than silently inject useless context.
+    let template = settings.injectionTemplate || DEFAULT_TEMPLATE;
+    if (!template.includes('{{content}}')) template = DEFAULT_TEMPLATE;
     let totalTokens = 0;
     let count = 0;
 

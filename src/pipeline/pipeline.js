@@ -345,7 +345,7 @@ export async function runPipeline(chat, externalSnapshot, contextualGatingContex
 
     // Restore user priority after AI modes — confidence sort may have overridden it,
     // and budget trimming must respect the explicit priority field. #16: reverse via setting.
-    finalEntries.sort((a, b) => comparePriority(a, b, settings.priorityReversed) || a.title.localeCompare(b.title));
+    finalEntries.sort((a, b) => comparePriority(a, b, settings.priorityReversed) || a.title.localeCompare(b.title) || (a.vaultSource || '').localeCompare(b.vaultSource || ''));
 
     clearScanTextCache();
 

@@ -1063,7 +1063,10 @@ export async function aiSearch(chat, candidateManifest, candidateHeader, snapsho
         const status = Number(err.status) || Number((err.message || '').match(/\b(4\d\d|5\d\d)\b/)?.[1]) || 0;
         const isRateLimit = status === 429 || /rate.?limit|too many requests/i.test(err.message || '');
         const isAuthError = status === 401 || status === 403 || /unauthoriz|forbidden|invalid api key|auth/i.test(err.message || '');
-        if (!isExcludedFromBreaker(err)) recordAiFailure();
+        // #11: on an EXCLUDED error during a half-open probe, neither recordAiFailure nor
+        // recordAiSuccess runs, so the probe slot would dangle until the ~60s stale-probe
+        // timeout — blocking AI recovery. releaseHalfOpenProbe is a no-op on the closed path.
+        if (!isExcludedFromBreaker(err)) recordAiFailure(); else releaseHalfOpenProbe();
         if (isUserAbort) {
             if (settings.debugMode) console.debug('[DLE] AI search aborted by user');
         } else if (isTimeout) {

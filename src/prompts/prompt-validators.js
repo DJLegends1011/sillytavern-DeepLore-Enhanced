@@ -17,7 +17,7 @@
  *   L3 — Existing `validateVaultPath()` runs first
  *   L4 — Pre-flight HTTP GET, parse frontmatter, verify `key:` matches stem,
  *        verify body contains no `lorebook-` tag (would indicate a vault entry)
- *   L5 — URL re-assembled internally from validated stem via `DLE_PROMPTS_DIR`
+ *   L5 — URL re-assembled internally from validated stem via `DLE_PROMPTS_DEFAULT_DIR`
  *   L6 — `deletePromptFile()` is the SOLE exported delete primitive
  *
  * Reviewers MUST reject any new `DELETE` HTTP call outside `deletePromptFile()`.

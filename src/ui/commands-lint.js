@@ -55,6 +55,10 @@ const CODE_LABELS = {
         title: 'Skipped — has `lorebook-never` tag',
         hint: 'Remove the `lorebook-never` tag to allow injection.',
     },
+    SKIP_EMPTY_TITLE: {
+        title: 'Skipped — empty title',
+        hint: 'Give the entry a non-empty `# H1` heading or a non-empty filename. Empty titles collide and are dropped from cache.',
+    },
 };
 
 function labelFor(code) {

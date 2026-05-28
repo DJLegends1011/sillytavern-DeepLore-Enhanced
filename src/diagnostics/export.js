@@ -514,6 +514,19 @@ function buildScrubberReport(ctx) {
 const MAX_VERBOSE_SIZE = 5 * 1024 * 1024; // 5 MB pre-compression safety limit
 
 /**
+ * #13: strip embedded credentials from a URL before writing it to the (local, never-shared)
+ * connections reference — userinfo (user:pass@) and token-bearing query params. Even the
+ * "your eyes only" file shouldn't persist a raw token a custom api-url/reverse-proxy may embed,
+ * since it lands in the same Downloads folder as the shareable report.
+ */
+function stripUrlSecrets(u) {
+    if (typeof u !== 'string' || !u) return u;
+    return u
+        .replace(/\/\/[^/@\s]*@/, '//')
+        .replace(/([?&](?:key|token|access_token|api_key|auth|secret|password|jwt|bearer|authorization|oauth_token)=)[^&\s]+/gi, '$1<token>');
+}
+
+/**
  * Unanonymized connections reference — user's eyes only, never shared.
  * @param {object} rawSnapshot — raw snapshot before scrubbing
  * @returns {string} plain-text markdown
@@ -540,7 +553,7 @@ function buildConnectionsReference(rawSnapshot) {
         lines.push('## SillyTavern Active Connection');
         lines.push(`- Main API: ${st.mainApi || '?'}`);
         lines.push(`- Chat completion source: ${st.chatCompletionSource || '?'}`);
-        if (st.reverseProxy) lines.push(`- Reverse proxy: ${st.reverseProxy}`);
+        if (st.reverseProxy) lines.push(`- Reverse proxy: ${stripUrlSecrets(st.reverseProxy)}`);
         if (st.selectedModel) lines.push(`- Model: ${st.selectedModel}`);
         if (st.claudeModel) lines.push(`- Claude model: ${st.claudeModel}`);
         if (st.openrouterModel) lines.push(`- OpenRouter model: ${st.openrouterModel}`);
@@ -582,7 +595,7 @@ function buildConnectionsReference(rawSnapshot) {
             lines.push(`- ID: ${id}`);
             lines.push(`- API: ${p.api || '?'}`);
             lines.push(`- Model: ${p.model || '?'}`);
-            if (p['api-url']) lines.push(`- API URL: ${p['api-url']}`);
+            if (p['api-url']) lines.push(`- API URL: ${stripUrlSecrets(p['api-url'])}`);
             if (p.proxy) lines.push(`- Proxy preset: ${p.proxy}`);
             if (p.preset) lines.push(`- Settings preset: ${p.preset}`);
             if (p.instruct) lines.push(`- Instruct: ${p.instruct}`);

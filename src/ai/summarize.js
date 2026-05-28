@@ -15,7 +15,7 @@
 import { chat, chat_metadata, saveChatConditional, reloadCurrentChat, saveMetadata } from '../../../../../../script.js';
 import { saveMetadataDebounced } from '../../../../../extensions.js';
 import { getSettings, resolveConnectionConfig } from '../../settings.js';
-import { tryAcquireHalfOpenProbe, recordAiSuccess, recordAiFailure } from '../state.js';
+import { tryAcquireHalfOpenProbe, recordAiSuccess, recordAiFailure, releaseHalfOpenProbe } from '../state.js';
 import { callAI, isExcludedFromBreaker } from './ai.js';
 import { classifyError } from '../../core/utils.js';
 import { parseRange, buildSummaryUserMessage, applyHideAndPrepend, rollbackById } from './summarize-pure.js';
@@ -68,7 +68,7 @@ async function callSummaryAI(userMessage, signal) {
         recordAiSuccess();
         return (result.text || '').trim();
     } catch (err) {
-        if (!isExcludedFromBreaker(err)) recordAiFailure();
+        if (!isExcludedFromBreaker(err)) recordAiFailure(); else releaseHalfOpenProbe(); // #11: free dangling half-open probe
         throw err;
     }
 }

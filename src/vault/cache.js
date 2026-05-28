@@ -158,6 +158,9 @@ export async function loadIndexFromCache() {
             const request = store.get(getCacheKey());
             request.onsuccess = () => resolve(request.result);
             request.onerror = () => reject(request.error);
+            // A tx abort that doesn't fire request.onerror would otherwise leave this await
+            // hanging and stall boot hydration (write/clear paths already wire onabort).
+            tx.onabort = () => reject(tx.error || new Error('IDB read transaction aborted'));
         });
 
         if (!result || !Array.isArray(result.entries) || result.entries.length === 0) {
@@ -220,6 +223,7 @@ export async function pruneOrphanedCacheKeys(saveSucceeded) {
             const request = store.getAllKeys();
             request.onsuccess = () => resolve(request.result);
             request.onerror = () => reject(request.error);
+            tx.onabort = () => reject(tx.error || new Error('IDB getAllKeys transaction aborted'));
         });
 
         let pruned = 0;

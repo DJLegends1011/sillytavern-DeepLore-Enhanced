@@ -126,6 +126,9 @@ export function validateFieldDefinition(raw) {
     const multi = raw.multi === true;
 
     const rawGating = raw.gating || {};
+    if (rawGating.enabled !== undefined && typeof rawGating.enabled !== 'boolean') {
+        errors.push(`gating.enabled must be true or false (got ${JSON.stringify(rawGating.enabled)}); defaulting to enabled. To disable gating use "enabled: false".`);
+    }
     const gating = {
         enabled: rawGating.enabled !== false,
         operator: VALID_OPERATORS.has(rawGating.operator) ? rawGating.operator : 'match_any',
@@ -169,12 +172,18 @@ export function parseFieldDefinitionYaml(yamlText) {
     let currentField = null;
     let inGating = false;
     let inValues = false;
+    let sawContent = false; // did any non-comment/non-blank line appear?
 
     for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
+        // Obsidian indents with tabs by default; the serializer uses 2-space units.
+        // Expand leading tabs (1 tab = one indent level → 2 spaces) so the \s{2}/\s{4}/\s{6}
+        // structure regexes match tab-indented hand-edited files instead of silently
+        // parsing zero fields.
+        const line = lines[i].replace(/^\t+/, t => '  '.repeat(t.length));
         const stripped = line.trimEnd();
 
         if (stripped.startsWith('#') || stripped === '' || stripped === 'fields:') continue;
+        sawContent = true;
 
         // New field: "  - name: ..."
         if (/^\s{2}-\s+name:\s*(.+)/.test(stripped)) {
@@ -242,6 +251,12 @@ export function parseFieldDefinitionYaml(yamlText) {
         const { field, errors: fieldErrors } = validateFieldDefinition(currentField);
         if (field) definitions.push(field);
         errors.push(...fieldErrors);
+    }
+
+    // Non-empty content that produced zero definitions is almost always a structure
+    // problem (e.g. mixed/wrong indentation). Surface it instead of failing silently.
+    if (definitions.length === 0 && errors.length === 0 && sawContent) {
+        errors.push('No field definitions parsed from non-empty content — check indentation and the "  - name:" structure (use spaces or tabs consistently, not mid-line mixes).');
     }
 
     return { definitions, errors };
@@ -323,14 +338,19 @@ export function evaluateOperator(operator, entryValue, activeValue) {
         case 'not_exists':
             return entryValue == null || (Array.isArray(entryValue) && entryValue.length === 0);
         case 'eq':
-            return String(entryValue).toLowerCase() === String(activeValue).toLowerCase();
+            // Reduce over active values ("any element matches") — String([a,b]) would compare
+            // against "a,b" and match nothing for a multi-valued context.
+            return activeArr.some(a => String(entryValue).toLowerCase() === String(a).toLowerCase());
         case 'gt': {
-            const a = Number(entryValue), b = Number(activeValue);
-            return !Number.isNaN(a) && !Number.isNaN(b) && a > b; // BUG-L2: NaN guard
+            const a = Number(entryValue);
+            if (Number.isNaN(a)) return false; // BUG-L2: NaN guard
+            // "any active element satisfies" — Number([3,5]) is NaN and would fail-closed.
+            return activeArr.some(x => { const b = Number(x); return !Number.isNaN(b) && a > b; });
         }
         case 'lt': {
-            const a = Number(entryValue), b = Number(activeValue);
-            return !Number.isNaN(a) && !Number.isNaN(b) && a < b; // BUG-L2: NaN guard
+            const a = Number(entryValue);
+            if (Number.isNaN(a)) return false; // BUG-L2: NaN guard
+            return activeArr.some(x => { const b = Number(x); return !Number.isNaN(b) && a < b; });
         }
         default:
             return true;
