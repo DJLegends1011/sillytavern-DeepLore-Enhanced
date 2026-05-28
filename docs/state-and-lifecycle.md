@@ -146,6 +146,24 @@ under `multiVaultConflictResolution='all'` (CLAUDE.md trackerKey invariant).
 | `aiCircuitHalfOpenProbe` | `boolean` (private) | Session |
 | `aiCircuitProbeTimestamp` | `number` (private) | Session |
 
+### Editable Prompts State (`src/prompts/prompt-store.js`, 2026-05-28)
+| Variable | Type | Scope | Writers | Readers |
+|---|---|---|---|---|
+| `promptCache` | `Map<key, string>` | Session | `loadPrompts()` | `getPrompt()` (sync hot path) |
+| `promptMeta` | `Map<key, object>` | Session | `loadPrompts()` | `getPromptStatusGrid()` (UI) |
+| `_currentLocale` | `string` | Session | `loadPrompts()` | `reloadPrompts()` |
+| `_loaded` | `boolean` | Session | `loadPrompts()` | tests only |
+| `_lastLoadErrors` | `Array<{key,reason}>` | Session | `loadPrompts()` | `getLastLoadErrors()`, toastr surface |
+| `_lastConnection` | `object\|null` | Session | `loadPrompts()` | `reloadPrompts()` |
+| **Setting** `aiPromptLocale` | `string` (locale or `''`) | Settings (persisted) | Prompts tab dropdown | `loadPrompts(settings.aiPromptLocale, ...)` |
+| **Setting** `promptsFolderPath` | `string` (relative path ending `/`) | Settings (persisted) | Prompts tab folder field | `buildPromptsConnection()` → `sanitizePromptsFolderPath()` |
+
+Boot order: `index.js` calls `loadPrompts()` after `loadSettingsUI()` / `bindSettingsEvents()`. Failures logged-not-thrown so a missing vault never blocks startup. `getPrompt()` is sync — cache is preloaded, every lookup is a Map hit.
+
+`buildPromptOverlay()` and `computePromptStatus()` are pure (in `prompt-store-pure.js`) — tested directly without mocks. The status state machine outputs one of `current_default`, `stale_default`, `customized`, `customized_stale_baseline`, `missing`.
+
+See `docs/gotchas.md` #70 for the delete cage layers and the load-bearing structural test that enforces exactly one HTTP `DELETE` site in `src/`.
+
 ### i18n State (`src/i18n/i18n.js`, 2026-05-22)
 | Variable | Type | Scope | Writers | Readers |
 |---|---|---|---|---|

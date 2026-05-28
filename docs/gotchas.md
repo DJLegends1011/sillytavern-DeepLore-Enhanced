@@ -974,3 +974,73 @@ Five small pipeline-stage fixes that each shut down a specific footgun. None cha
 **Wave 5 import report struct (`{nativeApplied, roundTripped, skipped, emAppended, emSkipped, emEntries}`)** is threaded through `convertWiEntry` via `options.report` (optional accumulator — harmless when omitted). `importEntries` + `upsertConvertedEntry` return it on result. Wave 5 popup consumes it. The skip policy for EM entries lives at the I/O layer (`importEntries`), not the converter — converter always emits the append form so single-entry callers (companion extensions) behave consistently with batch import.
 
 **Test:** `test/wi-import.test.mjs` (Wave 7) holds the full-parity fixture + no-silent-drop guard. Drift-class regression coverage in `test/regression.test.mjs`.
+
+---
+
+## 70. Editable prompts — delete cage + getPrompt() invariants (v2.5)
+
+**Files:** `src/prompts/prompt-validators.js`, `src/prompts/prompt-api.js`, `src/prompts/prompt-store-pure.js`, `src/prompts/prompt-store.js`, `src/prompts/deprecated-keys.js`, `src/i18n/prompts/en.js`, `test/prompts-delete-safety.test.mjs`, `test/prompts-store.test.mjs`, `test/prompts-api.test.mjs`.
+**Date:** 2026-05-28
+
+**The contract:** users can override DLE's 25 built-in LLM prompts with MD files inside their Obsidian vault (`DeepLore/prompts/` by default, configurable). Runtime reads vault → falls back to compiled-in EN dict. Per-prompt revert deletes the vault file. The cage is the safety system around DELETE.
+
+### Delete cage — six orthogonal layers
+
+User vault deletion is the single most damaging failure DLE can have. Layers in order:
+
+| Layer | Where | What it checks |
+|---|---|---|
+| **L1** Path shape (10 sub-checks) | `validatePromptDeletePath()` (pure) | Non-empty string, starts with sanitized prefix, ends `.md`, no `..` (raw / `%2e%2e` / double-encoded / Unicode lookalikes), no `//`, no leading `/`/`\\`/`~`/drive letter, no `%`/`+`/control chars, single filename past prefix, SCREAMING_SNAKE_CASE stem, ≤ 200 chars. |
+| **L2** Stem whitelist | `validatePromptDeletePath()` | Stem MUST be in `KNOWN_PROMPT_KEYS` (derived from `en.js` exports) ∪ `DEPRECATED_PROMPT_KEYS` (allowlist for keys removed in later versions). |
+| **L3** Legacy traversal guard | `validateVaultPath()` from `obsidian-api.js` | Re-runs ST-style normalize + traversal check. Defense in depth. |
+| **L4** Pre-flight GET + frontmatter verify | `deletePromptFile()` + `verifyPromptFileForDeletion()` (pure) | GET the file. Parse frontmatter. Refuse if `frontmatter.key` does not match validated stem. Refuse if body contains `lorebook-` tag (would be a vault entry, not a prompt). |
+| **L5** URL re-assembly | `deletePromptFile()` | After L1-L2 produce the validated stem, the DELETE URL is reassembled internally as `${prefix}${stem}.md`. Caller-supplied path is NEVER used past L1. Asserts assembled equals validated. |
+| **L6** Code structure | grep + comment-tag | `deletePromptFile()` is the SOLE exported delete primitive. The marker comment `DLE_DELETE_PRIMITIVE` flags the one allowed site. `test/prompts-api.test.mjs` enforces this structurally by counting `method: 'DELETE'` literals across `src/` — exactly 1, must be in `prompt-api.js`. |
+
+**Add to `DEPRECATED_PROMPT_KEYS` when removing keys, not speculatively.** Empty set at v2.5 ship.
+
+**Reviewers MUST reject** any new `method: 'DELETE'` outside `prompt-api.js`. Also reject any generic `deleteNote()`/`deleteFile()` export from `obsidian-api.js`.
+
+### getPrompt() resolver invariants
+
+`getPrompt(key)` is **synchronous by design** — called inside agentic loops and fence builders without await. Cache is preloaded at boot.
+
+Resolution order:
+1. `promptCache` Map (populated at boot by `loadPrompts()`).
+2. Compiled-in EN dict by key (final fallback).
+3. Empty string + console warn (unknown key — should never happen for a recognized key).
+
+`loadPrompts(locale, connection)` does the two-stage merge: compiled-in baseline, then vault overrides via `buildPromptOverlay()` (pure). Invalid overrides (parse fail, key mismatch, `lorebook-` tag in body, placeholder mismatch) fall back to compiled-in and surface in `errors[]` + per-row `meta.error` for the Prompts tab.
+
+### Placeholder contract
+
+Two interpolation styles, kept distinct on purpose:
+- **`${N}` numeric indices** — agentic loop fragments (nonce, tool count, max searches, etc.). Validator enforces parity between vault override and canonical (`validatePromptShape` R3). Substituted at call time by a local `interp(template, ...args)` helper.
+- **`{{maxEntries}}` Mustache style** — legacy AI-search system prompt contract. Substituted at call time via `.replace(/\{\{maxEntries\}\}/g, ...)`. Invisible to the validator.
+
+Don't unify these — the AI search prompt is user-editable with the Mustache placeholder already documented, and rewriting it to `${0}` would break every existing custom prompt users have written.
+
+### Status state machine (`computePromptStatus`)
+
+Q11 A+ 4-state machine for the Prompts tab UI:
+
+| `body_hash` vs `source_hash` | `source_hash` vs `canonical_hash` | Status |
+|---|---|---|
+| match | match | `current_default` (untouched, up to date) |
+| match | differ | `stale_default` (untouched, upstream changed) |
+| differ | match | `customized` (edited, baseline current) |
+| differ | differ | `customized_stale_baseline` (edited, baseline outdated) |
+
+Edge cases: missing `source_hash` → infer from body vs canonical comparison; missing canonical → `customized` (orphan key); all hashes null → `missing`.
+
+### Boot-time load
+
+`index.js` init calls `loadPrompts()` once after `loadSettingsUI()` / `bindSettingsEvents()`. Failures are logged-not-thrown so a missing/misconfigured vault never blocks extension startup. Without a connection, the cache is purely compiled-in — runtime is byte-identical to pre-feature behavior.
+
+### Tests
+
+- `test/prompts-delete-safety.test.mjs` — 225 assertions covering every cage layer, every known prompt key, 100 fuzz inputs, 22 named attack patterns (traversal variants, null byte, encoded, Unicode lookalikes, drive letter, file://, etc.), and the user-configurable-folder sanitizer.
+- `test/prompts-store.test.mjs` — 269 assertions covering pure helpers + runtime cache + overlay merge + status state machine + 4 round-trip cases.
+- `test/prompts-api.test.mjs` — 40 assertions covering L4 pre-flight + L6 structural ("exactly one DELETE in `src/`, in `prompt-api.js`, with the `DLE_DELETE_PRIMITIVE` comment-tag").
+
+The L6 structural test is the load-bearing review backstop. If you ever see it fail, do not relax it — the failure means a new DELETE site landed that shouldn't have.
