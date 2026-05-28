@@ -218,6 +218,136 @@ export function computePromptStatus({ bodyHash, sourceHash, canonicalHash }) {
 }
 
 /**
+ * Normalize a parsed body for hash + storage.
+ *
+ * The frontmatter parser consumes the closing `---` and one trailing newline,
+ * leaving a leading blank line in the body when the file used the canonical
+ * `---\n\nBody` shape (which `buildPromptFileContent` produces). Strip up to
+ * one leading newline so a freshly exported file's resolved body byte-equals
+ * the canonical dict value.
+ *
+ * @param {string} body
+ * @returns {string}
+ */
+export function normalizePromptBody(body) {
+    if (typeof body !== 'string') return '';
+    // Strip the leading blank line that buildPromptFileContent inserts after
+    // the closing `---`, and any trailing whitespace (including the trailing
+    // newline that the same builder appends). This keeps hash comparison
+    // stable for unedited exports while still detecting genuine content edits.
+    return body.replace(/^\r?\n/, '').replace(/\s+$/, '');
+}
+
+/**
+ * Pure overlay merge — given the compiled-in dict for a locale and a Map of
+ * raw vault override files keyed by prompt key, produces:
+ *
+ *   resolved   — Map<key, string>  the string to put in the runtime cache
+ *   meta       — Map<key, object>  per-key source/hash/status for the Prompts tab
+ *   errors     — Array<{ key, reason }>  failed overrides (toastr surface)
+ *
+ * Per-key resolution:
+ *   1. If `overrides.has(key)`:
+ *        a. parsePromptFile → on failure, fall back to compiled-in + error.
+ *        b. validatePromptShape against compiled-in canonical:
+ *             - mismatch → fall back to compiled-in + error.
+ *             - OK → use vault body; compute status from
+ *               { bodyHash, sourceHash from frontmatter, canonicalHash }.
+ *   2. Otherwise: use compiled-in value; status = current_default.
+ *
+ * Used by the runtime loader in `prompt-store.js` and by unit tests directly.
+ *
+ * @param {object} localeDict - The compiled-in dict module (e.g. PromptsEn).
+ * @param {Map<string, string>} overrides - key → raw file content from vault.
+ * @param {Set<string>} acceptedKeys - keys to populate (typically KNOWN_PROMPT_KEYS).
+ * @param {object} enDict - The EN dict for final fallback if locale dict is missing a key.
+ * @returns {{ resolved: Map<string, string>, meta: Map<string, object>, errors: Array<{ key: string, reason: string }> }}
+ */
+export function buildPromptOverlay(localeDict, overrides, acceptedKeys, enDict) {
+    const resolved = new Map();
+    const meta = new Map();
+    const errors = [];
+
+    for (const key of acceptedKeys) {
+        // Compiled-in value at locale, with EN fallback.
+        const localeValue = (localeDict && typeof localeDict[key] === 'string') ? localeDict[key] : null;
+        const enValue = (enDict && typeof enDict[key] === 'string') ? enDict[key] : null;
+        const canonicalValue = localeValue ?? enValue;
+        if (canonicalValue == null) {
+            // Key not in EN dict — unknown. Skip silently.
+            continue;
+        }
+        const canonicalHash = promptHash(normalizePromptBody(canonicalValue));
+
+        const raw = overrides.get(key);
+        if (raw == null) {
+            // No override — use compiled-in.
+            resolved.set(key, canonicalValue);
+            meta.set(key, {
+                source: 'compiled-in',
+                bodyHash: canonicalHash,
+                sourceHash: canonicalHash,
+                canonicalHash,
+                status: computePromptStatus({ bodyHash: canonicalHash, sourceHash: canonicalHash, canonicalHash }),
+                error: null,
+            });
+            continue;
+        }
+
+        // Parse the override.
+        const parsed = parsePromptFile(raw);
+        if (!parsed.ok) {
+            resolved.set(key, canonicalValue);
+            meta.set(key, {
+                source: 'compiled-in',
+                bodyHash: canonicalHash,
+                sourceHash: canonicalHash,
+                canonicalHash,
+                status: computePromptStatus({ bodyHash: canonicalHash, sourceHash: canonicalHash, canonicalHash }),
+                error: parsed.reason,
+            });
+            errors.push({ key, reason: `parse failure: ${parsed.reason}` });
+            continue;
+        }
+
+        // Validate against compiled-in canonical.
+        const validation = validatePromptShape(parsed, canonicalValue, key);
+        if (!validation.ok) {
+            resolved.set(key, canonicalValue);
+            meta.set(key, {
+                source: 'compiled-in',
+                bodyHash: canonicalHash,
+                sourceHash: canonicalHash,
+                canonicalHash,
+                status: computePromptStatus({ bodyHash: canonicalHash, sourceHash: canonicalHash, canonicalHash }),
+                error: validation.reason,
+            });
+            errors.push({ key, reason: `validation failure: ${validation.reason}` });
+            continue;
+        }
+
+        // Override valid — use vault body (normalized), derive status from three hashes.
+        const normalizedBody = normalizePromptBody(parsed.body);
+        const bodyHash = promptHash(normalizedBody);
+        const sourceHash = typeof parsed.frontmatter.source_hash === 'string' && parsed.frontmatter.source_hash
+            ? parsed.frontmatter.source_hash
+            : null;
+        const status = computePromptStatus({ bodyHash, sourceHash, canonicalHash });
+        resolved.set(key, normalizedBody);
+        meta.set(key, {
+            source: 'vault',
+            bodyHash,
+            sourceHash,
+            canonicalHash,
+            status,
+            error: null,
+        });
+    }
+
+    return { resolved, meta, errors };
+}
+
+/**
  * Build the MD file content for a prompt export.
  *
  * Frontmatter shape (Q3 A):

@@ -18,8 +18,18 @@
 
 import * as PromptsEn from '../i18n/prompts/en.js';
 import { resolveLocale } from '../i18n/i18n-pure.js';
-import { promptHash, computePromptStatus } from './prompt-store-pure.js';
-import { KNOWN_PROMPT_KEYS } from './prompt-validators.js';
+import {
+    buildPromptOverlay,
+    normalizePromptBody,
+    promptHash,
+    computePromptStatus,
+} from './prompt-store-pure.js';
+import { KNOWN_PROMPT_KEYS, sanitizePromptsFolderPath } from './prompt-validators.js';
+import {
+    listPromptsFolder,
+    fetchPromptFile,
+    DLE_PROMPTS_DEFAULT_DIR,
+} from './prompt-api.js';
 
 /**
  * Dynamically import the AI prompt dict for a given locale.
@@ -71,6 +81,21 @@ let _currentLocale = 'en';
 let _loaded = false;
 
 /**
+ * Last-seen list of validation errors from `loadPrompts`. UI surfaces this
+ * via toastr/Prompts tab.
+ *
+ * @type {Array<{ key: string, reason: string }>}
+ */
+let _lastLoadErrors = [];
+
+/**
+ * Last connection params used by loadPrompts. Reload re-uses them.
+ *
+ * @type {object | null}
+ */
+let _lastConnection = null;
+
+/**
  * Resolve a prompt by key.
  *
  * Lookup order:
@@ -103,39 +128,87 @@ export function getPrompt(key) {
 /**
  * Load prompts into the cache.
  *
- * In this commit (cache + resolver foundation), the cache is populated from
- * the compiled-in dict at the current locale ONLY. Vault override reads
- * land in Commit 4 — at that point this function becomes async and adds
- * vault fetch + validation between the compiled-in load and the cache fill.
+ * Two-stage flow:
+ *   1. Compiled-in dict at `locale` → baseline cache + canonical hashes.
+ *   2. If `connection` is provided, fetch every override file from the vault
+ *      prompts folder, run each through `buildPromptOverlay`, and replace the
+ *      cache entries whose overrides validate. Failed overrides remain on the
+ *      compiled-in fallback and get reported via `_lastLoadErrors`.
  *
  * Safe to call multiple times. Each call rebuilds the cache from scratch.
  *
  * @param {string} [locale] - aiPromptLocale value. Empty/null = follow UI locale.
- * @returns {Promise<{ loaded: number, source: string }>}
+ * @param {object | null} [connection] - Vault connection params:
+ *   { host, port, apiKey, prefix, useHttps }.
+ *   If omitted or null, compiled-in only.
+ * @returns {Promise<{ loaded: number, source: 'compiled-in' | 'vault', vaultCount: number, errors: Array<{ key: string, reason: string }> }>}
  */
-export async function loadPrompts(locale) {
+export async function loadPrompts(locale, connection) {
     const dict = await loadAiPromptDict(locale);
     _currentLocale = (dict && dict.__meta && dict.__meta.locale) || 'en';
+    _lastConnection = connection || null;
+
+    // Stage 1 — fetch vault overrides (if connection provided)
+    const overrides = new Map();
+    let vaultListPartial = false;
+    if (connection && connection.host && connection.port && connection.apiKey) {
+        const sanitizedPrefix = sanitizePromptsFolderPath(connection.prefix) || DLE_PROMPTS_DEFAULT_DIR;
+        const listResult = await listPromptsFolder(
+            connection.host,
+            connection.port,
+            connection.apiKey,
+            sanitizedPrefix,
+            !!connection.useHttps,
+        );
+        if (listResult.ok) {
+            for (const filename of listResult.files) {
+                if (!filename.endsWith('.md')) continue;
+                const stem = filename.replace(/\.md$/, '');
+                if (!KNOWN_PROMPT_KEYS.has(stem)) continue; // skip unknown files
+                const fetchResult = await fetchPromptFile(
+                    connection.host,
+                    connection.port,
+                    connection.apiKey,
+                    sanitizedPrefix,
+                    stem,
+                    !!connection.useHttps,
+                );
+                if (fetchResult.ok) {
+                    overrides.set(stem, fetchResult.content);
+                } else if (fetchResult.error !== 'not_found') {
+                    console.warn(`[DLE prompts] fetch failed for ${stem}: ${fetchResult.error}`);
+                }
+            }
+        } else {
+            vaultListPartial = true;
+            console.warn(`[DLE prompts] listPromptsFolder failed: ${listResult.error}`);
+        }
+    }
+
+    // Stage 2 — pure overlay merge
+    const { resolved, meta, errors } = buildPromptOverlay(dict, overrides, KNOWN_PROMPT_KEYS, PromptsEn);
+
     promptCache.clear();
     promptMeta.clear();
     let loaded = 0;
-    for (const key of KNOWN_PROMPT_KEYS) {
-        const value = (dict && typeof dict[key] === 'string') ? dict[key] : PromptsEn[key];
-        if (typeof value !== 'string') continue;
+    let vaultCount = 0;
+    for (const [key, value] of resolved) {
         promptCache.set(key, value);
-        const canonicalHash = promptHash(value);
-        promptMeta.set(key, {
-            source: 'compiled-in',
-            bodyHash: canonicalHash,
-            sourceHash: canonicalHash,
-            canonicalHash,
-            status: computePromptStatus({ bodyHash: canonicalHash, sourceHash: canonicalHash, canonicalHash }),
-            error: null,
-        });
         loaded++;
     }
+    for (const [key, m] of meta) {
+        promptMeta.set(key, m);
+        if (m.source === 'vault') vaultCount++;
+    }
+    _lastLoadErrors = errors;
     _loaded = true;
-    return { loaded, source: 'compiled-in' };
+    return {
+        loaded,
+        source: vaultCount > 0 ? 'vault' : 'compiled-in',
+        vaultCount,
+        errors,
+        vaultListPartial,
+    };
 }
 
 /**
@@ -145,7 +218,17 @@ export async function loadPrompts(locale) {
  * @returns {Promise<{ loaded: number, source: string }>}
  */
 export async function reloadPrompts() {
-    return loadPrompts(_currentLocale);
+    return loadPrompts(_currentLocale, _lastConnection);
+}
+
+/**
+ * Snapshot the last batch of override-load errors. The Prompts tab UI surfaces
+ * these via per-row indicators + a top-level toastr after `loadPrompts`.
+ *
+ * @returns {Array<{ key: string, reason: string }>}
+ */
+export function getLastLoadErrors() {
+    return _lastLoadErrors.slice();
 }
 
 /**
@@ -181,6 +264,8 @@ export function _resetPromptStoreForTests() {
     promptMeta.clear();
     _currentLocale = 'en';
     _loaded = false;
+    _lastLoadErrors = [];
+    _lastConnection = null;
 }
 
 /**

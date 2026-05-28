@@ -26,6 +26,8 @@ import {
     validatePromptShape,
     computePromptStatus,
     buildPromptFileContent,
+    buildPromptOverlay,
+    normalizePromptBody,
     promptHash,
 } from '../src/prompts/prompt-store-pure.js';
 import {
@@ -33,6 +35,7 @@ import {
     loadPrompts,
     reloadPrompts,
     getPromptStatusGrid,
+    getLastLoadErrors,
     _resetPromptStoreForTests,
     _isLoadedForTests,
     _getMetaForTests,
@@ -386,6 +389,220 @@ for (const key of KNOWN_PROMPT_KEYS) {
 }
 
 // Reset for downstream tests
+_resetPromptStoreForTests();
+
+// ════════════════════════════════════════════════════════════════════════════
+// normalizePromptBody — strips shim newlines, preserves real content
+// ════════════════════════════════════════════════════════════════════════════
+
+assertEqual(normalizePromptBody('\nBody\n'), 'Body', 'normalize: strips leading + trailing newlines');
+assertEqual(normalizePromptBody('Body'), 'Body', 'normalize: no-op on plain string');
+assertEqual(normalizePromptBody('\r\nBody\r\n'), 'Body', 'normalize: handles CRLF');
+assertEqual(normalizePromptBody('\n\nBody\n\n'), '\nBody', 'normalize: strips only one leading newline');
+assertEqual(normalizePromptBody(''), '', 'normalize: empty stays empty');
+assertEqual(normalizePromptBody(null), '', 'normalize: null returns empty');
+assertEqual(normalizePromptBody('Body with spaces and newlines\n\t  '), 'Body with spaces and newlines', 'normalize: trims all trailing whitespace');
+
+// ════════════════════════════════════════════════════════════════════════════
+// buildPromptOverlay — pure overlay merge
+// ════════════════════════════════════════════════════════════════════════════
+
+// Case 1 — empty overrides → all entries use compiled-in
+{
+    const overrides = new Map();
+    const result = buildPromptOverlay(PromptsEn, overrides, KNOWN_PROMPT_KEYS, PromptsEn);
+    assertEqual(result.errors.length, 0, 'overlay: no errors with empty overrides');
+    assertEqual(result.resolved.size, KNOWN_PROMPT_KEYS.size, 'overlay: all keys resolved');
+    let allCompiledIn = true;
+    for (const m of result.meta.values()) {
+        if (m.source !== 'compiled-in') { allCompiledIn = false; break; }
+    }
+    assert(allCompiledIn, 'overlay: every entry sourced from compiled-in');
+}
+
+// Case 2 — valid override for one key, unchanged content → status = current_default
+{
+    const key = 'SCRIBE_PROMPT';
+    const fileContent = buildPromptFileContent({
+        key,
+        locale: 'en',
+        value: PromptsEn.SCRIBE_PROMPT,
+    });
+    const overrides = new Map([[key, fileContent]]);
+    const result = buildPromptOverlay(PromptsEn, overrides, KNOWN_PROMPT_KEYS, PromptsEn);
+    assertEqual(result.errors.length, 0, 'overlay: no errors on unedited override');
+    const meta = result.meta.get(key);
+    assertEqual(meta.source, 'vault', 'overlay: override key sourced from vault');
+    assertEqual(meta.status, 'current_default', 'overlay: unedited override → current_default');
+    assertEqual(meta.bodyHash, meta.canonicalHash, 'overlay: body hash == canonical hash');
+}
+
+// Case 3 — user-edited override → status = customized
+{
+    const key = 'SCRIBE_PROMPT';
+    const sourceHash = promptHash(normalizePromptBody(PromptsEn.SCRIBE_PROMPT));
+    // Edit the body, keep source_hash matching original (which is the case after
+    // a fresh export → user edits but doesn't touch frontmatter)
+    const fileContent = `---
+key: ${key}
+locale: en
+source_hash: ${sourceHash}
+---
+
+I'm a custom version of the scribe prompt.`;
+    const overrides = new Map([[key, fileContent]]);
+    const result = buildPromptOverlay(PromptsEn, overrides, KNOWN_PROMPT_KEYS, PromptsEn);
+    assertEqual(result.errors.length, 0, 'overlay: no errors on edited override');
+    const meta = result.meta.get(key);
+    assertEqual(meta.source, 'vault', 'overlay: customized key from vault');
+    assertEqual(meta.status, 'customized', 'overlay: edited override → customized');
+    assert(meta.bodyHash !== meta.canonicalHash, 'overlay: body hash differs from canonical');
+}
+
+// Case 4 — stale default (untouched but upstream moved)
+{
+    const key = 'SCRIBE_PROMPT';
+    const oldCanonical = 'OLD canonical text that has since been replaced.';
+    const oldHash = promptHash(normalizePromptBody(oldCanonical));
+    const fileContent = `---
+key: ${key}
+locale: en
+source_hash: ${oldHash}
+---
+
+${oldCanonical}`;
+    const overrides = new Map([[key, fileContent]]);
+    const result = buildPromptOverlay(PromptsEn, overrides, KNOWN_PROMPT_KEYS, PromptsEn);
+    const meta = result.meta.get(key);
+    assertEqual(meta.source, 'vault', 'overlay: stale-default still sourced from vault');
+    assertEqual(meta.status, 'stale_default', 'overlay: body == source != canonical → stale_default');
+}
+
+// Case 5 — customized + stale baseline (edited + upstream moved)
+{
+    const key = 'SCRIBE_PROMPT';
+    const oldHash = 'old_baseline_hash_xyz';
+    const fileContent = `---
+key: ${key}
+locale: en
+source_hash: ${oldHash}
+---
+
+User's edited version of an old baseline.`;
+    const overrides = new Map([[key, fileContent]]);
+    const result = buildPromptOverlay(PromptsEn, overrides, KNOWN_PROMPT_KEYS, PromptsEn);
+    const meta = result.meta.get(key);
+    assertEqual(meta.status, 'customized_stale_baseline', 'overlay: edited + old hash → customized_stale_baseline');
+}
+
+// Case 6 — broken override (parse fail) → fall back to compiled-in + error
+{
+    const key = 'SCRIBE_PROMPT';
+    const fileContent = 'not a valid prompt file';
+    const overrides = new Map([[key, fileContent]]);
+    const result = buildPromptOverlay(PromptsEn, overrides, KNOWN_PROMPT_KEYS, PromptsEn);
+    const meta = result.meta.get(key);
+    assertEqual(meta.source, 'compiled-in', 'overlay: parse-fail falls back to compiled-in');
+    assert(meta.error !== null, 'overlay: parse-fail records error');
+    assert(result.errors.some(e => e.key === key), 'overlay: errors array contains parse-fail key');
+    assertEqual(result.resolved.get(key), PromptsEn.SCRIBE_PROMPT, 'overlay: resolved value is compiled-in canonical');
+}
+
+// Case 7 — placeholder mismatch (R3) → fall back + error
+{
+    const key = 'AGENTIC_TOOLS_INTRO';
+    const fileContent = `---
+key: ${key}
+locale: en
+---
+
+You have tools available:`; // missing ${0} and ${1}
+    const overrides = new Map([[key, fileContent]]);
+    const result = buildPromptOverlay(PromptsEn, overrides, KNOWN_PROMPT_KEYS, PromptsEn);
+    const meta = result.meta.get(key);
+    assertEqual(meta.source, 'compiled-in', 'overlay: placeholder mismatch falls back');
+    assert(/placeholder/.test(meta.error || ''), 'overlay: placeholder error recorded');
+}
+
+// Case 8 — frontmatter key mismatch (R1) → fall back + error
+{
+    const key = 'SCRIBE_PROMPT';
+    const fileContent = `---
+key: WRONG_KEY
+locale: en
+---
+
+Body that's otherwise fine.`;
+    const overrides = new Map([[key, fileContent]]);
+    const result = buildPromptOverlay(PromptsEn, overrides, KNOWN_PROMPT_KEYS, PromptsEn);
+    const meta = result.meta.get(key);
+    assertEqual(meta.source, 'compiled-in', 'overlay: key mismatch falls back');
+    assert(/does not match/.test(meta.error || ''), 'overlay: key-mismatch error recorded');
+}
+
+// Case 9 — lorebook- tag in body (R2) → fall back + error
+{
+    const key = 'SCRIBE_PROMPT';
+    const fileContent = `---
+key: SCRIBE_PROMPT
+locale: en
+---
+
+Body uses lorebook-always tag accidentally.`;
+    const overrides = new Map([[key, fileContent]]);
+    const result = buildPromptOverlay(PromptsEn, overrides, KNOWN_PROMPT_KEYS, PromptsEn);
+    const meta = result.meta.get(key);
+    assertEqual(meta.source, 'compiled-in', 'overlay: lorebook- tag falls back');
+    assert(/lorebook/i.test(meta.error || ''), 'overlay: lorebook-tag error recorded');
+}
+
+// Case 10 — multiple overrides, mixed valid/invalid
+{
+    const valid = buildPromptFileContent({
+        key: 'SCRIBE_PROMPT',
+        locale: 'en',
+        value: 'Custom scribe prose.',
+    });
+    const invalid = 'garbage';
+    const overrides = new Map([
+        ['SCRIBE_PROMPT', valid],
+        ['AI_NOTEPAD_PROMPT', invalid],
+    ]);
+    const result = buildPromptOverlay(PromptsEn, overrides, KNOWN_PROMPT_KEYS, PromptsEn);
+    assertEqual(result.meta.get('SCRIBE_PROMPT').source, 'vault', 'overlay mixed: valid override from vault');
+    assertEqual(result.meta.get('AI_NOTEPAD_PROMPT').source, 'compiled-in', 'overlay mixed: invalid falls back');
+    assertEqual(result.errors.length, 1, 'overlay mixed: one error reported');
+    assertEqual(result.errors[0].key, 'AI_NOTEPAD_PROMPT', 'overlay mixed: correct key in errors');
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Runtime: loadPrompts with no connection still works (commit 2 behavior)
+// ════════════════════════════════════════════════════════════════════════════
+
+_resetPromptStoreForTests();
+{
+    const result = await loadPrompts('en');
+    assertEqual(result.source, 'compiled-in', 'loadPrompts(no connection): source = compiled-in');
+    assertEqual(result.vaultCount, 0, 'loadPrompts(no connection): vaultCount = 0');
+    assertEqual(result.errors.length, 0, 'loadPrompts(no connection): no errors');
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Runtime: loadPrompts with malformed/incomplete connection treated as no-connection
+// ════════════════════════════════════════════════════════════════════════════
+
+_resetPromptStoreForTests();
+{
+    // Missing apiKey → treated as no connection (skipped silently).
+    const result = await loadPrompts('en', { host: '127.0.0.1', port: 27123 });
+    assertEqual(result.source, 'compiled-in', 'loadPrompts(missing apiKey): compiled-in fallback');
+    assertEqual(result.vaultCount, 0, 'loadPrompts(missing apiKey): no vault count');
+}
+
+// getLastLoadErrors snapshot starts empty after reset+load
+assertEqual(getLastLoadErrors().length, 0, 'runtime: getLastLoadErrors empty after clean load');
+
+// Reset for next test
 _resetPromptStoreForTests();
 
 // ════════════════════════════════════════════════════════════════════════════
