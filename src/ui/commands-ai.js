@@ -12,7 +12,7 @@ import { SlashCommandArgument, ARGUMENT_TYPE } from '../../../../../slash-comman
 import { SlashCommandEnumValue } from '../../../../../slash-commands/SlashCommandEnumValue.js';
 import { classifyError, NO_ENTRIES_MSG, yamlEscape } from '../../core/utils.js';
 import { getSettings, getPrimaryVault, resolveConnectionConfig } from '../../settings.js';
-import { vaultIndex, scribeInProgress, setIndexTimestamp, setSkipNextPipeline, loreGaps, tryAcquireHalfOpenProbe, recordAiSuccess, recordAiFailure } from '../state.js';
+import { vaultIndex, scribeInProgress, setIndexTimestamp, setSkipNextPipeline, loreGaps, tryAcquireHalfOpenProbe, recordAiSuccess, recordAiFailure, releaseHalfOpenProbe } from '../state.js';
 import { buildIndex, ensureIndexFresh, getMaxResponseTokens } from '../vault/vault.js';
 import { runScribe } from '../ai/scribe.js';
 import { runAutoSuggest, showSuggestionPopup } from '../ai/auto-suggest.js';
@@ -435,7 +435,7 @@ export async function summarizeEntries(entries) {
                 });
                 recordAiSuccess();
             } catch (callErr) {
-                if (!isExcludedFromBreaker(callErr)) recordAiFailure();
+                if (!isExcludedFromBreaker(callErr)) recordAiFailure(); else releaseHalfOpenProbe();
                 throw callErr;
             }
             // Audit DIAG-09: result.text may be undefined when the AI call fails or returns

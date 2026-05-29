@@ -92,6 +92,7 @@ import {
     setCurrentChatId as setVerdictChatId,
     hydrateChat as hydrateVerdictChat,
     getCurrent as getCurrentVerdictForRender,
+    clearChatIdb,
 } from './src/verdict/verdict-store.js';
 
 // ============================================================================
@@ -2420,8 +2421,14 @@ async function _doInit() {
         // mainly to evict any leftover legacy localStorage draft from pre-BUG-043 installs
         // and to no-op the chat_metadata cleanup defensively in case ST's wipe order
         // changes upstream.
-        const _onChatDeleted = () => {
+        const _onChatDeleted = (name) => {
             try { clearLibrarianSessionState(); } catch (err) { console.warn('[DLE] CHAT_DELETED cleanup failed:', err.message); }
+            // L3: ST wipes chat_metadata on delete, but verdict IDB is a separate store
+            // and would leak the deleted chat's rows forever. Both CHAT_DELETED and
+            // GROUP_CHAT_DELETED hand the deleted chat's id (same form getCurrentChatId
+            // returns — the value verdict keys its IDB rows on) as the first arg.
+            // Fire-and-forget: do NOT await in the event handler.
+            try { if (name) clearChatIdb(name); } catch (e) { console.warn('[DLE] verdict IDB cleanup on chat delete failed:', e?.message); }
         };
         _registerEs(event_types.CHAT_DELETED, _onChatDeleted);
         _registerEs(event_types.GROUP_CHAT_DELETED, _onChatDeleted);

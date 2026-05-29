@@ -334,7 +334,21 @@ export function applyGating(entries) {
     let iterations = 0;
     const MAX_ITERATIONS = 10;
 
-    let activeTitles = new Set(result.map(e => e.title.toLowerCase()));
+    // L13: refcount titles instead of a plain Set (mirrors applyRequiresExcludesGating in
+    // src/stages.js). Two same-titled entries from DIFFERENT vaults: dropping one must NOT
+    // purge the title while its twin survives, or a third entry's `requires:[Title]` wrongly
+    // fails. A title is "active" while its count > 0. Preserves gotcha #50 item 7 (permissive
+    // cross-vault bare-title lookup); only fixes the destructive-delete-while-twin-survives bug.
+    const activeTitles = new Map();
+    const isActive = (t) => (activeTitles.get(t) || 0) > 0;
+    const dropTitle = (t) => {
+        const n = (activeTitles.get(t) || 0) - 1;
+        if (n <= 0) activeTitles.delete(t); else activeTitles.set(t, n);
+    };
+    for (const e of result) {
+        const t = e.title.toLowerCase();
+        activeTitles.set(t, (activeTitles.get(t) || 0) + 1);
+    }
 
     while (changed && iterations < MAX_ITERATIONS) {
         changed = false;
@@ -343,18 +357,18 @@ export function applyGating(entries) {
         const nextResult = [];
         for (const entry of result) {
             if (entry.requires && entry.requires.length > 0) {
-                const allPresent = entry.requires.every(r => activeTitles.has(r.toLowerCase()));
+                const allPresent = entry.requires.every(r => isActive(r.toLowerCase()));
                 if (!allPresent) {
                     changed = true;
-                    activeTitles.delete(entry.title.toLowerCase());
+                    dropTitle(entry.title.toLowerCase());
                     continue;
                 }
             }
             if (entry.excludes && entry.excludes.length > 0) {
-                const anyPresent = entry.excludes.some(r => activeTitles.has(r.toLowerCase()));
+                const anyPresent = entry.excludes.some(r => isActive(r.toLowerCase()));
                 if (anyPresent) {
                     changed = true;
-                    activeTitles.delete(entry.title.toLowerCase());
+                    dropTitle(entry.title.toLowerCase());
                     continue;
                 }
             }

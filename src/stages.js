@@ -324,7 +324,23 @@ export function applyRequiresExcludesGating(entries, policy, debugMode, priority
     let iterations = 0;
     const MAX_ITERATIONS = 10;
 
-    let activeTitles = new Set(result.map(e => e.title.toLowerCase()));
+    // L13: refcount titles instead of a plain Set. With two same-titled entries from
+    // DIFFERENT vaults, dropping one must NOT purge the title while its twin survives —
+    // otherwise a third entry's `requires:[Title]` wrongly fails. A title is "active"
+    // (satisfies a bare cross-vault `requires`/`excludes` lookup) while its count > 0.
+    // This preserves gotcha #50 item 7 (permissive cross-vault requires: any vault's
+    // "Castle" satisfies a bare `requires:[Castle]`) — the lookup stays bare-title — and
+    // only fixes the destructive-delete-while-a-duplicate-survives asymmetry.
+    const activeTitles = new Map();
+    const isActive = (t) => (activeTitles.get(t) || 0) > 0;
+    const dropTitle = (t) => {
+        const n = (activeTitles.get(t) || 0) - 1;
+        if (n <= 0) activeTitles.delete(t); else activeTitles.set(t, n);
+    };
+    for (const e of result) {
+        const t = e.title.toLowerCase();
+        activeTitles.set(t, (activeTitles.get(t) || 0) + 1);
+    }
 
     while (changed && iterations < MAX_ITERATIONS) {
         changed = false;
@@ -335,18 +351,18 @@ export function applyRequiresExcludesGating(entries, policy, debugMode, priority
             if (policy.forceInject.has(trackerKey(entry))) { nextResult.push(entry); continue; }
 
             if (entry.requires && entry.requires.length > 0) {
-                const allPresent = entry.requires.every(r => activeTitles.has(r.toLowerCase()));
+                const allPresent = entry.requires.every(r => isActive(r.toLowerCase()));
                 if (!allPresent) {
                     changed = true;
-                    activeTitles.delete(entry.title.toLowerCase());
+                    dropTitle(entry.title.toLowerCase());
                     continue;
                 }
             }
             if (entry.excludes && entry.excludes.length > 0) {
-                const anyPresent = entry.excludes.some(r => activeTitles.has(r.toLowerCase()));
+                const anyPresent = entry.excludes.some(r => isActive(r.toLowerCase()));
                 if (anyPresent) {
                     changed = true;
-                    activeTitles.delete(entry.title.toLowerCase());
+                    dropTitle(entry.title.toLowerCase());
                     continue;
                 }
             }

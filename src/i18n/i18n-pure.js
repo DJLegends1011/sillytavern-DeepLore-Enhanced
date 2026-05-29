@@ -67,12 +67,42 @@ export function interpolate(text, ...values) {
 }
 
 /**
- * Pick singular / plural form. Translators may not have access to JS ternaries
- * in the source, so we split keys `_one` / `_other` and resolve at runtime.
- * Returns whichever value is provided (single hit) or `other` for count !== 1.
+ * CLDR-aware plural selection. Translators split a plural string into `_one` /
+ * `_other` keys (and, eventually, `_few` / `_many` for languages that need them);
+ * this resolves the right form at runtime from `count` and the active `locale`.
+ *
+ * Selection: `new Intl.PluralRules(locale).select(count)` yields a CLDR category
+ * (`zero/one/two/few/many/other`). We try `${baseKey}_${form}`; since only
+ * `_one`/`_other` ship today, any non-`one` form (e.g. Russian `few`/`many`)
+ * collapses to `${baseKey}_other`. If neither key is present we fall back to the
+ * bare `baseKey` so a missing pair surfaces visibly rather than printing blank.
+ *
+ * `count` is interpolated as `${0}`; any extra `args` map to `${1}`, `${2}`, …
+ * via the shared {@link interpolate} mechanism (indexed, translator-friendly).
+ *
+ * Pure — the ST-coupled wrapper in `i18n.js` binds the active merged dict + the
+ * active UI locale and delegates here so this stays unit-testable without ST.
+ *
+ * @param {Record<string,string>} dict  Resolved (merged) locale dict.
+ * @param {string} baseKey  Key prefix; `_one`/`_other` are appended.
+ * @param {string} locale   BCP-47 locale code for Intl.PluralRules.
+ * @param {number} count    The quantity — also interpolated as `${0}`.
+ * @param {...*} args        Additional indexed interpolation args (`${1}`, …).
+ * @returns {string}
  */
-export function pluralize(count, oneValue, otherValue) {
-    return count === 1 ? oneValue : otherValue;
+export function trPlural(dict, baseKey, locale, count, ...args) {
+    let form = 'other';
+    try {
+        form = new Intl.PluralRules(locale || 'en').select(count);
+    } catch {
+        // Invalid/unsupported locale → safe default category.
+        form = 'other';
+    }
+    const d = dict || {};
+    const formKey = `${baseKey}_${form}`;
+    const key = Object.hasOwn(d, formKey) ? formKey : `${baseKey}_other`;
+    const template = Object.hasOwn(d, key) ? d[key] : baseKey;
+    return interpolate(template, count, ...args);
 }
 
 /**

@@ -37,6 +37,7 @@ import { renderInjectionTab, renderBrowseTab, renderBrowseWindow, renderStatusZo
 import { renderLibrarianTab } from './drawer-render-librarian.js';
 import { hideGap, dismissGap, getHiddenGapIds, persistGaps } from '../librarian/librarian-tools.js';
 import { dedupError, dedupWarning } from '../toast-dedup.js';
+import { trPlural } from '../i18n/i18n.js';
 
 // ════════════════════════════════════════════════════════════════════════════
 // Helpers
@@ -385,7 +386,7 @@ export function wireInjectionTab($drawer) {
         const n = sources.length;
         const titles = sources.map(s => s.title).join('\n');
         navigator.clipboard.writeText(titles).then(
-            () => { toastr.success(`Copied ${n} title${n === 1 ? '' : 's'} to clipboard`, 'DeepLore Enhanced', { timeOut: 2000 }); $btn.focus(); },
+            () => { toastr.success(trPlural('dle_toast_titles_copied', n), 'DeepLore Enhanced', { timeOut: 2000 }); $btn.focus(); },
             () => toastr.warning('Clipboard access denied — check browser permissions.', 'DeepLore Enhanced', { timeOut: 3000 }),
         );
     });
@@ -863,7 +864,7 @@ export function wireGatingTab($drawer) {
         }
         saveMetadataDebounced();
         notifyGatingChanged();
-        toastr.success(`Cleared ${cleared} gating filter${cleared !== 1 ? 's' : ''}.`, 'DeepLore Enhanced', { timeOut: 2000 });
+        toastr.success(trPlural('dle_toast_gating_cleared', cleared), 'DeepLore Enhanced', { timeOut: 2000 });
     });
 
     $drawer.find('.dle-manage-fields-btn').on('click', () => openRuleBuilder());
@@ -922,7 +923,7 @@ export function wireGatingTab($drawer) {
         for (const { path, entryCount } of folderList) {
             const isActive = currentSet.has(path);
             const activeClass = isActive ? ' dle-field-select--active' : '';
-            html += `<button class="menu_button dle-field-select dle-folder-select dle-flex-between dle-w-full${activeClass}" data-value="${escapeHtml(path)}">${escapeHtml(path)}<span class="dle-text-xs" style="opacity:0.5;margin-left:auto;padding-left:8px;">${entryCount} ${entryCount === 1 ? 'entry' : 'entries'}</span></button>`;
+            html += `<button class="menu_button dle-field-select dle-folder-select dle-flex-between dle-w-full${activeClass}" data-value="${escapeHtml(path)}">${escapeHtml(path)}<span class="dle-text-xs" style="opacity:0.5;margin-left:auto;padding-left:8px;">${escapeHtml(trPlural('dle_popup_entry_count', entryCount))}</span></button>`;
         }
         html += '</div></div>';
 
@@ -1203,7 +1204,7 @@ export function wireLibrarianTab($drawer) {
             ? '<ul style="margin:6px 0 0 18px;padding:0;">' + titles.map(t => `<li>${esc(t)}</li>`).join('') + '</ul>'
             : '<em>No entries returned.</em>';
         const html = `<div><strong>Query:</strong> ${esc(query)}</div>`
-            + `<div style="margin-top:8px;"><strong>Context returned to writing AI (${titles.length} ${titles.length === 1 ? 'entry' : 'entries'}):</strong></div>`
+            + `<div style="margin-top:8px;"><strong>Context returned to writing AI (${esc(trPlural('dle_popup_entry_count', titles.length))}):</strong></div>`
             + list;
         await callGenericPopup(html, POPUP_TYPE.TEXT, '', { wide: false, allowVerticalScrolling: true });
     });
@@ -1275,7 +1276,7 @@ export function wireLibrarianTab($drawer) {
             ds.librarianLastClicked = null;
             const doneN = ids.length;
             toastr.success(`Marked ${doneN} as written`, 'DeepLore Enhanced', { timeOut: 2000 });
-            announceToScreenReader(`${doneN} item${doneN !== 1 ? 's' : ''} marked as Written`);
+            announceToScreenReader(trPlural('dle_announce_marked_written', doneN));
             scheduleRender(renderLibrarianTab);
             requestAnimationFrame(() => {
                 const $first = $drawer.find('.dle-librarian-list .dle-librarian-entry').first();

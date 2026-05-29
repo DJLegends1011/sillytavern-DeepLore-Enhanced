@@ -324,7 +324,7 @@ All registered via `_registerEs()` in `init()`. Full list:
 | `MESSAGE_SWIPED` | Clear tool calls/sources/notes on swiped message, rebuild counts (inline in `init()`) |
 | ~~`MESSAGE_DELETED`~~ | *(Removed — agentic loop produces no intermediates to clean up)* |
 | `MESSAGE_SWIPE_DELETED` | Clean up per-message extras (inline in `init()`) |
-| `CHAT_DELETED` / `GROUP_CHAT_DELETED` | `_onChatDeleted` — clear Librarian session state |
+| `CHAT_DELETED` / `GROUP_CHAT_DELETED` | `_onChatDeleted(name)` — clear Librarian session state, then evict the deleted chat's verdict IDB rows (see note below, L3) |
 | `CONNECTION_PROFILE_DELETED` | `_onProfileDeleted` — null dangling profileIds, toast |
 | `CONNECTION_PROFILE_UPDATED` | `_onProfileUpdated` — invalidate settings cache |
 | `SETTINGS_UPDATED` | Invalidate settings cache (inline in `init()`) |
@@ -339,6 +339,8 @@ All registered via `_registerEs()` in `init()`. Full list:
 | `_dleInitInProgress` | Promise sentinel during `_doInit()` execution. Second jQuery dispatch awaits this instead of tearing down the still-initializing first instance. Cleared in `finally`. |
 | `_realChatChangedHandler` | Set by `_installRealChatChangedHandler`. While `null`, the early stub queues events; once set, the stub becomes a trampoline that forwards directly. |
 | `_pendingChatChanged` / `_pendingChatChangedFired` | Single-slot queue for CHAT_CHANGED events that fire during init's awaits. Drained exactly once at `_installRealChatChangedHandler`. |
+
+**`_onChatDeleted(name)` verdict IDB eviction (L3, 2026-05-29):** `_onChatDeleted` now also clears the deleted chat's verdict IndexedDB rows via `clearChatIdb(name)` (fire-and-forget, try/catch, NOT awaited). Both `CHAT_DELETED` and `GROUP_CHAT_DELETED` emit the deleted chat's id as the first arg, in the same form `getCurrentChatId()` returns (the value verdict keys IDB rows on). Still calls `clearLibrarianSessionState()` first. ST wipes `chat_metadata` on delete, but verdict IDB is a SEPARATE store — without this, deleted chats' verdict rows leaked forever.
 
 ---
 

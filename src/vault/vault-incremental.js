@@ -264,7 +264,20 @@ export function incrementalMentionWeights(prevWeights, prevEntries, newEntries, 
     //                     against that target's regex (dirty sources already covered
     //                     in pass A).
     //    We share a contentLower cache (keyed by keyOf) across both passes.
+    //
+    //    Pre-populate LAST-WRITE-WINS over newEntries, exactly mirroring the full
+    //    path (vault.js: `for (const source of entries) contentLower.set(
+    //    trackerKey(source), source.content.toLowerCase())`). When two entries
+    //    share a keyOf (`vaultSource:title` — e.g. same-vault same-title
+    //    duplicates kept under multiVaultConflictResolution='all'), the LAST
+    //    one's content must win so a cold (incremental) build matches a warm
+    //    (full) rebuild. A lazy first-write-wins memo here diverged from full
+    //    (review finding L11 / gotcha): incremental sourced the FIRST duplicate's
+    //    content while full sourced the LAST → silent mention-ranking drift.
     const contentLower = new Map();
+    for (const source of newEntries) {
+        contentLower.set(keyOf(source), source.content.toLowerCase());
+    }
     const lowerOf = (entry) => {
         const k = keyOf(entry);
         let c = contentLower.get(k);

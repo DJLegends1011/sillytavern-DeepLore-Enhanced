@@ -28,6 +28,7 @@ import {
     resolveAiPromptLocale,
     mergeLocaleDicts,
     lookupKey,
+    trPlural as trPluralPure,
 } from './i18n-pure.js';
 
 const EXTENSION_BASE = '/scripts/extensions/third-party/sillytavern-DeepLore-Enhanced';
@@ -124,6 +125,31 @@ export function tr(key, fallback) {
     const direct = lookupKey(_dleDict, key, _enFallbackDict);
     if (direct !== key) return direct;
     return fallback !== undefined ? fallback : translate(key);
+}
+
+/**
+ * CLDR-aware plural lookup. Binds the active merged dict + active UI locale and
+ * delegates to the pure {@link trPluralPure}. Use for any "N thing(s)" string —
+ * splits into `_one`/`_other` (and future `_few`/`_many`) keys so translators
+ * control plural form instead of hardcoding English `count === 1 ? '' : 's'`.
+ *
+ * `count` interpolates as `${0}`; extra `args` map to `${1}`, `${2}`, …
+ *
+ *   trPlural('dle_popup_entry_count', n)        // "1 entry" / "3 entries"
+ *   trPlural('dle_activity_detail', n, toks)    // "1 entry, 12 tok" (${1}=toks)
+ *
+ * @param {string} baseKey  Key prefix; `_one`/`_other` are appended internally.
+ * @param {number} count    Quantity, also interpolated as `${0}`.
+ * @param {...*} args        Additional indexed args (`${1}`, …).
+ * @returns {string}
+ */
+export function trPlural(baseKey, count, ...args) {
+    // Pass a dict with EN gaps filled so a key missing from the active locale
+    // still resolves (mirrors tr()'s _dleDict → _enFallbackDict chain). For an
+    // EN user _dleDict already === _enFallbackDict, so this is a cheap merge.
+    const dict = mergeLocaleDicts(_enFallbackDict, _dleDict);
+    const locale = _dleLocale || resolveLocale(getCurrentLocale());
+    return trPluralPure(dict, baseKey, locale, count, ...args);
 }
 
 /**
