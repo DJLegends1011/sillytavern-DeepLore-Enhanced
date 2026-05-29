@@ -192,13 +192,19 @@ Custom Canvas-based force-directed graph visualization (no external library).
 
 **Physics:** ForceAtlas2-like repulsion model with configurable parameters.
 
-**Focus mode:** Highlights path from selected node through connected nodes. Depth-limited by `graphHoverFalloff` (transmission per hop — `E[d] = t^d`).
+**Layout modes (`gs.layoutMode`, v2.5):** Toolbar "Layout" select switches `force` (default — physics) ↔ `dag` (Layered DAG). `gs.layoutMode ∈ {force, focus, dag}` is the single discriminant — `graph-physics.js` `simulate()` early-returns unless `layoutMode === 'force'`, freezing the sim for every non-force layout. Non-force layouts stage deterministic positions on `_targetX/_targetY` and lerp in via `lerpEgoPositions` (the focus-tree rig). **Layered DAG** (`graph-dag.js`) uses only `requires`+`cascade` edges: hand-rolled Sugiyama-lite (DFS cycle-break → longest-path layering → deterministic ordering), top→down with directional arrowheads, non-participants hidden. Enter/exit snapshot then restore positions, `edgeVisibility`, `cachedVisibleCount`, and the hidden/reveal formula exactly (mirrors `enterFocusTree`/`exitFocusTree`). Deterministic layouts are NEVER persisted to `graphSavedLayout`. See gotcha #71.
+
+**Focus Tree (ego mode):** Double-click a node to enter. BFS from that root to `graphFocusTreeDepth` hops (default 2), hides everything outside the neighborhood, lays survivors out as a radial tree, and freezes the force sim. Depth is adjustable live via the +/- hop controls.
+
+**Hover reach/dim:** Separate from Focus Tree. On hover, BFS reaches `graphHoverDimDistance` hops (default 3) and dims everything beyond. Per-hop alpha falloff is `graphHoverFalloff` (transmission per hop — `E[d] = t^d`).
+
+**Vault Health / World Doctor (`graph-health.js`, v2.5):** "Health" toolbar button toggles a **JS-created floating side panel** — NOT part of the graph container HTML; created on demand, fixed top-right side view, removed on close. Surfaces structural problems by severity: 🔴 broken refs / contradictory gating / circular requires, 🟠 orphans, 🟡 over-constant budget / thin hubs / token-bloat (percentile, not a flat cutoff). Flagged nodes get severity-colored rings on canvas (`gs.healthActive` + `gs.healthFlagged`, keyed by node id). Clicking a finding centers on the culprit. Detectors are pure (`detect*`, unit-tested). Conceptually supersedes "Find Gaps"; both currently coexist.
 
 **Exit key:** `e` (NOT Escape). Escape bubbles to ST popup which would close the graph modal. See `reference_dialog_escape.md` in memory.
 
 **`graph: false` frontmatter field:** Excludes entry from graph entirely.
 
-**Gotcha:** Graph feature is complete for v0.2.0 — do not suggest refactors (see `project_graph_complete.md` in memory).
+**Note:** Graph was declared "complete" at v0.2.0, but **v2.5 reopened it** for view modes (Layout selector, Layered DAG, Vault Health) — see `audit/v2.5-graph-views/PLAN.md` and gotcha #71. The old "do not refactor" note (`project_graph_complete.md` in memory) is superseded for v2.5 view-mode work.
 
 ---
 
