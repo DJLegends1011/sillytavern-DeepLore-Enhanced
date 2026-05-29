@@ -892,6 +892,13 @@ dle-notes { display: none !important; }
     height: 100%;
 }
 
+/* C1 (Wave 2): the active-state glyph is a Font Awesome spinner (was a full-bleed mascot SVG).
+   Size it to read clearly inside the 42px dot; currentColor keeps it neutral (no health tint). */
+.dle-status-dot i.fa-spinner {
+    font-size: 24px;
+    line-height: 1;
+}
+
 .dle-status-ok { color: var(--dle-success); }
 .dle-status-degraded { color: var(--dle-warning); }
 .dle-status-limited { color: color-mix(in srgb, var(--SmartThemeQuoteColor, #ff8c00) 70%, #f44336); }

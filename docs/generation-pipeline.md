@@ -14,7 +14,7 @@ The generation pipeline is DLE's core — most regressions originate here. This 
 
 **The entire function is guarded by `generationLock`** — only one pipeline can run at a time.
 
-**Pipeline status element:** `_updatePipelineStatus` prepends to `#form_sheld` (not `#chat`). `_removePipelineStatus` uses a slide-down animation (`dle-toast-out` class + `animationend` listener). Pipeline phases: `"Choosing Lore…"` → `"Consulting vault…"` (new `consulting` phase, triggered when onStatus text includes "Consulting") → `"Generating…"`.
+**Pipeline status element:** `_updatePipelineStatus` prepends to `#form_sheld` (not `#chat`). `_removePipelineStatus` uses a slide-down animation (`dle-toast-out` class + `animationend` listener). Phase labels come from the canonical `state.PIPELINE_PHASE_LABELS` map (one source for the toast AND the drawer label — see gotcha #74). Progression: `choosing` "Choosing lore…" → (`prefilter` "Narrowing categories…" when `hierarchicalPreFilter` is enabled) → `consulting` "Consulting vault…" → `generating` "Generating…" → (Librarian: `searching`/`writing`/`flagging`). **v2.5 Wave 2:** `runPipeline`'s `onStatus` callback receives a phase KEY (e.g. `'consulting'`), not display text — `index.js` sets `pipelinePhase` deterministically and derives the label via `pipelineLabelFor()`. The old `text.includes('Consulting')` sniff is gone.
 
 ---
 

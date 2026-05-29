@@ -256,6 +256,31 @@ export function onPipelinePhaseChanged(cb) {
     return () => pipelinePhaseCallbacks.delete(cb);
 }
 
+/**
+ * C3 (v2.5 Wave 2): canonical phase → label map. SINGLE source of truth for BOTH
+ * status surfaces — the chat toast (`#dle-pipeline-status` via `_updatePipelineStatus`
+ * in index.js) and the drawer `.dle-pipeline-label` (drawer-render-status.js). Phases
+ * are set deterministically (NOT sniffed from label text — that broke when the label
+ * was relabeled/localized). Sub-second stages (gating / dedup / formatAndGroup) get NO
+ * phase of their own — they'd only flicker — so they inherit the prior phase's label.
+ */
+export const PIPELINE_PHASE_LABELS = {
+    idle: 'Idle',
+    indexing: 'Indexing…',
+    choosing: 'Choosing lore…',
+    prefilter: 'Narrowing categories…',
+    consulting: 'Consulting vault…',
+    generating: 'Generating…',
+    searching: 'Searching vault…',
+    flagging: 'Flagging gaps…',
+    writing: 'Writing…',
+};
+
+/** Canonical label for a pipeline phase. Unknown phase → its raw key (defensive). */
+export function pipelineLabelFor(phase) {
+    return PIPELINE_PHASE_LABELS[phase] || phase || PIPELINE_PHASE_LABELS.idle;
+}
+
 /** Pre-computed entity name Set for AI cache sliding window check */
 export let entityNameSet = new Set();
 export function setEntityNameSet(v) { entityNameSet = v; }

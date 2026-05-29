@@ -240,7 +240,9 @@ export async function runAgenticLoop(options) {
                         break;
                     }
                     searchCount++;
-                    onStatus?.(`Searching\u2026 (${searchCount}/${maxSearches})`);
+                    // C3: canonical "Searching vault\u2026" prefix (matches PIPELINE_PHASE_LABELS);
+                    // keeps the dynamic (n/m) progress in the chat toast.
+                    onStatus?.(`Searching vault\u2026 (${searchCount}/${maxSearches})`);
 
                     // CRIT-LIB-2: searchLoreAction returns `{ text, titles }` (see its
                     // doc comment). `titles` is the authoritative matched-entry list;

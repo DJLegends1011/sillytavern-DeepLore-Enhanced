@@ -56,7 +56,7 @@ import {
     fieldDefinitions,
     folderList,
     setLoreGaps, setLoreGapSearchCount, setLibrarianChatStats, setLibrarianLastUsage,
-    setPipelinePhase,
+    setPipelinePhase, pipelineLabelFor,
     skipNextPipeline, setSkipNextPipeline,
     suppressNextAgenticLoop, setSuppressNextAgenticLoop,
     buildPromise,
@@ -735,7 +735,7 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
     }
     setGenerationLock(true);
     setPipelinePhase('choosing');
-    _updatePipelineStatus('Choosing Lore\u2026');
+    _updatePipelineStatus(pipelineLabelFor('choosing'));
 
     // Reset librarian per-generation search counter
     setLoreGapSearchCount(0);
@@ -941,7 +941,10 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
         const folderFilter = chat_metadata.deeplore_folder_filter || null;
 
         const _pipelineStartMs = performance.now();
-        const _pipelineOnStatus = (text) => { _updatePipelineStatus(text); if (text.includes('Consulting')) setPipelinePhase('consulting'); };
+        // C3: runPipeline emits canonical PHASE KEYS ('prefilter', 'consulting') — set the
+        // phase deterministically and derive the toast label from the same map. No more
+        // `text.includes('Consulting')` sniff (broke on relabel/localization).
+        const _pipelineOnStatus = (phase) => { setPipelinePhase(phase); _updatePipelineStatus(pipelineLabelFor(phase)); };
         const { finalEntries: pipelineEntries, matchedKeys, trace } = await runPipeline(chatMessages, vaultSnapshot, ctx, { pins, blocks, folderFilter, signal: pipelineAbort.signal, onStatus: _pipelineOnStatus, genId });
         trace.totalMs = Math.round(performance.now() - _pipelineStartMs);
         trace.ensureIndexFreshMs = _indexFreshMs;
@@ -1467,7 +1470,7 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
 
         // Pipeline complete — show "Generating..." until first streaming token arrives.
         setPipelinePhase('generating');
-        _updatePipelineStatus('Generating\u2026');
+        _updatePipelineStatus(pipelineLabelFor('generating'));
 
         // === Agentic Loop Dispatch ===
         // When Librarian is enabled and the active API supports tool calling, DLE runs its
@@ -1581,10 +1584,11 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
                 };
 
                 setPipelinePhase('writing');
-                _updatePipelineStatus('Writing\u2026');
+                _updatePipelineStatus(pipelineLabelFor('writing'));
                 const onAgenticStatus = (text) => {
+                    // Agentic-loop status carries dynamic progress (e.g. search "(1/2)"), so the
+                    // toast keeps that richer text; the drawer label stays canonical via the phase.
                     _updatePipelineStatus(text);
-                    // Drawer phase tracks status-text prefix.
                     if (text.startsWith('Searching')) setPipelinePhase('searching');
                     else if (text.startsWith('Writing') || text.startsWith('Generating')) setPipelinePhase('writing');
                 };

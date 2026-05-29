@@ -109,6 +109,10 @@ export async function runPipeline(chat, externalSnapshot, contextualGatingContex
 
     if (settings.aiSearchEnabled && settings.aiSearchMode === 'ai-only') {
         let aiOnlyCandidates = vaultSnapshot;
+        // C3: surface the 'prefilter' phase only when the hierarchical pre-filter actually
+        // runs an AI category pass (otherwise hierarchicalPreFilter no-ops and this label
+        // would flicker). Phase key, not display text — index.js maps it canonically.
+        if (settings.hierarchicalPreFilter) onStatus?.('prefilter');
         const preFiltered = await hierarchicalPreFilter(vaultSnapshot, chat, signal);
         if (signal?.aborted) { const e = new Error('Pipeline aborted by user'); e.name = 'AbortError'; e.userAborted = true; throw e; }
         // `if (preFiltered)` would discard valid empty-array results — null is the skip sentinel.
@@ -148,7 +152,7 @@ export async function runPipeline(chat, externalSnapshot, contextualGatingContex
         }
 
         if (candidateManifest) {
-            onStatus?.('Consulting vault\u2026');
+            onStatus?.('consulting');
             const _aiStart = performance.now();
             const aiResult = await aiSearch(chat, candidateManifest, candidateHeader, vaultSnapshot, aiOnlyCandidates, signal);
             trace.aiSearchMs = Math.round(performance.now() - _aiStart);
@@ -245,6 +249,8 @@ export async function runPipeline(chat, externalSnapshot, contextualGatingContex
         // BUG-022: pass expandedMatched (includes wiki-linked), not keywordResult.matched.
         // null = skip, use all; [] = AI picked zero categories (valid filter result).
         let twoStageCandidates = expandedMatched;
+        // C3: 'prefilter' phase only when the hierarchical pre-filter actually runs (see ai-only path).
+        if (settings.hierarchicalPreFilter) onStatus?.('prefilter');
         const preFiltered = await hierarchicalPreFilter(expandedMatched, chat, signal);
         if (signal?.aborted) { const e = new Error('Pipeline aborted by user'); e.name = 'AbortError'; e.userAborted = true; throw e; }
         if (preFiltered != null) {
@@ -271,7 +277,7 @@ export async function runPipeline(chat, externalSnapshot, contextualGatingContex
         if (!candidateManifest) {
             finalEntries = keywordResult.matched;
         } else {
-            onStatus?.('Consulting vault\u2026');
+            onStatus?.('consulting');
             const _aiStart2 = performance.now();
             const aiResult = await aiSearch(chat, candidateManifest, candidateHeader, vaultSnapshot, twoStageCandidates, signal);
             trace.aiSearchMs = Math.round(performance.now() - _aiStart2);

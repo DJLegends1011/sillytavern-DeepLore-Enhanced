@@ -128,7 +128,9 @@ under `multiVaultConflictResolution='all'` (CLAUDE.md trackerKey invariant).
 ### UI State
 | Variable | Type | Reset scope | Writers | Readers |
 |---|---|---|---|---|
-| `pipelinePhase` | `'idle'\|'choosing'\|'generating'\|'writing'\|'searching'\|'flagging'` | Session | `setPipelinePhase()` | drawer status display |
+| `pipelinePhase` | `'idle'\|'indexing'\|'choosing'\|'prefilter'\|'consulting'\|'generating'\|'searching'\|'flagging'\|'writing'` | Session | `setPipelinePhase()` (set by phase KEY, never inferred from label text) | drawer status glyph (spinner when ≠ idle) + `.dle-pipeline-label` + chat toast |
+
+**`PIPELINE_PHASE_LABELS` / `pipelineLabelFor(phase)` (state.js, v2.5 Wave 2):** the canonical phase→label map. SINGLE source of truth for the drawer label AND the chat toast. `runPipeline`'s `onStatus` callback receives a phase KEY (`'prefilter'`/`'consulting'`), not display text; `index.js` sets the phase deterministically and derives the label from this map. See gotcha #74 — never sniff phase from label text. C2 split health off the glyph: `computeOverallStatus` now drives only the SR-only status announce, not the dot's color/pulse (health = footer icons).
 | `autoSuggestMessageCount` | `number` | Chat (→0) | CHARACTER_MESSAGE_RENDERED, CHAT_CHANGED | auto-suggest trigger |
 | `notepadExtractInProgress` | `boolean` | Chat (→false) | GENERATION_ENDED, CHAT_CHANGED | extract lock |
 | `lastHealthResult` | `{errors, warnings}\|null` | Session | /dle-health command | settings badge |
