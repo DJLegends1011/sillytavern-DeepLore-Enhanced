@@ -17,7 +17,7 @@ Refine keys gate the primary-key match in `testEntryMatch` (`core/matching.js`).
 
 Empty `refine_keys` array passes for all four modes (vacuously satisfied).
 
-The pure predicate `applySelectiveLogic(matchedCount, total, logic)` in `core/matching.js` is the single source of truth — pin the predicate so future refine-gate sites can't diverge across modes (matches the M-6 `hasWarmup` invariant). Today only `testEntryMatch` calls it, but recursion and BM25 paths both consume `testEntryMatch`, so all three keyword sites are covered transitively. BM25 fuzzy matches bypass refine keys entirely (TF-IDF scoring is content-wide, not keyword-based) — that's an intentional architectural carve-out, not a `selective_logic` exception.
+The pure predicate `applySelectiveLogic(matchedCount, total, logic)` (`core/matching.js:249`) is the canonical single-source-of-truth for the four modes. **Caveat:** the hot path inside `testEntryMatch` (`core/matching.js:189-230`) does NOT call `applySelectiveLogic` — for perf it inlines an equivalent `switch (logic)` that short-circuits on first hit/miss (the predicate takes a pre-counted `matchedCount`, which would force counting every refine key even when the default `and_any` can bail at hit 1). `testEntryMatch` only `void`-references the predicate (`core/matching.js:227`) to keep it pinned. `applySelectiveLogic` IS the live implementation for diagnostics / user-facing copy (`diagnostics.js`, `commands-pipeline.js`) and the test suite. The inline switch and the predicate MUST stay logically aligned across the four modes (matches the M-6 `hasWarmup` invariant). Recursion and BM25 keyword pre-validation share `testEntryMatch`, so all three keyword sites use the same inline gate. BM25 fuzzy matches bypass refine keys entirely (TF-IDF scoring is content-wide, not keyword-based) — an intentional architectural carve-out, not a `selective_logic` exception.
 
 Parser validates `frontmatter.selective_logic` against the four-name enum; unknown values fall back to `and_any` and emit `W_INVALID` via `/dle-lint`. Importer (`src/helpers.js:convertWiEntry`) maps ST's integer enum 0..3 to the snake name; mode 0 is the implicit default and is omitted from emitted frontmatter to keep vault entries clean.
 
@@ -125,7 +125,9 @@ Driven by `fieldDefinitions` array (default 4 from `src/fields.js`: `era`, `loca
 - **Moderate:** Entry with value + no context = passes
 - **Lenient:** Like moderate, plus `match_any`/`match_all` non-matches also pass. Precision operators (`eq`, `gt`, `lt`, `not_any`) always filter. (BUG-H8)
 
-**Short-circuit:** If no context dimension is set at all, returns entries unchanged (early return at top of `applyContextualGating()`).
+**Short-circuit (`hasAnyContext`, `stages.js:172-178`):** If no context dimension is set at all, returns entries unchanged. **Exception (M-7, gotcha #65):** any enabled gating rule using `exists`/`not_exists` forces `hasAnyContext = true` even with zero active context — those operators evaluate entry *shape* (does the entry have a value?), not active context, so the loop must run. Without this, a vault that uses `not_exists` to drop incomplete entries would silently pass everything when the user set no other context.
+
+Also returns unchanged if `fieldDefs` is null/empty (`stages.js:159`). Note `existence` operators (`exists`/`not_exists`) bypass both the "no entry value → pass" and "entry has value but no active context → strict-block" exemptions (`stages.js:190-202`) — they always evaluate.
 
 ---
 
@@ -152,7 +154,7 @@ applyFolderFilter(entries, selectedFolders, policy, debugMode)
 
 **Controlled by:** `settings.hierarchicalPreFilter` (default: `false`, in `settings.js` `defaultSettings`)
 
-Not a post-pipeline stage — runs inside `runPipeline()` _before_ `applyContextualGating()` and `buildCandidateManifest()`. When enabled and candidate count exceeds `HIERARCHICAL_THRESHOLD = 40` (module-scope constant in `ai.js`), it makes a lightweight AI call to cluster candidates by category and ask which categories are relevant to the current chat, returning a reduced set.
+Not a post-pipeline stage — runs inside `runPipeline()` _before_ `applyContextualGating()` and `buildCandidateManifest()`. When enabled and selectable candidate count is **>= `HIERARCHICAL_THRESHOLD = 40`** (`ai.js:397` module-scope const; the guard is `if (selectable.length < HIERARCHICAL_THRESHOLD) return null` at `ai.js:415`, so exactly 40 triggers), it makes a lightweight AI call to cluster candidates by category and ask which categories are relevant to the current chat, returning a reduced set.
 
 - **Returns:** `null` (skip — too few candidates or threshold not met) or a filtered array. An empty array is a valid return (AI selected zero relevant categories).
 - **BUG-396 rescue:** After filtering, entries whose primary keywords are explicitly mentioned in the chat are re-added, preventing high-relevance entries from being silently dropped.
@@ -214,10 +216,11 @@ applyStripDedup(entries, policy, injectionLog, lookbackDepth, defaultSettings, d
 
 - Reads `chat_metadata.deeplore_injection_log` (array of `{gen, entries[]}`)
 - Takes last `lookbackDepth` log entries
-- Builds dedup key: `title|position|depth|role|contentHash`
+- Builds dedup key: `${vaultSource||''}:title|position|depth|role|contentHash` (vaultSource prefix is load-bearing — `stages.js:442` write-side / `stages.js:477` read-side. Without it, vault-A's "Castle" would suppress a same-titled but distinct vault-B "Castle" on the next turn. Legacy log entries lacking `vaultSource` use `''`, which matches new single-vault entries — backward compatible.)
 - Entry matches recent log entry with same key → skip
 - ForceInject entries exempt
 - No-op if log empty
+- **No-op if `lookbackDepth <= 0`** (`stages.js:426`). `slice(-0)` would otherwise return the entire log; `<= 0` is treated as "dedup disabled", NOT "dedup against entire log" (M-4, gotcha #65). To dedup against the whole log, pass `Number.MAX_SAFE_INTEGER`.
 
 ---
 
@@ -328,4 +331,6 @@ All log lines are suppressed when their stage has no meaningful work (zero-chang
 
 **`extractCustomFields(frontmatter, fieldDefs)`** — Called during `parseVaultFile()`. Extracts custom field values from entry frontmatter based on field definitions. Returns `{ [fieldName]: value }`.
 
-**Reserved field names** (enforced by `RESERVED_FIELD_NAMES` set in `src/fields.js`): `keys`, `priority`, `tags`, `requires`, `excludes`, `position`, `depth`, `role`, `scandepth`, `excluderecursion`, `refine_keys`, `cascade_links`, `cooldown`, `warmup`, `probability`, `summary`, `graph`, `enabled`, `constant`, `seed`, `bootstrap`, `type`, `fileclass`, `status`, `aliases`.
+**Reserved field names** (enforced by `RESERVED_FIELD_NAMES` set in `src/fields.js:8`): `keys`, `priority`, `tags`, `requires`, `excludes`, `position`, `depth`, `role`, `scandepth`, `excluderecursion`, `refine_keys`, `cascade_links`, `cooldown`, `warmup`, `probability`, `summary`, `graph`, `enabled`, `constant`, `seed`, `bootstrap`, `type`, `fileclass`, `status`, `aliases`, `selective_logic`. (`selective_logic` is reserved so a user can't shadow the native Wave-3 refine-gate field via `field-definitions.yaml` and route it into `customFields` — see `fields.js:13-17`.)
+
+**Valid operators** (`VALID_OPERATORS` set, `src/fields.js:22`): `match_any`, `match_all`, `not_any`, `exists`, `not_exists`, `gt`, `lt`, `eq`. (Note: `not_all` is a valid `selective_logic` mode for refine keys but is NOT a contextual-gating operator — the gating operator enum has no `not_all`.)

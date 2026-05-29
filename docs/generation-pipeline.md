@@ -20,16 +20,22 @@ The generation pipeline is DLE's core — most regressions originate here. This 
 
 ## Phase 1: Early Guards (in `onGenerate()`)
 
+Actual order in `index.js:onGenerate()` (the first three guards run in this exact sequence):
+
 ```
-onGenerate(chatMessages)
-  → Skip if type === 'quiet' or !settings.enabled
-  → Skip if skipNextPipeline (consume and clear flag, early return)
-  → Skip if last message has tool_invocations or is_system (tool-call continuation from other extensions)
+onGenerate(chatMessages, contextSize, abort, type)
+  → Skip if type === 'quiet' or !settings.enabled (index.js:670; clears stale prefill if !enabled)
+  → applyResponsePrefill(settings)                 (index.js:682 — runs BEFORE all skip guards)
+  → Skip if inSteppedThinking                       (index.js:688 — Stepped Thinking coexistence)
+  → Skip if skipNextPipeline (consume and clear flag, early return) (index.js:695)
+  → Skip if last message has tool_invocations or is_system (index.js:704 — tool-call continuation)
 ```
 
-1. **Quiet generations** (type `'quiet'`): Background API calls (e.g., summarization). No lore injection.
-2. **`skipNextPipeline` bypass**: One-shot flag checked after the quiet check and before the tool-call continuation check. When true, the entire DLE pipeline is skipped (early return). The flag is consumed immediately (reset to `false`). Used by `/dle-review` to prevent the DLE pipeline from running on vault review generations — the review needs a clean generation with no lore injection.
-3. **Tool-call continuations** (in `onGenerate()`): When the last message has `extra.tool_invocations` or `is_system`, ST is re-calling Generate after a tool invocation from another extension using ST's ToolManager. Lore from the original generation is still in context. Re-running would waste tokens and corrupt analytics. Records `{ skipped: true, reason: 'tool_call_continuation' }` in the flight recorder. DLE's own Librarian uses the agentic loop (not ToolManager), so DLE tool calls never trigger this guard.
+1. **Quiet generations** (type `'quiet'`, `index.js:670`): Background API calls (e.g., summarization). No lore injection. If `!settings.enabled`, also clears the stale prefill prompt so it doesn't survive a mid-session toggle.
+2. **Response prefill** (`applyResponsePrefill(settings)`, `index.js:682`): Runs BEFORE every skip guard, on purpose — prefill must survive stepped-thinking, `skipNextPipeline`, and tool-call-continuation generations (all of which still emit a writing-AI call that benefits from prefill). When the prefill setting is off it clears any stale `PREFILL_ID` extension prompt. This is a separate injection axis from the lore pipeline.
+3. **Stepped Thinking coexistence** (`inSteppedThinking`, `index.js:688`): When a Stepped Thinking generation pass is in flight, the pipeline AND the Librarian dispatch are skipped — otherwise the pipeline would re-enter N× per user turn and the Librarian would corrupt thinking output. Records `{ skipped: true, reason: 'stepped_thinking' }` in the flight recorder.
+4. **`skipNextPipeline` bypass** (`index.js:695`): One-shot flag checked after the stepped-thinking guard and before the tool-call continuation check. When true, the entire DLE pipeline is skipped (early return). The flag is consumed immediately (reset to `false`). Used by `/dle-review` to prevent the DLE pipeline from running on vault review generations — the review needs a clean generation with no lore injection.
+5. **Tool-call continuations** (`index.js:704`): When the last message has `extra.tool_invocations` or `is_system`, ST is re-calling Generate after a tool invocation from another extension using ST's ToolManager. Lore from the original generation is still in context. Re-running would waste tokens and corrupt analytics. Records `{ skipped: true, reason: 'tool_call_continuation' }` in the flight recorder. DLE's own Librarian uses the agentic loop (not ToolManager), so DLE tool calls never trigger this guard.
 
 ---
 
@@ -131,7 +137,7 @@ try {
 
 ### Hierarchical Pre-Filter Toggle
 
-Controlled by `settings.hierarchicalPreFilter` (default: `false`, in `defaultSettings`). When enabled and candidate count exceeds `HIERARCHICAL_THRESHOLD = 40` (ai.js: module-top const), a lightweight AI call clusters candidates by category and asks which categories are relevant, returning a reduced candidate set before the main AI search.
+Controlled by `settings.hierarchicalPreFilter` (default: `false`, `settings.js:165`). When enabled and selectable candidate count is **>= `HIERARCHICAL_THRESHOLD = 40`** (`ai.js:397`; guard `selectable.length < HIERARCHICAL_THRESHOLD → return null` at `ai.js:415`, so 40 triggers), a lightweight AI call clusters candidates by category and asks which categories are relevant, returning a reduced candidate set before the main AI search.
 
 - **Returns:** `null` (skip, use all candidates) or a filtered array (may be empty — empty is a valid result meaning no categories matched)
 - **BUG-396 rescue:** Entries whose primary keywords are explicitly mentioned in the chat are re-added after filtering, preventing the pre-filter from silently dropping highly-relevant entries
@@ -243,8 +249,8 @@ After pipeline commit and `_updatePipelineStatus('Generating...')`, DLE fires `n
   → If suppressNextAgenticLoop:
     → Reset flag to false (consumed)
     → Fall through to ST's normal generation
-  → Else if librarianEnabled && isToolCallingSupported():
-    → abort()                              // Prevent ST from generating
+  → Else if librarianEnabled && isToolCallingSupported() && type not in {continue, append, appendFinal}:
+    → abort(true)                          // Prevent ST from generating + break interceptor chain (BUG-AUDIT Fix 30, index.js:1474)
     → setSendButtonState(true)             // C1: Re-entrancy guard (abort re-enables send)
     → deactivateSendButtons()
     → setLoreGapSearchCount(0)             // C6: Reset search counter
@@ -275,7 +281,9 @@ The agentic loop runs the state machine (SEARCH -> FLAG -> DONE), calling `searc
 
 **C9 keepalive:** The agentic loop calls `setGenerationLockTimestamp(Date.now())` before every API call and before tool processing. Without this, the 30s stale-lock detector in Phase 2 would force-release the lock mid-loop, causing epoch mismatch on the next iteration.
 
-**C1 re-entrancy:** `abort()` calls ST's `unblockGeneration()`, which re-enables the send button. The dispatch immediately locks it again via `setSendButtonState(true)`. Restored in `finally`.
+**`abort(true)` (BUG-AUDIT Fix 30, index.js:1474):** The dispatch passes `true` to `abort` so ST's `runGenerationInterceptors` breaks the interceptor chain immediately. Plain `abort()` only flags `aborted=true` but lets every later interceptor still run against the chat DLE has already replaced.
+
+**C1 re-entrancy:** `abort(true)` calls ST's `unblockGeneration()`, which re-enables the send button. The dispatch immediately locks it again via `setSendButtonState(true)`. Restored in `finally`.
 
 ---
 

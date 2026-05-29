@@ -4,11 +4,13 @@ Code-level internals for the editable-prompts subsystem. For user-facing docs se
 
 ## What it does
 
-DLE ships 25 LLM-facing prompts as compiled-in string constants in `src/i18n/prompts/{locale}.js`. The editable-prompts feature lets users override any of them with MD files inside their Obsidian vault. Runtime reads vault file → falls back to compiled-in dict at the user's chosen `aiPromptLocale`.
+DLE ships **30** LLM-facing prompts as compiled-in string constants in `src/i18n/prompts/{locale}.js`. The editable-prompts feature lets users override any of them with MD files inside their Obsidian vault. Runtime reads vault file → falls back to compiled-in dict at the user's chosen `aiPromptLocale`.
 
-The 25 keys split into two groups (sorted in the Prompts tab UI):
-- **Substantive (12)** — `EMMA_*_GREETING`, `LIBRARIAN_PRIMER`, `LIBRARIAN_FIRSTRUN_QA_SCRIPT`, `AGENTIC_ROLE_SECTION`, `AI_SEARCH_SYSTEM_PROMPT`, `AI_NOTEPAD_PROMPT`, `SCRIBE_PROMPT`, `AUTO_SUGGEST_PROMPT`, `OPTIMIZE_KEYS_PROMPT`, `SUMMARIZE_PROMPT`. Multi-line prose, real tuning surface.
-- **Agentic fragments (13)** — fence headers, tool descriptions, workflow step labels, `IMPORTANT_FINAL`. Short, structural. Collapsible by default in the UI.
+The 30 keys are everything `en.js` exports except `__meta` (`KNOWN_PROMPT_KEYS = Object.keys(PromptsEn).filter(k => k !== '__meta' && k !== 'default')`, `prompt-validators.js:37-39`). They split into two groups via `classifyPromptKey()` (`src/ui/prompts-tab.js:214-218` — substantive iff key does NOT start with `AGENTIC_`, **except** `AGENTIC_ROLE_SECTION` which is forced substantive):
+- **Substantive (12)** — the 3 `EMMA_*_GREETING` keys, `LIBRARIAN_PRIMER`, `LIBRARIAN_FIRSTRUN_QA_SCRIPT`, `AGENTIC_ROLE_SECTION`, `AI_SEARCH_SYSTEM_PROMPT`, `AI_NOTEPAD_PROMPT`, `SCRIBE_PROMPT`, `AUTO_SUGGEST_PROMPT`, `OPTIMIZE_KEYS_PROMPT`, `SUMMARIZE_PROMPT`. Multi-line prose, real tuning surface.
+- **Agentic fragments (18)** — `AGENTIC_FENCE_*` headers (7), `AGENTIC_TOOL_*` descriptions (4), `AGENTIC_TOOLS_INTRO`, `AGENTIC_WORKFLOW*` step labels (5), `AGENTIC_IMPORTANT_FINAL`. Short, structural. Collapsible by default in the UI. (`AGENTIC_ROLE_SECTION` is the lone `AGENTIC_*` key NOT counted here.)
+
+> Counts verified 2026-05-28 via `Object.keys(PromptsEn)` against `en.js`: 30 keys, 12 substantive, 18 fragments. The grid headings render these counts live (`prompts-tab.js:263,268`).
 
 ## File layout
 
@@ -97,7 +99,7 @@ Hash computation uses `simpleHash` from `core/utils.js` (not cryptographic; just
 **Prompts tab** (between Features and System; commit 5):
 - Language dropdown writes `aiPromptLocale`. Change triggers confirm-and-overwrite-all if vault overrides exist (Q3).
 - Folder path field writes `promptsFolderPath`. Sanitized through `sanitizePromptsFolderPath()` on change; reverts to default with toastr warning if input is unsafe.
-- **Export Prompts to Vault** — writes all 25 prompts via `writePromptFile()`. Confirms before clobbering existing overrides.
+- **Export Prompts to Vault** — writes all 30 prompts (`exportAllPrompts()` iterates `KNOWN_PROMPT_KEYS`, `prompts-tab.js:110-129`) via `writePromptFile()`. Confirms before clobbering existing overrides. The status line shows the live count (`Exporting ${KNOWN_PROMPT_KEYS.size} prompts…`, `prompts-tab.js:475`).
 - **Reload Prompts** — re-runs `loadPrompts()` to pick up vault edits.
 - **Reset All Prompts** — iterates `KNOWN_PROMPT_KEYS` through `deletePromptFile()`. Every delete passes the six-layer cage.
 - **Status grid** (commit 6) — per-row source, status badge, error indicator, action buttons. Substantive prompts shown by default; agentic fragments in a collapsible `<details>`.
@@ -128,7 +130,7 @@ await loadPromptsForBoot(getSettings());
 
 ## Migration
 
-19 inline AGENTIC_* fragments + 6 substantive defaults previously held copies of these strings in:
+The 18 inline `AGENTIC_*` fragments + the substantive defaults previously held copies of these strings in:
 - `src/librarian/librarian-prompts.js` (Emma greetings + primer + QA script)
 - `src/librarian/agentic-messages.js` (agentic loop role/fence/tool/workflow fragments)
 - `src/ai/ai.js` + `src/ui/settings-ui.js` (AI search system prompt fallback)

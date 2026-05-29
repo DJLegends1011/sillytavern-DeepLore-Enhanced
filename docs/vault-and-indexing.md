@@ -38,12 +38,12 @@ Default in `settings.js`: `vaults: []` (in `defaultSettings`). Legacy single-vau
 
 All vault-aware code iterates `settings.vaults.filter(v => v.enabled)`. Vault order matters for:
 - **Field definitions**: always loaded from `enabledVaults[0]` (the "primary" vault).
-- **Conflict resolution** (`settings.multiVaultConflictResolution`): `all` | `first` | `last` | `merge`. Applied by `deduplicateMultiVault()` in `vault-pure.js`. Keyed by `entry.title.toLowerCase()`. H-05: merge mode now OR-merges boolean flags (`constant`, `seed`, `bootstrap`, `guide`).
+- **Conflict resolution** (`settings.multiVaultConflictResolution`): `all` | `first` | `last` | `merge`. **Default `'all'`** (vault-pure.js:155-157 `VALID_DEDUPE_MODES`; unknown/invalid values also fall back to `'all'` = preserve every copy). Applied by `deduplicateMultiVault()` in `vault-pure.js`. Keyed by `entry.title.toLowerCase()`. Merge mode (vault-pure.js:165-204): unions array fields (`keys`, `tags`, `links`, `resolvedLinks`, `requires`, `excludes` — H18), concatenates content with `\n\n---\n\n`, OR-merges boolean flags (`constant`, `seed`, `bootstrap`, `guide` — H-05), first-non-empty for scalar summary, and unions/first-non-empty for `customFields`. Crucially does NOT recompute `_contentHash` (BUG-378) — it must equal the first member's on-disk file hash so reuse-sync doesn't flag the merged entry as modified every poll.
 - **Cross-vault duplicate detection**: `detectCrossVaultDuplicates()` runs before dedup in both `buildIndex()` and `buildIndexWithReuse()`. Shows a warning toast listing conflicting titles and vault sources. Duplicates are not forbidden at runtime but users are told to rename.
 
 ### `getPrimaryVault(settings)` (settings.js:getPrimaryVault())
 
-Returns first enabled vault, or `vaults[0]`, or a fallback object `{ name: 'Default', host: '127.0.0.1', port: 27124, apiKey: '', https: true, enabled: false }`.
+Returns first enabled vault, or `vaults[0]`, or a fallback object `{ name: 'Default', host: '127.0.0.1', port: 27123, apiKey: '', https: false, enabled: false }` (settings.js:510 — HTTP/27123, not HTTPS/27124).
 
 ### `resolveWriteVault(toolKey, settings, overrideName?)` (settings.js)
 
@@ -149,13 +149,13 @@ Keyed by `"host:port"` string (e.g. `"127.0.0.1:27123"`). Each vault gets indepe
 
 **Half-open:** Exactly one probe request allowed through (`halfOpenProbe` flag). Success -> closed. Failure -> open (with fresh `openedAt` for recalculated backoff).
 
-**Circuit state events:** State transitions push `pushEvent('obsidian_circuit', {key, from, to})` to the `eventBuffer`. This tracks when individual vaults enter/exit open state for diagnostic timeline reconstruction.
+**Circuit state events:** State transitions push `pushEvent('obsidian_circuit', {port, from, to[, failures]})` to the `eventBuffer` (obsidian-api.js:163,176). The field is named `port` but its value is the breaker key string (`host:port`, or a legacy bare port number). This tracks when individual vaults enter/exit open state for diagnostic timeline reconstruction.
 
 **Pruning:** `pruneCircuitBreakers(activeKeys)` removes entries for hosts no longer in config. Called from settings-ui when vault config changes.
 
 ### CORS proxy usage
 
-DLE does NOT use ST's CORS proxy for Obsidian connections. The Obsidian Local REST API plugin has built-in CORS support. CORS proxy (`enableCorsProxy: true` in ST's `config.yaml`) is still required for Obsidian vault fetching if you use HTTPS with a self-signed cert (some browser/cert-store combinations route through the bridge to bypass cert errors). **AI features no longer use CORS proxy as of v2.5** (Custom Proxy mode dead-headed; Connection Profile uses CMRS server-side and bypasses the bridge entirely — see `docs/gotchas.md` #68). Pre-v2.5, the CORS proxy was used by AI search and Librarian in proxy mode; that path is now unreachable in production but the code is preserved for rollback.
+DLE does NOT use ST's CORS proxy for Obsidian connections — `obsidian-api.js` makes **direct** browser→Obsidian `fetch` calls (see the module header: "Direct browser → Obsidian communication"). There is no CORS-proxy / bridge code path in this module at all. The Obsidian Local REST API plugin enables CORS itself. A self-signed HTTPS cert must be OS-trusted (or have a browser exception) for direct fetch to work — DLE does not (and cannot, from this module) route around cert errors via ST's proxy. **AI features also no longer use CORS proxy as of v2.5** (Custom Proxy mode dead-headed; Connection Profile uses CMRS server-side and bypasses the bridge entirely — see `docs/gotchas.md` #68). Pre-v2.5, the CORS proxy was used by AI search and Librarian in proxy mode; that path is now unreachable in production but the code is preserved for rollback.
 
 ### `diagnoseFetchFailure()` (obsidian-api.js:diagnoseFetchFailure())
 
@@ -212,7 +212,7 @@ Pipeline.js extracts these frontmatter fields (with type coercion):
 `tokenEstimate` is initially set to `0` in `parseVaultFile()`. Actual estimation happens later:
 - **buildIndex():** `await getTokenCountAsync(entry.content)` with fallback `Math.ceil(content.length / 4.0)` — wrapped in `Promise.all(entries.map(async ...))` so tokenization runs in parallel. When the tokenizer is unavailable and the fallback is used, a warning is logged.
 - **buildIndexWithReuse():** Same for newly-parsed entries; reused entries keep their existing estimate. **The reuse-path tokenization is intentionally serial inside the for-loop** (one `await getTokenCountAsync` per file). This is acceptable in the steady state because reuse-sync only re-tokenizes the small set of *modified* files (cache hits skip the await). It is NOT acceptable when every file needs re-parsing — see V-H4 below.
-- **Merge dedup:** `Math.ceil(mergedContent.length / 4.0)` (rough estimate, not tokenizer).
+- **Merge dedup:** sums the tokenizer-accurate member estimates (`existing.tokenEstimate + entry.tokenEstimate`, vault-pure.js:185), NOT `Math.ceil(content.length/4)`. The char/4 path diverged from the tokenizer units used for every non-merged entry and skewed budget math; the members were already tokenized in vault.js's parallel pass before dedup runs.
 
 ### V-H4: fieldDefsChanged delegates to buildIndex (2026-05-22)
 
@@ -306,9 +306,9 @@ Removes `settings.analyticsData` keys that don't match any active `trackerKey(en
 
 ### IndexedDB schema
 
-- **Database:** `DeepLoreEnhanced` (DB_VERSION = 1)
-- **Object store:** `vaultCache` (no key path -- uses explicit keys)
-- **Schema version:** `CACHE_SCHEMA_VERSION = 4` (bumped: H-06 cache key includes lorebookTag + conflictResolution)
+- **Database:** `DeepLoreEnhanced` (DB_VERSION = 2). **Bumped 1→2 by the Verdict store** (`src/verdict/verdict-store.js`) to add the `verdicts` object store; `cache.js`'s `onupgradeneeded` and verdict-store's both keep `vaultCache` on the bump (`cache.js:17`, `verdict-store.js:47,100-108`). The two modules share one physical DB.
+- **Object store:** `vaultCache` (no key path -- uses explicit keys). Sibling store `verdicts` is owned by the Verdict store, not the vault cache layer.
+- **Schema version:** `CACHE_SCHEMA_VERSION = 4` (cache.js:20 — H-06 cache key includes lorebookTag + conflictResolution). This is the cache-payload schema, separate from the IDB `DB_VERSION`.
 
 ### Cache key format
 

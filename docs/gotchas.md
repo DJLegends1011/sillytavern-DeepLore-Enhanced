@@ -2,6 +2,98 @@
 
 Every item here has caused a regression. Read this before modifying pipeline, state, or lifecycle code.
 
+> **Stable-number contract.** Each `## N.` heading is referenced by number from `CLAUDE.md`, the other `docs/*.md`, code comments (`// see gotchas.md #46`), and `test/regression.test.mjs`. **Never renumber, never reuse a freed number.** Numbers are append-only: a new gotcha takes the next free integer regardless of subsystem (which is why the physical order below is not strictly ascending — #50/#51 are swapped, and #54–#67 interleave). A retired gotcha keeps its number tagged `(RESOLVED vX.Y — kept for reference)`. To jump to a gotcha, Ctrl-F for `## N.` (the dot disambiguates `## 5.` from `## 50.`).
+
+## Index by subsystem
+
+Format: `#N — title`. Listed under the subsystem you'd most likely be editing when it bites. Some gotchas touch multiple areas; they're filed under the primary one.
+
+**Generation pipeline & onGenerate** (`index.js`, `src/pipeline/`, `core/`)
+- #1 — Epoch guards (re-check `chatEpoch`/`generationLockEpoch` after every await)
+- #2 — `clearPrompts` timing (never without verified replacement)
+- #6 — Tool-call continuations (skip pipeline when `tool_invocations`/`is_system`)
+- #7 — Generation lock (3 vars, 30s stale auto-release, lockEpoch-gated release)
+- #9 — Swipe tracking (`${msgIdx}|${swipe_id}` key, not content hash)
+- #13 — Module-scope for onGenerate dependencies
+- #26 — `onGenerate` param is `chatMessages` (filtered copy), not global `chat`
+- #31 — Vault review bypass (`skipNextPipeline`)
+- #32 — Pipeline status toast z-index
+- #42 — Stepped Thinking re-entry guard
+- #45 — `formatAndGroup` escapes title only, content raw (issue #16)
+- #51 — `verdictMsgIdx` anchors on global `chat`, not filtered `chatMessages`
+- #60 — Bootstrap exemption is gen-scoped to `bootstrapActive` (Stages H-3)
+- #63 — Cascade-pulled `excludeRecursion:true` entries don't seed recursion text (M-5)
+- #65 — Stages MEDIUMs bundle (M-3/M-4/M-6/M-7/M-8 — strip-dedup, warmup, gating, truncation hash)
+
+**State & lifecycle** (`src/state.js`, `init()`, observers)
+- #3 — State mutation scoping (session vs chat vs generation reset)
+- #4 — `trackerKey` vs bare title
+- #14 — Listener registration via `_registerEs`
+- #15 — `scribeInProgress` must NOT reset on CHAT_CHANGED
+- #16 — Build epoch zombie guard
+- #33 — `suppressNextAgenticLoop` reset placement
+- #44 — `MESSAGE_SWIPE_DELETED` emits an object payload
+- #50 — `trackerKey` drift is a regression class (10 drifted sites)
+- #59 — Boot-path race guards (BOOT-MED-1/2/3)
+- #62 — Vault rename is destructive — confirm before apply (V-M5)
+
+**Verdict store** (`src/verdict/`)
+- #46 — Verdict store replaces the four racing globals
+- #52 — `pruneCurrentChat` is sampled — cap is soft (200 + N-1)
+
+**AI subsystem & circuit breaker** (`src/ai/`)
+- #10 — AI circuit breaker (pure query vs mutation gate; 401/403/429 excluded)
+- #11 — Settings cache removed (BUG-088; `invalidateSettingsCache` is a no-op)
+- #12 — Connection mode independence (`librarianConnectionMode` separate)
+- #34 — `hierarchicalPreFilter` uses an independent breaker probe
+- #36 — Error cause chaining (`{ cause: err }`) + `_isDebug()` ST-free read
+- #37 — Clear Picks must reset all pipeline caches
+- #38 — All `.abort()` calls go through `abortWith`
+- #39 — Tool-calling gate is per-model, not just per-source
+- #40 — Claude detection must cover OpenRouter relays (`isUnderlyingClaude`)
+- #48 — Reuse-sync must honor partial-fetch flags (V-C1)
+- #68 — Custom Proxy connection mode dead-headed in v2.5 (migration v3→v4)
+
+**Librarian / agentic loop** (`src/librarian/`)
+- #5 — Guide entry isolation (`getWriterVisibleEntries`)
+- #8 — No DLE intermediate messages
+- #21 — Agentic loop epoch guards (+ `_runFlagIteration`)
+- #22 — Agentic loop stale-lock keepalive (C9)
+- #23 — Agentic loop re-entrancy guard (C1)
+- #24 — Tool result batching (C4 — 4 provider formats)
+- #25 — Provider format handling (raw, not normalized)
+- #27 — `saveReply` does NOT save to disk (call `saveChatConditional`)
+- #28 — `CHARACTER_MESSAGE_RENDERED` cleans `message.mes` async after `saveReply`
+- #29 — `type` must be forwarded to `saveReply`
+- #30 — `onProse` in the agentic loop is async (must await)
+- #35 — `librarianPerMessageActivity` changes gap/dropdown lifecycle
+- #41 — Gemini multi-turn messages MUST be OpenAI shape
+- #43 — Every post-await branch in agentic dispatch re-checks epoch
+- #54 — `onProse` throw must not lose paid-for prose (CRIT-LIB-3)
+- #66 — `searchLoreAction` returns structured `{text, titles}` — don't regex `###`
+- #67 — Librarian HIGH-severity fixes (HL2/HL3/HL4/HL5)
+
+**Vault, indexing & import** (`src/vault/`, `core/utils.js`)
+- #49 — Import dedup existence check must fail loud on network errors (V-C2)
+- #55 — `finalizeIndex` incremental derived-state updates (P3)
+- #57 — Frontmatter parsing MUST NOT pollute `Object.prototype` (V-H3)
+- #61 — `clearIndexCache` aborted txns hang without `tx.onabort` (V-M3)
+- #69 — WI import is a contract, not best-effort (v2.5 WI parity)
+
+**Diagnostics & scrubbing** (`src/diagnostics/`, `src/ui/diagnostics.js`)
+- #17 — Health check `entries` → `vaultIndex` fix
+- #18 — `diagnoseEntry()` pipeline stage coverage
+- #19 — `pseudonymizeTrace()` must scrub `matchedBy`/`reason`/`vaultSource`
+- #20 — Scrubber pattern callback argument counts
+
+**Drawer, settings & i18n UI** (`src/drawer/`, `src/ui/`, `locales/`)
+- #47 — i18n hooks ST's built-in system — don't roll your own
+- #53 — PM-mode registration requires `promptManager.activeCharacter`
+- #56 — Drawer dismiss handler must exempt clicks inside ST popups
+- #58 — Every `<button>` MUST specify `type="button"` (a11y / form-safety)
+- #64 — Settings UI MEDIUMs bundle (V-M1/V-M2/V-M4/V-M5)
+- #70 — Editable prompts — delete cage + `getPrompt()` invariants (v2.5)
+
 ---
 
 ## 1. Epoch Guards

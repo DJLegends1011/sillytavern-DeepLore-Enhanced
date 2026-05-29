@@ -69,16 +69,18 @@ deserialization). 90% of generations no-op the scan. See `docs/gotchas.md` #52.
 **Verdict APIs (verdict-store.js):**
 | API | Use |
 |---|---|
-| `writeVerdict(v)` | Pipeline writes one verdict at commit (replaces 4× setLast*). |
+| `writeVerdict(v)` | Pipeline writes one verdict at commit (replaces 4× setLast*). Async; ring write is sync so immediate reads see it, IDB spill fire-and-forget. |
 | `getCurrent()` | Newest verdict (any chat in ring). |
-| `getCurrentForChat(chatId)` | Newest for a specific chat. |
+| `getCurrentForChat(chatId)` | Newest for a specific chat (backward ring scan). |
 | `getPrevious()` | Second-newest for the current chat (replaces `previousSources` diff anchor). |
-| `getByMessage(msgIdx, chatId?)` | Verdict-by-message lookup; falls back to IDB. |
+| `getByMessageSync(msgIdx, chatId?)` | Ring-only sync lookup (no IDB fallback). For sync UI consumers (cartographer popup). |
+| `getPreviousForMessage(msgIdx, chatId?)` | Ring verdict with the largest `msgIdx' < msgIdx` — "what changed since the prior turn" when inspecting an OLDER message. Sync. |
+| `getByMessage(msgIdx, chatId?)` | Async verdict-by-message lookup; ring first, falls back to range-scoped IDB scan. |
 | `setCurrentChatId(chatId)` | Rebind scope on CHAT_CHANGED. |
 | `clearRing()` | Drop in-memory ring only (sync, no IDB touch). **Use on CHAT_CHANGED** so the destination chat's IDB rows survive for hydrate. |
 | `clearChatIdb(chatId)` | Drop IDB rows for one chat (e.g. user deletes chat). Ring untouched. |
 | `clearChat(chatId)` | Drop ring + IDB records for a chat. `null` = wipe everything (nuke-from-orbit only; **never** call on CHAT_CHANGED — it deletes every chat's persisted verdicts). |
-| `hydrateChat(chatId)` | Pull recent IDB records for resume-after-reload. |
+| `hydrateChat(chatId)` | Pull recent IDB records for resume-after-reload. F2 race fix: merges (not replaces) mid-hydration writes whose `ts` beats the freshest hydrated row. See gotchas #46. |
 | `onVerdictChanged(cb)` | Observer; fires on every write / clear / hydrate. |
 
 **Verdict shape (per record):** `genId`, `chatId`, `msgIdx`, `epoch`, `lockEpoch`, `ts`,
@@ -191,7 +193,7 @@ Each observable is a `Set<() => void>`. Registration returns an unsubscribe func
 | Index updated | `onIndexUpdated` | `notifyIndexUpdated` | finalizeIndex in vault.js | drawer, settings-ui |
 | AI stats | `onAiStatsUpdated` | `notifyAiStatsUpdated` | aiSearch, scribe calls | drawer footer |
 | Circuit state | `onCircuitStateChanged` | `notifyCircuitStateChanged` | recordAiSuccess/Failure | drawer, settings-ui |
-| Injection sources ready | `onInjectionSourcesReady` | `notifyInjectionSourcesReady` | `setLastInjectionSources()` commit (before `notifyPipelineComplete`) | drawer (Why? tab only) |
+| Injection sources ready | `onInjectionSourcesReady` | `notifyInjectionSourcesReady` | `writeVerdict()` commit in onGenerate (index.js :1217, :1239 — fires immediately after the per-turn verdict is written, before the agentic loop / ST generation) | drawer (Why? tab only) |
 | Pipeline complete | `onPipelineComplete` | `notifyPipelineComplete` | onGenerate finally, CHAT_CHANGED | drawer (all tabs) |
 | Gating changed | `onGatingChanged` | `notifyGatingChanged` | context/field changes, CHAT_CHANGED | drawer gating tab |
 | Pin/block changed | `onPinBlockChanged` | `notifyPinBlockChanged` | pin/block commands | drawer injection tab |
@@ -255,20 +257,29 @@ Hydrate perSwipeInjectedKeys from chat_metadata.deeplore_swipe_injected_keys
 setLastGenerationTrackerSnapshot(null)
 ```
 
-### 7. Counter/Cache Resets
+### 7. Counter/Cache Resets + Verdict Rebind
 ```
 setGenerationCount(0)
 setLastIndexGenerationCount(0)
-setLastInjectionEpoch(-1)
 setLastWarningRatio(0)
-setAiSearchCache({...empty...})
+resetAiSearchCache()              // canonical empty shape (incl. matchedEntrySet)
 resetAiThrottle()
 setAutoSuggestMessageCount(0)
-setLastPipelineTrace(null)
-setLastInjectionSources(null)
-setPreviousSources(null)
 resetCartographer()
+
+// Verdict store (REPLACES the old setLastInjectionEpoch(-1) /
+//                setLastPipelineTrace(null) / setLastInjectionSources(null) /
+//                setPreviousSources(null) line — all four globals were deleted
+//                in the Verdict refactor; see state.js :48,:75,:103):
+newVerdictChatId = getCurrentChatId() || null
+clearVerdictRing()                // clearRing — in-memory ring ONLY, no IDB touch
+setVerdictChatId(newVerdictChatId) // setCurrentChatId — rebind scope
+if (newVerdictChatId) hydrateVerdictChat(newVerdictChatId)  // async, fire-and-forget
 ```
+**Do NOT call `clearChat(null)` here** — that nukes every chat's IDB rows and defeats the
+per-chat spill (resume-after-reload). `clearRing()` is the only correct call on chat switch.
+See `docs/gotchas.md` #46. `index.js` imports these aliased: `clearRing as clearVerdictRing`,
+`setCurrentChatId as setVerdictChatId`, `hydrateChat as hydrateVerdictChat` (index.js :90-93).
 
 ### 8. Librarian State Hydration
 ```

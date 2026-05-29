@@ -12,7 +12,8 @@ These docs explain **how the code works** — call graphs, data flows, state mut
 | State variables, `CHAT_CHANGED`, observers | [state-and-lifecycle.md](state-and-lifecycle.md) |
 | Obsidian fetch, index build, cache, BM25 | [vault-and-indexing.md](vault-and-indexing.md) |
 | AI search, connection routing, circuit breaker | [ai-subsystem.md](ai-subsystem.md) |
-| Librarian tools, gap detection | [librarian.md](librarian.md) |
+| Librarian tools, gap detection, agentic loop | [librarian.md](librarian.md) |
+| Editable prompts (Prompts tab, override resolver, delete cage) | [editable-prompts.md](editable-prompts.md) |
 | Pipeline stages, gating, field definitions | [stages-and-gating.md](stages-and-gating.md) |
 | Scribe, Notebook, Graph, Cartographer | [secondary-features.md](secondary-features.md) |
 | Pre-change safety check (always) | [gotchas.md](gotchas.md) |

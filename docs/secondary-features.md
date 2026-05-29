@@ -130,14 +130,14 @@ Injected as auxiliary prompt via `_injectAuxPrompt('deeplore_notebook', content,
 → runAutoSuggest()
     → Build context from recent chat
     → callAutoSuggest(systemPrompt, userMessage, 'autoSuggest')
-       (3-mode routing: st / profile / proxy — see ai-subsystem.md §8)
+       (2-mode routing: st / profile — proxy dead-headed v2.5, see ai-subsystem.md §8)
     → Parse response into entry suggestions
     → Return suggestions array
 → showSuggestionPopup(suggestions)
     → Modal with suggested entries for user review
 ```
 
-**Connection routing:** Auto-suggest has its own `callAutoSuggest()` function (`src/ai/auto-suggest.js:callAutoSuggest()`) with independent 3-mode routing (st/profile/proxy) and circuit breaker integration — it does NOT call `callAI()` directly.
+**Connection routing:** Auto-suggest has its own `callAutoSuggest()` function (`src/ai/auto-suggest.js:28`) with independent routing and circuit breaker integration — it does NOT call `callAI()` directly (it dispatches `st` mode via `generateQuietPrompt`, `profile` mode via `callAI`). **Custom Proxy mode was removed in v2.5:** the dispatch whitelist is now `st` and `profile` only; a legacy `'proxy'` value falls through to the `Unknown auto-suggest connection mode` throw at `auto-suggest.js:99`. Mirrors the same dead-head in `scribe.js:63` (`callScribe`).
 
 **State:** `autoSuggestMessageCount` — reset to 0 on CHAT_CHANGED.
 
@@ -217,6 +217,7 @@ Ring buffer of per-generation event summaries (`generationBuffer`, size **50** �
 **Boot marker:** `{ kind: 'recorder_started' }` pushed on init.
 
 **Additional flight recorder entry types:**
+- `{ skipped: true, reason: 'stepped_thinking' }` — generation skipped because a Stepped Thinking pass is in flight (`index.js:690`)
 - `{ skipped: true, reason: 'lock_contention' }` — generation skipped because another pipeline holds the lock (< 30s)
 - `{ skipped: true, reason: 'tool_call_continuation' }` — generation skipped because last message has `tool_invocations` (from other extensions using ST's ToolManager)
 - `{ forceRelease: true, lockAgeMs, oldEpoch, newEpoch }` — stale lock force-released after 30s
@@ -255,12 +256,14 @@ Support infrastructure for the diagnostics system. Console interceptor monkey-pa
 
 **`SENSITIVE_KEY_RE` expanded**: Now also matches `helicone_auth`, `cf_access`, `credential`, and `webhook` in addition to the original patterns.
 
-### ui.js
-User-facing entry point: `triggerDiagnosticDownload()` builds the anonymized report + unanonymized reference file and triggers browser download via ephemeral `<a>` element.
+### ui.js (`src/diagnostics/ui.js`)
+User-facing entry point: `triggerDiagnosticDownload()` (`src/diagnostics/ui.js:26`) builds the anonymized report + unanonymized reference file and triggers browser download via ephemeral `<a>` element.
 
-**BUG FIX:** Health check at ~line 145 previously referenced `entries` (undefined) instead of `vaultIndex` when running excludes checks, causing the health check to crash on vaults with exclude references. Fixed to use `vaultIndex`.
+### Health check & `diagnoseEntry()` (`src/ui/diagnostics.js` — NOT `src/diagnostics/ui.js`)
 
-**`diagnoseEntry()`** now reports 5 additional pipeline stages: `guide_entry` (entry is guide-only), `folder_filter` (filtered by active folder), `blocked` (per-chat block), `contextual_gating` (failed era/location/scene/character filter), `strip_dedup` (removed by strip dedup). These give more granular insight into why an entry wasn't injected.
+`runHealthCheck()` (`src/ui/diagnostics.js:23`) and `diagnoseEntry()` (`src/ui/diagnostics.js:287`) live in `src/ui/diagnostics.js`, a distinct file from the export entry point above. The health check uses `vaultIndex` throughout (`diagnostics.js:77,83,96,151`); an earlier bug where an excludes check referenced an undefined `entries` is fixed in current code.
+
+**`diagnoseEntry()`** reports per-stage exclusion reasons including: `guide_entry` (entry is guide-only), `folder_filter` (filtered by active folder), `blocked` (per-chat block), `contextual_gating` (failed era/location/scene/character filter), `strip_dedup` (removed by strip dedup) — giving granular insight into why an entry wasn't injected.
 
 ### toast-dedup.js
 `suppressedCounts` Map tracks the number of suppressed toasts per category. `getSuppressedCounts()` exported for diagnostics — included in diagnostic exports to show how often toast dedup is firing.
@@ -299,9 +302,9 @@ Read-only object created on `init()`. Three getters (no setters):
 - **`.state`** — snapshot of key state variables: `vaultIndex`, `generationCount`, `chatEpoch`, `generationLock`, `cooldownTracker`, etc.
 - **`.trace`** — returns `getCurrentVerdict()?.trace ?? null`
 - **`.verdict`** — returns the current verdict record (genId, msgIdx, epoch, injectedSources, trace, perEntry)
-- **`.buffers`** — returns `.drain()` of all 6 ring buffers (console, network, errors, aiCalls, events, generations)
+- **`.buffers`** — returns `.drain()` of all 7 ring buffers (`index.js:2783`): `console`, `network` (scrubbed via `scrubDeep` at this read surface — #12), `errors`, `aiCalls`, `aiPrompts` (PII-sensitive, only populated when debugMode=true), `events`, `generations`
 
-For browser console debugging. Read-only — mutations have no effect on DLE state.
+For browser console debugging. Read-only — mutations have no effect on DLE state. Installed/torn down by a `debugMode` observer (`installDebugNamespace`, `index.js:2763`): turning debugMode off deletes `__DLE_DEBUG` and clears `aiPromptBuffer` so captured prompts can't be re-exposed.
 
 ### `/dle-inspect` Timing Section
 Now shows `genId` at the top of the trace view. When timing data is present on the trace, displays a collapsible "Stage Timing" table listing each `*Ms` field with its value and a total row. Collapsed by default to keep the inspect view compact.

@@ -94,6 +94,8 @@ aiSearch(chat, candidateManifest, candidateHeader, snapshot, candidateEntries, s
   -> { results: AiSearchMatch[], error: boolean, errorMessage?: string }
 ```
 
+**Timeout:** the call passes `timeout: settings.aiSearchTimeout` (`ai.js:895`), default **20000ms** (`settings.js:100`, validation range `{min:1000, max:999999}` at `settings.js:350`). The 500ms throttle is separate — see AI Call Throttle above.
+
 **State read:** `vaultIndex`, `aiSearchCache`, `aiSearchStats`, `entityNameSet`, `entityShortNameRegexes`, `entityRegexVersion`, `lastScribeSummary`, `decayTracker`, `consecutiveInjections`.
 **State written:** `aiSearchCache` (via `setAiSearchCache`), `aiSearchStats` (mutated in-place).
 **Dependencies:** `getSettings()`, `buildAiChatContext()`, `simpleHash()`, `callAI()`, `extractAiResponseClient()`, `normalizeResults()`, `fuzzyTitleMatch()`.
@@ -373,12 +375,25 @@ Only unclassified errors (typically 5xx, network failures, or persistent format 
 
 All AI-calling functions use the same circuit breaker probe pattern and the same exclusion classifier (`isExcludedFromBreaker()`):
 
-| Function | File | Modes | Notes |
+**Mode availability per feature (verified 2026-05-28 against `settings.js` defaults + per-caller dispatch).** `proxy` is dead-headed everywhere in v2.5 — it throws at the callAI dispatch or, for scribe/auto-suggest, at their own explicit `mode === 'proxy'` guard (`scribe.js:63-64`, the auto-suggest mirror). The live mode sets are:
+
+| Feature | Default mode | Live modes | `st` path? |
 |---|---|---|---|
-| `aiSearch()` | `src/ai/ai.js` | profile, proxy, st | Main caller; `recordAiSuccess/Failure()` |
-| `hierarchicalPreFilter()` | `src/ai/ai.js` | profile, proxy | `releaseHalfOpenProbe()` only — never records success/failure. Every non-error early-return MUST release the probe (try/finally guard via `_releaseProbeOnce`); otherwise HALF-OPEN slot leaks for 60s and blocks recovery (AI-audit H1). |
-| `callAutoSuggest()` | `src/ai/auto-suggest.js` | st, profile, proxy | `recordAiSuccess/Failure()` |
-| `callScribe()` (internal) | `src/ai/scribe.js` | st, profile, proxy | `recordAiSuccess/Failure()` |
+| AI Search (`aiSearch`) | `profile` | `profile` only | No — routes solely through `callAI` (`ai.js:888-899`). Never used `generateQuietPrompt`. |
+| Scribe (`scribe`) | `inherit` | `inherit`/`st`/`profile` | Yes — `st` = `generateQuietPrompt` (`scribe.js:67-76`) |
+| Auto-Suggest / Auto-Lorebook (`autoSuggest`) | `inherit` | `inherit`/`st`/`profile` | Yes — `st` = `generateQuietPrompt` (`auto-suggest.js:34-44`) |
+| AI Notepad (`aiNotepad`) | `inherit` | `inherit`/`profile` | No |
+| Librarian (`librarian`) | `inherit` | `inherit`/`profile` | No |
+| Optimize Keys (`optimizeKeys`) | `inherit` | `inherit`/`profile` | No |
+
+`librarianConnectionMode`'s validation enum still lists `'proxy'` (`settings.js:391`) as a legacy stored value the migration handles; it is not a reachable runtime path.
+
+| Function | File | Live modes | Notes |
+|---|---|---|---|
+| `aiSearch()` | `src/ai/ai.js` | profile | Main caller; `recordAiSuccess/Failure()`. (`proxy` dead-headed; no `st` path.) |
+| `hierarchicalPreFilter()` | `src/ai/ai.js` | profile | `releaseHalfOpenProbe()` only — never records success/failure. Every non-error early-return MUST release the probe (try/finally guard via `_releaseProbeOnce`); otherwise HALF-OPEN slot leaks for 60s and blocks recovery (AI-audit H1). |
+| `callAutoSuggest()` | `src/ai/auto-suggest.js` | st, profile | `recordAiSuccess/Failure()`. `proxy` throws at the explicit guard. |
+| `callScribe()` (internal) | `src/ai/scribe.js` | st, profile | `recordAiSuccess/Failure()`. `proxy` throws (`scribe.js:63-64`). |
 | `callSummaryAI()` (internal to `summarizeRange`) | `src/ai/summarize.js` | inherits scribe config | `recordAiSuccess/Failure()`. Was bypassing the breaker entirely pre-Wave-B. |
 | Per-entry call in `summarizeEntries()` batch | `src/ui/commands-ai.js` | resolves `optimizeKeys` tool config | `recordAiSuccess/Failure()` per entry. Was bypassing both `resolveConnectionConfig` and the breaker pre-Wave-B. Skipped entries on open breaker count toward `failed`, not aborted — loop continues. |
 
@@ -512,11 +527,11 @@ Sends a minimal probe (`'Reply OK.'` system, `'ping'` user, max 8 tokens, 15s ti
 
 ### `callAutoSuggest(systemPrompt, userMessage, toolKey)` -- auto-suggest.js
 
-Routes auto-suggest AI calls through the same connection-mode system as `callScribe`. Three modes:
+Routes auto-suggest AI calls through the same connection-mode system as `callScribe`. Two live modes (`proxy` dead-headed v2.5 — throws at the explicit `mode === 'proxy'` guard before falling through to `st`):
 
-- **`st` mode**: Uses `generateQuietPrompt({ quietPrompt, skipWIAN, responseLength })`. Wraps a `Promise.race()` to handle GENERATION_STOPPED early-exit (BUG-244) and a configurable timeout. `recordAiSuccess/Failure()` integrations included; timeouts and user aborts do NOT trip the breaker.
-- **`profile` / `proxy` mode**: Delegates to `callAI()` with `{ ...resolved, caller: 'autoSuggest' }`. Circuit breaker probe acquired via `tryAcquireHalfOpenProbe()`.
+- **`st` mode** (`auto-suggest.js:34-44`): Uses `generateQuietPrompt({ quietPrompt, skipWIAN, responseLength })`. Wraps a `Promise.race()` to handle GENERATION_STOPPED early-exit (BUG-244) and a configurable timeout. `recordAiSuccess/Failure()` integrations included; timeouts and user aborts do NOT trip the breaker.
+- **`profile` mode** (`auto-suggest.js:83`): Delegates to `callAI()` with `{ ...resolved, caller: 'autoSuggest' }`. Circuit breaker probe acquired via `tryAcquireHalfOpenProbe()`.
 
 Default `toolKey = 'autoSuggest'` — callers can override to route through a different connection config (useful for testing).
 
-**Circuit breaker:** All three modes call `isAiCircuitOpen()` + `tryAcquireHalfOpenProbe()`. `recordAiSuccess()` on success; `recordAiFailure()` on error (skipped for throttled/abort/timeout).
+**Circuit breaker:** Both live modes call `isAiCircuitOpen()` + `tryAcquireHalfOpenProbe()`. `recordAiSuccess()` on success; `recordAiFailure()` on error (skipped for throttled/abort/timeout).

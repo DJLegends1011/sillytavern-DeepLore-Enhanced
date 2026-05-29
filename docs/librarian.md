@@ -85,7 +85,7 @@ Four provider response formats are handled:
 | OpenAI-compatible | default | `data.choices[0].message.tool_calls` | `data.choices[0].message.content` |
 | Cohere | (via OpenAI path) | `data.message.tool_calls` | `data.message.content[0].text` |
 
-`isToolCallingSupported(model?)` returns false for `main_api !== 'openai'`, sources in `NO_TOOLS_SOURCES` (ai21, perplexity, nanogpt, pollinations, moonshot), OR resolved model in `NO_TOOLS_MODELS` (reasoning-only models that silently fail tool calls — `deepseek-reasoner`, `^o[1-9]`, `*-r1`, `openai/o[1-9]`, `anthropic/*-thinking`). When omitted, `model` is resolved via `getResolvedModel()` (CMRS profile model first, then `oai_settings.{source}_model`). Reasoning-only model rejection emits a distinct `dedupWarning` keyed `librarian_no_tools_reasoner` so the user sees model-specific guidance rather than generic provider-doesn't-support guidance.
+`isToolCallingSupported(model?)` returns false for `main_api !== 'openai'`, sources in `NO_TOOLS_SOURCES` (ai21, perplexity, nanogpt, pollinations, moonshot — `agentic-api.js:21-23`), OR resolved model in `NO_TOOLS_MODELS` (reasoning-only models that silently fail tool calls — `agentic-api.js:35-42`: `/^deepseek-reasoner/`, `/^deepseek\/.*r1/`, `/-r1(-|$|:)/`, `/^o1(-|$)/`, `/^openai\/o1/`, `/^anthropic\/.*-thinking/`). **BUG-AUDIT Fix 29: the o-series pattern was narrowed from `^o[1-9]` to `^o1` only** — o3, o3-mini, o4-mini all support function calling, so the broad pattern was over-blocking; `o1` alone is genuinely reasoning-only. When `model` is omitted it is resolved via `getResolvedModel()` (CMRS profile model first, then `oai_settings.{source}_model`). Reasoning-only model rejection emits a distinct `dedupWarning` keyed `librarian_no_tools_reasoner` so the user sees model-specific guidance rather than generic provider-doesn't-support guidance.
 
 Google Gemini `tool_choice` normalization (G6): string values mapped to `{ mode: 'AUTO'|'ANY'|'NONE' }`.
 
@@ -227,7 +227,7 @@ Only successful searches (`titleMatches.length > 0`) push a `'search'` record on
 
 ---
 
-## 6. Librarian Session
+## 5. Librarian Session
 
 **File:** `src/librarian/librarian-session.js`
 
@@ -281,7 +281,7 @@ Outer loop (tool_call -> re-enter AI) with inner loop (validation retries).
 
 ---
 
-## 7. Librarian Chat Tools
+## 6. Librarian Chat Tools
 
 **File:** `src/librarian/librarian-chat-tools.js`
 
@@ -326,7 +326,7 @@ Generates the tools documentation section embedded in Emma's system prompt. Rebu
 
 ---
 
-## 8. Per-Message Activity Mode
+## 7. Per-Message Activity Mode
 
 **Setting:** `librarianPerMessageActivity` (default: `false`).
 
@@ -407,9 +407,15 @@ Both track `{ searchCalls, flagCalls, estimatedExtraTokens }`.
 
 ### Connection Mode Default and Migration
 
-**`librarianConnectionMode` now defaults to `'inherit'`** (was `'profile'`). The `inherit` mode falls back to `aiSearch` connection settings.
+**`librarianConnectionMode` defaults to `'inherit'`** (`settings.js:209`; was `'profile'`). The `inherit` mode falls back to `aiSearch` connection settings (which is itself `'profile'`-only post-v2.5, so the inherit chain always lands on profile).
 
-**Migration v2→v3** (`settingsVersion` bumped from 2 to 3): Unconfigured profile connections are auto-migrated to `inherit`. This runs in `getSettings()` when `settingsVersion < 3`.
+**Migration ladder** (`runMigrations()` in `src/settings-migrations-pure.js`; current `settingsVersion: 5` at `settings.js:270`). Each `if (fromVersion < N)` branch is idempotent. Librarian-relevant steps:
+- **1→2**: rename `librarianSessionModel` → `librarianModel`.
+- **2→3**: only an UNconfigured Librarian (`librarianConnectionMode === 'profile' && !librarianProfileId`) flips to `'inherit'`. Explicit profile selections are preserved.
+- **3→4 (v2.5 proxy deprecation)**: every per-feature mode key in `PROXY_DEPRECATION_MODE_KEYS` (`aiSearchConnectionMode`, `scribeConnectionMode`, `librarianConnectionMode`, `aiNotepadConnectionMode`, `autoSuggestConnectionMode`, `optimizeKeysConnectionMode`) currently set to `'proxy'` flips to `'profile'`. `*ProxyUrl` and `*ProfileId` keys are NOT touched (proxyUrl kept for rollback; profileId left so the post-migration popup can prompt the user to pick a profile). Sets `settings._proxyMigrationV2_5_notice = [flippedKeys]` (only when at least one flipped), consumed once by `_maybeShowProxyDeprecationNotice()` at boot. See gotcha #68 + the PRX-MIG regression suite.
+- **4→5**: WI-parity default `wiImportEmHandling = 'append'` (not Librarian-specific).
+
+`librarianConnectionMode`'s validation enum still allows `'proxy'` (`settings.js:391`) as a stored legacy value — runtime dispatch refuses it, the migration flips it.
 
 **Onboarding validation**: When the Librarian is enabled in settings, validation checks the connection config and shows a toastr warning if function calling is not supported by the current provider/model.
 
