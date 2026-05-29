@@ -127,6 +127,29 @@ export function tr(key, fallback) {
 }
 
 /**
+ * Inject localized HTML for elements marked `data-i18n-html="key"`.
+ *
+ * ST's native `data-i18n` is textContent-only (i18n.js setAttribute/textContent paths),
+ * so it escapes any markup in the value. For credit lines, help text, and wizard copy
+ * that legitimately contain <strong>/<a>/<code>, we use this custom attribute instead and
+ * call this helper once after the template mounts. Inert to ST (it only scans data-i18n).
+ * Values are trusted repo locale strings, so innerHTML is safe here. See gotchas.md #72.
+ *
+ * @param {Element|JQuery} [root=document] Subtree to scan (the just-mounted template root).
+ */
+export function applyHtmlI18n(root) {
+    const el = root && root.jquery ? root[0] : (root || document);
+    if (!el || !el.querySelectorAll) return;
+    const nodes = [];
+    if (el.matches && el.matches('[data-i18n-html]')) nodes.push(el);
+    nodes.push(...el.querySelectorAll('[data-i18n-html]'));
+    for (const n of nodes) {
+        const key = n.getAttribute('data-i18n-html');
+        if (key) n.innerHTML = tr(key);
+    }
+}
+
+/**
  * Tagged template re-export so callers can `import { t } from '.../i18n.js'`.
  * Forwards to ST's `t` — interpolation uses `${0}`, `${1}`, etc. in translation.
  */

@@ -1,8 +1,6 @@
 import { lastHealthResult } from '../state.js';
 import { COMMUNITY_PALETTE, convexHull } from './graph-analysis.js';
-
-// Local escapeHtml — avoids the ST import so this module stays Node.js-testable.
-const escapeHtml = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+import { escapeHtml } from './graph-util.js';
 
 // ─── Pure helpers ───
 
@@ -553,7 +551,9 @@ export function initRender(gs) {
         // ─── Health overlay (severity rings around flagged nodes) ───
         if (gs.healthActive && gs.healthFlagged && gs.healthFlagged.size) {
             const HSEV = { 3: '#e15759', 2: '#f28e2b', 1: '#edc948' };
-            const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 600);
+            // a11y: reducedMotion gets static rings (pulse held at full). The tick also stops
+            // forcing per-frame redraws in that mode — keep the two in lockstep.
+            const pulse = gs.reducedMotion ? 1 : 0.5 + 0.5 * Math.sin(Date.now() / 600);
             ctx.lineWidth = 2.5;
             for (const [id, sev] of gs.healthFlagged) {
                 const n = nodes[id];

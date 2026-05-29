@@ -1,8 +1,7 @@
 import { getVaultByName } from '../../settings.js';
 import { buildObsidianURI } from '../helpers.js';
 import { computeGapAnalysis } from './graph-analysis.js';
-
-const escapeHtml = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+import { escapeHtml } from './graph-util.js';
 
 /**
  * @param {object} gs
@@ -556,13 +555,9 @@ export function initEvents(gs, dbg) {
     const resetBtn = document.getElementById('dle-graph-reset');
     if (resetBtn) {
         resetBtn.addEventListener('click', () => {
-            if (gs.focusTreeRoot) gs.exitFocusTree();
             // Without this, Reset in DAG mode leaves layoutMode='dag' (physics frozen) +
             // DAG-restricted edgeVisibility + pinned nodes → user stranded, no recovery.
-            if (gs.layoutMode === 'dag' && gs.exitDagLayout) {
-                gs.exitDagLayout();
-                if (layoutModeEl) layoutModeEl.value = 'force';
-            }
+            gs.resetToForceLayout();
             for (const n of nodes) {
                 n.pinned = false;
                 n._treePinned = false;

@@ -1,6 +1,7 @@
 import { chat_metadata, getCurrentChatId } from '../../../../../../script.js';
 import { escapeHtml } from '../../../../../utils.js';
 import { getSettings } from '../../settings.js';
+import { tr } from '../i18n/i18n.js';
 import {
     vaultIndex,
     generationLock, indexing,
@@ -76,19 +77,21 @@ export function renderInjectionTab() {
         $whyNotSection.removeClass('dle-visible');
         $diff.empty();
         if (generationLock) {
-            $empty.html('<i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i><p>Choosing lore...</p>').addClass('dle-visible');
+            $empty.html(`<i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i><p>${tr('dle_empty_state_choosing')}</p>`).addClass('dle-visible');
         } else {
+            // Localized — mirrors the static empty-state in drawer.html. tr() returns the
+            // _html keys' markup verbatim, so <code>/<a> render. See gotchas.md #72.
             $empty.html(
                 '<i class="fa-solid fa-circle-question" aria-hidden="true"></i>'
-                + '<p>No entries injected yet. Send a message mentioning entry keywords, or check Obsidian connection.</p>'
+                + `<p>${tr('dle_empty_injection')}</p>`
                 + '<div class="dle-empty-guide">'
-                + '<p>To see lore injection in action:</p>'
+                + `<p>${tr('dle_empty_guide_intro')}</p>`
                 + '<ol>'
-                + '<li>Connect to an Obsidian vault with <code>#lorebook</code>-tagged entries</li>'
-                + '<li>Send a message mentioning a keyword from your entries</li>'
-                + '<li>This tab will show which entries were injected and why</li>'
+                + `<li>${tr('dle_empty_guide_step_1')}</li>`
+                + `<li>${tr('dle_empty_guide_step_2')}</li>`
+                + `<li>${tr('dle_empty_guide_step_3')}</li>`
                 + '</ol>'
-                + '<p class="dle-empty-commands"><code>/dle-setup</code> — configure your vault &nbsp; <code>/dle-browse</code> — see indexed entries</p>'
+                + `<p class="dle-empty-commands">${tr('dle_empty_guide_commands')}</p>`
                 + '</div>',
             ).addClass('dle-visible');
         }
@@ -282,9 +285,17 @@ export function renderBrowseTab() {
             $emptyNoData.removeClass('dle-visible');
         } else {
             $emptyLoading.removeClass('dle-visible');
+            // Localized — mirrors the static #dle-browse-empty-no-data guide in drawer.html.
             $emptyNoData.html(
-                '<p>No vault entries indexed yet. Connect Obsidian and run <code>/dle-setup</code> to get started.</p>' +
-                '<p class="dle-empty-legend">Entries show P50 priority (lower wins) or CONST (always injected).</p>'
+                `<p>${tr('dle_browse_no_data')}</p>`
+                + '<div class="dle-empty-guide">'
+                + `<p>${tr('dle_browse_no_data_intro')}</p>`
+                + '<ul>'
+                + `<li>${tr('dle_browse_no_data_step_tags')}</li>`
+                + `<li>${tr('dle_browse_no_data_step_keys')}</li>`
+                + '</ul>'
+                + `<p class="dle-empty-commands">${tr('dle_browse_no_data_commands')}</p>`
+                + '</div>',
             ).addClass('dle-visible');
         }
         $emptyNoResults.removeClass('dle-visible');

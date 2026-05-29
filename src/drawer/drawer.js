@@ -3,6 +3,7 @@ import { renderExtensionTemplateAsync } from '../../../../../extensions.js';
 import { accountStorage } from '../../../../../util/AccountStorage.js';
 import { escapeHtml } from '../../../../../utils.js';
 import { getSettings } from '../../settings.js';
+import { applyHtmlI18n } from '../i18n/i18n.js';
 import {
     vaultIndex, generationLock,
     loreGaps,
@@ -188,6 +189,7 @@ export async function createDrawerPanel() {
 
     // Footer must live outside .scrollableInner so it stays pinned during scroll.
     $drawer.find('.dle-drawer-inner').append(drawerContent);
+    applyHtmlI18n($drawer.find('.dle-drawer-inner')[0]); // markup-bearing locale strings (data-i18n-html)
     const $footerZone = $drawer.find('#dle-drawer-footer');
     if ($footerZone.length) $footerZone.insertAfter($drawer.find('.dle-drawer-inner'));
 

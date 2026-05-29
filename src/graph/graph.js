@@ -18,8 +18,7 @@ import { initGraphSettings } from './graph-settings.js';
 import { initDagLayout } from './graph-dag.js';
 import { initHealth } from './graph-health.js';
 import { computeDisparityFilter, computeLouvainCommunities } from './graph-analysis.js';
-
-const escapeHtml = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+import { escapeHtml } from './graph-util.js';
 
 const TAG = '[DLE Graph]';
 function dbg(...args) {
@@ -829,20 +828,25 @@ export async function showGraphPopup() {
     initDagLayout(gs, dbg);
     initHealth(gs, dbg);
 
+    // Single recovery path back to Force: drop any non-force layout and reflect it in the
+    // layout-mode select. Every "get me unstuck" affordance (Reset, Redraw) routes through here
+    // so the layoutMode state and the select DOM value can't fall out of sync.
+    gs.resetToForceLayout = () => {
+        if (gs.focusTreeRoot) gs.exitFocusTree();
+        if (gs.layoutMode === 'dag' && gs.exitDagLayout) gs.exitDagLayout();
+        const lmEl = document.getElementById('dle-graph-layout-mode');
+        if (lmEl) lmEl.value = 'force';
+    };
+
     /** Clear saved layout and replay the BFS rollout animation. */
     gs.replayReveal = () => {
         settings.graphSavedLayout = null;
         gs.layoutSaved = false;
         invalidateSettingsCache();
         saveSettingsDebounced();
-        if (gs.focusTreeRoot) gs.exitFocusTree();
         // Redraw in DAG mode would otherwise leave layoutMode='dag' (physics frozen) and the
         // reveal animation below would never run. Drop back to force first + sync the select.
-        if (gs.layoutMode === 'dag' && gs.exitDagLayout) {
-            gs.exitDagLayout();
-            const lmEl = document.getElementById('dle-graph-layout-mode');
-            if (lmEl) lmEl.value = 'force';
-        }
+        gs.resetToForceLayout();
         for (const n of nodes) {
             n.pinned = false;
             n._treePinned = false;
@@ -953,8 +957,10 @@ export async function showGraphPopup() {
         if (anyRevealing) { gs.needsDraw = true; gs.hasSpringEnergy = true; }
 
         // Health severity rings pulse via Math.sin(Date.now()); without a per-frame redraw the
-        // rings freeze on a settled graph. Drive redraws while the Health panel is open.
-        if (gs.healthActive) gs.needsDraw = true;
+        // rings freeze on a settled graph. Drive redraws while the panel is open — but only for
+        // motion-OK users. reducedMotion renders static rings (render gates the pulse too), so
+        // forcing per-frame full redraws there would burn the CPU for an animation we don't show.
+        if (gs.healthActive && !gs.reducedMotion) gs.needsDraw = true;
 
         const hoverChanged = gs.hoverNode !== gs.prevHoverNode;
         gs.prevHoverNode = gs.hoverNode;
