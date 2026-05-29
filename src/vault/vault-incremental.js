@@ -35,6 +35,16 @@ export function bm25DocId(entry) {
 }
 
 /**
+ * Mirror state.js `trackerKey(entry)` (`vaultSource:title`). Re-declared here so
+ * this module stays pure (no ST-state import). The mentionWeights IDENTITY/storage
+ * keys MUST use this so same-titled entries across vaults don't collide (gotcha
+ * #50). Search-TERMS (names/targetNames) stay title/keys-based by design.
+ */
+function keyOf(entry) {
+    return `${entry.vaultSource || ''}:${entry.title}`;
+}
+
+/**
  * Reference full mentionWeights builder — mirrors `computeDerivedIndexFields`'s
  * mentionWeights block in vault.js. Exists so the equivalence tests can compare
  * `incrementalMentionWeights(...)` against a known-good full rebuild without
@@ -42,29 +52,32 @@ export function bm25DocId(entry) {
  */
 export function fullMentionWeights(entries) {
     const weights = new Map();
-    const targetNames = new Map();
+    // IDENTITY/storage keyed by keyOf (vaultSource:title); search-TERMS stay
+    // title/keys-based. See keyOf() note above.
+    const targetNames = new Map(); // keyOf → string[]
     for (const entry of entries) {
         const names = [entry.title.toLowerCase()];
         for (const key of entry.keys) {
             const keyLc = key.toLowerCase();
             if (keyLc.length >= 2) names.push(keyLc);
         }
-        targetNames.set(entry.title, names);
+        targetNames.set(keyOf(entry), names);
     }
-    const targetRegexes = new Map();
-    for (const [title, names] of targetNames) {
-        targetRegexes.set(title, buildTargetRegex(names));
+    const targetRegexes = new Map(); // keyOf → regex
+    for (const [key, names] of targetNames) {
+        targetRegexes.set(key, buildTargetRegex(names));
     }
-    const contentLower = new Map();
+    const contentLower = new Map(); // keyOf → lowered content
     for (const source of entries) {
-        contentLower.set(source.title, source.content.toLowerCase());
+        contentLower.set(keyOf(source), source.content.toLowerCase());
     }
     for (const source of entries) {
-        const content = contentLower.get(source.title);
-        for (const [targetTitle, regex] of targetRegexes) {
-            if (targetTitle === source.title) continue;
+        const sourceKey = keyOf(source);
+        const content = contentLower.get(sourceKey);
+        for (const [targetKey, regex] of targetRegexes) {
+            if (targetKey === sourceKey) continue;
             const count = countMatches(regex, content);
-            if (count > 0) weights.set(`${source.title}\0${targetTitle}`, count);
+            if (count > 0) weights.set(`${sourceKey}\0${targetKey}`, count);
         }
     }
     return weights;
@@ -136,17 +149,18 @@ export function diffEntries(prevEntries, newEntries) {
 // A. Incremental mentionWeights
 // ============================================================================
 //
-// The full algorithm in `computeDerivedIndexFields` is:
+// The full algorithm in `computeDerivedIndexFields` is (IDENTITY keyed by
+// keyOf = vaultSource:title; search-TERMS title/keys-based — gotcha #50):
 //   For each target entry T:
-//     names[T] = [title, ...keys with length>=2] (lowercased)
+//     names[T] = [title, ...keys with length>=2] (lowercased)   ← search-terms
 //     regex[T] = combined regex matching any of names[T] (word-bounded when name<=3)
 //   For each source entry S:
-//     contentLower[S] = S.content.toLowerCase()
-//   For each (S, T) where S.title !== T.title:
-//     count = number of regex[T] matches in contentLower[S]
-//     if count > 0: weights[`${S.title}\0${T.title}`] = count
+//     contentLower[keyOf(S)] = S.content.toLowerCase()
+//   For each (S, T) where keyOf(S) !== keyOf(T):
+//     count = number of regex[T] matches in contentLower[keyOf(S)]
+//     if count > 0: weights[`${keyOf(S)}\0${keyOf(T)}`] = count
 //
-// Key insight: a change to entry X invalidates exactly:
+// Key insight: a change to entry X (identified by keyOf(X)) invalidates exactly:
 //   - the ROW {X → *}  (X's content changed → all matches X→T are stale)
 //   - the COL {* → X}  (X's title or keys changed → regex[X] is stale, every
 //                       source's contribution to X needs rescan)
@@ -203,29 +217,31 @@ function countMatches(regex, contentLower) {
 export function incrementalMentionWeights(prevWeights, prevEntries, newEntries, diff) {
     const weights = new Map(prevWeights); // start from previous
 
-    // Set of titles whose ROW and COL need recompute. We treat add/remove/modify
-    // identically — any change to entry X invalidates both axes for X.
-    const dirtyTitles = new Set();
-    for (const e of diff.added) dirtyTitles.add(e.title);
-    for (const e of diff.removed) dirtyTitles.add(e.title);
-    for (const e of diff.modified) dirtyTitles.add(e.title);
-    // A modified entry might have RENAMED. The old title's row and column are
-    // also stale — purge them so a follow-up scan from the new title doesn't
-    // leave orphan rows/cols around the old title.
+    // Set of IDENTITY keys (keyOf = vaultSource:title) whose ROW and COL need
+    // recompute. We treat add/remove/modify identically — any change to entry X
+    // invalidates both axes for X. Keying by keyOf (not bare title) keeps
+    // same-titled cross-vault entries distinct (gotcha #50).
+    const dirtyKeys = new Set();
+    for (const e of diff.added) dirtyKeys.add(keyOf(e));
+    for (const e of diff.removed) dirtyKeys.add(keyOf(e));
+    for (const e of diff.modified) dirtyKeys.add(keyOf(e));
+    // A modified entry might have RENAMED (or been re-homed to another vault).
+    // The old identity's row and column are also stale — purge them so a
+    // follow-up scan from the new identity doesn't leave orphan rows/cols.
     for (let i = 0; i < diff.modified.length; i++) {
-        const oldTitle = diff.modifiedPrev[i].title;
-        if (oldTitle !== diff.modified[i].title) dirtyTitles.add(oldTitle);
+        const oldKey = keyOf(diff.modifiedPrev[i]);
+        if (oldKey !== keyOf(diff.modified[i])) dirtyKeys.add(oldKey);
     }
 
-    if (dirtyTitles.size === 0) return weights;
+    if (dirtyKeys.size === 0) return weights;
 
-    // 1. Purge ALL existing entries touching any dirty title (row OR col).
+    // 1. Purge ALL existing entries touching any dirty key (row OR col).
     //    Cheap iteration vs the alternative of rebuilding from scratch.
     for (const key of [...weights.keys()]) {
         const nullIdx = key.indexOf('\0');
         const src = key.slice(0, nullIdx);
         const tgt = key.slice(nullIdx + 1);
-        if (dirtyTitles.has(src) || dirtyTitles.has(tgt)) {
+        if (dirtyKeys.has(src) || dirtyKeys.has(tgt)) {
             weights.delete(key);
         }
     }
@@ -234,11 +250,11 @@ export function incrementalMentionWeights(prevWeights, prevEntries, newEntries, 
     //    But for the COL recomputation we also need to scan unchanged sources
     //    against the dirty target's regex, so we still need every dirty
     //    target's regex even if no source changed.
-    const newTitleSet = new Set(newEntries.map(e => e.title));
-    const dirtyTargetRegexes = new Map(); // target title → combined regex
+    const newKeySet = new Set(newEntries.map(e => keyOf(e)));
+    const dirtyTargetRegexes = new Map(); // target keyOf → combined regex
     for (const entry of newEntries) {
-        if (dirtyTitles.has(entry.title)) {
-            dirtyTargetRegexes.set(entry.title, buildTargetRegex(buildTargetNames(entry)));
+        if (dirtyKeys.has(keyOf(entry))) {
+            dirtyTargetRegexes.set(keyOf(entry), buildTargetRegex(buildTargetNames(entry)));
         }
     }
 
@@ -247,13 +263,14 @@ export function incrementalMentionWeights(prevWeights, prevEntries, newEntries, 
     //    - Pass B (cols): for every dirty TARGET, scan from every NON-DIRTY source
     //                     against that target's regex (dirty sources already covered
     //                     in pass A).
-    //    We share a contentLower cache across both passes.
+    //    We share a contentLower cache (keyed by keyOf) across both passes.
     const contentLower = new Map();
     const lowerOf = (entry) => {
-        let c = contentLower.get(entry.title);
+        const k = keyOf(entry);
+        let c = contentLower.get(k);
         if (c == null) {
             c = entry.content.toLowerCase();
-            contentLower.set(entry.title, c);
+            contentLower.set(k, c);
         }
         return c;
     };
@@ -262,14 +279,15 @@ export function incrementalMentionWeights(prevWeights, prevEntries, newEntries, 
     // targets). Build any missing target regexes lazily — but only if there are
     // any dirty sources. If no dirty sources exist, pass A is a no-op.
     let allTargetRegexes = null;
-    const dirtySourcesExist = newEntries.some(e => dirtyTitles.has(e.title));
+    const dirtySourcesExist = newEntries.some(e => dirtyKeys.has(keyOf(e)));
     if (dirtySourcesExist) {
         allTargetRegexes = new Map();
         for (const target of newEntries) {
-            if (dirtyTargetRegexes.has(target.title)) {
-                allTargetRegexes.set(target.title, dirtyTargetRegexes.get(target.title));
+            const tKey = keyOf(target);
+            if (dirtyTargetRegexes.has(tKey)) {
+                allTargetRegexes.set(tKey, dirtyTargetRegexes.get(tKey));
             } else {
-                allTargetRegexes.set(target.title, buildTargetRegex(buildTargetNames(target)));
+                allTargetRegexes.set(tKey, buildTargetRegex(buildTargetNames(target)));
             }
         }
     }
@@ -277,37 +295,39 @@ export function incrementalMentionWeights(prevWeights, prevEntries, newEntries, 
     // Pass A: dirty source scans all targets
     if (allTargetRegexes) {
         for (const source of newEntries) {
-            if (!dirtyTitles.has(source.title)) continue;
+            const sourceKey = keyOf(source);
+            if (!dirtyKeys.has(sourceKey)) continue;
             const content = lowerOf(source);
-            for (const [targetTitle, regex] of allTargetRegexes) {
-                if (targetTitle === source.title) continue;
+            for (const [targetKey, regex] of allTargetRegexes) {
+                if (targetKey === sourceKey) continue;
                 const count = countMatches(regex, content);
-                if (count > 0) weights.set(`${source.title}\0${targetTitle}`, count);
+                if (count > 0) weights.set(`${sourceKey}\0${targetKey}`, count);
             }
         }
     }
 
     // Pass B: every dirty target scanned from non-dirty sources
-    for (const [targetTitle, regex] of dirtyTargetRegexes) {
+    for (const [targetKey, regex] of dirtyTargetRegexes) {
         for (const source of newEntries) {
-            if (dirtyTitles.has(source.title)) continue; // covered by pass A
-            if (source.title === targetTitle) continue;
+            const sourceKey = keyOf(source);
+            if (dirtyKeys.has(sourceKey)) continue; // covered by pass A
+            if (sourceKey === targetKey) continue;
             const content = lowerOf(source);
             const count = countMatches(regex, content);
-            if (count > 0) weights.set(`${source.title}\0${targetTitle}`, count);
+            if (count > 0) weights.set(`${sourceKey}\0${targetKey}`, count);
         }
     }
 
-    // Final cleanup: if the previous index had weights to titles no longer in
+    // Final cleanup: if the previous index had weights to identities no longer in
     // the new entry set, the purge in step 1 already removed them (they're in
-    // dirtyTitles via the removed[] list). But if a previous source/target
-    // disappeared WITHOUT going through dirtyTitles (defensive — shouldn't
+    // dirtyKeys via the removed[] list). But if a previous source/target
+    // disappeared WITHOUT going through dirtyKeys (defensive — shouldn't
     // happen given diffEntries semantics), drop them now.
     for (const key of [...weights.keys()]) {
         const nullIdx = key.indexOf('\0');
         const src = key.slice(0, nullIdx);
         const tgt = key.slice(nullIdx + 1);
-        if (!newTitleSet.has(src) || !newTitleSet.has(tgt)) {
+        if (!newKeySet.has(src) || !newKeySet.has(tgt)) {
             weights.delete(key);
         }
     }

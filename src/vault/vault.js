@@ -95,38 +95,45 @@ function computeDerivedIndexFields(entries, settings, previousEntries) {
         // Full rebuild — BUG-374 algorithm. One combined regex per target +
         // pre-lowercased content once → O(N × total_content), NOT O(N × M × content).
         weights = new Map();
-        const targetNames = new Map(); // targetTitle → string[]
+        // IDENTITY/storage keyed by trackerKey (vaultSource:title) so same-titled
+        // entries in different vaults don't collide (gotcha #50). The search-TERMS
+        // (`names`) stay title/keys-based — two vaults' "Castle" SHOULD both match
+        // the word "Castle" in text.
+        const targetNames = new Map(); // trackerKey → string[]
         for (const entry of entries) {
             const names = [entry.title.toLowerCase()];
             for (const key of entry.keys) {
                 const keyLc = key.toLowerCase();
                 if (keyLc.length >= 2) names.push(keyLc);
             }
-            targetNames.set(entry.title, names);
+            targetNames.set(trackerKey(entry), names);
         }
         const targetRegexes = new Map();
-        for (const [title, names] of targetNames) {
+        for (const [key, names] of targetNames) {
             const parts = names.map(name => {
                 const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
                 return name.length <= 3 ? `\\b${escaped}\\b` : escaped;
             });
             parts.sort((a, b) => b.length - a.length);
-            targetRegexes.set(title, new RegExp(parts.join('|'), 'gi'));
+            targetRegexes.set(key, new RegExp(parts.join('|'), 'gi'));
         }
+        // Pair regexes with their owning entry so self-skip compares identity, not term.
+        const targetEntries = new Map(); // trackerKey → entry
+        for (const entry of entries) targetEntries.set(trackerKey(entry), entry);
         const contentLower = new Map();
         for (const source of entries) {
-            contentLower.set(source.title, source.content.toLowerCase());
+            contentLower.set(trackerKey(source), source.content.toLowerCase());
         }
         for (const source of entries) {
-            const content = contentLower.get(source.title);
-            const sourceName = source.title;
-            for (const [targetTitle, regex] of targetRegexes) {
-                if (targetTitle === sourceName) continue;
+            const sourceKey = trackerKey(source);
+            const content = contentLower.get(sourceKey);
+            for (const [targetKey, regex] of targetRegexes) {
+                if (targetKey === sourceKey) continue;
                 regex.lastIndex = 0;
                 let count = 0;
                 while (regex.exec(content) !== null) count++;
                 if (count > 0) {
-                    weights.set(`${sourceName}\0${targetTitle}`, count);
+                    weights.set(`${sourceKey}\0${targetKey}`, count);
                 }
             }
         }

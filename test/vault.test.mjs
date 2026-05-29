@@ -1681,6 +1681,71 @@ test('L13: incrementalEntityRegexes — name removed when only entry using it is
     assertEqual(regexes.size, 2, 'only 2 regexes left');
 });
 
+// Bug #7 — mentionWeights bare-title re-key. Two entries share a TITLE but live
+// in DIFFERENT vaults, each mentioning the other (and the SHARED title word). The
+// IDENTITY/storage keys MUST be keyOf (vaultSource:title), so the cross-mentions
+// produce DISTINCT weight keys instead of colliding onto one bare-title key.
+// FAILS on the pre-fix bare-`.title` code (collides to a single key / self-skip
+// drops the pair); PASSES after keying identity by keyOf. Pinned for BOTH paths.
+test('L14: mentionWeights — same title, different vault does NOT collide (full)', () => {
+    // "Castle" in vault A mentions "Castle" (the B one) and vice-versa. Because the
+    // search-TERM is the shared word "Castle", each entry's content matches the
+    // other's regex. Under bare-title keying, source===target self-skip would
+    // wrongly drop the pair AND both would map to one key. keyOf keeps them apart.
+    const entries = [
+        makeEntry('Castle', {
+            filename: 'castle.md', vaultSource: 'lore-a', keys: ['fortress'],
+            content: 'The Castle here is grand. The other Castle is rival.',
+            _contentHash: 'a1',
+        }),
+        makeEntry('Castle', {
+            filename: 'castle.md', vaultSource: 'lore-b', keys: ['keep'],
+            content: 'This Castle stands tall. The first Castle opposes it.',
+            _contentHash: 'b1',
+        }),
+    ];
+    const w = fullMentionWeights(entries);
+    // Two DISTINCT identity keys: A→B and B→A. Bare-title code yields self-skip
+    // (same .title) → 0 pairs, OR a single colliding key. Either way size !== 2.
+    assertEqual(w.size, 2, 'two distinct cross-vault mention pairs (not collided)');
+    assert(w.has('lore-a:Castle\0lore-b:Castle'), 'A→B keyed by keyOf');
+    assert(w.has('lore-b:Castle\0lore-a:Castle'), 'B→A keyed by keyOf');
+});
+
+test('L14b: mentionWeights — same title, different vault does NOT collide (incremental)', () => {
+    // Build the B entry incrementally on top of the A-only prev index. The
+    // incremental dirty-key / self-skip math must also key identity by keyOf, or
+    // it collides the two "Castle"s exactly like the full path would.
+    const prev = [
+        makeEntry('Castle', {
+            filename: 'castle.md', vaultSource: 'lore-a', keys: ['fortress'],
+            content: 'The Castle here is grand. The other Castle is rival.',
+            _contentHash: 'a1',
+        }),
+    ];
+    const next = [
+        prev[0],
+        makeEntry('Castle', {
+            filename: 'castle.md', vaultSource: 'lore-b', keys: ['keep'],
+            content: 'This Castle stands tall. The first Castle opposes it.',
+            _contentHash: 'b1',
+        }),
+    ];
+    const diff = diffEntries(prev, next);
+    const inc = incrementalMentionWeights(fullMentionWeights(prev), prev, next, diff);
+    const full = fullMentionWeights(next);
+
+    // Equivalence invariant: incremental === full, byte-for-byte.
+    assertEqual(inc.size, full.size, 'incremental pair count matches full');
+    for (const [key, val] of full) {
+        assertEqual(inc.get(key), val, `pair ${key}`);
+    }
+    // And the cross-vault keys are distinct (not collided to one bare-title key).
+    assertEqual(inc.size, 2, 'two distinct cross-vault mention pairs (incremental)');
+    assert(inc.has('lore-a:Castle\0lore-b:Castle'), 'A→B keyed by keyOf (incremental)');
+    assert(inc.has('lore-b:Castle\0lore-a:Castle'), 'B→A keyed by keyOf (incremental)');
+});
+
 // ============================================================================
 //  M. V-H4 — fieldDefsChanged delegates to buildIndex (perf fix)
 // ============================================================================

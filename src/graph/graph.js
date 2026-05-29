@@ -92,10 +92,15 @@ export async function showGraphPopup() {
         const key = `${Math.min(from, to)},${Math.max(from, to)},${type}`;
         if (!edgeSet.has(key)) {
             edgeSet.add(key);
-            const srcTitle = graphEntries[from]?.title || '';
-            const tgtTitle = graphEntries[to]?.title || '';
-            const mw = (mentionWeights.get(`${srcTitle}\0${tgtTitle}`) || 0)
-                      + (mentionWeights.get(`${tgtTitle}\0${srcTitle}`) || 0);
+            // mentionWeights is keyed by trackerKey (vaultSource:title) so same-titled
+            // cross-vault entries don't collide (gotcha #50). Build the identity key
+            // from each node's full entry, not its bare title.
+            const srcEntry = graphEntries[from];
+            const tgtEntry = graphEntries[to];
+            const srcKey = srcEntry ? trackerKey(srcEntry) : '';
+            const tgtKey = tgtEntry ? trackerKey(tgtEntry) : '';
+            const mw = (mentionWeights.get(`${srcKey}\0${tgtKey}`) || 0)
+                      + (mentionWeights.get(`${tgtKey}\0${srcKey}`) || 0);
             edges.push({ from, to, type, _idx: edges.length, weight: Math.max(1, mw), _revealAlpha: 0 });
         }
     }
