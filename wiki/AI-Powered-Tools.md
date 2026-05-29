@@ -5,7 +5,7 @@ Features that use AI to help you build, maintain, and grow your vault. These run
 The headline v2 feature on this page is the **Librarian**, which has two halves: writing-AI tools (`search` and `flag`) that fire mid-generation, and **Emma**, a separate chat agent that helps you author the missing entries.
 
 > [!NOTE]
-> Each tool below has its own independent connection channel. You can route Emma to one model, the Scribe to another, AI Search to a third. Defaults inherit from AI Search.
+> Each tool below has its own independent connection channel. You can route Emma to one model, the Scribe to another, AI Search to a third. Defaults inherit from AI Search. Each channel is a SillyTavern **Connection Profile** (or "Inherit"); the legacy Custom Proxy mode was removed in v2.5 — see [[AI Search#connection]] for the migration note.
 
 ---
 
@@ -52,7 +52,7 @@ The `lorebook-guide` tag marks an entry as Librarian-only. It is never injected 
 
 ### Connection channel
 
-The Librarian has its own connection channel (`librarianConnectionMode`), independent of AI Search. Defaults to `inherit` (resolves to AI Search settings); set it to `profile` or `proxy` to route Emma through a different model. Tool calling is required, so the resolved provider must support function calling.
+The Librarian has its own connection channel (`librarianConnectionMode`), independent of AI Search. Defaults to **Inherit** (resolves to AI Search settings); set it to a specific **Connection Profile** to route Emma through a different model. Tool calling is required, so the resolved provider must support function calling.
 
 Supported tool-calling providers: Claude, Gemini (makersuite/vertexai), OpenAI-compatible, Cohere. Sources without tool support (`ai21`, `perplexity`, `nanogpt`, `pollinations`, `moonshot`) cannot drive the Librarian; the writing AI falls through to ST's normal generation when tool calling is unsupported, and a deduplicated warning fires.
 
@@ -86,8 +86,8 @@ Auto-summarizes your roleplay into timestamped markdown notes written back to yo
 
 **Connection options:**
 - **Inherit** (default): resolves to AI Search settings
+- **SillyTavern Connection**: reuse your main chat's active connection
 - **Connection Profile**: any saved Connection Manager profile. Use this to route summaries through a different (often cheaper) model.
-- **Custom Proxy**: a separate Anthropic-compatible Messages API endpoint (e.g., claude-code-proxy)
 
 **Setup:**
 1. Enable **Session Scribe** in Settings → Features → Session Scribe
@@ -113,7 +113,7 @@ Scans recent chat for characters, places, items, and concepts that lack a vault 
 3. Suggestions appear in a popup with title, type, keywords, summary, and content
 4. Accept to write the entry to Obsidian, or reject to skip
 
-**Connection options:** Inherit (default), Connection Profile, or Custom Proxy.
+**Connection options:** Inherit (default), SillyTavern Connection, or Connection Profile.
 
 **Setup:**
 1. Enable **Auto Lorebook** in Settings → Features → Auto Lorebook
@@ -135,7 +135,7 @@ Scans recent chat for characters, places, items, and concepts that lack a vault 
 - `keyword`: pure keyword optimization without AI
 - `two-stage`: AI analyzes content and suggests keys
 
-**Connection:** independent (Inherit / Profile / Proxy). Defaults to Inherit (resolves to AI Search settings).
+**Connection:** independent (Inherit / Connection Profile). Defaults to Inherit (resolves to AI Search settings).
 
 Suggestions appear in a popup for review. Apply changes in Obsidian, then run `/dle-refresh` to pick them up.
 

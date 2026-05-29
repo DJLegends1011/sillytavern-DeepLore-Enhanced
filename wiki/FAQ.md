@@ -9,7 +9,7 @@ Yes. DeepLore stores lore entries as markdown files in an Obsidian vault. You al
 AI search is optional. Keyword-only mode matches entries by trigger keywords in the chat and never makes an AI call. Two-stage mode adds a second pass: an AI ranks the keyword matches against entry summaries and picks the best ones. Keyword-only is free; two-stage costs roughly one extra provider call per turn.
 
 ### What AI providers work with AI search?
-Any provider SillyTavern's Connection Manager supports: Anthropic, OpenAI, OpenRouter, Google, Cohere, Mistral, DeepSeek, and local backends like Oobabooga, KoboldCpp, and llama.cpp. Create a Connection Manager profile and select it in AI Search settings, or use Custom Proxy mode to route through ST's built-in CORS proxy.
+Any provider SillyTavern's Connection Manager supports: Anthropic, OpenAI, OpenRouter, Google, Cohere, Mistral, DeepSeek, and local backends like Oobabooga, KoboldCpp, and llama.cpp. Create a Connection Manager profile and select it in AI Search settings. (The old "Custom Proxy" mode was removed in v2.5 — Connection Profiles are now the only path.)
 
 ### What model should I use for AI search?
 A fast, cheap model. AI search reads compact entry summaries and picks which ones to inject; it does not generate creative text. **Claude Haiku** and **GPT-4o-mini** are good defaults. Cost runs to a fraction of a cent per message on Haiku-class models.
@@ -108,7 +108,7 @@ SillyTavern's built-in World Info matches keywords from a JSON file. DeepLore re
 - The Librarian: gap-flagging during generation and Emma for authoring entries from those gaps.
 
 ### Can I import my existing SillyTavern lorebooks?
-Yes. Run `/dle-import` to convert World Info JSON exports into Obsidian vault notes with proper frontmatter. It handles standard WI exports, V2 character cards, and entry arrays. After import, DLE offers to AI-generate summaries for the new entries, reusing the `/dle-summarize` pipeline.
+Yes. Run `/dle-import` to convert World Info JSON exports into Obsidian vault notes with proper frontmatter. It handles standard WI exports, V2 character cards, and entry arrays. As of v2.5 the importer reads **every** WI field: most land natively (keys, secondary keys, `constant`, `order`→`priority`, `position`, `depth`, `probability`, `disable`, `role`, `excludeRecursion`, and all four `selectiveLogic` modes), and the rest round-trip into the vault as frontmatter so nothing is silently dropped. After import, DLE offers to AI-generate summaries for the new entries, reusing the `/dle-summarize` pipeline. See [[For World Info Users]] for the full field-by-field cheat sheet.
 
 ### Can I use both at the same time?
 You can, but it is not recommended. Both systems inject lore into the prompt, so you pay double in token budget. To migrate, import your World Info with `/dle-import` and then disable the built-in World Info on entries DLE now owns.

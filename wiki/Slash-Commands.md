@@ -1,9 +1,9 @@
 # Slash Commands
 
-DeepLore registers about 40 slash commands in SillyTavern. Type them in the chat input, or open the `/dle` palette and search.
+DeepLore registers more than 40 slash commands in SillyTavern. Type them in the chat input, or open the `/dle` palette and search.
 
 > [!NOTE]
-> ST's built-in `/help slash` auto-discovers DLE commands from the `helpString` each one registers, so the in-app help stays current with the code.
+> ST's built-in `/help slash` auto-discovers DLE commands from the `helpString` each one registers, so the in-app help stays current with the code. A couple of commands (`/dle-summarize-range`, `/dle-summarize-rollback`) are registered but intentionally left off the `/dle` palette to keep it focused — they still work and show up in `/help slash`.
 
 ## Command palette
 
@@ -120,7 +120,7 @@ Run 30+ health checks on vault entries and settings. Results group by category i
 
 **Categories:**
 - Multi-vault config and API key validation
-- Settings (scan depth, AI mode, proxy URL, budget, cache TTL, index staleness)
+- Settings (scan depth, AI mode, leftover Custom Proxy mode from before v2.5, budget, cache TTL, index staleness)
 - Entry config (duplicate titles, empty keys, empty content, orphaned references, oversized entries, missing summaries)
 - Gating (circular requires, unresolved wikilinks, conflicting overrides)
 - AI search (entries without summaries)
@@ -180,6 +180,30 @@ Uses the AI search connection.
 
 ### `/dle-summarize`
 Generate AI search summaries for entries that lack one. Each summary is presented in a review popup before writing back to Obsidian frontmatter. A button on the review popup aborts the remaining queue.
+
+---
+
+### `/dle-summarize-range <range>`
+AI-summarize a range of chat messages, hide the originals, and prepend the summary in their place. Returns a summary ID you can use to undo.
+
+**Range syntax:**
+- `5-15` summarize messages 5 through 15
+- `10-` from message 10 to the end
+- `-8` the last 8 messages
+- `7` just message 7
+
+The success toast includes the summary ID and the rollback command to undo it. Uses the Optimize Keys connection settings and the dedicated summary prompt/budgets (System tab is not where these live — see the `summarySystemPrompt`/`summaryMaxTokens`/`summaryTimeout` keys).
+
+---
+
+### `/dle-summarize-rollback [id|all]`
+Undo a `/dle-summarize-range` operation: restore the hidden messages and remove the summary message.
+
+**Usage:**
+- `/dle-summarize-rollback <id>` roll back one summary (the ID from the summarize toast)
+- `/dle-summarize-rollback` or `/dle-summarize-rollback all` roll back every summary in this chat
+
+The argument autocompletes with the summaries present in the current chat.
 
 ---
 
@@ -352,7 +376,7 @@ Clear the folder filter, allowing entries from every folder again.
 ## Setup
 
 ### `/dle-setup`
-Run the guided setup wizard: connect the Obsidian vault, configure the lorebook tag, pick a search mode, and so on. AI search connections (profile or proxy) are configured separately in the settings panel. See [[Installation]].
+Run the guided setup wizard: connect the Obsidian vault, configure the lorebook tag, pick a search mode, and so on. AI search connections are configured separately in the settings panel (Connection → AI Connections; pick a Connection Profile). See [[Installation]].
 
 ---
 
@@ -381,6 +405,8 @@ Run the guided setup wizard: connect the Obsidian vault, configure the lorebook 
 | `/dle-newlore` (`/dle-suggest`) | AI suggests new entries |
 | `/dle-optimize-keys <name>` | AI suggests better keywords |
 | `/dle-summarize` | Generate missing summaries |
+| `/dle-summarize-range <range>` | AI-summarize a chat range, hide originals |
+| `/dle-summarize-rollback [id\|all]` | Undo a summarize-range operation |
 | `/dle-review [question]` | Send vault to AI for review |
 | `/dle-scribe [focus]` | Write session note to Obsidian |
 | `/dle-scribe-history` | Browse session notes |

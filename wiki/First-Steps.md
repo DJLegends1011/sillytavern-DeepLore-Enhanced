@@ -97,11 +97,11 @@ Start with scan depth 4 and budget 3000, then adjust based on `/dle-inspect` out
 When you're ready to switch from keywords-only to two-stage:
 
 1. Go to **Settings → Matching → Search Mode** and select **Two-Stage**
-2. In **Settings → AI Search**, pick a connection mode:
-   - **Profile:** uses a SillyTavern Connection Manager profile (recommended)
-   - **Proxy:** routes through SillyTavern's CORS proxy to a custom endpoint (advanced)
-3. Select or create a connection profile pointed at a fast, cheap model (Haiku, GPT-4o-mini, or any local model that handles structured output well)
-4. Run `/dle-status`. It should show "AI search: enabled"
+2. In **Settings → Connection → AI Connections**, select or create a SillyTavern Connection Manager profile for AI search, pointed at a fast, cheap model (Haiku, GPT-4o-mini, or any local model that handles structured output well)
+3. Run `/dle-status`. It should show "AI search: enabled"
+
+> [!NOTE]
+> AI features use SillyTavern Connection Manager profiles. The old Custom Proxy mode was removed in v2.5 — if an old config still has it selected, the health check flags it and points you to pick a profile.
 
 AI search earns its keep when your vault is large or entries have nuanced triggers that keywords can't capture. Example from the README: a scene about "the consequences of breaking an oath" pulls in your Bloodchain entry without the word "Bloodchain" appearing.
 

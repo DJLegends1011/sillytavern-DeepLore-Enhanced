@@ -22,6 +22,9 @@
 
 **Reference**
 - [[Writing Vault Entries]]
+  - [[Frontmatter Fields]]
+  - [[Vault Entry Templates]]
+  - [[Advanced Entry Gating]]
 - [[AI Search]]
 - [[Pipeline]]
 - [[Settings Reference]]

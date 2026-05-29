@@ -69,11 +69,14 @@ If you are using HTTPS (port 27124) and seeing "Failed to fetch" or "Certificate
 ## AI search issues
 
 ### "AI search failed, using keyword fallback"
-- **Timed out:** increase the AI Search timeout (default: 10s).
-- **Auth error:** check your connection profile or proxy API key.
+- **Timed out:** increase the AI Search timeout (default: 20s).
+- **Auth error:** check that your connection profile's API key is valid.
 - **Profile not found:** select a profile in AI Search settings, or create one in Connection Manager.
-- **Network error:** check the proxy URL, or verify your connection profile works in Connection Manager.
+- **Network error:** verify your connection profile works in SillyTavern's main API panel.
 - **Server error:** the API provider may be down. Try again later.
+
+> [!NOTE]
+> If you see **"Custom Proxy mode was removed in v2.5"**, a channel is still set to the removed proxy mode. Open **Settings → Connection → AI Connections** and pick a Connection Profile for it. (DeepLore migrates `proxy` settings to `profile` automatically on upgrade, but a manually-edited setting can still hit this.)
 
 ### AI search returning empty results
 - **Check:** Entries have a `summary:` field. AI search relies on summaries to decide relevance.
@@ -94,14 +97,14 @@ If you are using HTTPS (port 27124) and seeing "Failed to fetch" or "Certificate
 
 ### AI search timing out with local LLMs
 - Local models (e.g. Magistry 24B, Qwen, Mistral) are often much slower than cloud APIs and may need 60-120 seconds to respond, especially on longer chats.
-- The default AI search timeout is 10,000ms (10 seconds), tuned for fast cloud APIs.
+- The default AI search timeout is 20,000ms (20 seconds), tuned for fast cloud APIs.
 - **Fix:** Increase the timeout in Settings → AI Search → Show Advanced → Timeout. Values of 60000-120000ms (60-120 seconds) are common for local models. The cap is 999999ms (~16 minutes) for cases where a slow provider routinely runs longer. The same applies to Scribe and Auto-Suggest timeouts in their respective tabs.
 
 ### AI circuit breaker tripped
 - After 2 consecutive AI failures (timeouts, errors), the circuit breaker trips and AI search is disabled for 30 seconds.
 - During this period, the pipeline falls back to keyword-only matching.
 - After 30 seconds, a single half-open probe is allowed. If it succeeds, the circuit breaker resets and AI search resumes normally.
-- **Fix:** Check your connection profile or proxy URL. Run `/dle-status` to see circuit breaker state.
+- **Fix:** Check that your connection profile works (test it in SillyTavern's main API panel). Run `/dle-status` to see circuit breaker state.
 
 ### Per-vault circuit breaker
 - In multi-vault setups, each vault (identified by host:port) has its own independent circuit breaker with exponential backoff (2s → 4s → 8s → 15s max).

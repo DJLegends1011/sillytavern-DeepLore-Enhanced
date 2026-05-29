@@ -1,6 +1,8 @@
 # Setup wizard
 
-The setup wizard walks you through configuring DeepLore for the first time. Nine pages: vault connection, tags, matching, AI search, the Librarian, vault structure, and lorebook import. Goes from install to working lore injection without leaving the popup.
+The setup wizard walks you through configuring DeepLore for the first time. Nine pages: Welcome, vault connection, tags and search mode, matching, AI search, the Librarian, vault structure, lorebook import, and Done. It takes you from install to working lore injection without leaving the popup.
+
+If you pick **keywords-only** on the tags-and-search-mode page, the AI search and Librarian pages are skipped — both need a tool-calling AI connection — so you'll see seven pages instead of nine.
 
 ## When it runs
 
@@ -86,15 +88,10 @@ Click a preset to fill the values, or set them manually:
 
 *Skipped if you chose keywords-only on page 3.*
 
-Choose how DLE connects to an AI for entry selection.
+DLE connects to an AI for entry selection through a saved **SillyTavern Connection Manager profile**. Pick your profile from the dropdown, then click **Test AI Connection** to verify the selected connection works.
 
-- **Profile mode:** use a saved SillyTavern Connection Manager profile. Pick from the dropdown
-- **Custom Proxy mode:** point at a custom proxy (e.g., `claude-code-proxy`). Enter the proxy URL and model name
-
-Click **Test AI Connection** to verify the selected connection works.
-
-> [!WARNING]
-> Custom Proxy mode requires `enableCorsProxy: true` in `SillyTavern/config.yaml`. Without it, proxy calls throw a descriptive error.
+> [!NOTE]
+> As of v2.5 the wizard offers only Connection Profile mode — the old Custom Proxy option was removed. No `config.yaml` changes are needed. If you upgraded from an older DeepLore that used a proxy, that setting is migrated to a profile automatically and a one-time notice asks you to choose one.
 
 ### 6. Librarian
 

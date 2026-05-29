@@ -39,7 +39,7 @@ Set **Injection Mode** to **Prompt List** to register DLE's injections as named 
 
 - Requires a Chat Completion API (OpenAI-compatible).
 - Per-entry frontmatter overrides with custom position/depth still create separate injection groups.
-- The `deeplore_notebook` entry also appears in the PM (it already uses a stable key).
+- The `deeplore_notebook` (Author's Notebook) and `deeplore_ai_notepad` (AI Notepad) entries also appear in the Prompt Manager when those features are enabled, so you can position them independently.
 
 ---
 

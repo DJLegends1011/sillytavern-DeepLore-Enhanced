@@ -44,7 +44,7 @@ onGenerate(chat)
   │         ├─ circuit breaker check     Skip if AI circuit is open (2 failures, 30s cooldown)
   │         ├─ sliding window cache      Reuse if manifest unchanged + no new entity mentions
   │         ├─ build AI context          Recent chat + manifest + header (+ scribe summary)
-  │         ├─ call AI (profile/proxy)   Send to configured AI connection
+  │         ├─ call AI (Connection Profile) Send via the configured Connection Profile
   │         ├─ parse response            Extract JSON array of selections
   │         └─ confidence-gated budget   Over-request 2x, sort by confidence tier
   │
@@ -143,12 +143,12 @@ The Obsidian connection uses a **per-vault circuit breaker**, keyed by `host:por
 2. **Check each entry's keys:** for every entry with `keys`, test if any keyword appears in the scan text.
    - Respects Case Sensitive and Match Whole Words settings.
    - Entries with per-entry `scanDepth` use their own message window.
-   - If `refine_keys` is set, at least one refine key must also match (AND filter).
+   - If `refine_keys` is set, they must also satisfy the entry's `selective_logic` mode (default `and_any`: at least one refine key matches). See [[Entry Matching and Behavior#Selective logic modes]].
 3. **Warmup check:** if entry has `warmup: N`, count keyword occurrences; skip if below threshold.
-4. **Probability check:** if entry has `probability: N` (0.0-1.0), roll a random number; skip if roll exceeds probability.
+4. **Probability check:** if entry has `probability: N` (0.0-1.0), roll a random number; skip if roll exceeds probability. `probability: 0` never fires; no field (or `null`) always fires.
 5. **Cooldown check:** if entry has per-entry `cooldown` and is currently in cooldown, skip it.
 6. **Cascade links:** if matched entries have `cascade_links`, the listed entries are pulled in without keyword matching. Cascade-linked entries still respect cooldown and probability gates, but not warmup.
-7. **Recursive scanning:** if enabled, scan matched entry content for keywords that trigger more entries. Repeats up to Max Recursion Steps. Entries with `excludeRecursion: true` are skipped.
+7. **Recursive scanning:** if enabled, scan matched entry content for keywords that trigger more entries. Repeats up to Max Recursion Steps (default 3). Newly recursed entries still pass the cooldown, probability, and warmup gates. Entries with `excludeRecursion: true` don't contribute their content to the recursion scan text.
 8. **BM25 fuzzy search:** if Fuzzy Search is enabled, supplement keyword matches with BM25/TF-IDF scored results. Entries scoring above the Fuzzy Min Score threshold (default 0.5) are added to the match set, top 20 per generation. Respects the same warmup, cooldown, and probability gates as exact matches.
 9. **Active Character Boost:** if enabled, auto-match the active character's entry by name or keyword even if not mentioned in chat.
 10. **Constants:** entries tagged `#lorebook-always` or with `constant: true` are always included regardless of keywords.

@@ -92,7 +92,6 @@ Per-chat AI-extracted session notes injected into context. The AI maintains runn
 | **Tag extraction** | AI wraps notes in `<dle-notes>` tags; DLE extracts and stores them, then strips them from the visible message |
 | **Per-chat storage** | Notes stored on `chat_metadata.deeplore_ai_notepad`; accumulate as the chat grows |
 | **Configurable injection** | Position, depth, and role controls; same pattern as Author's Notebook |
-| **Per-message tracking** | Each message's extracted notes stored on `message.extra.deeplore_ai_notes`; visible in Context Cartographer |
 | **Independent connection** | Separate connection channel for the extraction call |
 | **`/dle-ai-notepad`** | View, edit, or clear accumulated notes |
 
@@ -145,8 +144,7 @@ Under-the-hood systems that make DLE fast and reliable. See [[Infrastructure]] f
 | **IndexedDB persistent cache** | Instant startup from browser-side cache |
 | **Reuse sync** | Skip re-parsing unchanged entries on refresh |
 | **Circuit breaker** | Exponential backoff on Obsidian connection failures; AI search circuit trips after 2 consecutive failures (30s cooldown) |
-| **Prompt cache optimization** | Anthropic prompt caching for proxy mode AI calls |
-| **Sliding window AI cache** | Reuse AI results when chat changes are lore-irrelevant |
+| **Sliding window AI cache** | Reuse AI search results when recent chat changes don't mention any vault entity, so identical lookups skip the provider call entirely |
 | **Hierarchical manifest clustering** | Two-call AI approach for vaults with 40+ entries |
 | **HTTPS support** | Obsidian connections support HTTPS for remote or secured setups, with auto-diagnosis of cert/auth/unreachable failure modes |
 | **Flight recorder** | Ring buffer captures recent extension activity (pipeline runs, tool calls, errors) for export |

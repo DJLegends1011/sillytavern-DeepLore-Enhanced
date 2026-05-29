@@ -6,11 +6,13 @@
   </picture>
 </p>
 
-**World Info keyword matching breaks at scale. DeepLore reads your Obsidian vault instead: keywords plus AI retrieval, so the right lore fires even when the word wasn't typed.**
+**Welcome to DeepLore.** It keeps your stories grounded in your worldbuilding by feeding the right lore to the AI exactly when a scene needs it — drawn straight from your [Obsidian](https://obsidian.md/) vault.
 
-DeepLore connects your [Obsidian](https://obsidian.md/) vault to [SillyTavern](https://github.com/SillyTavern/SillyTavern) and injects relevant lore entries into your prompts. Two-stage retrieval runs keyword matching first, then asks an AI to pick the most contextually relevant entries from what survived. The matching entry fires even when the keyword was never typed.
+If you've used SillyTavern's World Info (lorebooks), you know the pain: keyword matching breaks down as your world grows, and the entry you needed stays cold because nobody typed the magic word. DeepLore fixes that. It runs keyword matching first, then asks an AI to read what survived and pick the entries that actually fit the scene — so the right lore fires *even when the keyword was never typed.*
 
-In v2, the writing AI flags gaps mid-generation. Emma, the Librarian agent, helps you author the entries. Your story fills in your world. Your world fires back into your story.
+It plugs into [SillyTavern](https://github.com/SillyTavern/SillyTavern) and works in the background while you write. As you roleplay, the writing AI can flag gaps in your world mid-generation, and Emma — the Librarian agent — helps you fill them in. Your story builds your world; your world flows back into your story.
+
+New here? Start with **[[What is DeepLore]]**, then **[[Quick Start]]** to get it running in five minutes.
 
 ![DeepLore drawer panel showing the Browse tab with a filterable entry list, token budget bar, priority badges, and temperature heatmap coloring](images/dle-drawer.png)
 
@@ -41,7 +43,7 @@ In v2, the writing AI flags gaps mid-generation. Emma, the Librarian agent, help
 - **SillyTavern 1.12.14+**
 - **Obsidian** with the **Local REST API** plugin enabled
 - A lore vault. Your existing Obsidian vault works; `/dle-import` converts World Info JSON if you're migrating.
-- For AI search: any LLM provider via SillyTavern's Connection Manager, or Custom Proxy mode through ST's CORS proxy. Keywords-only mode runs without any provider.
+- For AI search: any LLM provider via a SillyTavern Connection Manager profile. Keywords-only mode runs without any provider.
 
 ## Wiki pages
 

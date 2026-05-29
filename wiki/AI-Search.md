@@ -55,28 +55,21 @@ Disables AI search entirely. Pure keyword + BM25 fuzzy matching, like base DeepL
 
 ---
 
-## Connection modes
+## Connection
 
-AI search needs an AI model to call. Two connection modes are available.
+AI search needs an AI model to call. It runs through a **Connection Profile** — a saved SillyTavern Connection Manager profile. This is the only connection mode for AI Search.
 
-### Connection Profile (recommended)
-
-Uses a saved SillyTavern Connection Manager profile. Any provider works: Anthropic, OpenAI, OpenRouter, local models, anything you have set up in SillyTavern.
+Any provider works: Anthropic, OpenAI, OpenRouter, local models (Ollama, LM Studio, KoboldCpp), anything you have set up in SillyTavern's Connection Manager.
 
 - No separate proxy or server needed
-- Calls are made client-side via `ConnectionManagerRequestService`
+- Calls are made client-side via SillyTavern's `ConnectionManagerRequestService`
 - You can override the model (e.g., a cheap, fast Haiku-class model even if your profile defaults to a larger one)
 - The profile dropdown shows all compatible saved profiles
 
-**Setup:** in AI Search settings, set connection mode to **Connection Profile**, select a profile from the dropdown, and optionally set a model override. Click **Test AI Search** to verify.
+**Setup:** open Settings → Connection → AI Connections, expand **AI Search**, select a profile from the dropdown, and optionally set a model override. Click **Test AI Search** to verify.
 
-### Custom Proxy
-
-Routes AI requests through an external proxy server that exposes an Anthropic-compatible Messages API at `/v1/messages`. Requests pass through SillyTavern's built-in CORS proxy (`enableCorsProxy: true` required in `config.yaml`).
-
-This mode exists primarily for [claude-code-proxy](https://github.com/horselock/claude-code-proxy) users.
-
-**Setup:** set connection mode to **Custom Proxy**, enter the proxy URL (e.g., `http://localhost:42069`), set the model name (e.g., `claude-haiku-4-5-20251001`), and click **Test AI Search**. Confirm `enableCorsProxy: true` is set in `config.yaml`.
+> [!NOTE]
+> The legacy **Custom Proxy** mode (routing AI calls through an external Anthropic-compatible endpoint via SillyTavern's CORS proxy) was removed in v2.5. Connection Profiles cover every provider, including local proxies you previously pointed at via the proxy URL — just add them as a Custom OpenAI-compatible profile in Connection Manager. If you previously used proxy mode, DLE migrated you to Connection Profile automatically on upgrade. DLE AI features no longer require `enableCorsProxy: true` in `config.yaml`.
 
 ---
 
@@ -195,7 +188,7 @@ The AI Search section of the settings panel shows session statistics:
 - **Input Tokens:** estimated total input tokens sent
 - **Output Tokens:** estimated total output tokens received
 
-Both connection modes report token usage (profile mode falls back to `prompt_tokens` / `completion_tokens` if the provider returns those instead of `input_tokens` / `output_tokens`).
+Token usage is read from the provider's response (`input_tokens` / `output_tokens`, falling back to `prompt_tokens` / `completion_tokens` if the provider returns those instead).
 
 These stats are **session-scoped**. They accumulate across chat switches and reset only on page refresh, by design. They track total AI search usage for the browser session, not per-chat.
 
@@ -212,14 +205,6 @@ For large vaults (40+ selectable entries with 4+ distinct categories), AI search
 **Safety valve:** if the category filter would remove more than the configured threshold of entries (default 80%, controlled by **Category Filtering Strength** / `hierarchicalAggressiveness`, range 0.0-0.8), the pre-filter is skipped and the full manifest is used. Prevents overly aggressive AI category selection from hiding relevant entries.
 
 **When it activates:** automatically when the vault has 40+ selectable (non-constant) entries and 4+ distinct categories, AND `hierarchicalPreFilter` is enabled.
-
----
-
-## Prompt cache optimization
-
-In **Custom Proxy mode**, the manifest is placed first in the message payload with `cache_control` breakpoints. This lets Anthropic's prompt caching reuse the manifest server-side (it rarely changes between calls in the same chat), reducing token costs on subsequent calls.
-
-Custom Proxy mode only. Connection Profile mode does not support `cache_control` breakpoints.
 
 ---
 

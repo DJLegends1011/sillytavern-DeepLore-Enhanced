@@ -4,6 +4,18 @@ Every DeepLore setting, with default, range, and effect. Values match `settings.
 
 ![Settings popup showing the Connection tab with Enable toggle, vault connection configuration for test-vault, Add Vault and Test All buttons, multi-vault conflict resolution dropdown, field definitions path, and Vault Tags section](images/dle-settings.png)
 
+> [!IMPORTANT]
+> ## v2.5: Custom Proxy mode removed
+>
+> Earlier versions let any AI feature route through a "Custom Proxy" connection mode (ST's CORS proxy to an external endpoint such as `claude-code-proxy`). **That mode was removed in v2.5.** Every DLE AI feature now uses **[[Connection profile|Connection Profiles]]** (or, where supported, inherits another feature's connection).
+>
+> - The Custom Proxy radio is **hidden** in the settings UI — you can no longer select it.
+> - If a chat still has a feature saved in proxy mode, DLE shows a boot-time deprecation notice and the AI call throws a descriptive error. `/dle-health` flags it with a fix: pick a Connection Profile.
+> - **`enableCorsProxy: true` is no longer required** for DLE's AI features. (ST's own AI requests may still need it for raw-URL backends.)
+> - **Migration:** open **Connection → AI Connections**, set the feature's Connection Mode to **Connection Profile** (or **Inherit**), and pick a saved Connection Manager profile. Any provider works.
+>
+> Valid connection modes per feature are now: AI Search → `profile`; Session Scribe / Auto Lorebook → `inherit` / `st` / `profile`; AI Notepad / Librarian / Optimize Keys → `inherit` / `profile`.
+
 ## Master toggle (About tab)
 
 | Setting | Default | Range | Description |
@@ -49,11 +61,28 @@ DLE supports multiple Obsidian vaults. Each vault has its own host, port, API ke
 
 ![Custom Gating Fields editor showing three defined fields (era, location, and scene_type) each with Type, Gating operator, Context Key, Tolerance, and Allowed Values configuration](images/dle-custom-gating.png)
 
+## Prompts (Prompts tab)
+
+DLE's AI-facing default prompts (search, scribe, notepad, librarian, etc.) are editable. Override files live as `.md` in your vault, and a per-prompt grid lets you Export, Reload, and Reset each one. Two settings govern the tab:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| **AI Prompt Language** (`aiPromptLocale`) | (follow UI) | Locale for the AI-facing default prompts, separate from the UI locale. Empty follows the SillyTavern UI locale. Pin to a specific language (e.g. English) if you do not trust machine-translated prompts to preserve model behavior. User-overridden prompt text is unaffected. |
+| **Prompts Folder Path** (`promptsFolderPath`) | `DeepLore/prompts/` | Vault folder where editable prompt-override `.md` files live. Sibling to `field-definitions.yaml`. |
+
 ## AI connections (Connection tab → AI Connections sub-tab)
 
 This sub-tab houses one accordion section per AI feature. Each section configures a connection channel: AI Search, Session Scribe, Auto Lorebook, AI Notepad (extract mode), Librarian, and Optimize Keys. The per-feature connection settings live with the feature in this reference, so look up each setting in its own section below.
 
-`Inherit` mode means a feature reuses the AI Search connection. AI Search is the only feature that cannot inherit (it is the source). Librarian's default mode is `inherit` (changed in settings v3); other features default to `inherit` as well. Each feature can override mode, profile, proxy URL, and model independently. The channels are deliberately independent so users can route Emma to a tool-calling model while AI search runs on something cheap.
+**Connection modes** (see the [v2.5 migration callout](#v25-custom-proxy-mode-removed) above — Custom Proxy is gone):
+
+| Mode | Meaning | Available on |
+|------|---------|--------------|
+| `profile` | Use a saved Connection Manager profile. Any provider works. | All features |
+| `inherit` | Reuse the AI Search connection. | All except AI Search (it is the inheritance root) |
+| `st` | Use SillyTavern's own active connection. | Session Scribe, Auto Lorebook only |
+
+AI Search is the only feature that cannot inherit (it is the source). Librarian's default mode is `inherit` (it was `profile` before; changed in a settings migration). Each feature can override mode, profile, and model independently — even when inheriting, the per-feature Model / Max Tokens / Timeout still apply. The channels are deliberately independent so users can route Emma to a tool-calling model while AI search runs on something cheap.
 
 ## Search mode (Matching tab)
 
@@ -95,6 +124,9 @@ This sub-tab houses one accordion section per AI feature. Each section configure
 | **Skip Recently Injected** (Strip Duplicate Injections) | On | Toggle | Skip re-injecting entries already injected in recent generations. Tracked per-chat. Constants are exempt. |
 | **Messages to check** (Lookback Depth) | `2` | 1-10 | Number of previous generations to check for already-injected entries. Higher values dedupe more aggressively. |
 | **Filter Strictness** (Contextual Gating Tolerance) | `strict` | Dropdown | How strictly contextual gating filters entries. `strict`: block when context dimensions are missing. `moderate`: block only on direct mismatch. `lenient`: allow when no context dimensions are set. Custom fields can override per-field. |
+| **Reverse priority order** (`priorityReversed`) | Off | Toggle | Off (default): lower priority number wins, matching Obsidian/World Info convention. On: higher number wins. Affects budget allocation, the Librarian view, and the Cartographer display. The Browse popup's explicit priority sort is unaffected. |
+| **Compress imports by default** (`importCompressByDefault`) | Off | Toggle | When on, World Info import compresses each entry's body (caveman-style) before writing to the vault, annotated `compress: caveman` in frontmatter. Per-import option can override. |
+| **Example Messages import handling** (`wiImportEmHandling`) | `append` | Dropdown | How World Info import treats Example Messages entries (ST positions 5/6). `append`: convert to a normal entry with a "## Example Dialogue" subheader. `skip`: drop them. |
 
 ## Injection (Injection tab)
 
@@ -129,10 +161,9 @@ Visible when Search Mode is `two-stage` or `ai-only`.
 
 | Setting | Default | Range | Description |
 |---------|---------|-------|-------------|
-| **Connection Mode** | `profile` | Radio | `profile` uses a saved Connection Manager profile (recommended). `proxy` routes through ST's CORS proxy to a separate proxy server. |
-| **Connection Profile** | (none) | Select | Profile mode. Pick a saved Connection Manager profile. Any provider works. |
-| **Proxy URL** | `http://localhost:42069` | Text | Proxy mode. URL of the claude-code-proxy or compatible endpoint. Must expose `/v1/messages`. Routed through ST's CORS proxy; requires `enableCorsProxy: true` in `config.yaml`. |
-| **Model Override** | (none) | Text | Optional model override. In profile mode, leave empty to use the profile's model. In proxy mode, specify the model name. |
+| **Connection Mode** | `profile` | Radio | AI Search routes through a saved Connection Manager profile. (Custom Proxy mode was removed in v2.5 — see the migration callout at the top of this page.) |
+| **Connection Profile** | (none) | Select | Pick a saved Connection Manager profile. Any provider works. |
+| **Model Override** | (none) | Text | Optional model override. Leave empty to use the profile's model. |
 | **Max Response Tokens** | `1024` | 64-4096 | Token limit for the AI response. Keep low; only a small JSON array is needed. |
 | **Timeout (ms)** | `20000` | 1000-999999 | Maximum wait before falling back to keyword-only results. Local models may need 60000-120000ms; cloud APIs typically respond in 5000-15000ms. Cap is intentionally permissive — set this past 120000ms only if you know your provider routinely runs longer. |
 | **AI Confidence Threshold** | `low` | Dropdown | Minimum confidence level for AI selections. `low`: accept all (high+medium+low). `medium`: accept medium and high. `high`: high only. |
@@ -148,9 +179,12 @@ Visible when Search Mode is `two-stage` or `ai-only`.
 | **Messages Sent to AI** (AI Scan Depth) | `4` | 1-100 | Number of recent messages sent to the AI for context. Can differ from the keyword scan depth. |
 | **Max Summary Length (chars)** (Entry Description Length) | `600` | 100-1000 | Max characters for entry descriptions in the AI manifest. Only applies to entries without a `summary` field. |
 | **System Prompt Override** | (none) | Text | Custom system prompt for AI selection. Empty uses the default. Supports the `{{maxEntries}}` placeholder. |
-| **Claude system prefix** (Prepend "You are Claude Code") | Off | Toggle | Proxy mode only. Prepends `You are Claude Code.` to the AI system prompt. Enable when routing a Claude model through the proxy. |
+| **Claude system prefix** (Prepend "You are Claude Code") | Off | Toggle | Legacy proxy-mode toggle. Only had an effect in the removed Custom Proxy mode, so it is now a no-op in profile mode. Left in place for rollback. |
 | **Force merge system prompt into user message** | Off | Toggle | Merge the system prompt into the user message. Use when the provider rejects or mishandles the system role (e.g., some Z.AI GLM versions). Try Prompt Post-Processing Semi/Strict first. |
 | **Use Session Notes as AI Context** | Off | Toggle | Feed the Session Scribe's latest summary into AI search context for better entry selection. See [[Features#Use Session Notes as AI Context]]. |
+| **Custom Fields in AI Manifest** (`aiManifestIncludeFields`) | (all) | Text | Comma-separated whitelist of custom-field names to send to the AI alongside each candidate entry. Empty includes every custom field that has a value. Populate (e.g. `era, faction`) to prune the manifest for token control. |
+| **Response Prefill Mode** (`responsePrefillMode`) | `off` | Dropdown | Inject seed text as the last assistant message so the writing AI continues from it. `off`: no injection. `anthropic-only`: only when the model is Claude. `all-providers`: apply to every chat-completion source. |
+| **Response Prefill Seed** (`responsePrefillSeed`) | (none) | Text | The prefill text injected when a prefill mode is active. |
 
 ### AI search filtering (AI Search → Show Filtering)
 
@@ -168,10 +202,9 @@ Settings for the `/dle-optimize-keys` command, which refines entry keywords usin
 |---------|---------|-------|-------------|
 | **Optimize Keys Mode** | `keyword` | Dropdown | `keyword`: refine existing keywords without AI. `two-stage`: use AI to analyze entry content and suggest better keywords. |
 | **Optimize Keys Prompt** | (none) | Text | Override the default optimization prompt. |
-| **Connection Mode** | `inherit` | Radio | `inherit` uses the AI Search connection. Or pick `profile` (saved profile) or `proxy`. |
+| **Connection Mode** | `inherit` | Radio | `inherit` uses the AI Search connection, or pick `profile` (saved profile). |
 | **Connection Profile** | (none) | Select | Profile mode only. |
-| **Proxy URL** | `http://localhost:42069` | Text | Proxy mode only. |
-| **Model Override** | (none) | Text | Override the model used for keyword optimization. |
+| **Model Override** | (none) | Text | Override the model used for keyword optimization. Empty inherits from AI Search. |
 | **Max Tokens** | `1024` | 256-8192 | Maximum tokens for the optimization response. |
 | **Timeout (ms)** | `30000` | 5000-999999 | Request timeout for optimization calls. |
 
@@ -193,9 +226,8 @@ AI-managed session notes that accumulate context across a conversation. The AI e
 | **Capture Mode** | `tag` | Radio | `tag`: AI uses `<dle-notes>` tags inline during generation. Free, no extra API calls. Best with flagship models. `extract`: a separate post-generation call extracts notes. Works with any writing model. Costs one extra API call per message. |
 | **Custom Tag Instruction** | (none) | Text | Custom instruction prompt for tag mode. Empty uses the default. |
 | **Custom Extraction Prompt** | (none) | Text | Custom extraction prompt for extract mode. Empty uses the default. |
-| **Connection Mode** | `inherit` | Radio | Extract mode only. `inherit` uses AI Search. Or `profile`/`proxy`. |
+| **Connection Mode** | `inherit` | Radio | Extract mode only. `inherit` uses AI Search, or pick `profile`. |
 | **Connection Profile** | (none) | Select | Extract mode, profile only. |
-| **Proxy URL** | `http://localhost:42069` | Text | Extract mode, proxy only. |
 | **Model Override** | (none) | Text | Extract mode. Override the extraction model. |
 | **Max Response Tokens** | `1024` | 256-8192 | Extract mode. Maximum tokens for the extraction response. |
 | **Timeout (ms)** | `30000` | 5000-999999 | Extract mode. Request timeout. |
@@ -211,10 +243,9 @@ Position, depth, and role for the AI Notepad live on the Injection tab.
 | **Session Folder** | `Sessions` | Text | Vault folder where session notes get saved. Created if missing. |
 | **Messages to Include** | `20` | 5-100 | Number of recent chat messages included as context for the summary. |
 | **Custom Summary Prompt** | (none) | Text | Override the default summary prompt. The default covers events, character dynamics, revelations, and state changes. |
-| **Connection Mode** | `inherit` | Radio | `inherit` uses AI Search. Or `profile`/`proxy`. |
+| **Connection Mode** | `inherit` | Radio | `inherit` (use AI Search), `st` (use SillyTavern's own active connection), or `profile` (saved profile). |
 | **Connection Profile** | (none) | Select | Profile mode only. |
-| **Proxy URL** | `http://localhost:42069` | Text | Proxy mode only. |
-| **Model Override** | (none) | Text | Override the model used for summaries. |
+| **Model Override** | (none) | Text | Override the model used for summaries. Empty inherits from AI Search. |
 | **Max Response Tokens** | `1024` | 256-4096 | Maximum tokens for the summary response. |
 | **Timeout (ms)** | `60000` | 5000-999999 | Request timeout for summary generation. |
 
@@ -227,10 +258,9 @@ Position, depth, and role for the AI Notepad live on the Injection tab.
 | **Target Folder** | (none) | Text | Obsidian folder for new entries. Empty saves to vault root. |
 | **Write directly (skip review popup)** | Off | Toggle | When on, auto-suggested entries write to the vault immediately without the review popup. Use with caution. |
 | **Custom Prompt** | (none) | Text | Override the default auto-suggest prompt. |
-| **Connection Mode** | `inherit` | Radio | `inherit` uses AI Search. Or `profile`/`proxy`. |
+| **Connection Mode** | `inherit` | Radio | `inherit` (use AI Search), `st` (use SillyTavern's own active connection), or `profile` (saved profile). |
 | **Connection Profile** | (none) | Select | Profile mode only. |
-| **Proxy URL** | `http://localhost:42069` | Text | Proxy mode only. |
-| **Model Override** | (none) | Text | Override the model used for suggestions. |
+| **Model Override** | (none) | Text | Override the model used for suggestions. Empty inherits from AI Search. |
 | **Max Tokens** | `2048` | 256-4096 | Maximum tokens for the suggestion response. |
 | **Timeout (ms)** | `30000` | 5000-999999 | Request timeout for auto-suggest generation. |
 
@@ -238,19 +268,19 @@ Use `/dle-newlore` to trigger on-demand at any time.
 
 ## Librarian (Features tab → Librarian)
 
-Tool-assisted lore retrieval and gap detection. When enabled, the writing AI can call `search_lore` and `flag_lore` tools during generation to look up vault entries and flag missing lore. The Librarian session UI (`/dle-librarian`) opens an interactive chat with Emma for drafting new entries. See [[Features#Librarian]].
+Tool-assisted lore retrieval and gap detection. When enabled, the writing AI can call `search` and `flag` tools during generation to look up vault entries and flag missing lore. The Librarian session UI (`/dle-librarian`) opens an interactive chat with Emma for drafting new entries. See [[Features#Librarian]].
 
 ### Tools
 
 | Setting | Default | Range | Description |
 |---------|---------|-------|-------------|
-| **Enable Librarian** | Off | Toggle | Enables Librarian generation-time tools and the interactive session UI. Auto-enables function calling on the active connection. |
-| **Allow vault searches during generation** (Search Tool) | On | Toggle | Enables the `search_lore` tool during generation (gated by Enable Librarian). |
-| **Allow flagging missing lore** (Flag Tool) | On | Toggle | Enables the `flag_lore` tool during generation (gated by Enable Librarian). |
+| **Enable Librarian** | Off | Toggle | Enables Librarian generation-time tools and the interactive session UI. Requires a tool-calling-capable connection; falls back to plain generation if unsupported. |
+| **Allow vault searches during generation** (Search Tool) | On | Toggle | Enables the `search` tool during generation (gated by Enable Librarian). |
+| **Allow flagging missing lore** (Flag Tool) | On | Toggle | Enables the `flag` tool during generation (gated by Enable Librarian). |
 | **Show tool call details on messages** | On | Toggle | Show the "Consulted lore vault" dropdown on assistant messages when the AI used Librarian tools. |
 | **Per-message activity** | Off | Toggle | When on, gap and flag records are tied to messages: cleared on new generation, kept on swipe, dropdown data persisted per-message. When off (default), gaps accumulate and dropdowns are ephemeral. |
-| **Searches per reply** | `2` | 1-10 | Maximum `search_lore` calls per generation. |
-| **Results per search** | `5` | 1-20 | Maximum entries returned per `search_lore` call. |
+| **Searches per reply** | `2` | 1-10 | Maximum `search` calls per generation. |
+| **Results per search** | `5` | 1-20 | Maximum entries returned per `search` call. |
 | **Result size limit (tokens)** | `1500` | 500-5000 | Token budget for search results returned to the AI per call. |
 
 ### Writing sessions
@@ -259,9 +289,8 @@ Tool-assisted lore retrieval and gap detection. When enabled, the writing AI can
 |---------|---------|-------|-------------|
 | **Write Folder** | (none) | Text | Destination folder in Obsidian for entries written from Librarian sessions. Empty saves to vault root. |
 | **Auto-draft when opening a gap** (Auto-Send on Gap) | On | Toggle | Automatically send the draft prompt when opening a flagged gap in the Librarian session. |
-| **Connection Mode** | `inherit` | Radio | `inherit` (use AI Search), `profile` (saved profile), or `proxy`. The default is `inherit` as of settings v3. Librarian intentionally has its own channel so users can route Emma to a different model. |
+| **Connection Mode** | `inherit` | Radio | `inherit` (use AI Search) or `profile` (saved profile). Defaults to `inherit`. Librarian intentionally has its own channel so users can route Emma to a different model. |
 | **Connection Profile** | (none) | Select | Profile mode only. |
-| **Proxy URL** | `http://localhost:42069` | Text | Proxy mode only. |
 | **Model Override** | (none) | Text | Override the model. Empty inherits from AI Search (when in `inherit` mode). |
 | **Session Max Tokens** | `4096` | 1024-16384 | Maximum tokens for Librarian session responses. |
 | **Session Timeout (ms)** | `120000` | 10000-999999 | Request timeout for Librarian session AI calls. The 120s default leaves headroom for forced-final-response loops on large contexts and reasoning models. |
@@ -329,7 +358,7 @@ These keys appear in `defaultSettings` but are not surfaced in the UI as user-ed
 | `promptPresets` | `{}` | Saved prompt presets keyed by tool name (`{ [toolKey]: { [presetName]: promptText } }`). |
 | `analyticsData` | `{}` | All-time analytics counters. |
 | `_wizardCompleted` | `false` | First-run setup wizard completion flag. |
-| `settingsVersion` | `3` | Settings schema version. Migrations run on load when stored version is behind. |
+| `settingsVersion` | `5` | Settings schema version. Migrations run on load when stored version is behind. |
 | `graphSavedLayout` | `null` | Saved graph node positions: `{ positions: { title: { x, y } }, timestamp }`. |
 | `aiSearchEnabled` | `false` | Internal mirror of `aiSearchMode` being non-`keywords-only`. Auto-managed; do not edit. |
 
@@ -344,5 +373,5 @@ These work automatically with no configuration:
 - **Hierarchical manifest clustering:** for vaults with 40+ selectable entries and 4+ categories, the optional Category Pre-filter uses a two-call AI approach for better scaling. Off by default.
 - **Sliding window AI cache:** AI search cache tracks manifest and chat hashes separately for smarter cache reuse. New chat lines are reused unless they reference vault entities.
 - **Confidence-gated budget:** AI search over-requests entries (2x), sorts by confidence tier before applying the budget cap.
-- **Prompt cache optimization:** in proxy mode, the manifest is placed first with `cache_control` breakpoints for Anthropic prompt caching. Profile mode does not currently support `cache_control`.
-- **Settings migrations:** version 1→2 consolidated Librarian model fields. Version 2→3 changed Librarian default connection mode from `profile` to `inherit` for unconfigured users. Existing explicit profile selections are preserved.
+- **Confidence tiers:** AI selections carry a confidence level (high/medium/low); the AI Confidence Threshold setting decides which tiers are accepted before the budget cap applies.
+- **Settings migrations:** run automatically on load when the stored `settingsVersion` is behind the current schema (5). 1→2 consolidated Librarian model fields. 2→3 changed Librarian's default connection mode from `profile` to `inherit` for unconfigured users (explicit profile selections preserved). 3→4 (v2.5) flipped any feature still on Custom Proxy mode to `profile` and shows a one-time deprecation notice — see the migration callout at the top of this page. 4→5 added the `wiImportEmHandling` default.

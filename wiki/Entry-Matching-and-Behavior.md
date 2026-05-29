@@ -89,6 +89,27 @@ warmup: 3  # Keyword must appear 3+ times in scan text each generation
 
 ---
 
+## Probability
+
+Per-entry `probability: N` in frontmatter, a number from `0.0` to `1.0`. After an entry matches by keyword, DLE rolls a random number; the entry only triggers if the roll falls within the probability.
+
+**Use case:** add variety. A "random encounter" or "rumor" entry with `probability: 0.3` triggers about 30% of the times its keywords match, so the same flavor lore doesn't appear on every relevant turn.
+
+**Example:**
+
+```yaml
+probability: 0.5   # ~50% chance to trigger when keywords match
+```
+
+**Notes:**
+
+- No `probability` field (or `null`) means the entry always triggers when matched.
+- `probability: 0` means the entry never triggers, even when its keywords match.
+- The roll happens once per generation, after the keyword and warmup checks pass.
+- Cascade-linked entries also respect probability (a cascade-linked entry with `probability: 0` is still skipped), but warmup is ignored for them.
+
+---
+
 ## Re-injection cooldown
 
 Global setting (not per-entry). Skips re-injecting an entry for N generations after it was last injected. Saves context by avoiding redundant lore repetition.
@@ -114,9 +135,10 @@ Global setting that prevents the same entries from being injected in consecutive
 
 **Notes:**
 
+- Enabled by default with a lookback depth of 2.
 - Constants (`#lorebook-always`) are exempt and always inject.
 - Injection history is tracked per-chat in `chat_metadata.deeplore_injection_log`.
-- The dedup key is `title|position|depth|role|contentHash`, so the same entry at a different depth or role isn't considered a duplicate.
+- The dedup key combines vault, title, position, depth, role, and a content hash, so the same entry at a different depth or role (or with edited content) isn't considered a duplicate. Two entries with the same title in different vaults are also kept distinct.
 - Distinct from re-injection cooldown: deduplication checks a sliding window of recent generations; re-injection cooldown counts generations since last injection.
 
 ---
@@ -179,7 +201,7 @@ See [[Writing Vault Entries]] for a complete template.
 
 ## Refine keys
 
-Per-entry `refine_keys` in frontmatter. Adds a secondary AND filter on top of primary keyword matching. When set, at least one refine key must also appear in the scan text for the entry to trigger.
+Per-entry `refine_keys` in frontmatter. Adds a secondary filter on top of primary keyword matching: a primary keyword must match **and** the refine keys must satisfy the entry's `selective_logic` mode before the entry triggers.
 
 **Use case:** reduce false positives for entries with common primary keywords. A character named "Rose" might have `refine_keys` requiring mention of their faction or role to avoid triggering on every use of the word "rose".
 
@@ -194,6 +216,26 @@ refine_keys:
   - spymaster
   - intelligence
 ```
+
+### Selective logic modes
+
+`selective_logic` controls how the refine keys are evaluated. This mirrors SillyTavern's World Info Selective Logic, so imported lorebooks keep the same behavior. Four modes are supported (default `and_any`):
+
+| Mode | Entry triggers when… |
+|------|----------------------|
+| `and_any` (default) | A primary key matched **and** at least one refine key also matched. |
+| `and_all` | A primary key matched **and** every refine key also matched. |
+| `not_all` | A primary key matched **and** not all refine keys matched (fewer than the full set). |
+| `not_any` | A primary key matched **and** no refine key matched. |
+
+```yaml
+refine_keys:
+  - hostile
+  - betrayal
+selective_logic: not_any   # only fire when neither word is present
+```
+
+An invalid `selective_logic` value falls back to `and_any` and is flagged by `/dle-lint`. When an entry's primary key matches but the refine gate blocks it, the `/dle-inspect` trace reports the mode-aware reason (e.g. "selective_logic=and_all blocked (1/2 refine keys matched)").
 
 See [[Writing Vault Entries]] for a complete template.
 

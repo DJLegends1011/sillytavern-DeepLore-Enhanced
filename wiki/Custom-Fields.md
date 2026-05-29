@@ -26,7 +26,7 @@ All four use the `match_any` operator and `moderate` tolerance by default.
 
 ### Visual editor (recommended)
 
-Click **Manage Fields** in the drawer's Filters tab or in Settings. The rule builder lets you:
+Open the rule builder from the gear icon in the drawer's **Filters** tab toolbar, or the **Edit Fields** button in the Settings popup. The rule builder lets you:
 
 - Add, delete, duplicate, and reorder fields
 - Set field name (snake_case), display label, data type, and multi-value toggle
@@ -77,7 +77,7 @@ Field definitions are stored at `DeepLore/field-definitions.yaml` in your primar
 | `contextKey` | string | No | Key in chat context state (default: same as `name`) |
 | `values` | string[] | No | Allowed values list (empty = freeform) |
 
-Reserved names that cannot be used: `keys`, `priority`, `tags`, `requires`, `excludes`, `position`, `depth`, `role`, `scandepth`, `excluderecursion`, `refine_keys`, `cascade_links`, `cooldown`, `warmup`, `probability`, `summary`, `graph`, `enabled`, `constant`, `seed`, `bootstrap`, `type`, `fileclass`, `status`, `aliases`.
+Reserved names that cannot be used: `keys`, `priority`, `tags`, `requires`, `excludes`, `position`, `depth`, `role`, `scandepth`, `excluderecursion`, `refine_keys`, `selective_logic`, `cascade_links`, `cooldown`, `warmup`, `probability`, `summary`, `graph`, `enabled`, `constant`, `seed`, `bootstrap`, `type`, `fileclass`, `status`, `aliases`.
 
 ## Using fields in frontmatter
 
@@ -130,7 +130,7 @@ The built-in fields have shorthand aliases:
 
 View all active filters with `/dle-context-state` (alias: `/dle-ctx`).
 
-You can also set context from the drawer's **Gating** tab by clicking the value buttons.
+You can also set context from the drawer's **Filters** tab by clicking the value buttons.
 
 ## Gating operators
 

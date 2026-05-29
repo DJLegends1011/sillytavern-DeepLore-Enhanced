@@ -7,7 +7,7 @@ Install steps for DeepLore. Install the extension, point it at an Obsidian vault
 - [SillyTavern](https://github.com/SillyTavern/SillyTavern) v1.12.14+
 - [Obsidian](https://obsidian.md/) with the [Local REST API](https://github.com/coddingtonbear/obsidian-local-rest-api) community plugin installed and enabled
 - A vault for your lore. Your existing Obsidian vault works; `/dle-import` converts SillyTavern World Info JSON into vault entries
-- For AI search (optional): a saved Connection Manager profile in SillyTavern (any provider), or a custom proxy reachable via SillyTavern's CORS proxy
+- For AI search (optional): a saved Connection Manager profile in SillyTavern (any provider). This is the only supported connection path as of v2.5 — the old Custom Proxy mode was removed
 
 > [!IMPORTANT]
 > If you previously ran the older standalone `sillytavern-DeepLore` extension, uninstall it first. Running both at once corrupts prompt injection.
@@ -30,7 +30,7 @@ Install steps for DeepLore. Install the extension, point it at an Obsidian vault
 ### Option B: manual git clone
 
 ```bash
-cd SillyTavern/data/default-user/extensions
+cd SillyTavern/public/scripts/extensions/third-party
 git clone https://github.com/pixelnull/sillytavern-DeepLore-Enhanced.git
 ```
 
@@ -68,33 +68,18 @@ Any entries in your vault tagged `lorebook` (or whatever tag you configured) mat
 
 AI search adds a second pipeline stage: after keyword pre-filtering, an AI model reads compact summaries of the candidates and selects the contextually relevant ones. See [[AI Search]] for the full mechanism.
 
-#### Option A: connection profile (recommended)
-
-Reuses an existing SillyTavern API connection. No extra software.
+AI search reuses an existing SillyTavern API connection through a Connection Manager profile. No extra software, and no `config.yaml` changes.
 
 1. Confirm you have at least one API connection set up in SillyTavern and saved as a Connection Manager profile
 2. In DLE settings, scroll to **AI Search**
 3. Check **Enable AI Search**
-4. Set connection mode to **Connection Profile** (default)
+4. Set connection mode to **Connection Profile** (the only mode in v2.5)
 5. Choose your profile from the dropdown
 6. Optionally set a **Model Override** (e.g., to force a cheaper model like Haiku)
 7. Click **Test AI Search** to verify
 
-#### Option B: custom proxy
-
-Routes AI search calls through an external proxy server via SillyTavern's built-in CORS proxy.
-
-1. Install and start a compatible proxy such as [claude-code-proxy](https://github.com/horselock/claude-code-proxy) (defaults to `http://localhost:42069`)
-2. Open `SillyTavern/config.yaml` and set `enableCorsProxy: true`, then restart SillyTavern
-3. In DLE settings, scroll to **AI Search**
-4. Check **Enable AI Search**
-5. Set connection mode to **Custom Proxy**
-6. Set the **Proxy URL** (e.g., `http://localhost:42069`)
-7. Set the **Model Override** (e.g., `claude-haiku-4-5-20251001`)
-8. Click **Test AI Search** to verify
-
-> [!WARNING]
-> Without `enableCorsProxy: true` in `config.yaml`, proxy mode throws a descriptive error. Profile mode does not need it.
+> [!NOTE]
+> The legacy **Custom Proxy** connection mode was removed in v2.5. If you ran an older DeepLore that pointed AI search at a local proxy (e.g. claude-code-proxy), DeepLore migrates that setting to **Connection Profile** automatically on first load and shows a one-time notice asking you to pick a profile. Connection Profile is now the only supported path, and DeepLore's AI features no longer require `enableCorsProxy: true`. The same applies to the Scribe, Auto Lorebook, AI Notepad, Librarian, and Optimize Keys channels.
 
 ---
 
@@ -105,7 +90,7 @@ If you installed via the built-in installer, SillyTavern shows an update notific
 If you installed manually, pull the latest changes:
 
 ```bash
-cd SillyTavern/data/default-user/extensions/sillytavern-DeepLore-Enhanced
+cd SillyTavern/public/scripts/extensions/third-party/sillytavern-DeepLore-Enhanced
 git pull
 ```
 
@@ -123,9 +108,10 @@ git pull
 
 ### AI search test fails
 
-- **Connection Profile mode:** Confirm the selected profile still exists and its underlying API connection works. Test the connection in SillyTavern's main API panel first.
-- **Custom Proxy mode:** Verify the proxy is running (`curl http://localhost:42069` or equivalent). Confirm `enableCorsProxy: true` is set in `config.yaml`. Check the proxy's console for errors.
-- **Timeout:** AI search has a configurable timeout (default 10 seconds). Slow providers may need a longer timeout. See [[Settings Reference]].
+- **Profile missing or broken:** Confirm the selected profile still exists and its underlying API connection works. Test the connection in SillyTavern's main API panel first.
+- **No profile selected:** Pick a profile in AI Search settings, or create one in Connection Manager.
+- **Timeout:** AI search has a configurable timeout (default 20 seconds). Slow providers — especially local models — may need a longer timeout. See [[Settings Reference]].
+- **"Custom Proxy mode was removed in v2.5":** You (or an old setting) still point a channel at proxy mode. Open **Settings → Connection → AI Connections** and pick a Connection Profile for that channel.
 
 ### No entries found after Refresh Index
 
@@ -135,6 +121,6 @@ git pull
 
 ### Extension not appearing in SillyTavern
 
-- **Check the extensions folder:** The extension lives at `SillyTavern/data/default-user/extensions/sillytavern-DeepLore-Enhanced/` with `manifest.json` at the root.
-- **Check SillyTavern version:** DeepLore requires SillyTavern v1.12.14+.
+- **Check the extensions folder:** The extension lives at `SillyTavern/public/scripts/extensions/third-party/sillytavern-DeepLore-Enhanced/` (or `data/default-user/extensions/sillytavern-DeepLore-Enhanced/` if you installed it for a single user) with `manifest.json` at the root.
+- **Check SillyTavern version:** DeepLore requires SillyTavern v1.12.14+ (enforced by `minimum_client_version` in the manifest). Older versions refuse to load the extension.
 - **Clear browser cache:** Hard-refresh (`Ctrl+Shift+R`) or clear cache and reload.

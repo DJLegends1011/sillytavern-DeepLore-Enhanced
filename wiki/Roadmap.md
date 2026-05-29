@@ -80,7 +80,7 @@ Size estimates: **[S]** small, **[M]** medium, **[L]** large.
 | ~~**Entry Clustering / Smart Grouping**~~ | ~~M~~ | Shipped in 1.0. Hierarchical pre-filter clusters by category; graph has Louvain clustering and gap analysis. |
 | **Keyboard Shortcuts** | S | Ctrl+Shift+B/M/N/R for common drawer and pipeline actions. |
 | **Entry Versioning / History Timeline** | M | Track changes to vault entries over time with diffs. |
-| ~~**Setup Wizard AI Connection Step**~~ | ~~S~~ | Shipped in 1.0. Wizard page 5 configures AI search connection (profile or proxy). |
+| ~~**Setup Wizard AI Connection Step**~~ | ~~S~~ | Shipped in 1.0. Wizard page 5 configures the AI search connection profile. (The proxy radio is hidden as of v2.5; Connection Profiles are canonical.) |
 | **`/dle-summarize` Batch UX** | M | Batch mode for generating summaries across many entries with progress tracking and abort support. |
 | **`/dle-set-characters` Browse Popup** | S | Rich browse-and-select popup for the character gating command, matching the style of `/dle-set-era`. |
 | **Simulation Scope Disclaimer** | S | Add a note to `/dle-simulate` output clarifying that results are approximate and may differ from real generations. |
@@ -135,7 +135,7 @@ Size estimates: **[S]** small, **[M]** medium, **[L]** large.
 | **Web Worker for Keyword Matching** | M | Offload regex matching off the main thread for vaults with 500+ entries. |
 | **Pipeline Telemetry Dashboard** | M | Timing data, performance counters, and user-facing metrics for pipeline runs. |
 | **Observer Unsubscribe Pattern** | M | Refactor `state.js` callback arrays to return unsubscribe functions, enabling proper cleanup if modules are ever reloaded. |
-| **Per-Turn Decision Record ("Verdict")** | M | Replace the racing globals (`lastInjectionSources`, `lastPipelineTrace`, `previousSources`, `lastInjectionEpoch`) with one authoritative per-message record of what DLE decided that turn: which entries injected, why, AI confidence, lens/stage outcomes, token cost. **Storage:** in-memory ring buffer of recent verdicts, spilling to IndexedDB for the current chat only (capped, auto-pruned). **Never** written to `chat_metadata`; chat files stay clean. **Fixes:** (1) drawer/cartographer/`/dle-inspect` go stale or disagree across messages because they read different globals; (2) swipes pollute cooldown/decay/injection trackers because rollback is partial across the racing globals; (3) "what did DLE inject on message #47?" is unanswerable today; the data was overwritten on message #48. **Removes:** the four racing globals, their epoch-guard coordination code, and the drawer fallback that reads `lastPipelineTrace` when `lastInjectionSources` is empty. **Tradeoffs:** does not survive chat export/import (local-only), does not sync across devices, does not survive long-term IndexedDB pruning. Considered but rejected: storing on `message.extra` (chat file bloat). Pairs naturally with the "Lens stack" reframe below; a verdict is most useful when it's a clean lens-stack readout, but neither requires the other. Deferred from v0.2.0 coherence audit; user wants to revisit later. |
+| ~~**Per-Turn Decision Record ("Verdict")**~~ | ~~M~~ | **Shipped in v2.5.** `src/verdict/verdict-store.js` is now the single source of truth for "what did DLE decide this turn" — it replaced the racing globals (`lastInjectionSources`, `lastPipelineTrace`, `previousSources`, `lastInjectionEpoch`). One authoritative per-message verdict carries `injectedSources` + full `trace` + `perEntry` + `epoch`/`msgIdx`/`chatId`. In-memory ring buffer (cap 50) spilling to per-chat IndexedDB (soft cap ~200), pruned via a sampled scan; never written to `chat_metadata`. Drawer / Cartographer / `/dle-inspect` read one consistent record; "what did DLE inject on message #47?" is now answerable across reloads and chat switches. |
 | **Lens Stack Refactor** | L | Reframe the matching/gating/dedup pipeline as an ordered stack of composable "lenses." Each lens is a small pure function `(entries, context) → entries-with-verdicts` that says yes/no/boost with a reason. Pin, block, era gating, requires/excludes, cooldown, decay, dedup, AI search, fuzzy match: all become lenses with the same shape. **Why:** today's pipeline is ~10 bespoke stages, each with its own state, calling convention, and quirks; debugging "why didn't entry X show up?" requires knowing which of 10 places killed it. As a lens stack, the answer is one ordered readout. Adding a new gating rule stops requiring touching multiple files. The Injection tab and `/dle-inspect` become trivially honest; print the stack. **Catch:** real refactor, not a rename. A halfway state (some stages converted, others bespoke) is *more* complex than today, not less, so this only pays off if committed to fully. Pairs with Verdict (the verdict is what a lens stack writes). **Order of operations if pursued:** Verdict first (it is the data structure Lens writes into), then convert stages one at a time across releases, then delete the old `runPipeline` orchestrator when nothing depends on it. Likely a v0.3 or v1.0 project, not a bolt-on. Deferred from v0.2.0 coherence audit. |
 
 ---
@@ -170,22 +170,25 @@ Size estimates: **[S]** small, **[M]** medium, **[L]** large.
 
 These are SillyTavern World Info features that DLE does not currently implement. They were filed as bugs in the 2026-04-07 audit but are missing features, not regressions, so they live here. Source: `audit/bug-hunt-2026-04-07.md`.
 
-| Item | Source | Summary |
-|------|--------|---------|
-| **Whole-word boundary regex parity** | BUG-044 | DLE smart-boundary differs from ST `(?:^|\W)(...)(?:$|\W)` for `_`-prefixed keys, multi-word keys, and NFC-normalized keys. Imported WI lorebooks silently match different sets. |
-| **Regex-key support** | BUG-045 | `/pattern/flags` keys silently treated as literal strings; WI imports lose all regex keys. |
-| **`selectiveLogic` modes (NOT_ALL/NOT_ANY/AND_ALL)** | BUG-046 | DLE hard-codes AND_ANY. WI books with NOT_ANY (negative gating, very common) silently inverted. |
-| **Sticky timed effect** | BUG-047 | WI sticky (force-active for N messages after activation) not implemented. DLE drops entries after one generation regardless of sticky frontmatter. |
-| **`delay` / `delayUntilRecursion` timed effects** | BUG-048 | Cannot express "only on recursion >= N" or "wait until chat length >= N." WI lorebooks designed around this break. |
-| **Untruncated recursion buffer** | BUG-049 | DLE truncates recursive scan budget to 50KB; ST never truncates. Substring may break mid-word. |
-| **`preventRecursion` flag** | BUG-050 | No way to express "match but do not seed further recursion." Only `excludeRecursion` (skip during recursive scan) exists. |
-| **Position constants ANTop/ANBottom/EMTop/EMBottom/atDepth** | BUG-051 | Missing position constants. `position: ANTop` etc. in vault frontmatter silently mis-injected at IN_PROMPT/IN_CHAT. |
-| **Inclusion-group / group-scoring support** | BUG-052 | Common WI pattern ("pick one of N region descriptions") completely absent. Includes `useGroupScoring`, `group_weight`, `group_override`. |
-| **Subscribe to WORLDINFO_FORCE_ACTIVATE** | BUG-081 | Cross-extension force-injection of lore broken; "DLE replaces WI" claim leaks for any third-party extension that uses the contract. |
-| **Subscribe to WORLDINFO_UPDATED** | BUG-082 | Hybrid vault+WI users drift silently. |
-| **Persona/character/scenario/depth-prompt/creator-notes scan surfaces** | BUG-095 | WI books triggering off persona description / scenario silently fail. |
-| **Per-entry `caseSensitive` / `matchWholeWords` override** | BUG-096 | Frontmatter `case_sensitive: true` ignored. Always reads global setting. |
-| **Min-activations / depth-skew loop** | BUG-097 | Sparse-keyword vaults cannot request "advance scan depth until N activated." |
-| **`@@activate` / `@@dont_activate` decorators** | BUG-098 | Decorator strings end up in injected content as literals. |
-| **Probability scale parity (0-100)** | BUG-099 | WI entry imported with `probability: 50` evaluates as `50 > 1.0` and never enters random branch; always passes. No validation. |
-| **BM25 fuzzy results respect `refineKeys` gating** | BUG-100 | Fuzzy match cannot fail refine-key gating because primary+refine is not re-checked on the BM25 path. |
+> [!NOTE]
+> **v2.5 closed several of these.** The importer now reads every WI field — most land natively, the rest round-trip into the vault so nothing is silently dropped. `selectiveLogic` (all 4 modes) is now enforced natively; per-entry `caseSensitive` / `matchWholeWords` are now preserved on import (visible, not yet enforced). See [[For World Info Users]] for the full current cheat sheet. The remaining items below are genuine gaps.
+
+| Item | Size | Source | Summary |
+|------|------|--------|---------|
+| **Whole-word boundary regex parity** | M | BUG-044 | DLE smart-boundary differs from ST `(?:^|\W)(...)(?:$|\W)` for `_`-prefixed keys, multi-word keys, and NFC-normalized keys. Imported WI lorebooks silently match different sets. |
+| **Regex-key support** | M | BUG-045 | `/pattern/flags` keys silently treated as literal strings; WI imports lose all regex keys. |
+| ~~**`selectiveLogic` modes (NOT_ALL/NOT_ANY/AND_ALL)**~~ | ~~M~~ | BUG-046 | **Shipped in v2.5.** All four modes (`and_any` / `and_all` / `not_all` / `not_any`) enforced natively by `applySelectiveLogic` on the primary keyword + recursion paths. (BM25 fuzzy still bypasses refine keys by design — see BUG-100.) |
+| **Sticky timed effect** | M | BUG-047 | WI sticky (force-active for N messages after activation) not implemented. DLE drops entries after one generation regardless of sticky frontmatter. Round-trips on import, flagged `W_NOT_IMPLEMENTED`. |
+| **`delay` / `delayUntilRecursion` timed effects** | M | BUG-048 | Cannot express "only on recursion >= N" or "wait until chat length >= N." Round-trips on import, flagged `W_NOT_IMPLEMENTED`. |
+| **Untruncated recursion buffer** | M | BUG-049 | DLE truncates recursive scan budget to 50KB; ST never truncates. Substring may break mid-word. |
+| **`preventRecursion` flag** | S | BUG-050 | No way to express "match but do not seed further recursion." Only `excludeRecursion` (skip during recursive scan) exists. Round-trips on import. |
+| **Position constants ANTop/ANBottom/EMTop/EMBottom/atDepth** | M | BUG-051 | Missing position constants. `position: ANTop` etc. in vault frontmatter silently mis-injected at IN_PROMPT/IN_CHAT. (EM positions 5/6 now handled on import — see [[For World Info Users#Example Messages handling (v2.5)]].) |
+| **Inclusion-group / group-scoring support** | M | BUG-052 | Common WI pattern ("pick one of N region descriptions") completely absent. Includes `useGroupScoring`, `group_weight`, `group_override`. Round-trips on import, flagged `W_NOT_IMPLEMENTED`. |
+| **Subscribe to WORLDINFO_FORCE_ACTIVATE** | M | BUG-081 | Cross-extension force-injection of lore broken; "DLE replaces WI" claim leaks for any third-party extension that uses the contract. |
+| **Subscribe to WORLDINFO_UPDATED** | S | BUG-082 | Hybrid vault+WI users drift silently. |
+| **Persona/character/scenario/depth-prompt/creator-notes scan surfaces** | M | BUG-095 | WI books triggering off persona description / scenario silently fail. The 6 `match_*` scan-source toggles round-trip on import (preserved, not enforced). |
+| **Per-entry `caseSensitive` / `matchWholeWords` enforcement** | M | BUG-096 | v2.5 preserves frontmatter `case_sensitive:` / `match_whole_words:` on import (round-trip), but matching still reads the global toggle. Per-entry enforcement is the remaining gap. |
+| **Min-activations / depth-skew loop** | M | BUG-097 | Sparse-keyword vaults cannot request "advance scan depth until N activated." |
+| **`@@activate` / `@@dont_activate` decorators** | S | BUG-098 | Decorator strings end up in injected content as literals. |
+| **Probability validation for hand-authored entries** | S | BUG-099 | Import auto-rescales `probability: 50` → `0.50`, but hand-authored out-of-range values (`probability: 50` in YAML) still evaluate as `50 > 1.0` and always pass. Reject or rescale at load time. |
+| **BM25 fuzzy results respect `refineKeys` gating** | S | BUG-100 | Fuzzy match cannot fail refine-key gating because primary+refine is not re-checked on the BM25 path (intentional today — TF-IDF is content-wide). |

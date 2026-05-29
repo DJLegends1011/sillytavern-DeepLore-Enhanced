@@ -12,7 +12,7 @@ If you already use SillyTavern's built-in World Info (WI) lorebook, most concept
 
 | World Info field | DeepLore equivalent | Notes |
 |---|---|---|
-| `key` (primary keys) | `keys:` (YAML list) | One trigger keyword per list item. Comma-string format from older ST exports auto-splits on import. See [[Writing Vault Entries#Keys]]. |
+| `key` (primary keys) | `keys:` (YAML list) | One trigger keyword per list item. Comma-string format from older ST exports auto-splits on import. See [[Frontmatter Fields]]. |
 | `keysecondary` (secondary keys) | `refine_keys:` | Gating mode set by `selective_logic`. Default `and_any` matches WI's default. |
 | `comment` (entry name) | The note's filename and `# Title` | DeepLore uses the Obsidian note title as the entry title. Falls back to the first key if `comment` is empty. |
 | `content` | Everything below the frontmatter fence | Plain Markdown body. |
@@ -50,7 +50,7 @@ WI:  order: 100   →  shows up first
 DLE: priority: 10 →  shows up first
 ```
 
-`/dle-import` keeps your numbers as-is, so the sort order flips after import. The importer fires a one-shot warning toast about this. Review and re-priority your imported entries. See [[Writing Vault Entries#Priority]] for guidance on choosing values.
+`/dle-import` keeps your numbers as-is, so the sort order flips after import. The post-import report popup calls this out as one of the items needing manual review. Re-priority your imported entries. See [[Frontmatter Fields]] for guidance on choosing values.
 
 ### 2. Probability is a fraction in DeepLore
 
@@ -69,7 +69,7 @@ These don't exist in WI. Skim once so you know they're there:
 - **Seed entries** (`lorebook-seed`): content sent to the AI search stage as story context on new chats. Force-injected into the writing AI prompt as well. See [[Glossary#Seed Entry]].
 - **Bootstrap entries** (`lorebook-bootstrap`): force-inject when chat is short (default: 3 or fewer messages), then become regular triggered entries. See [[Glossary#Bootstrap Entry]].
 - **Guide entries** (`lorebook-guide`): Librarian-only writing and style guides. Never reach the writing AI through any path. See [[AI-Powered Tools#Librarian]].
-- **`summary` field**: tells AI search *when* to pick this entry. Required for AI search to work well. See [[Writing Vault Entries#Summary]].
+- **`summary` field**: tells AI search *when* to pick this entry. Required for AI search to work well. See [[Frontmatter Fields]].
 - **Contextual gating**: `era`, `location`, `scene_type`, `character_present`, plus your own custom fields filter entries by story state. See [[Custom Fields]].
 - **`requires` / `excludes`**: entry-title graph gating. `requires: [Bloodchain]` means "only inject me if Bloodchain was also selected." See [[Entry Matching and Behavior]].
 - **`cooldown` / `warmup`**: per-entry timing gates. See [[Entry Matching and Behavior]].
@@ -92,7 +92,7 @@ DeepLore ships an importer that converts WI JSON into Markdown notes with proper
 **v2.5: every WI field now lands.** Three tiers:
 
 1. **Native** — DLE acts on the field directly: `key`, `keysecondary`, `comment`, `content`, `constant`, `order`→`priority`, `position` (with EM handling — see below), `depth`, `probability`, `scanDepth`, `disable`→`enabled:false`, `excludeRecursion`, `role`, `selectiveLogic` (all 4 modes).
-2. **Round-trip preserved** — landed in vault frontmatter as snake_case, flagged by `/dle-lint` (`W_NOT_IMPLEMENTED` for planned-to-implement fields like `sticky`/`delay`/`group*`, `W_WI_ROUND_TRIP` for "DLE intentionally ignores"): `vectorized`, `selective`, `use_probability`, `prevent_recursion`, `delay_until_recursion`, `group_override`, `use_group_scoring`, `case_sensitive`, `match_whole_words`, `automation_id`, `add_memo`, `display_index`, plus the 6 `match_*` scan-source toggles.
+2. **Round-trip preserved** — landed in vault frontmatter as snake_case, flagged by `/dle-lint` (`W_NOT_IMPLEMENTED` for planned-to-implement fields like `sticky`/`delay`/`group*`, `W_WI_ROUND_TRIP` for "DLE intentionally ignores"): `vectorized`, `selective`, `use_probability`, `prevent_recursion`, `delay_until_recursion`, `group_override`, `use_group_scoring`, `case_sensitive`, `match_whole_words`, `automation_id`, `add_memo`, `display_index`, the 6 `match_*` scan-source toggles, plus the modern ST fields `triggers`, `ignore_budget`, `character_filter`, and `decorators`.
 3. **Still needs manual review** (true semantic gaps DLE can't auto-fix):
    - `priority` (semantic flip; the import report calls it out)
    - Regex keys (treated as literal strings — Roadmap BUG-045)
@@ -108,7 +108,7 @@ ST positions 5 (`before_example_messages`) and 6 (`after_example_messages`) inje
 
 Most users find a single short flavor quote inside the parent character entry is enough to teach an LLM the voice; the EM slot is often noise once the model has the character description. The post-import popup explains this and offers a one-click "Skip Example Messages on future imports" button that flips the setting. Already-imported EM entries stay in the vault — `/dle-delete` them by name if you want them gone.
 
-Override per-import in `Settings → Connection → WI Import → Example Messages`, or per-call via `options.emHandling: 'append' | 'skip'` for companion-extension integrations.
+Override the default in `Settings → DeepLore Enhanced → Matching → Import`, or per-call via `options.emHandling: 'append' | 'skip'` for companion-extension integrations.
 
 ---
 

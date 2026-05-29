@@ -145,15 +145,15 @@ A specific model from a provider (Claude Haiku, GPT-4o-mini, Llama-3-70B).
 A saved SillyTavern Connection Manager profile DLE can route an AI feature to. Configures provider, model, and API key.
 
 **Connection mode**
-The choice of how a DLE feature reaches its AI: profile (use a saved Connection Manager profile) or proxy (route through ST's built-in CORS proxy to an external endpoint such as `claude-code-proxy`). Proxy mode requires `enableCorsProxy: true` in `config.yaml`.
+The choice of how a DLE feature reaches its AI. As of v2.5 the modes are: `profile` (use a saved Connection Manager profile), `inherit` (reuse the AI Search connection), and `st` (use SillyTavern's own active connection — Session Scribe and Auto Lorebook only). The old `proxy` mode was removed in v2.5; see [[Settings Reference]] for the migration. AI Search itself is profile-only.
 
 **Connection channel**
-A per-feature connection. DLE has independent channels for AI search, the Librarian, the Scribe, and the Notepad. They do not share settings.
+A per-feature connection. DLE has independent channels for AI search, the Librarian, the Scribe, the Notepad, Auto Lorebook, and Optimize Keys. They do not share settings — each can override mode, profile, model, max tokens, and timeout.
 
 **Librarian**
 Two linked systems sharing the name:
-1. **Generation tools.** The writing AI gets `search` and `flag` tools during generation. `search` queries the vault for entries the pipeline missed. `flag` records gaps when the writing AI reaches for lore that is not in your vault.
-2. **Emma.** A separate chat agent (opened via `/dle-librarian`, the drawer Librarian tab, or by clicking a flag) that helps you author or update vault entries from flagged gaps. Her toolset includes `search_vault`, `get_entry`, `get_full_content`, `find_similar`, `get_writing_guide`, `flag_entry_update`, and more. Both halves require a tool-calling provider on their connection. Emma uses her own connection channel, separate from AI search.
+1. **Generation tools.** The writing AI gets `search` and `flag` tools during generation. `search` queries the vault for entries the pipeline missed; `flag` records gaps when the writing AI reaches for lore that is not in your vault. (Each is independently gated by its own setting under the master Librarian toggle.)
+2. **Emma.** A separate chat agent (opened via `/dle-librarian`, the drawer Librarian tab, or by clicking a flag) that helps you author or update vault entries from flagged gaps. Her toolset is roughly a dozen tools: `search_vault`, `get_entry`, `get_links`, `get_backlinks`, `get_full_content`, `find_similar`, `list_flags`, `list_entries`, `get_recent_chat`, `flag_entry_update`, `compare_entry_to_chat`, plus `get_writing_guide` (only when guide entries exist). Both halves require a tool-calling provider on their connection. Emma uses her own connection channel, separate from AI search.
 
 **Emma**
 The Librarian persona. She/her in user-facing copy. Opens from the drawer's Librarian tab, the `/dle-librarian` command, or by clicking a flag.

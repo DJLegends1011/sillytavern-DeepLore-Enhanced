@@ -46,7 +46,7 @@ Extract mode is useful when your writing model doesn't reliably follow the `<dle
 2. Go to the **Features** tab
 3. Check **Enable AI Notebook**
 4. Choose **Tag** or **Extract** mode
-5. For Extract mode, configure the AI connection (Inherit, Profile, or Proxy)
+5. For Extract mode, configure the AI connection (Inherit or a Connection Profile)
 
 ---
 
@@ -61,12 +61,11 @@ Extract mode is useful when your writing model doesn't reliably follow the `<dle
 | Role | System | Injection role (system, user, or assistant) |
 | Instruction Prompt | (built-in) | Custom prompt override for tag mode instructions |
 | Extract Prompt | (built-in) | Custom prompt override for extract mode |
-| Connection Mode | Inherit | `inherit` (resolves to AI Search settings), `profile` (ST Connection Manager), or `proxy` (CORS proxy) |
+| Connection Mode | Inherit | `inherit` (resolves to AI Search settings) or `profile` (an ST Connection Manager profile) |
 | Profile ID | (none) | Which ST profile to use for extract mode |
-| Proxy URL | `http://localhost:42069` | Proxy endpoint for extract mode |
 | Model | (none) | Model override for extract mode |
 | Max Tokens | 1024 | Token limit for the extraction API call (256-8192) |
-| Timeout | 30s | API timeout for extraction (5-120s) |
+| Timeout | 30s (30000ms) | API timeout for extraction (5000-999999ms) |
 
 ---
 
@@ -85,6 +84,10 @@ Notes are also visible per-message in the **Context Cartographer** popup (the so
 Notes live in `chat_metadata.deeplore_ai_notepad` as a plain text string. They persist with the chat: switching chats loads that chat's notes, and notes survive page reloads. The accumulator is capped at 64KB; when it exceeds the cap, oldest blocks are trimmed at paragraph boundaries (`\n\n`).
 
 Each message's extracted notes are also saved on `message.extra.deeplore_ai_notes` for per-message inspection.
+
+### Pinning notes
+
+In the `/dle-ai-notepad` editor you can **pin** individual lines. Pinned lines are protected: they survive the 64KB cap trim and any deduplication pass, so a critical fact you want kept forever won't be evicted as the note store grows. Pins are stored as normalized keys in `chat_metadata.deeplore_ai_notepad_pins` (per chat). If you later edit a pinned line so it no longer matches its stored key, the pin quietly stops applying rather than erroring.
 
 ### Swipe and edit rollback
 
