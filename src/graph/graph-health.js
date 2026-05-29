@@ -9,6 +9,7 @@
  * Node-flag map keys are node ids (= index into gs._vaultIndex), never bare titles — gotcha #50.
  */
 import { breakCycles } from './graph-dag.js';
+import { escapeHtml } from './graph-util.js';
 
 const SEV = { CRIT: 3, WARN: 2, INFO: 1 };
 const SEV_COLOR = { 3: '#e15759', 2: '#f28e2b', 1: '#edc948' };
@@ -230,8 +231,6 @@ export function computeHealthFindings(gs) {
 }
 
 // ─── Floating side-panel UI (JS-created, not in container HTML) ───
-
-const escapeHtml = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 export function initHealth(gs, dbg) {
     let panelEl = null;

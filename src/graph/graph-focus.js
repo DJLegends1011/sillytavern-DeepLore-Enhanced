@@ -6,6 +6,8 @@
  * @returns {{ bfsDepth, computeRadialLayout, enterFocusTree, exitFocusTree,
  *             computeHoverDistances, applyFilters, fitToView, findNearest, hitRadius }}
  */
+import { isRehidden } from './graph-util.js';
+
 export function initFocus(gs, dbg) {
 
     /**
@@ -207,7 +209,7 @@ export function initFocus(gs, dbg) {
                 n.pinned = false;
                 n._treePinned = false;
             }
-            n.hidden = n.orphan || (n.revealBatchIdx != null && n.revealBatchIdx >= gs.revealedBatch && n.revealBatchIdx !== -1);
+            n.hidden = isRehidden(n, gs.revealedBatch);
             delete n._targetX;
             delete n._targetY;
         }
@@ -299,7 +301,15 @@ export function initFocus(gs, dbg) {
                 n.y = n._targetY;
             }
         }
-        if (!anyMoving) gs._egoLerpActive = false;
+        if (!anyMoving) {
+            gs._egoLerpActive = false;
+            // physics.simulate() early-returns in non-force modes, so it never clears these.
+            // Without clearing them here, the tick's draw gate (hasSpringEnergy || maxDelta>…)
+            // stays true forever and re-draws the whole canvas every frame for as long as the
+            // user sits in focus/DAG layout. The reveal-anim block re-sets them if it's running.
+            gs.hasSpringEnergy = false;
+            gs.maxDelta = 0;
+        }
         return anyMoving;
     }
 

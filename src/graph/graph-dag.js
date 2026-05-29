@@ -9,6 +9,7 @@
  *
  * Map keys are node ids (collision-safe), never bare titles — gotcha #50.
  */
+import { isRehidden } from './graph-util.js';
 
 /**
  * Break cycles in a directed edge list via iterative DFS back-edge removal.
@@ -157,7 +158,9 @@ export function initDagLayout(gs, dbg) {
             gs._preLayoutPositions = new Map();
             for (const n of gs.nodes) gs._preLayoutPositions.set(n.id, { x: n.x, y: n.y });
         }
-        gs._preLayoutEdgeVis = { ...gs.edgeVisibility };
+        // Guarded like _preLayoutPositions: a second enter() before exit() must not overwrite the
+        // saved (pre-DAG) visibility with the already-DAG-restricted one and corrupt restore.
+        if (!gs._preLayoutEdgeVis) gs._preLayoutEdgeVis = { ...gs.edgeVisibility };
 
         // Restrict to directed edges; rebuild degree-derived state under the new visibility.
         gs.edgeVisibility.link = false;
@@ -195,15 +198,23 @@ export function initDagLayout(gs, dbg) {
         gs.needsDraw = true;
 
         if (dbg) dbg(`DAG: ${ids.length} nodes, ${maxLayer + 1} layers, ${removed.size} back-edge(s) broken`);
-        if (gs.fitToView) gs.fitToView();
+        // Fit AFTER the lerp settles, not now — node x/y are still the pre-DAG force positions,
+        // so fitting here would frame the old scatter (wrong zoom for a tall layered tree). Defer
+        // past the ~150ms lerp; tracked in _fitTimers so popup-close cancels it. (Mirrors replayReveal.)
+        if (gs.fitToView) {
+            const tid = setTimeout(() => {
+                if (gs.isRunning && gs.layoutMode === 'dag') gs.fitToView(true);
+            }, 260);
+            (gs._fitTimers = gs._fitTimers || []).push(tid);
+        }
         return true;
     }
 
     function exit() {
         for (const n of gs.nodes) {
             if (n._layoutPinned) { n.pinned = false; n._layoutPinned = false; }
-            // Same re-hide formula as exitFocusTree — keep reveal/orphan state consistent.
-            n.hidden = n.orphan || (n.revealBatchIdx != null && n.revealBatchIdx >= gs.revealedBatch && n.revealBatchIdx !== -1);
+            // Shared re-hide rule with exitFocusTree — keeps reveal/orphan state consistent.
+            n.hidden = isRehidden(n, gs.revealedBatch);
             delete n._targetX;
             delete n._targetY;
         }
