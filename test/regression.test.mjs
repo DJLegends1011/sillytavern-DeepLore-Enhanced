@@ -3392,6 +3392,64 @@ test('MV-10: applyPinBlock matchedKeys keyed by trackerKey, not bare title', () 
     assertEqual(matchedKeys.get('vault-b:Castle'), '(pinned)', 'vault-b Castle pin recorded by trackerKey');
 });
 
+test('MV-DTK: drawer token-breakdown srcMap keyed by trackerKey, not bare title', async () => {
+    // Site: src/drawer/drawer-render-status.js renderStatusZone token breakdown (~:174-191).
+    // It builds `srcMap` from verdict.injectedSources to look up each injected entry's
+    // selection reason (constant / ai / pinned / keyword) and SUM its tokens into the
+    // matching bucket. Pre-fix it keyed the Map by bare `s.title` and looked up by bare
+    // `e.title`. With two cross-vault entries sharing a title but selected for DIFFERENT
+    // reasons, the bare-title Map collapsed them: the second source overwrote the first,
+    // so BOTH injected entries resolved to the SAME reason → one entry's tokens were
+    // misattributed to the wrong bucket. Composite trackerKey (vaultSource:title.toLowerCase())
+    // keeps them distinct — matching every sibling drawer site (see MV-1).
+
+    // Behavioral component: replicate the production attribution loop with the FIXED key.
+    // Same title "Castle" in two vaults, selected by different reasons + distinct token counts.
+    const injectedSources = [
+        { title: 'Castle', vaultSource: 'vault-a', matchedBy: 'AI selection' },
+        { title: 'Castle', vaultSource: 'vault-b', matchedBy: '(pinned)' },
+    ];
+    const injected = [
+        { title: 'Castle', vaultSource: 'vault-a', tokens: 50 },
+        { title: 'Castle', vaultSource: 'vault-b', tokens: 80 },
+    ];
+    const keyOf = (e) => `${e.vaultSource || ''}:${(e.title || '').toLowerCase()}`;
+    const srcMap = new Map(injectedSources.map(s => [keyOf(s), (s.matchedBy || '').toLowerCase()]));
+    let aiTokens = 0, pinTokens = 0, keywordTokens = 0, constTokens = 0, otherTokens = 0;
+    for (const e of injected) {
+        const reason = srcMap.get(keyOf(e)) || '';
+        if (reason.includes('constant') || reason.includes('always')) constTokens += e.tokens;
+        else if (reason.startsWith('ai:') || reason.includes('ai selection')) aiTokens += e.tokens;
+        else if (reason.includes('pinned')) pinTokens += e.tokens;
+        else if (reason.includes('fuzzy') || reason.includes('keyword') || reason.includes('(')) keywordTokens += e.tokens;
+        else otherTokens += e.tokens;
+    }
+    // vault-a Castle (AI, 50t) → AI bucket; vault-b Castle (pinned, 80t) → Pinned bucket.
+    // Bare-title keying would have BOTH resolve to vault-b's "(pinned)" reason →
+    // aiTokens=0, pinTokens=130. The composite key keeps attribution correct.
+    assertEqual(aiTokens, 50, 'vault-a Castle (AI-selected) → AI bucket, not collapsed');
+    assertEqual(pinTokens, 80, 'vault-b Castle (pinned) → Pinned bucket, not collapsed');
+    assertEqual(otherTokens, 0, 'no entry mis-bucketed as Other');
+
+    // Source-structure guard (the part that flips RED→GREEN on the real fix):
+    // drawer-render-status.js is not node-importable (top-level ST imports of script.js
+    // et al), so assert the production srcMap build + lookup use the composite trackerKey
+    // shape, NOT bare `s.title` / `e.title`. RED before the fix, GREEN after.
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const url = await import('node:url');
+    const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
+    const drawerSrc = await fs.readFile(path.resolve(__dirname, '../src/drawer/drawer-render-status.js'), 'utf8');
+    // The Map MUST be keyed by a vaultSource:title composite, never bare `s.title`.
+    assertMatch(drawerSrc, /new Map\(\s*src\.map\(s\s*=>\s*\[\s*`\$\{\s*s\.vaultSource[^`]*\}:\$\{[^`]*s\.title[^`]*\}`/,
+        'srcMap keyed by `${s.vaultSource||\'\'}:${s.title...}` composite (not bare s.title)');
+    // The lookup MUST use the same composite, never bare `srcMap.get(e.title)`.
+    assertMatch(drawerSrc, /srcMap\.get\(\s*`\$\{\s*e\.vaultSource[^`]*\}:\$\{[^`]*e\.title[^`]*\}`/,
+        'srcMap lookup uses `${e.vaultSource||\'\'}:${e.title...}` composite (not bare e.title)');
+    assertEqual(/srcMap\.get\(e\.title\)/.test(drawerSrc), false,
+        'no bare srcMap.get(e.title) remains (gotcha #50 drift fixed)');
+});
+
 // ============================================================================
 // M-5: Cascade-pulled entries with excludeRecursion must not seed recursion text
 // ============================================================================

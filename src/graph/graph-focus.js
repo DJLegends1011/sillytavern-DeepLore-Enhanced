@@ -50,13 +50,9 @@ export function initFocus(gs, dbg) {
      * so focus tree always shows the structural neighborhood, not just visible-edge subgraph.
      */
     function bfsDepth(rootId, maxDepth) {
-        const { nodes, edges } = gs;
-        const fullAdj = new Map();
-        for (const n of nodes) fullAdj.set(n.id, []);
-        for (const edge of edges) {
-            fullAdj.get(edge.from).push(edge.to);
-            fullAdj.get(edge.to).push(edge.from);
-        }
+        // Full structural adjacency is memoized on gs._fullAdj (built once per popup; the edge set
+        // is immutable for the lifetime of gs). Avoids rebuilding O(N+E) on every focus/hop tick.
+        const fullAdj = gs.getFullAdj();
         const dist = new Map();
         const treeEdges = new Set();
         dist.set(rootId, 0);

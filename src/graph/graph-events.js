@@ -585,12 +585,9 @@ export function initEvents(gs, dbg) {
                 for (const [id, count] of edgeCountByNode) {
                     if (count > hubEdges) { hubId = id; hubEdges = count; }
                 }
-                const fullAdj = new Map();
-                for (const n of nodes) fullAdj.set(n.id, []);
-                for (const edge of edges) {
-                    fullAdj.get(edge.from).push(edge.to);
-                    fullAdj.get(edge.to).push(edge.from);
-                }
+                // Reuse the memoized full structural adjacency (see graph.js gs.getFullAdj) instead
+                // of rebuilding O(N+E) on every Reset — the edge set is immutable for the popup.
+                const fullAdj = gs.getFullAdj();
                 const rdepth = new Map();
                 rdepth.set(hubId, 0);
                 const rqueue = [hubId];

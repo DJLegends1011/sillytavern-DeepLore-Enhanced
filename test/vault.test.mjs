@@ -2355,6 +2355,193 @@ test('L5-equiv: incremental BM25 == full rebuild for a small mixed delta (df+tot
 });
 
 // ============================================================================
+//  S. L11b — merge-mode reuse-sync must NOT double-accumulate content
+// ============================================================================
+//
+// RED reproduce-test for review finding L11b (MED). It encodes a CURRENT BUG and
+// is SUPPOSED TO FAIL until the L11b fix lands (the source-guard test below is the
+// RED→GREEN anchor; the behavioral test documents the mechanism).
+//
+// Bug: under `multiVaultConflictResolution='merge'`, the committed index holds ONE
+// entry per title whose `content` is the concatenation of all members
+// (m1 + sep + m2) but whose `_contentHash` is BUG-378-preserved as the hash of the
+// FIRST member's on-disk file (m1). On a reuse-sync tick, buildIndexWithReuse's
+// fast-path keys `existingMap` by `vaultSource\0filename`, so the merged blob is
+// reachable under the FIRST member's file key. When that file is re-fetched its
+// hash matches → the naive fast-path pushes the m1+m2 blob; the SECOND member's
+// file has no existing entry under its own key → re-parsed fresh (m2); then the
+// `deduplicateMultiVault(..., 'merge')` pass re-merges → (m1+m2) + sep + m2 =
+// m1+m2+m2. Each tick re-merges the already-merged blob → unbounded growth, and
+// the inflated entry becomes the baseline fed to the incremental delta (token /
+// budget skew). The FULL build always re-parses members cleanly, so reuse ≠ full.
+//
+// The fix: on the reuse fast-path, under merge mode only, verify the reuse
+// candidate against a fresh single-member parse of its own file via
+// `canReuseMergedCandidate` (content-equality) — a genuine single-file entry
+// matches, a merged blob does not → forced re-parse → the dedup pass rebuilds the
+// merge cleanly from fresh members (== full build). Persisted markers can't be
+// used: cache.js strips `_`-fields on save, so a `_mergedFrom` flag dies on
+// hydrate (and the first post-hydrate sync is a reuse tick).
+//
+// vault.js is NOT importable in the Node harness (it pulls tokenizers.js /
+// openai.js / script.js), so — exactly like the M-series — the RED→GREEN anchor
+// is a SOURCE-STRUCTURE guard, paired with a behavioral simulation built on the
+// real (importable) `deduplicateMultiVault` that reproduces the growth mechanism.
+
+section('S. L11b — merge-mode reuse-sync double-accumulation');
+
+// Faithful, dependency-free model of the reuse-sync file loop's per-file decision
+// (mirrors buildIndexWithReuse). `verifyMergeReuse` toggles the L11b fix:
+//   false → naive (== OLD production): reuse the existing entry whenever its
+//           _contentHash matches the file hash (this reuses the merged blob).
+//   true  → fixed (== NEW production): under merge mode, only reuse when a fresh
+//           single-member parse of the file matches existing.content (the rule
+//           `canReuseMergedCandidate` enforces). A merged blob fails the check and
+//           is re-parsed to its single member.
+// In both cases the surviving `allEntries` are run through the REAL
+// `deduplicateMultiVault(..., 'merge')` — the production dedup pass.
+function simulateReuseMergeTick(snapshot, fetchedFiles, { verifyMergeReuse }) {
+    // existingMap keyed by `vaultSource\0filename` (production key shape).
+    const existingMap = new Map();
+    for (const e of snapshot) existingMap.set(`${e.vaultSource}\0${e.filename}`, e);
+
+    const allEntries = [];
+    for (const file of fetchedFiles) {
+        const existing = existingMap.get(`${file.vaultSource}\0${file.filename}`);
+        // Fresh single-member parse of THIS file (in production: parseVaultFile →
+        // content === this file's own member content, never the merged blob).
+        const fresh = {
+            title: file.title, vaultSource: file.vaultSource, filename: file.filename,
+            content: file.content, keys: file.keys || [], tags: ['lorebook'],
+            tokenEstimate: file.tokenEstimate || 0, _contentHash: file.hash,
+            links: [], resolvedLinks: [], requires: [], excludes: [], customFields: {},
+        };
+        const hashMatches = existing && existing._contentHash === file.hash;
+        let reuse = hashMatches;
+        if (reuse && verifyMergeReuse) {
+            // canReuseMergedCandidate's rule: genuine single-file entry parses back
+            // to identical content; a merged blob (m1+sep+m2) does not.
+            reuse = fresh.content === existing.content;
+        }
+        allEntries.push(reuse ? existing : fresh);
+    }
+    return deduplicateMultiVault(allEntries, 'merge');
+}
+
+test('L11b-MERGE: naive reuse path GROWS merged content each tick (bug reproduced)', () => {
+    // Two cross-vault same-title entries: vaultA/Castle (m1) and vaultB/Castle (m2).
+    const m1 = 'Castle of the north, ancient and cold.';
+    const m2 = 'Castle gardens bloom in the southern spring.';
+    const filesA = { title: 'Castle', vaultSource: 'vaultA', filename: 'castle.md', content: m1, hash: 'hashA', tokenEstimate: 10 };
+    const filesB = { title: 'Castle', vaultSource: 'vaultB', filename: 'castle.md', content: m2, hash: 'hashB', tokenEstimate: 12 };
+
+    // Tick 0 = full build: parse both members fresh, dedup-merge.
+    const fetched = [filesA, filesB];
+    const tick0 = deduplicateMultiVault(
+        fetched.map(f => ({
+            title: f.title, vaultSource: f.vaultSource, filename: f.filename,
+            content: f.content, keys: [], tags: ['lorebook'], tokenEstimate: f.tokenEstimate,
+            _contentHash: f.hash, links: [], resolvedLinks: [], requires: [], excludes: [], customFields: {},
+        })), 'merge');
+    assertEqual(tick0.length, 1, 'tick0: merged to one entry');
+    const fullLen = tick0[0].content.length;
+    assert(tick0[0].content.includes(m1) && tick0[0].content.includes(m2), 'tick0: both members present');
+    // Sanity: the merged blob carries vaultA's _contentHash (BUG-378) → matches filesA's hash.
+    assertEqual(tick0[0]._contentHash, 'hashA', 'tick0: merged blob keeps first member hash (BUG-378)');
+
+    // Tick 1 (naive reuse): snapshot = [merged blob]; re-fetch both files.
+    const naive1 = simulateReuseMergeTick(tick0, fetched, { verifyMergeReuse: false });
+    assertEqual(naive1.length, 1, 'naive tick1: still one entry');
+    // The bug: merged blob (m1+m2) reused for filesA + fresh m2 → m1+m2+m2.
+    assert(naive1[0].content.length > fullLen,
+        'naive tick1: content GREW vs full build (bug — reuse != full)');
+    const m2Count1 = naive1[0].content.split(m2).length - 1;
+    assertEqual(m2Count1, 2, 'naive tick1: second member body duplicated (m1+m2+m2)');
+
+    // Tick 2 (naive reuse again, snapshot = naive1): grows further still.
+    const naive2 = simulateReuseMergeTick(naive1, fetched, { verifyMergeReuse: false });
+    assert(naive2[0].content.length > naive1[0].content.length,
+        'naive tick2: content keeps growing unbounded');
+});
+
+test('L11b-MERGE: fixed reuse path keeps merged content STABLE == full build', () => {
+    const m1 = 'Castle of the north, ancient and cold.';
+    const m2 = 'Castle gardens bloom in the southern spring.';
+    const filesA = { title: 'Castle', vaultSource: 'vaultA', filename: 'castle.md', content: m1, hash: 'hashA', tokenEstimate: 10 };
+    const filesB = { title: 'Castle', vaultSource: 'vaultB', filename: 'castle.md', content: m2, hash: 'hashB', tokenEstimate: 12 };
+    const fetched = [filesA, filesB];
+
+    const fullBuild = deduplicateMultiVault(
+        fetched.map(f => ({
+            title: f.title, vaultSource: f.vaultSource, filename: f.filename,
+            content: f.content, keys: [], tags: ['lorebook'], tokenEstimate: f.tokenEstimate,
+            _contentHash: f.hash, links: [], resolvedLinks: [], requires: [], excludes: [], customFields: {},
+        })), 'merge');
+    const fullLen = fullBuild[0].content.length;
+    const fullTokens = fullBuild[0].tokenEstimate;
+
+    // Tick 1 (fixed reuse): verifyMergeReuse=true → merged blob fails the content
+    // check for filesA → re-parsed to m1; filesB re-parsed to m2 → dedup merges →
+    // m1+m2, identical to the full build.
+    const fixed1 = simulateReuseMergeTick(fullBuild, fetched, { verifyMergeReuse: true });
+    assertEqual(fixed1.length, 1, 'fixed tick1: one entry');
+    assertEqual(fixed1[0].content.length, fullLen, 'fixed tick1: content length == full build');
+    assertEqual(fixed1[0].content, fullBuild[0].content, 'fixed tick1: content byte-identical to full build');
+    assertEqual(fixed1[0].tokenEstimate, fullTokens, 'fixed tick1: tokenEstimate == full build (no skew)');
+    const m2CountFixed = fixed1[0].content.split(m2).length - 1;
+    assertEqual(m2CountFixed, 1, 'fixed tick1: second member body appears exactly once');
+
+    // Tick 2 (fixed reuse, snapshot = fixed1): STILL stable — no growth.
+    const fixed2 = simulateReuseMergeTick(fixed1, fetched, { verifyMergeReuse: true });
+    assertEqual(fixed2[0].content.length, fullLen, 'fixed tick2: content length STILL == full build');
+    assertEqual(fixed2[0].content, fullBuild[0].content, 'fixed tick2: content STILL byte-identical (no accumulation)');
+});
+
+test('L11b-MERGE: vault.js reuse loop gates merge reuse behind canReuseMergedCandidate (source guard — RED→GREEN anchor)', () => {
+    // vault.js is not importable in the Node harness, so anchor the fix to source
+    // (mirrors the M-series). RED on unfixed source, GREEN once L11b lands.
+    const src = readFileSync(join(REPO_ROOT, 'src/vault/vault.js'), 'utf8');
+
+    // 1. The pure, exported predicate must exist.
+    assert(/export function canReuseMergedCandidate\s*\(/.test(src),
+        'canReuseMergedCandidate exported from vault.js');
+
+    // 2. The reuse loop must compute a mergeMode flag from the conflict-resolution setting.
+    assert(/const\s+mergeMode\s*=\s*settings\.multiVaultConflictResolution\s*===\s*'merge'/.test(src),
+        'reuse path derives mergeMode from multiVaultConflictResolution');
+
+    // 3. The fast-path reuse decision must consult canReuseMergedCandidate when in
+    //    merge mode (so a merged blob is never reused verbatim).
+    const reuseIdx = src.indexOf('export async function buildIndexWithReuse');
+    assert(reuseIdx > 0, 'buildIndexWithReuse found');
+    const reuseBody = src.slice(reuseIdx);
+    assert(/if\s*\(\s*canReuse\s*&&\s*mergeMode\s*\)/.test(reuseBody),
+        'merge-mode verification gate present in reuse loop');
+    assert(/canReuse\s*=\s*canReuseMergedCandidate\(/.test(reuseBody),
+        'reuse decision routed through canReuseMergedCandidate under merge mode');
+});
+
+test('L11b-MERGE: non-merge reuse decision is untouched by the fix (mergeMode-gated)', () => {
+    // Guard the "non-merge default path byte-identical" requirement: the merge
+    // verification (the only new branch) must be gated behind `mergeMode`, so for
+    // 'all'/'first'/'last' the reuse decision is the original hash-only check.
+    const src = readFileSync(join(REPO_ROOT, 'src/vault/vault.js'), 'utf8');
+    const reuseIdx = src.indexOf('export async function buildIndexWithReuse');
+    const reuseBody = src.slice(reuseIdx);
+
+    // The verification re-parse + canReuseMergedCandidate call must appear ONLY
+    // inside an `if (canReuse && mergeMode)` block — never unconditionally.
+    const gateIdx = reuseBody.indexOf('if (canReuse && mergeMode)');
+    const predIdx = reuseBody.indexOf('canReuse = canReuseMergedCandidate(');
+    assert(gateIdx > 0, 'mergeMode gate present');
+    assert(predIdx > gateIdx, 'canReuseMergedCandidate call sits after (inside) the mergeMode gate');
+
+    // The base reuse decision must still be the original hash + !fieldDefsChanged check.
+    assert(/let\s+canReuse\s*=\s*existing\s*&&\s*existing\._contentHash\s*===\s*fileHash\s*&&\s*!fieldDefsChanged/.test(reuseBody),
+        'base reuse decision unchanged: existing && hash match && !fieldDefsChanged');
+});
+
+// ============================================================================
 // Summary
 // ============================================================================
 

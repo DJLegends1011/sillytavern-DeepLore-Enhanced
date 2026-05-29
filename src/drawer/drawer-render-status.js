@@ -173,10 +173,14 @@ export function renderStatusZone() {
     let breakdownParts = [];
     if (trace?.injected?.length) {
         const src = _statusVerdict?.injectedSources || [];
-        const srcMap = new Map(src.map(s => [s.title, (s.matchedBy || '').toLowerCase()]));
+        // Key by trackerKey (vaultSource:title.toLowerCase()), not bare title — two
+        // cross-vault entries sharing a title would otherwise collide and misattribute
+        // one entry's tokens to the wrong bucket. Mirrors every sibling drawer site
+        // (gotcha #50; trackerKey invariant). See test MV-DTK in regression.test.mjs.
+        const srcMap = new Map(src.map(s => [`${s.vaultSource || ''}:${(s.title || '').toLowerCase()}`, (s.matchedBy || '').toLowerCase()]));
         let constTokens = 0, keywordTokens = 0, aiTokens = 0, pinTokens = 0, otherTokens = 0;
         for (const e of trace.injected) {
-            const reason = srcMap.get(e.title) || '';
+            const reason = srcMap.get(`${e.vaultSource || ''}:${(e.title || '').toLowerCase()}`) || '';
             if (reason.includes('constant') || reason.includes('always')) constTokens += e.tokens;
             else if (reason.startsWith('ai:') || reason.includes('ai selection')) aiTokens += e.tokens;
             else if (reason.includes('pinned')) pinTokens += e.tokens;

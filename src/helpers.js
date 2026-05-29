@@ -1076,16 +1076,39 @@ export function normalizePinBlock(item) {
 }
 
 /**
+ * Comparison core for pin/block ↔ entry matching. ASSUMES `pb` is already a
+ * normalized `{ title, vaultSource }` object (the shape `normalizePinBlock`
+ * returns). No vaultSource on the pin = match any vault.
+ *
+ * This is the single source of truth for the comparison so `matchesPinBlock`
+ * (which normalizes first, for raw/external callers) and this fast-path
+ * (for callers that already hold normalized pins — `buildExemptionPolicy`,
+ * `applyPinBlock` in `stages.js`) can never drift. Hot-path callers that loop
+ * over entries × already-normalized pins MUST use this to avoid the
+ * O(entries×pins) throwaway `normalizePinBlock` allocations per generation.
+ *
+ * @param {{ title: string, vaultSource: string|null }} pb - already-normalized
+ * @param {{ title: string, vaultSource?: string }} entry
+ * @returns {boolean}
+ */
+export function matchesNormalizedPinBlock(pb, entry) {
+    if (pb.title.toLowerCase() !== entry.title.toLowerCase()) return false;
+    if (pb.vaultSource && entry.vaultSource && pb.vaultSource !== entry.vaultSource) return false;
+    return true;
+}
+
+/**
  * Pin/block matches an entry. No vaultSource on the pin = match any vault.
+ * Accepts raw (string or object) `pinBlock` — normalizes first, then delegates
+ * to `matchesNormalizedPinBlock` so the comparison logic is single-sourced.
+ * Callers that already hold normalized pins should call
+ * `matchesNormalizedPinBlock` directly to skip the per-call normalize.
  * @param {string|{title:string, vaultSource?:string}} pinBlock
  * @param {{ title: string, vaultSource?: string }} entry
  * @returns {boolean}
  */
 export function matchesPinBlock(pinBlock, entry) {
-    const pb = normalizePinBlock(pinBlock);
-    if (pb.title.toLowerCase() !== entry.title.toLowerCase()) return false;
-    if (pb.vaultSource && entry.vaultSource && pb.vaultSource !== entry.vaultSource) return false;
-    return true;
+    return matchesNormalizedPinBlock(normalizePinBlock(pinBlock), entry);
 }
 
 /**

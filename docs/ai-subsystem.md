@@ -361,13 +361,13 @@ Clears probe flag and timestamp without recording success or failure. Used by `h
 
 ### What does NOT trip the breaker
 
-The exclusion list is shared across ALL wrappers via `isExcludedFromBreaker(err)` — implemented in `src/ai/breaker-pure.js` (intentionally ST-free so it can be unit-tested) and re-exported from `src/ai/ai.js` so callers keep importing from there. Every caller in the table below routes its trip decision through this single helper — copy-pasting the four conditions per wrapper is how drift creeps back in (see Wave-B audit, 2026-05-22).
+The exclusion list is shared across ALL wrappers via `isExcludedFromBreaker(err)` — implemented in `src/ai/breaker-pure.js` (intentionally ST-free so it can be unit-tested) and re-exported from `src/ai/ai.js` so callers keep importing from there. Every caller in the table below routes its trip decision through this single helper — copy-pasting the four conditions per wrapper is how drift creeps back in (see Wave-B audit, 2026-05-22). **Status detection is structured-first; any prose status scrape must be LABELED (`HTTP`/`status` before the 3-digit code), never a bare `\d{3}` — see gotchas.md #76 (L8).**
 
 - Throttle failures (`err.throttled`)
 - Timeouts (`err.timedOut` or `AbortError`)
 - User aborts (`err.userAborted`, or `AbortError` whose message contains "aborted by user")
 - Rate limits (HTTP 429, or message matching `rate.?limit|too many requests`)
-- Auth errors (HTTP 401/403, or message matching `unauthoriz|forbidden|invalid api key|auth`)
+- Auth errors (HTTP 401/403, or message matching `unauthoriz|forbidden|invalid api key`). The bare `auth` alternative was REMOVED (L8, 2026-05-29) — it mis-excluded legit 5xx prose like "auth backend 500 unavailable". See gotchas.md #76.
 
 Only unclassified errors (typically 5xx, network failures, or persistent format drift) call `recordAiFailure()`.
 

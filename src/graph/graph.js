@@ -783,6 +783,10 @@ export async function showGraphPopup() {
         settings, springLen,
         tooltipEl: document.getElementById('dle-graph-tooltip'),
         listenerAC,
+        // Full structural adjacency memo (Map<id, id[]> over ALL edges, ignoring edgeVisibility).
+        // Built lazily by getFullAdj(); invariant for the popup's lifetime because the edge set is
+        // never mutated after construction. A new popup = fresh gs = _fullAdj starts null = rebuilt.
+        _fullAdj: null,
         // Cross-module hooks \u2014 populated by initRender/initFocus/initEvents/etc. below.
         buildAdjacency: null, applyFilters: null, fitToView: null,
         getNodeColor: null, getNodeRadius: null,
@@ -799,6 +803,9 @@ export async function showGraphPopup() {
     };
 
     // gs.buildAdjacency wraps the closure so degree-derived state stays consistent on every rebuild.
+    // NOTE: this rebuilds the *visible-edge-filtered* gs.adjacency (respects edgeVisibility / legend
+    // toggles). It deliberately does NOT touch gs._fullAdj — the full structural adjacency ignores
+    // edgeVisibility, so legend toggles never invalidate it.
     gs.buildAdjacency = () => {
         buildAdjacency();
         gs.adjacency = adjacency;
@@ -806,6 +813,23 @@ export async function showGraphPopup() {
         for (let i = 0; i < nodes.length; i++) {
             nodeDegree[i] = edgeCountByNode.get(i) || 0;
         }
+    };
+
+    // Full structural adjacency (ALL edges, ignoring edgeVisibility), memoized on gs._fullAdj.
+    // Consumed by bfsDepth (focus tree) and the Reset-handler radial layout, both of which need
+    // the structural neighborhood, not the visible-edge subgraph. Built once per popup: the edge
+    // set is immutable for the lifetime of gs, so the ONLY invalidation trigger would be an edge-set
+    // mutation (which never happens — a new popup builds a fresh gs with _fullAdj = null).
+    gs.getFullAdj = () => {
+        if (gs._fullAdj) return gs._fullAdj;
+        const fullAdj = new Map();
+        for (const n of nodes) fullAdj.set(n.id, []);
+        for (const edge of edges) {
+            fullAdj.get(edge.from).push(edge.to);
+            fullAdj.get(edge.to).push(edge.from);
+        }
+        gs._fullAdj = fullAdj;
+        return fullAdj;
     };
 
     // Disparity-filter backbone (Serrano et al.) — initial computation, recomputed on slider change.

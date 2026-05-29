@@ -94,6 +94,7 @@ import {
     getCurrent as getCurrentVerdictForRender,
     clearChatIdb,
 } from './src/verdict/verdict-store.js';
+import { tr } from './src/i18n/i18n.js';
 
 // ============================================================================
 // BUG-063: Lifecycle / teardown infrastructure.
@@ -506,20 +507,6 @@ const PROXY_MIG_TOOL_KEY = {
     optimizeKeysConnectionMode: 'optimizeKeys',
 };
 
-/**
- * Resolve an i18n key with English fallback. Uses dynamic import so a missing
- * i18n module (test envs, init failures) doesn't crash the popup path.
- */
-async function _t(key, fallback) {
-    try {
-        const { translate } = await import('../../../i18n.js');
-        const out = translate(key, fallback);
-        return out || fallback;
-    } catch {
-        return fallback;
-    }
-}
-
 async function _maybeShowProxyDeprecationNotice() {
     const settings = getSettings();
     const migrated = settings._proxyMigrationV2_5_notice;
@@ -536,15 +523,17 @@ async function _maybeShowProxyDeprecationNotice() {
         return;
     }
 
-    // Resolve labels.
-    const title = await _t('dle_proxy_migration_title', 'Custom Proxy mode removed');
-    const explainer = await _t(
+    // Resolve labels. `tr` reads the preloaded i18n dict synchronously (defers to
+    // ST's translate() only on a miss); the dict is loaded at init before this
+    // popup is dispatched, so no async import plumbing is needed.
+    const title = tr('dle_proxy_migration_title', 'Custom Proxy mode removed');
+    const explainer = tr(
         'dle_proxy_migration_explainer',
         "DeepLore v2.5 removed the Custom Proxy connection mode. The Connection Profile path is more reliable and matches SillyTavern's connection system. Your affected features have been switched to Connection Profile, but you may need to set up profiles in SillyTavern's Connection Manager. Click below to jump to the right settings page.",
     );
-    const affectedHeader = await _t('dle_proxy_migration_affected', 'Affected features:');
-    const okLabel = await _t('dle_proxy_migration_open_settings', 'Open Settings');
-    const cancelLabel = await _t('dle_proxy_migration_dismiss', 'Dismiss');
+    const affectedHeader = tr('dle_proxy_migration_affected', 'Affected features:');
+    const okLabel = tr('dle_proxy_migration_open_settings', 'Open Settings');
+    const cancelLabel = tr('dle_proxy_migration_dismiss', 'Dismiss');
 
     const labelLis = [];
     for (const key of ordered) {
@@ -552,7 +541,7 @@ async function _maybeShowProxyDeprecationNotice() {
         // Defensive fallback: key in PROXY_DEPRECATION_MODE_KEYS but missing from
         // the label map — show the raw setting name rather than crash.
         const fallback = i18nKey ? i18nKey.replace(/^dle_(label|feature|tool|analytics_section)_/, '') : key;
-        const label = i18nKey ? await _t(i18nKey, fallback) : fallback;
+        const label = i18nKey ? tr(i18nKey, fallback) : fallback;
         labelLis.push(`<li>${label}</li>`);
     }
     const html =

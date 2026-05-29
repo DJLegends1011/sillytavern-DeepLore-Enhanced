@@ -3,7 +3,7 @@
  * Pure(ish) — each stage takes explicit inputs, no implicit global reads.
  */
 import { trackerKey } from './state.js';
-import { normalizePinBlock, matchesPinBlock, comparePriority } from './helpers.js';
+import { normalizePinBlock, matchesNormalizedPinBlock, comparePriority } from './helpers.js';
 import { evaluateOperator } from './fields.js';
 
 /** Lazy debugMode read — avoids importing settings.js (ST globals break tests). */
@@ -58,7 +58,8 @@ export function buildExemptionPolicy(vaultSnapshot, pins, blocks, bootstrapActiv
     // produce N trackerKeys — walk the snapshot and add every match.
     for (const pb of normalizedPins) {
         for (const entry of vaultSnapshot) {
-            if (matchesPinBlock(pb, entry)) forceInject.add(trackerKey(entry));
+            // pb is already normalized (normalizedPins above) — skip re-normalize.
+            if (matchesNormalizedPinBlock(pb, entry)) forceInject.add(trackerKey(entry));
         }
     }
     return {
@@ -85,7 +86,9 @@ export function applyPinBlock(entries, vaultSnapshot, policy, matchedKeys) {
     let upgradedCount = 0;
     let blockedCount = 0;
 
-    // H23: matchesPinBlock for vault-aware matching, backward-compat with bare strings.
+    // H23: vault-aware matching, backward-compat with bare strings. policy.pins /
+    // policy.blocks are already normalized by buildExemptionPolicy, so use the
+    // matchesNormalizedPinBlock fast-path (skip per-call normalize).
     if (policy.pins.length > 0) {
         // BUG-AUDIT-H15: index for O(1) lookup instead of findIndex per pin.
         // Key by trackerKey (vaultSource:title) so same-title entries from different
@@ -97,7 +100,7 @@ export function applyPinBlock(entries, vaultSnapshot, policy, matchedKeys) {
             if (!resultIdx.has(k)) resultIdx.set(k, ri);
         }
         for (const entry of vaultSnapshot) {
-            const isPinned = policy.pins.some(pb => matchesPinBlock(pb, entry));
+            const isPinned = policy.pins.some(pb => matchesNormalizedPinBlock(pb, entry));
             if (isPinned) {
                 // BUG-030: deep-clone array fields to prevent shared refs with vaultIndex.
                 const cloneFields = {
@@ -132,7 +135,7 @@ export function applyPinBlock(entries, vaultSnapshot, policy, matchedKeys) {
     // Blocks override constants.
     if (policy.blocks.length > 0) {
         const beforeBlock = result.length;
-        result = result.filter(e => !policy.blocks.some(pb => matchesPinBlock(pb, e)));
+        result = result.filter(e => !policy.blocks.some(pb => matchesNormalizedPinBlock(pb, e)));
         blockedCount = beforeBlock - result.length;
     }
 

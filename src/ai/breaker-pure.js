@@ -43,10 +43,24 @@ export function isExcludedFromBreaker(err) {
     if (isUserAbortByName) return true;
     const isTimeout = err.timedOut === true || err.name === 'AbortError' || /timed?\s*out/i.test(msg);
     if (isTimeout) return true;
-    const status = Number(err.status) || Number((msg.match(/\b(4\d\d|5\d\d)\b/) || [])[1]) || 0;
+    // Prefer structured fields. err.code may carry a numeric or string status.
+    // The prose fallback ONLY scrapes a status that is explicitly LABELED
+    // (e.g. "HTTP 503", "status: 401", "status 429") — never a bare 3-digit run,
+    // which over-matches token counts, model names, and other prose numbers and
+    // would wrongly EXCLUDE a genuine service-down 5xx from the breaker.
+    const codeNum = Number(err.code);
+    const status = Number(err.status)
+        || (Number.isFinite(codeNum) ? codeNum : 0)
+        || Number((msg.match(/(?:\bhttp|\bstatus(?:\s*code)?)[:\s]+(\d{3})\b/i) || [])[1])
+        || 0;
     const isRateLimit = status === 429 || /rate.?limit|too many requests/i.test(msg);
     if (isRateLimit) return true;
-    const isAuthError = status === 401 || status === 403 || /unauthoriz|forbidden|invalid api key|auth/i.test(msg);
+    // Drop the bare `auth` substring/word alternative — it over-matched
+    // "Author"/"authentication" AND a standalone "auth" inside a genuine 5xx
+    // ("auth backend 500 unavailable"), wrongly excluding service-down errors.
+    // Keep only the explicit, unambiguous auth phrases for status-less providers.
+    const isAuthError = status === 401 || status === 403
+        || /unauthoriz|forbidden|invalid api key/i.test(msg);
     if (isAuthError) return true;
     return false;
 }

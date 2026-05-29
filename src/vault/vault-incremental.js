@@ -194,6 +194,63 @@ function buildTargetRegex(names) {
 }
 
 /**
+ * PERF (L5, 2026-05-29): module-scoped cache of compiled mention-target regexes,
+ * reused ACROSS incremental builds. Mirrors `incrementalEntityRegexes`'s
+ * `prevRegexes` reuse pattern, but kept inside this module because
+ * `incrementalMentionWeights` returns a plain Map (its caller can't thread a
+ * regex map back in without a signature change, which would break the L*
+ * equivalence tests + vault.js caller).
+ *
+ * Before this, a single-entry change recompiled a combined regex for EVERY entry
+ * in the vault on every call (the `allTargetRegexes` pass below), defeating the
+ * incremental win. Now we recompile only when an entry's regex INPUTS changed.
+ *
+ * Correctness: the cached compiled RegExp is a pure function of `buildTargetNames
+ * (entry)` (title + keys>=2, lowercased) — so reuse is byte-identical to a fresh
+ * compile. We guard on a names-signature, NOT just keyOf, so a rename/keys-change
+ * (same keyOf, different names) recompiles. The /g regexes are stateful
+ * (`lastIndex`), but every read goes through `countMatches`, which resets
+ * `lastIndex` first — so sharing one instance across calls is safe. Capacity is
+ * bounded with a soft LRU-ish trim to avoid unbounded growth across many distinct
+ * vaults (e.g. across test runs).
+ */
+const _targetRegexCache = new Map(); // keyOf → { sig, regex }
+const TARGET_REGEX_CACHE_MAX = 4096;
+
+/** Stable signature of a target's regex inputs (title + keys>=2, lowercased). */
+function targetNamesSignature(names) {
+    return names.join('\0');
+}
+
+/**
+ * Return the combined target regex for an entry, reusing the cached compiled
+ * instance when the entry's names are unchanged since the last build.
+ */
+function getTargetRegex(entry, key) {
+    const names = buildTargetNames(entry);
+    const sig = targetNamesSignature(names);
+    const hit = _targetRegexCache.get(key);
+    if (hit && hit.sig === sig) {
+        // Refresh recency (Map insertion order ≈ LRU for the trim below).
+        _targetRegexCache.delete(key);
+        _targetRegexCache.set(key, hit);
+        return hit.regex;
+    }
+    const regex = buildTargetRegex(names);
+    _targetRegexCache.set(key, { sig, regex });
+    if (_targetRegexCache.size > TARGET_REGEX_CACHE_MAX) {
+        // Evict oldest insertions until back under cap.
+        const overflow = _targetRegexCache.size - TARGET_REGEX_CACHE_MAX;
+        let i = 0;
+        for (const k of _targetRegexCache.keys()) {
+            if (i++ >= overflow) break;
+            _targetRegexCache.delete(k);
+        }
+    }
+    return regex;
+}
+
+/**
  * Count regex matches in lowered content. Same algorithm as the full path:
  * lastIndex-reset loop on a /g regex.
  */
@@ -250,11 +307,15 @@ export function incrementalMentionWeights(prevWeights, prevEntries, newEntries, 
     //    But for the COL recomputation we also need to scan unchanged sources
     //    against the dirty target's regex, so we still need every dirty
     //    target's regex even if no source changed.
+    //    NOTE (L5): `getTargetRegex` returns the module-cached compiled regex
+    //    when an entry's names are unchanged. Dirty entries whose names changed
+    //    (title/keys) recompile (signature miss) — so this is still correct.
     const newKeySet = new Set(newEntries.map(e => keyOf(e)));
     const dirtyTargetRegexes = new Map(); // target keyOf → combined regex
     for (const entry of newEntries) {
-        if (dirtyKeys.has(keyOf(entry))) {
-            dirtyTargetRegexes.set(keyOf(entry), buildTargetRegex(buildTargetNames(entry)));
+        const k = keyOf(entry);
+        if (dirtyKeys.has(k)) {
+            dirtyTargetRegexes.set(k, getTargetRegex(entry, k));
         }
     }
 
@@ -289,8 +350,10 @@ export function incrementalMentionWeights(prevWeights, prevEntries, newEntries, 
     };
 
     // For pass A we need EVERY target's regex (because a dirty source scans all
-    // targets). Build any missing target regexes lazily — but only if there are
-    // any dirty sources. If no dirty sources exist, pass A is a no-op.
+    // targets). Non-dirty targets reuse the module-cached compiled regex
+    // (`getTargetRegex` — L5 perf: a single-entry change no longer recompiles a
+    // regex for every entry in the vault). Build only if there are any dirty
+    // sources; if no dirty sources exist, pass A is a no-op.
     let allTargetRegexes = null;
     const dirtySourcesExist = newEntries.some(e => dirtyKeys.has(keyOf(e)));
     if (dirtySourcesExist) {
@@ -300,7 +363,7 @@ export function incrementalMentionWeights(prevWeights, prevEntries, newEntries, 
             if (dirtyTargetRegexes.has(tKey)) {
                 allTargetRegexes.set(tKey, dirtyTargetRegexes.get(tKey));
             } else {
-                allTargetRegexes.set(tKey, buildTargetRegex(buildTargetNames(target)));
+                allTargetRegexes.set(tKey, getTargetRegex(target, tKey));
             }
         }
     }
@@ -378,11 +441,24 @@ export function computeEntryBM25TF(entry) {
 /**
  * Apply an incremental delta to a BM25 index. Returns a fresh index object
  * (does not mutate the input). The output is byte-equivalent to a full
- * `buildBM25Index(newEntries)` — equivalence is enforced by test L4.
+ * `buildBM25Index(newEntries)` — equivalence is enforced by test L4 + T-L5.
  *
- * @param {object} prevIndex — { idf, docs, avgDl, invertedIndex }
+ * PERF (L5, 2026-05-29): the index produced here CARRIES `df` and `totalLen`
+ * so a follow-up incremental call reuses them with zero rebuild. addDoc/removeDoc
+ * mutate both as they go (they already adjusted df/len locally). Previously this
+ * re-derived `df` by walking every doc's every term and re-summed `totalLen`
+ * over all docs on EVERY call (O(total tokens)) — pure throwaway work that
+ * defeated the point of an incremental update. When the prior index lacks the
+ * carried fields (it came from a full `buildBM25Index`, which returns no `df`/
+ * `totalLen`, or from an older cache), we derive them ONCE: df from posting-list
+ * sizes (`df.get(term) === invertedIndex.get(term).size` by construction — no
+ * per-doc term walk needed) and totalLen by summing doc.len. The output remains
+ * byte-identical to a full rebuild either way; `df`/`totalLen` are extra fields
+ * the BM25 scorer ignores.
+ *
+ * @param {object} prevIndex — { idf, docs, avgDl, invertedIndex, [df], [totalLen] }
  * @param {{added: Array, removed: Array, modified: Array, modifiedPrev: Array}} diff
- * @returns {object} new BM25 index
+ * @returns {object} new BM25 index (carries `df` + `totalLen` for the next call)
  */
 export function incrementalBM25Update(prevIndex, diff) {
     // Defensive: if the prior index has no inverted index (pre-H-12) fall back
@@ -395,21 +471,27 @@ export function incrementalBM25Update(prevIndex, diff) {
     // Clone the structural pieces so the input remains untouched (defensive —
     // future callers might still hold a reference to the previous index).
     const docs = new Map(prevIndex.docs);
-    const df = new Map();
-    // Reconstruct df from previous idf? Not possible — idf is derived FROM df,
-    // not vice versa. Instead, derive it from the prevIndex's docs by inverse:
-    // for each doc, increment df once per unique term in tf.
-    for (const doc of docs.values()) {
-        for (const term of doc.tf.keys()) {
-            df.set(term, (df.get(term) || 0) + 1);
-        }
-    }
     const invertedIndex = new Map();
     for (const [term, posting] of prevIndex.invertedIndex) {
         invertedIndex.set(term, new Set(posting));
     }
-    let totalLen = 0;
-    for (const doc of docs.values()) totalLen += doc.len;
+
+    // Carry df + totalLen from the prior index when present (it came from a
+    // previous incrementalBM25Update). Otherwise derive ONCE — df straight from
+    // posting-list sizes (df === posting.size by construction; no need to walk
+    // every doc's every term), totalLen by summing doc.len. Subsequent
+    // add/remove mutate these in place, so the expensive rebuild never repeats.
+    let df;
+    let totalLen;
+    if (prevIndex.df instanceof Map && typeof prevIndex.totalLen === 'number') {
+        df = new Map(prevIndex.df);
+        totalLen = prevIndex.totalLen;
+    } else {
+        df = new Map();
+        for (const [term, posting] of invertedIndex) df.set(term, posting.size);
+        totalLen = 0;
+        for (const doc of docs.values()) totalLen += doc.len;
+    }
 
     // Remove obsolete docs first (removed + modified-prev).
     const removeDoc = (entry) => {
@@ -462,7 +544,8 @@ export function incrementalBM25Update(prevIndex, diff) {
     // Always recompute ALL idf — N likely changed (if added/removed nonzero)
     // and even for pure-modified case the df shift can be widespread. The cost
     // (one log per term) is dwarfed by tokenization savings; not worth the
-    // complexity to track which terms moved.
+    // complexity to track which terms moved. (df === invertedIndex posting size
+    // by construction — invariant L5-inv1.)
     if (N > 0) {
         for (const [term, freq] of df) {
             idf.set(term, Math.log((N - freq + 0.5) / (freq + 0.5) + 1));
@@ -474,6 +557,9 @@ export function incrementalBM25Update(prevIndex, diff) {
         docs,
         avgDl: N > 0 ? totalLen / N : 0,
         invertedIndex,
+        // Carry df + totalLen so the NEXT incremental call skips the rebuild.
+        df,
+        totalLen,
     };
 }
 

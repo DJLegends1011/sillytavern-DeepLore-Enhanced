@@ -60,6 +60,41 @@ function isPartialFetchFailure(failed, total) {
     return failed >= PARTIAL_FETCH_FAILURE_THRESHOLD.absolute || rate >= PARTIAL_FETCH_FAILURE_THRESHOLD.rate;
 }
 
+/**
+ * L11b: decide whether a hash-matched reuse candidate is safe to reuse verbatim
+ * under merge-mode conflict resolution.
+ *
+ * In merge mode (`multiVaultConflictResolution='merge'`) the committed index holds
+ * ONE entry per title whose `content` is the concatenation of every member
+ * (m1 + sep + m2 + …) but — by BUG-378 — whose `_contentHash` is preserved as the
+ * hash of the FIRST member's on-disk file. So when the reuse-sync loop re-fetches
+ * that first member's file, `existing._contentHash === fileHash` is TRUE and the
+ * naive fast-path would push the already-merged blob. The dedup pass then re-merges
+ * it with the freshly-parsed remaining members → m1+m2+m2, growing unbounded on
+ * every tick (reuse ≠ full build).
+ *
+ * Persisted markers don't help — `cache.js` strips `_`-prefixed fields (except a
+ * small whitelist) on save, so any `_mergedFrom` flag dies on hydrate. Instead we
+ * verify structurally: a genuine single-file entry parses back to byte-identical
+ * content, while a merged blob does not. Mismatch ⇒ refuse reuse so the entry is
+ * re-parsed fresh and the dedup pass rebuilds the merge cleanly from members
+ * (== full build).
+ *
+ * Pure + exported so the reproduce-test drives the REAL predicate, not a copy.
+ * Non-merge modes never call this (the loop only invokes it when `mergeMode`), so
+ * the non-merge reuse decision is unaffected.
+ *
+ * @param {object|null} existing - the reuse candidate from the committed index
+ * @param {object|null} freshParsed - a fresh `parseVaultFile` of the candidate's own file
+ * @returns {boolean} true if `existing` is a genuine single-file entry safe to reuse
+ */
+export function canReuseMergedCandidate(existing, freshParsed) {
+    if (!existing || !freshParsed) return false;
+    // A merged blob's content (m1+sep+m2…) never matches a fresh parse of the
+    // single member file (m1). Only identical content is a genuine single entry.
+    return freshParsed.content === existing.content;
+}
+
 // Module-scoped: resets only on page refresh, so periodic rebuilds stay silent.
 let _parserLedgerToastShown = false;
 
@@ -826,6 +861,11 @@ export async function buildIndexWithReuse() {
             entriesWithWarnings: [],
         };
         const lenientAuthoring = settings.lenientAuthoring !== false;
+        // L11b: under merge mode the committed index holds already-merged blobs whose
+        // `_contentHash` matches the first member's file — the reuse fast-path must
+        // verify reuse candidates against a fresh parse (see the loop below) so a
+        // merged blob is never reused and re-merged (unbounded content growth).
+        const mergeMode = settings.multiVaultConflictResolution === 'merge';
         setLastVaultAttemptCount(enabledVaults.length);
 
         for (const vault of enabledVaults) {
@@ -918,7 +958,42 @@ export async function buildIndexWithReuse() {
                     const existing = existingMap.get(key);
                     const fileHash = simpleHash(file.content);
 
-                    if (existing && existing._contentHash === fileHash && !fieldDefsChanged) {
+                    // L11b: merge-mode reuse must NOT reuse an already-merged entry.
+                    // Under `multiVaultConflictResolution='merge'`, the committed index
+                    // holds ONE entry per title whose `content` is the concatenation of
+                    // all members (m1 + sep + m2) but whose `_contentHash` is BUG-378-
+                    // preserved as the hash of the FIRST member's on-disk file (m1). So
+                    // for that first member's file the hash matches here and the naive
+                    // fast-path would push the m1+m2 blob, which the dedup pass below
+                    // then re-merges with the freshly-parsed second member → m1+m2+m2,
+                    // growing unbounded every tick (reuse ≠ full build). We can't rely
+                    // on a persisted marker (cache.js strips `_`-fields except a small
+                    // whitelist, so a `_mergedFrom` flag dies on hydrate). Instead, when
+                    // merge mode is active, verify the reuse candidate against a CHEAP
+                    // sync re-parse of its own file (no tokenize) via the shared
+                    // `canReuseMergedCandidate` predicate: a genuine single-file entry
+                    // parses back to identical content, while a merged blob does not —
+                    // forcing it down the re-parse path so the dedup pass rebuilds the
+                    // merge cleanly from fresh members (== full build). The re-parse is
+                    // hoisted into `freshParsed` so the else-branch reuses it rather than
+                    // parsing twice. Non-merge modes never enter this branch, so their
+                    // reuse decision stays byte-identical.
+                    let freshParsed;
+                    let freshParseDone = false;
+                    let canReuse = existing && existing._contentHash === fileHash && !fieldDefsChanged;
+                    if (canReuse && mergeMode) {
+                        freshParsed = parseVaultFile(file, tagConfig, newFieldDefs, {
+                            lenientAuthoring,
+                            onSkip: (reason) => {
+                                buildReport.skipped.push({ filename: file.filename, reason });
+                                buildReport.skipCount++;
+                            },
+                        });
+                        freshParseDone = true;
+                        canReuse = canReuseMergedCandidate(existing, freshParsed);
+                    }
+
+                    if (canReuse) {
                         // Unchanged — reuse existing entry. Roll forward its
                         // `_parserWarnings` so /dle-lint still surfaces them.
                         allEntries.push(existing);
@@ -934,7 +1009,7 @@ export async function buildIndexWithReuse() {
                         }
                     } else {
                         hasChanges = true;
-                        const entry = parseVaultFile(file, tagConfig, newFieldDefs, {
+                        const entry = freshParseDone ? freshParsed : parseVaultFile(file, tagConfig, newFieldDefs, {
                             lenientAuthoring,
                             onSkip: (reason) => {
                                 buildReport.skipped.push({ filename: file.filename, reason });
