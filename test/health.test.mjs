@@ -3,7 +3,7 @@
  */
 import {
     detectBrokenRefs, detectContradictoryGating, detectCircular, detectOrphans,
-    detectOverConstant, detectTokenBloat, detectThinHubs, computeHealthFindings,
+    detectOverConstant, detectTokenBloat, detectThinHubs, detectSelfRefs, computeHealthFindings,
 } from '../src/graph/graph-health.js';
 import { test, section, summary, assert, assertEqual } from './helpers.mjs';
 import { makeEntry } from './helpers.mjs';
@@ -48,6 +48,16 @@ test('acyclic requires chain has no cycles', () => {
     assertEqual(detectCircular(entries).length, 0, 'chain is acyclic');
 });
 
+test('cascade-only cycle is detected (invariant #4 — not requires-only)', () => {
+    const entries = [makeEntry('A', { cascadeLinks: ['B'] }), makeEntry('B', { cascadeLinks: ['A'] })];
+    assertEqual(detectCircular(entries).length, 1, 'pure cascade A↔B is one cycle');
+});
+
+test('mixed requires+cascade cycle is detected', () => {
+    const entries = [makeEntry('A', { requires: ['B'] }), makeEntry('B', { cascadeLinks: ['A'] })];
+    assertEqual(detectCircular(entries).length, 1, 'requires→cascade back-edge forms a cycle');
+});
+
 section('detectOrphans');
 
 test('flags zero-degree node ids', () => {
@@ -80,6 +90,27 @@ test('percentile outlier above floor is flagged', () => {
 test('uniform-small vault flags nothing (floor respected)', () => {
     const entries = [300, 300, 300, 300].map((t, i) => makeEntry(`n${i}`, { tokenEstimate: t }));
     assertEqual(detectTokenBloat(entries, 0.9, 400).length, 0, 'all below floor → none');
+});
+
+test('uniform-LARGE vault flags nothing (no spread, even above floor)', () => {
+    const entries = [500, 500, 500, 500, 500].map((t, i) => makeEntry(`n${i}`, { tokenEstimate: t }));
+    assertEqual(detectTokenBloat(entries, 0.9, 400).length, 0, 'uniform above floor must not flag all');
+});
+
+section('detectSelfRefs');
+
+test('flags an entry whose requires names its own title', () => {
+    const entries = [makeEntry('Loop', { requires: ['Loop'] }), makeEntry('Other')];
+    const r = detectSelfRefs(entries);
+    assertEqual(r.length, 1, 'one self-reference');
+    assertEqual(r[0].title, 'Loop', 'Loop flagged');
+});
+
+test('self-reference via cascade is flagged; clean entries are not', () => {
+    const entries = [makeEntry('A', { cascadeLinks: ['a'] }), makeEntry('B', { requires: ['A'] })];
+    const r = detectSelfRefs(entries);
+    assertEqual(r.length, 1, 'case-insensitive self cascade flagged');
+    assertEqual(r[0].title, 'A', 'only A self-refs');
 });
 
 section('detectThinHubs');

@@ -557,6 +557,12 @@ export function initEvents(gs, dbg) {
     if (resetBtn) {
         resetBtn.addEventListener('click', () => {
             if (gs.focusTreeRoot) gs.exitFocusTree();
+            // Without this, Reset in DAG mode leaves layoutMode='dag' (physics frozen) +
+            // DAG-restricted edgeVisibility + pinned nodes → user stranded, no recovery.
+            if (gs.layoutMode === 'dag' && gs.exitDagLayout) {
+                gs.exitDagLayout();
+                if (layoutModeEl) layoutModeEl.value = 'force';
+            }
             for (const n of nodes) {
                 n.pinned = false;
                 n._treePinned = false;

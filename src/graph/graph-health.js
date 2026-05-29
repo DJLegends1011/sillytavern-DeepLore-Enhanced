@@ -47,8 +47,9 @@ export function detectContradictoryGating(entries) {
 }
 
 /**
- * Cycles in the requires graph (and optionally cascade). Returns the entry-index pairs
- * forming back-edges. Reuses breakCycles (graph-dag) on a title-resolved index graph.
+ * Cycles in the directed dependency graph (requires AND cascade — gotcha #71 invariant #4
+ * forbids regressing to requires-only). Returns the entry-index pairs forming back-edges.
+ * Reuses breakCycles (graph-dag) on a title-resolved index graph.
  */
 export function detectCircular(entries) {
     const titleToIdx = new Map();
@@ -59,10 +60,14 @@ export function detectCircular(entries) {
     const ids = entries.map((_, i) => i);
     const edges = [];
     entries.forEach((e, i) => {
-        for (const r of (e.requires || [])) {
-            const j = titleToIdx.get(String(r).toLowerCase());
-            if (j !== undefined && j !== i) edges.push({ from: i, to: j });
-        }
+        const addDir = (arr) => {
+            for (const r of (arr || [])) {
+                const j = titleToIdx.get(String(r).toLowerCase());
+                if (j !== undefined && j !== i) edges.push({ from: i, to: j });
+            }
+        };
+        addDir(e.requires);
+        addDir(e.cascadeLinks);
     });
     const { removed } = breakCycles(ids, edges);
     return [...removed].map(key => {
@@ -94,14 +99,36 @@ export function detectOverConstant(entries) {
 export function detectTokenBloat(entries, percentile = 0.9, floor = 400) {
     const toks = entries.map(e => e.tokenEstimate || 0).filter(t => t > 0).sort((a, b) => a - b);
     if (toks.length === 0) return [];
+    const median = toks[Math.floor((toks.length - 1) / 2)];
+    // No real spread → no outliers. A uniform vault (all entries ~equal) must flag nothing,
+    // not every entry above the floor.
+    if (toks[toks.length - 1] <= median * 1.5) return [];
     const cut = Math.max(floor, toks[Math.min(toks.length - 1, Math.floor(toks.length * percentile))]);
     const out = [];
     entries.forEach((e, idx) => {
-        if ((e.tokenEstimate || 0) >= cut && (e.tokenEstimate || 0) > floor) {
+        const t = e.tokenEstimate || 0;
+        if (t >= cut && t > floor && t > median * 1.5) {
             out.push({ idx, title: e.title, tokens: e.tokenEstimate });
         }
     });
     return out.sort((a, b) => b.tokens - a.tokens);
+}
+
+/**
+ * Entries whose requires/excludes/cascade reference their OWN title. A self-require can never
+ * be satisfied (the entry would have to be matched to match itself) → breaks silently.
+ */
+export function detectSelfRefs(entries) {
+    const out = [];
+    entries.forEach((e, idx) => {
+        const self = (e.title || '').toLowerCase();
+        if (!self) return;
+        const hit = (arr) => (arr || []).some(r => String(r).toLowerCase() === self);
+        if (hit(e.requires) || hit(e.excludes) || hit(e.cascadeLinks)) {
+            out.push({ idx, title: e.title });
+        }
+    });
+    return out;
 }
 
 /** Heavily-referenced but thin entries (degree ≥ minDeg, tokens < maxTok). */
@@ -123,10 +150,25 @@ export function detectThinHubs(entries, degreeOf, minDeg = 6, maxTok = 160) {
  */
 export function computeHealthFindings(gs) {
     const entries = gs._vaultIndex || [];
-    const degreeOf = (id) => gs.edgeCountByNode?.get(id) || 0;
+    // Structural degree from the FULL edge set, independent of gs.edgeVisibility. edgeCountByNode
+    // is rebuilt under the active visibility filter (DAG mode hides link/excludes; legend toggles),
+    // so using it would falsely flag link-only/excludes-only entries as orphans. Fall back to
+    // edgeCountByNode only when no edge list is available (headless tests).
+    const degreeOf = (() => {
+        if (Array.isArray(gs.edges)) {
+            const d = new Map();
+            for (const e of gs.edges) {
+                d.set(e.from, (d.get(e.from) || 0) + 1);
+                d.set(e.to, (d.get(e.to) || 0) + 1);
+            }
+            return (id) => d.get(id) || 0;
+        }
+        return (id) => gs.edgeCountByNode?.get(id) || 0;
+    })();
     const nodeIds = entries.map((_, i) => i);
 
     const broken = detectBrokenRefs(entries);
+    const selfRefs = detectSelfRefs(entries);
     const contra = detectContradictoryGating(entries);
     const circular = detectCircular(entries);
     const orphans = detectOrphans(nodeIds, degreeOf);
@@ -150,6 +192,11 @@ export function computeHealthFindings(gs) {
         contra.forEach(c => flag(c.idx, SEV.CRIT));
         findings.push({ sev: SEV.CRIT, key: 'contradictory', title: 'Contradictory gating', count: contra.length,
             detail: contra.slice(0, 3).map(c => `${c.title} requires∧excludes ${c.target}`).join('; '), nodeIds: contra.map(c => c.idx) });
+    }
+    if (selfRefs.length) {
+        selfRefs.forEach(s => flag(s.idx, SEV.CRIT));
+        findings.push({ sev: SEV.CRIT, key: 'self-ref', title: 'Self-reference', count: selfRefs.length,
+            detail: names(selfRefs), nodeIds: selfRefs.map(s => s.idx) });
     }
     if (circular.length) {
         circular.forEach(c => { flag(c.from, SEV.CRIT); flag(c.to, SEV.CRIT); });

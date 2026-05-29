@@ -70,6 +70,9 @@ export function assignLayers(ids, acyclicEdges) {
     for (let pass = 0; pass < ids.length; pass++) {
         let changed = false;
         for (const e of acyclicEdges) {
+            // Exported-helper contract: skip edges whose endpoints aren't in `ids` (would
+            // otherwise compare against undefined and silently no-op / propagate NaN).
+            if (!layer.has(e.from) || !layer.has(e.to)) continue;
             if (layer.get(e.to) < layer.get(e.from) + 1) {
                 layer.set(e.to, layer.get(e.from) + 1);
                 changed = true;
@@ -180,8 +183,10 @@ export function initDagLayout(gs, dbg) {
             n.vx = 0; n.vy = 0;
             n.pinned = true;
             n._layoutPinned = true;
+            // Un-hidden participants that were orphan-/batch-hidden keep _revealScale=0 and would
+            // render invisible until the tick reveal-lerp ramps them — force them visible now.
+            n._revealScale = 1;
         }
-        gs._dagRemovedEdges = removed; // back-edges dropped to break cycles (diagnostic)
         gs.cachedVisibleCount = ids.length;
         gs.layoutMode = 'dag';
         gs._egoLerpActive = true;
@@ -215,7 +220,6 @@ export function initDagLayout(gs, dbg) {
             gs._preLayoutEdgeVis = null;
             gs.buildAdjacency();
         }
-        gs._dagRemovedEdges = null;
         gs.cachedVisibleCount = gs.nodes.length;
         gs.layoutMode = 'force';
         gs._egoLerpActive = false;

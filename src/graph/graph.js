@@ -836,6 +836,13 @@ export async function showGraphPopup() {
         invalidateSettingsCache();
         saveSettingsDebounced();
         if (gs.focusTreeRoot) gs.exitFocusTree();
+        // Redraw in DAG mode would otherwise leave layoutMode='dag' (physics frozen) and the
+        // reveal animation below would never run. Drop back to force first + sync the select.
+        if (gs.layoutMode === 'dag' && gs.exitDagLayout) {
+            gs.exitDagLayout();
+            const lmEl = document.getElementById('dle-graph-layout-mode');
+            if (lmEl) lmEl.value = 'force';
+        }
         for (const n of nodes) {
             n.pinned = false;
             n._treePinned = false;
@@ -944,6 +951,10 @@ export async function showGraphPopup() {
             }
         }
         if (anyRevealing) { gs.needsDraw = true; gs.hasSpringEnergy = true; }
+
+        // Health severity rings pulse via Math.sin(Date.now()); without a per-frame redraw the
+        // rings freeze on a settled graph. Drive redraws while the Health panel is open.
+        if (gs.healthActive) gs.needsDraw = true;
 
         const hoverChanged = gs.hoverNode !== gs.prevHoverNode;
         gs.prevHoverNode = gs.hoverNode;
