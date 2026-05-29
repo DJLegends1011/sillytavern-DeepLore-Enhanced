@@ -116,7 +116,8 @@ under `multiVaultConflictResolution='all'` (CLAUDE.md trackerKey invariant).
 | `loreGaps` | `array` | Chat (hydrated) | persistGaps, CHAT_CHANGED | drawer librarian tab |
 | `loreGapSearchCount` | `number` | Generation (→0) | onGenerate (agentic dispatch), searchLoreAction | max search limit |
 | `librarianSessionStats` | `{searchCalls, flagCalls, estimatedExtraTokens}` | **Session** (NOT reset) | librarian-tools.js | drawer footer |
-| `librarianChatStats` | `{searchCalls, flagCalls, estimatedExtraTokens}` | Chat (→zeroed) | librarian-tools.js, CHAT_CHANGED | drawer |
+| `librarianChatStats` | `{searchCalls, flagCalls, estimatedExtraTokens}` | Chat (→zeroed) | librarian-tools.js, CHAT_CHANGED | drawer (settings popup readout only — NOT footer) |
+| `librarianLastUsage` | `{input, output, total}` | Chat (→zeroed) | index.js (post-`runAgenticLoop`, from `result.usage`), CHAT_CHANGED | drawer footer `.dle-librarian-usage` readout |
 
 ### Pipeline Control Flags
 | Variable | Type | Reset scope | Writers | Readers |

@@ -445,6 +445,10 @@ export async function createDrawerPanel() {
                 if (!ds.stGenerating) return;
                 ds.stGenerating = false;
                 scheduleRender(renderStatusZone);
+                // A2: the real Librarian usage readout is set after the agentic loop
+                // returns (index.js), just before this event is emitted — refresh the
+                // footer so "Librarian: N tok" reflects the turn that just completed.
+                scheduleRender(renderFooter);
             };
             stCtx2.eventSource.on(stCtx2.eventTypes.GENERATION_ENDED, handleGenerationEnded);
             drawerListeners.eventSource.push({ event: stCtx2.eventTypes.GENERATION_ENDED, handler: handleGenerationEnded });

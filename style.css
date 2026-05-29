@@ -222,9 +222,9 @@
         animation-duration: 0.01ms !important;
         animation-iteration-count: 1 !important;
     }
-    /* Explicitly disable budget pulse and status dot animations */
-    .dle-token-bar-container.dle-budget-critical .dle-token-bar,
-    .dle-entries-bar-container.dle-budget-critical .dle-entries-bar,
+    /* Explicitly disable status dot animation. (B1: the header token/entries-bar hazard
+       classes that used to be listed here were removed — those bars no longer animate.
+       The footer context-critical state uses a static glow only, so nothing to disable.) */
     .dle-status-dot.dle-status-active {
         animation: none !important;
     }
@@ -1090,7 +1090,9 @@ dle-notes { display: none !important; }
 
 .dle-token-bar-container .dle-token-bar {
     height: 100%;
-    background: linear-gradient(90deg, var(--dle-success), color-mix(in srgb, var(--dle-success) 70%, white));
+    /* B4: calm NEUTRAL fill (was green = "good"). This header bar shows "this round's lore
+       selection" — full ≠ good/bad/health, just the limiter working. Theme-derived gray. */
+    background: color-mix(in srgb, var(--SmartThemeBodyColor, #b0b0b0) 42%, var(--dle-border));
     border-radius: var(--dle-radius-sm);
     /* BUG-168: width transition dropped — was forcing layout recalc + paint every
        frame for 300ms on every pipeline run. Background/shadow still transition
@@ -1099,22 +1101,9 @@ dle-notes { display: none !important; }
     margin: 0;
 }
 
-/* Budget urgency states */
-.dle-token-bar-container.dle-budget-high .dle-token-bar {
-    background:
-        repeating-linear-gradient(45deg, transparent 0 6px, rgba(255,255,255,0.18) 6px 10px),
-        linear-gradient(90deg, var(--dle-warning), var(--dle-error));
-    box-shadow: 0 0 6px color-mix(in srgb, var(--dle-warning) 40%, transparent);
-}
-.dle-token-bar-container.dle-budget-critical .dle-token-bar {
-    background:
-        repeating-linear-gradient(45deg, transparent 0 4px, rgba(255,255,255,0.32) 4px 8px),
-        var(--dle-error);
-    box-shadow: 0 0 8px color-mix(in srgb, var(--dle-error) 50%, transparent);
-    /* BUG-170: infinite box-shadow keyframe removed — caused per-frame repaint storm
-       while budget-critical state was active. Solid red background + static glow
-       still signals the critical state without animating a paint property. */
-}
+/* B1: header bars never go red. The .dle-budget-high/.dle-budget-critical hazard rules
+   were removed here — drawer-render-status.js no longer applies those classes to the token
+   or entries bars. Earned red lives ONLY on the footer context bar (overflow). */
 
 .dle-token-bar-label {
     position: absolute;
@@ -1141,25 +1130,14 @@ dle-notes { display: none !important; }
 
 .dle-entries-bar-container .dle-entries-bar {
     height: 100%;
-    background: linear-gradient(90deg, var(--dle-info), color-mix(in srgb, var(--dle-info) 70%, white));
+    /* B4: calm NEUTRAL fill (was blue/info). Same rationale as the token bar above. */
+    background: color-mix(in srgb, var(--SmartThemeBodyColor, #b0b0b0) 42%, var(--dle-border));
     border-radius: var(--dle-radius-sm);
     /* BUG-168: see token-bar rule — width transition dropped to avoid reflow storm. */
     transition: background 300ms ease, box-shadow 300ms ease;
     margin: 0;
 }
-.dle-entries-bar-container.dle-budget-high .dle-entries-bar {
-    background:
-        repeating-linear-gradient(45deg, transparent 0 6px, rgba(255,255,255,0.18) 6px 10px),
-        linear-gradient(90deg, var(--dle-warning), var(--dle-error));
-    box-shadow: 0 0 6px color-mix(in srgb, var(--dle-warning) 40%, transparent);
-}
-.dle-entries-bar-container.dle-budget-critical .dle-entries-bar {
-    background:
-        repeating-linear-gradient(45deg, transparent 0 4px, rgba(255,255,255,0.32) 4px 8px),
-        var(--dle-error);
-    box-shadow: 0 0 8px color-mix(in srgb, var(--dle-error) 50%, transparent);
-    /* BUG-170: see token-bar rule above. Same repaint-storm fix. */
-}
+/* B1: entries-bar hazard rules removed — see token-bar note above. */
 
 .dle-entries-bar-label {
     position: absolute;
@@ -1173,6 +1151,20 @@ dle-notes { display: none !important; }
     text-shadow: 0 1px 2px rgba(0,0,0,0.9);
     font-weight: 600;
 }
+
+/* B2: soft "cap trimmed lore" note under the header bars. Gentle, non-alarm: a muted
+   info-tinted line, NOT warning-orange or error-red, NO hatch/glow. It only appears when a
+   cap actually cost lore ("N of M shown" / "trimmed to fit") — calm acknowledgement that the
+   limiter did its job, never an alarm. .dle-hidden toggled by drawer-render-status.js. */
+.dle-bar-note {
+    font-size: var(--dle-text-xs);
+    line-height: 1.3;
+    margin: 1px 0 0 2px;
+    color: color-mix(in srgb, var(--dle-info, #6b9bd1) 70%, var(--SmartThemeBodyColor, #aaa));
+    opacity: 0.85;
+    font-style: italic;
+}
+.dle-bar-note.dle-hidden { display: none; }
 
 /* --- Chips (gating filters, tags) --- */
 
@@ -2244,7 +2236,14 @@ button.dle-browse-block.dle-block-active {
     bottom: 0;
     left: 0;
     width: 0;
-    background: color-mix(in srgb, var(--SmartThemeBodyColor, #e0e0e0) 40%, transparent);
+    /* A4: the reply reservation is ghosted AND hatched so it reads as "held, not consumed" —
+       visually distinct from the solid used fill. It is never counted as used (split aria in
+       drawer-render-footer.js announces used vs reserved separately). */
+    background: repeating-linear-gradient(
+        45deg,
+        color-mix(in srgb, var(--SmartThemeBodyColor, #e0e0e0) 32%, transparent) 0 5px,
+        transparent 5px 10px
+    );
     /* BUG-168: width/left transitions dropped — reflow/repaint per frame. Bar snaps instead. */
 }
 
@@ -2264,6 +2263,32 @@ button.dle-browse-block.dle-block-active {
     text-overflow: ellipsis;
     font-weight: 600;
 }
+
+/* A3: the footer context bar is the ONE bar where red is EARNED — overflow (used + reserved
+   approaching max) means the conversation is about to lose history. At rest it's calm green
+   (healthy room); high → orange; critical → red + hatch + static glow. Header bars never do
+   this (B1). Static glow only — no animation (BUG-170 repaint-storm lesson). The USED segment
+   carries the color; the reserved hatch (A4) is left ghosted. */
+.dle-context-bar-container.dle-context-high .dle-context-bar-context {
+    background: var(--dle-warning, #d97706);
+}
+.dle-context-bar-container.dle-context-critical .dle-context-bar-context {
+    background:
+        repeating-linear-gradient(45deg, transparent 0 4px, rgba(255,255,255,0.30) 4px 8px),
+        var(--dle-error, #dc2626);
+    box-shadow: 0 0 8px color-mix(in srgb, var(--dle-error, #dc2626) 50%, transparent);
+}
+
+/* A2: real Librarian token I/O of the last agentic turn — sits just under the context bar.
+   Muted/secondary so it reads as supplementary info, not a primary metric or a health signal.
+   .dle-hidden toggled by drawer-render-footer.js (hidden until a Librarian turn runs). */
+.dle-librarian-usage {
+    font-size: var(--dle-text-xs);
+    line-height: 1.4;
+    margin: 2px 0 0 2px;
+    color: color-mix(in srgb, var(--SmartThemeBodyColor, #aaa) 65%, transparent);
+}
+.dle-librarian-usage.dle-hidden { display: none; }
 
 /* --- Footer row (health icons left, AI stats right) --- */
 .dle-footer-row {

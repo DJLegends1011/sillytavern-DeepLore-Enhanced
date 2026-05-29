@@ -162,10 +162,20 @@ export function renderStatusZone() {
             : 0;
     const $barContainer = $drawer.find('.dle-token-bar-container');
     $barContainer.attr('aria-valuenow', used).attr('aria-valuemax', budget);
+    // B1/B4: header bars never go red. This bar shows "this round's lore selection" — a cap
+    // hit means the limiter worked, shown calmly, not an alarm. The ONE earned-red bar is the
+    // footer context bar (overflow). Clear any legacy hazard classes; never re-add them.
     $barContainer.removeClass('dle-budget-high dle-budget-critical');
-    if (pct >= 95) $barContainer.addClass('dle-budget-critical');
-    else if (pct >= 80) $barContainer.addClass('dle-budget-high');
     $drawer.find('.dle-token-bar').css('width', `${pct}%`);
+    // B2: soft, non-alarm note ONLY when the budget actually cost lore — i.e. an entry was
+    // truncated to fit. Neutral copy; no alarm verbs, no red/hatch/glow. Signal from
+    // trace.injected[].truncated (set in core/matching.js when budget forces a cut).
+    const _truncatedAny = Array.isArray(trace?.injected) && trace.injected.some(e => e.truncated);
+    const $tokenNote = $drawer.find('.dle-token-bar-note');
+    if ($tokenNote.length) {
+        if (_truncatedAny) $tokenNote.text('trimmed to fit').removeClass('dle-hidden');
+        else $tokenNote.text('').addClass('dle-hidden');
+    }
     const budgetLabel = budget
         ? `Budget: ${formatTokensCompact(used)} / ${formatTokensCompact(budget)}`
         : settings.unlimitedBudget
@@ -199,7 +209,20 @@ export function renderStatusZone() {
             : 'Lore budget: waiting for first generation';
     $barContainer.attr('title', tokenTitle);
 
-    const injectedNum = _statusVerdict?.injectedSources?.length ?? _statusVerdict?.trace?.injected?.length ?? 0;
+    // B3: the bar counts only cap-governed (positional) entries against maxEntries. Outlets
+    // bypass the cap (core/matching.js — position NONE, placed via {{outlet::name}} macros)
+    // yet land in trace.injected, so counting them let the bar read e.g. "7/5" clamped to
+    // 100%. trace.injected[].outlet flags them; surface outlets separately so the bar tells
+    // the truth about the limiter and outlets aren't silently folded into a cap they ignore.
+    const _injArr = _statusVerdict?.trace?.injected;
+    let injectedNum, outletNum = 0;
+    if (Array.isArray(_injArr)) {
+        outletNum = _injArr.filter(e => e.outlet).length;
+        injectedNum = _injArr.length - outletNum;
+    } else {
+        // No trace this turn → fall back to the source count (no outlet split available).
+        injectedNum = _statusVerdict?.injectedSources?.length ?? 0;
+    }
     const maxEntries = settings.unlimitedEntries ? 0 : (settings.maxEntries || 0);
     const entriesPct = maxEntries
         ? Math.min(100, Math.round((injectedNum / maxEntries) * 100))
@@ -209,21 +232,34 @@ export function renderStatusZone() {
     const $entriesBarContainer = $drawer.find('.dle-entries-bar-container');
     $entriesBarContainer.toggleClass('dle-indexing-shimmer', !!indexing);
     $entriesBarContainer.attr('aria-valuenow', injectedNum).attr('aria-valuemax', maxEntries);
+    // B1/B4: header entries bar never goes red. Clear legacy hazard classes; never re-add.
     $entriesBarContainer.removeClass('dle-budget-high dle-budget-critical');
-    if (entriesPct >= 95) $entriesBarContainer.addClass('dle-budget-critical');
-    else if (entriesPct >= 80) $entriesBarContainer.addClass('dle-budget-high');
     $drawer.find('.dle-entries-bar').css('width', `${entriesPct}%`);
+    const _outletSuffix = outletNum > 0 ? ` (+${outletNum} outlet)` : '';
     const entriesLabel = maxEntries
-        ? `Entries | ${injectedNum} / ${maxEntries}`
+        ? `Entries | ${injectedNum} / ${maxEntries}${_outletSuffix}`
         : settings.unlimitedEntries
-            ? `Entries | ${injectedNum} / \u221E`
+            ? `Entries | ${injectedNum} / \u221E${_outletSuffix}`
             : 'Entries | waiting';
     $drawer.find('.dle-entries-bar-label').text(entriesLabel);
-    const entriesTitle = maxEntries
+    // B2: soft note ONLY when the entry cap actually cost lore \u2014 more positional candidates
+    // matched than were shown. Neutral "N of M shown", no alarm styling. positionalCandidates
+    // = positional injected + budgetCut (set in index.js); falls back to injectedNum (no note).
+    const _positionalCandidates = Number.isFinite(trace?.positionalCandidates) ? trace.positionalCandidates : injectedNum;
+    const _entriesTrimmed = _positionalCandidates > injectedNum;
+    const $entriesNote = $drawer.find('.dle-entries-bar-note');
+    if ($entriesNote.length) {
+        if (_entriesTrimmed) $entriesNote.text(`${injectedNum} of ${_positionalCandidates} shown`).removeClass('dle-hidden');
+        else $entriesNote.text('').addClass('dle-hidden');
+    }
+    const _outletTitle = outletNum > 0
+        ? ` Plus ${outletNum} outlet ${outletNum === 1 ? 'entry' : 'entries'} placed via {{outlet}} macros — these bypass the entry cap.`
+        : '';
+    const entriesTitle = (maxEntries
         ? `${injectedNum} of ${maxEntries} entr${maxEntries === 1 ? 'y' : 'ies'} injected — limits how many lore entries are included per message`
         : settings.unlimitedEntries
             ? `${injectedNum} entr${injectedNum === 1 ? 'y' : 'ies'} injected (unlimited) — no entry count cap configured`
-            : 'Entry limit: waiting for first generation';
+            : 'Entry limit: waiting for first generation') + _outletTitle;
     $entriesBarContainer.attr('title', entriesTitle);
 
     const ctx = chat_metadata?.deeplore_context;

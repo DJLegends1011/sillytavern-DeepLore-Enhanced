@@ -55,7 +55,7 @@ import {
     notifyChatInjectionCountsUpdated,
     fieldDefinitions,
     folderList,
-    setLoreGaps, setLoreGapSearchCount, setLibrarianChatStats,
+    setLoreGaps, setLoreGapSearchCount, setLibrarianChatStats, setLibrarianLastUsage,
     setPipelinePhase,
     skipNextPipeline, setSkipNextPipeline,
     suppressNextAgenticLoop, setSuppressNextAgenticLoop,
@@ -1119,9 +1119,21 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
                 tokens: e.tokenEstimate,
                 truncated: !!e._truncated,
                 originalTokens: e._originalTokens || e.tokenEstimate,
+                // B3: outlets bypass the maxEntries cap (core/matching.js — position NONE,
+                // macro-placed via {{outlet::name}}) yet land in acceptedEntries. Flag them
+                // so the header entries-bar numerator counts only cap-governed (positional)
+                // entries and surfaces outlets separately, instead of reading e.g. "7/5".
+                outlet: !!e.outlet,
             }));
             trace.totalTokens = totalTokens;
             trace.budgetLimit = settings.maxTokensBudget;
+            // B2: pre-cap positional candidate count. budgetCut holds positional entries
+            // dropped by the entry-count cap OR the token budget (outlets are never cut),
+            // so positionalCandidates = positional injected + budgetCut. The header entries
+            // bar shows a soft "N of M shown" note when this exceeds the injected count —
+            // i.e. when a cap actually cost lore. Neutral signal, never an alarm.
+            trace.positionalCandidates = (trace.injected.filter(e => !e.outlet).length)
+                + (trace.budgetCut ? trace.budgetCut.length : 0);
             // BUG-278/279: stale-pipeline guard on activity feed. A stale pipeline landing here
             // would push a stale activity row. Trace lands inside the verdict written below;
             // the verdict's epoch/lockEpoch tag carries the same staleness signal forward.
@@ -1593,6 +1605,19 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
 
                 // Re-check after the loop completes — chat may have changed during it.
                 if (epoch !== chatEpoch || lockEpoch !== generationLockEpoch) return;
+
+                // A2: surface the REAL Librarian I/O measured inside the agentic loop
+                // (result.usage = { totalInput, totalOutput }). The footer used to display
+                // librarianChatStats.estimatedExtraTokens — a payload-size proxy that
+                // accumulates per chat and never matched actual API spend. Store the true
+                // per-turn cost; the footer renders it as a separate "Librarian: N tok"
+                // readout. The drawer footer re-renders on GENERATION_ENDED (emitted below
+                // in finally), so this lands before the readout is drawn.
+                if (result?.usage) {
+                    const _in = result.usage.totalInput || 0;
+                    const _out = result.usage.totalOutput || 0;
+                    setLibrarianLastUsage({ input: _in, output: _out, total: _in + _out });
+                }
 
                 if (proseMsg) {
                     // Lifecycle events already fired in onProse — just attach tool data and re-save.
@@ -2604,6 +2629,9 @@ async function _doInit() {
             setLoreGaps(savedGaps ? savedGaps.map(normalizeLoreGap) : []);
             setLoreGapSearchCount(0);
             setLibrarianChatStats({ searchCalls: 0, flagCalls: 0, estimatedExtraTokens: 0 });
+            // A2: per-turn real Librarian usage is chat-scoped — clear so a new chat's
+            // footer doesn't show the prior chat's last-turn cost until it generates.
+            setLibrarianLastUsage({ input: 0, output: 0, total: 0 });
             clearSessionActivityLog();
 
             resetDrawerState();

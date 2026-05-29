@@ -206,6 +206,8 @@ Applies token budget (`maxTokensBudget`), entry limit (`maxEntries`), groups by 
 ### Trace Publishing (in `onGenerate()`)
 Enriches `trace` with gating/budget/dedup details. **Epoch-guarded** (in `onGenerate()`): only publishes trace and pushes activity if both epochs match.
 
+**Drawer-bar trace fields (v2.5 Wave 1):** `trace.injected[]` records each carry `outlet: !!e.outlet` so the header entries bar can count only cap-governed (positional) entries and surface outlets separately (outlets bypass the `maxEntries` cap — `core/matching.js` position NONE). `trace.positionalCandidates` = positional injected count + `trace.budgetCut.length` (outlets are never cut) = pre-cap positional candidate count; the entries bar shows a soft "N of M shown" note when it exceeds the injected count. Both are read by `drawer-render-status.js`. See gotcha #73 for the full header/footer signal vocabulary (header bars stay calm-neutral; only the footer context bar earns red).
+
 ---
 
 ## Phase 8: Commit Phase (in `onGenerate()`)

@@ -1,7 +1,7 @@
 import { amount_gen, getCurrentChatId } from '../../../../../../script.js';
 import { getSettings } from '../../settings.js';
 import {
-    vaultIndex, librarianChatStats,
+    vaultIndex, librarianLastUsage,
     aiSearchStats, isAiCircuitOpen, aiCircuitOpenedAt, resetAiCircuitBreaker,
     indexEverLoaded, indexTimestamp, lastHealthResult,
 } from '../state.js';
@@ -66,12 +66,14 @@ export function renderFooter() {
     // chatCompletionSettings respects "unlocked context"; ctx.maxContext is the base slider only.
     const maxContext = ctx?.chatCompletionSettings?.openai_max_context || ctx?.maxContext || 0;
     const responseTokens = ctx?.chatCompletionSettings?.openai_max_tokens || amount_gen || 0;
+    // A1: the bar represents the ONE real settled prompt — promptManager.tokenUsage only.
+    // The old `+lib` add folded librarianChatStats.estimatedExtraTokens (a payload-size
+    // proxy that accumulates per chat) into a window it was never part of. Librarian I/O
+    // is a separate API call; it's surfaced as its own readout below, not in this bar.
     const contextUsed = ds.contextTokens || 0;
-    const libExtra = librarianChatStats?.estimatedExtraTokens || 0;
-    const totalUsed = contextUsed + libExtra;
 
     if (maxContext > 0) {
-        const contextPct = Math.min(100, (totalUsed / maxContext) * 100);
+        const contextPct = Math.min(100, (contextUsed / maxContext) * 100);
         const responsePct = Math.min(100 - contextPct, (responseTokens / maxContext) * 100);
 
         $footer.find('.dle-context-bar-context').css('width', `${contextPct}%`);
@@ -80,24 +82,55 @@ export function renderFooter() {
             width: `${responsePct}%`,
         });
 
-        const label = totalUsed
-            ? `${formatTokensCompact(totalUsed)} / ${formatTokensCompact(maxContext)}${libExtra > 0 ? ` (+${formatTokensCompact(libExtra)} lib)` : ''}`
+        // A3: this is the ONE bar where red is earned — overflow (used + reserved → max)
+        // means the conversation is about to lose history. Threshold on used + reserved.
+        const fillPct = contextPct + responsePct;
+        $barContainer.removeClass('dle-context-high dle-context-critical');
+        if (fillPct >= 95) $barContainer.addClass('dle-context-critical');
+        else if (fillPct >= 85) $barContainer.addClass('dle-context-high');
+
+        const label = contextUsed
+            ? `${formatTokensCompact(contextUsed)} / ${formatTokensCompact(maxContext)}`
             : `— / ${formatTokensCompact(maxContext)}`;
         $footer.find('.dle-context-bar-label').text(label);
 
-        const tooltipParts = [`${formatTokensCompact(contextUsed)} prompt tokens`];
-        if (libExtra > 0) tooltipParts.push(`${formatTokensCompact(libExtra)} librarian tokens`);
-        tooltipParts.push(`${formatTokensCompact(responseTokens)} response reserve`);
-        tooltipParts.push(`${formatTokensCompact(maxContext)} max context`);
-        const contextTitle = tooltipParts.join(' · ');
-        $barContainer.attr('aria-valuenow', totalUsed + responseTokens).attr('aria-valuemax', maxContext);
-        $barContainer.attr('title', contextTitle);
+        // A4: announce used and reserved SEPARATELY — aria-valuenow is the used prompt only
+        // (never used + reserved, which conflated reservation with consumption). The reserve
+        // is described in aria-valuetext + the tooltip.
+        const contextTitle = [
+            `${formatTokensCompact(contextUsed)} prompt tokens`,
+            `${formatTokensCompact(responseTokens)} response reserve`,
+            `${formatTokensCompact(maxContext)} max context`,
+        ].join(' · ');
+        $barContainer
+            .attr('aria-valuenow', contextUsed)
+            .attr('aria-valuemax', maxContext)
+            .attr('aria-valuetext', `${formatTokensCompact(contextUsed)} used, ${formatTokensCompact(responseTokens)} reserved for reply, of ${formatTokensCompact(maxContext)} max`)
+            .attr('title', contextTitle);
     } else {
         $footer.find('.dle-context-bar-context').css('width', '0%');
         $footer.find('.dle-context-bar-response').css({ left: '0%', width: '0%' });
         $footer.find('.dle-context-bar-label').text('Context data unavailable \u2014 waiting for first generation');
-        $barContainer.attr('aria-valuenow', 0).attr('aria-valuemax', 0);
+        $barContainer.removeClass('dle-context-high dle-context-critical');
+        $barContainer.attr('aria-valuenow', 0).attr('aria-valuemax', 0).removeAttr('aria-valuetext');
         $barContainer.attr('title', 'Context data unavailable \u2014 waiting for first generation');
+    }
+
+    // A2: real Librarian token I/O of the last agentic turn (state.librarianLastUsage,
+    // set from result.usage). A distinct readout \u2014 Librarian runs its own API call via
+    // CMRS, so its cost is NOT part of ST's settled prompt window above. Hidden until a
+    // Librarian turn has run this chat.
+    const $libUsage = $footer.find('.dle-librarian-usage');
+    if ($libUsage.length) {
+        const lib = librarianLastUsage || { input: 0, output: 0, total: 0 };
+        if (lib.total > 0) {
+            $libUsage
+                .text(`Librarian: ${formatTokensCompact(lib.total)} tok`)
+                .attr('title', `Last Librarian turn \u2014 ${formatTokensCompact(lib.input)} in \u00b7 ${formatTokensCompact(lib.output)} out`)
+                .removeClass('dle-hidden');
+        } else {
+            $libUsage.text('').addClass('dle-hidden');
+        }
     }
 
     // ── Activity feed ──

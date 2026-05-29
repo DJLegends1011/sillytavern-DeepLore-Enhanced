@@ -20,6 +20,8 @@
         <div class="dle-token-bar" style="width: 0%;"></div>
         <span class="dle-token-bar-label" data-i18n="dle_token_bar_waiting">Lore | waiting…</span>
     </div>
+    <!-- B2: soft, non-alarm note shown only when the token budget actually cost lore (truncation). -->
+    <div class="dle-bar-note dle-token-bar-note dle-hidden"></div>
 
     <!-- Max entries bar -->
     <div class="dle-entries-bar-container" role="progressbar" aria-valuenow="0" aria-valuemax="1" aria-valuemin="0"
@@ -27,6 +29,8 @@
         <div class="dle-entries-bar" style="width: 0%;"></div>
         <span class="dle-entries-bar-label" data-i18n="dle_entries_bar_waiting">Entries | waiting…</span>
     </div>
+    <!-- B2: soft note shown only when the entry cap actually cost lore ("N of M shown"). -->
+    <div class="dle-bar-note dle-entries-bar-note dle-hidden"></div>
 
     <!-- Active gating filters (only shown when set) -->
     <div class="dle-active-filters" aria-label="Active gating filters"></div>
@@ -445,6 +449,10 @@
             <span class="dle-context-bar-label" data-i18n="dle_context_unavailable">Context data unavailable — waiting for first generation</span>
         </div>
     </div>
+
+    <!-- A2: real Librarian token I/O of the last agentic turn — a separate API call, NOT part
+         of the settled prompt window above. Hidden until a Librarian turn runs this chat. -->
+    <div class="dle-librarian-usage dle-hidden"></div>
 
     <!-- Activity feed (recent pipeline runs) -->
     <details class="dle-activity-feed-wrap">

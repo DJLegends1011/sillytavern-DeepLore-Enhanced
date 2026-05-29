@@ -290,6 +290,16 @@ export function setLibrarianSessionStats(v) { librarianSessionStats = v; }
 export let librarianChatStats = { searchCalls: 0, flagCalls: 0, estimatedExtraTokens: 0 };
 export function setLibrarianChatStats(v) { librarianChatStats = v; }
 
+/**
+ * Librarian: REAL token I/O of the last agentic turn (from result.usage —
+ * measured input/output, not the librarian-tools payload-size proxy
+ * `estimatedExtraTokens`). Per-turn snapshot so the footer readout stays
+ * coherent with the context bar's "last generation, at rest" semantics.
+ * Reset on CHAT_CHANGED. See drawer-render-footer.js (A2) + docs/gotchas.md.
+ */
+export let librarianLastUsage = { input: 0, output: 0, total: 0 };
+export function setLibrarianLastUsage(v) { librarianLastUsage = v; }
+
 /** Custom field definitions: loaded from Obsidian YAML or defaults */
 /** @type {import('./fields.js').FieldDefinition[]} */
 export let fieldDefinitions = [];
