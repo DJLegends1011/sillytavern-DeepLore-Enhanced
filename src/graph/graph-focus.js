@@ -163,7 +163,7 @@ export function initFocus(gs, dbg) {
         }
         gs.focusTreeRoot._treeEdgeIdx = treeEdgeIdx;
         gs.cachedVisibleCount = depthMap.size;
-        gs.focusTreePhysics = true;
+        gs.layoutMode = 'focus';
         gs._egoLerpActive = true;
         gs.alpha = 0.001;
         gs.needsDraw = true;
@@ -241,7 +241,7 @@ export function initFocus(gs, dbg) {
         delete gs.focusTreeRoot._treeEdgeIdx;
         delete gs.focusTreeRoot._depthMap;
         gs.focusTreeRoot = null;
-        gs.focusTreePhysics = false;
+        gs.layoutMode = 'force';
         gs._egoLerpActive = false;
         gs.cachedVisibleCount = nodes.length;
 
@@ -347,7 +347,7 @@ export function initFocus(gs, dbg) {
         let matchCount = 0;
         const hasFilter = q || gs.typeFilter || gs.tagFilter;
 
-        if (!hasFilter && !gs.focusTreeRoot) {
+        if (!hasFilter && gs.layoutMode === 'force') {
             let wasIsolated = false;
             for (const n of nodes) {
                 if (n.hidden && !n.orphan && (n.revealBatchIdx == null || n.revealBatchIdx < gs.revealedBatch || n.revealBatchIdx === -1)) {

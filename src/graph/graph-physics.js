@@ -58,7 +58,7 @@ export function initPhysics(gs) {
     }
 
     function simulate() {
-        if (gs.focusTreePhysics) return;
+        if (gs.layoutMode !== 'force') return;
 
         if (gs.simulationStartTime && Date.now() - gs.simulationStartTime > MAX_SIMULATION_MS) {
             forceSettle();

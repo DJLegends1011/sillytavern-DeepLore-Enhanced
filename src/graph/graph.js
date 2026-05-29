@@ -15,6 +15,8 @@ import { initRender } from './graph-render.js';
 import { initFocus } from './graph-focus.js';
 import { initEvents } from './graph-events.js';
 import { initGraphSettings } from './graph-settings.js';
+import { initDagLayout } from './graph-dag.js';
+import { initHealth } from './graph-health.js';
 import { computeDisparityFilter, computeLouvainCommunities } from './graph-analysis.js';
 
 const escapeHtml = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -261,6 +263,11 @@ export async function showGraphPopup() {
                 ${tagOptions}
             </select>
             <span class="dle-graph-toolbar-sep"></span>
+            <select id="dle-graph-layout-mode" class="text_pole dle-graph-toolbar-select" title="Layout mode — Force (physics) or Layered DAG (requires/cascade dependency tree)">
+                <option value="force">Layout: Force</option>
+                <option value="dag">Layout: Layered DAG</option>
+            </select>
+            <span class="dle-graph-toolbar-sep"></span>
             <select id="dle-graph-color-mode" class="text_pole dle-graph-toolbar-select" title="Node color mode">
                 <option value="type">Color: Type</option>
                 <option value="priority">Color: Priority</option>
@@ -289,6 +296,7 @@ export async function showGraphPopup() {
             <button id="dle-graph-export-json" class="menu_button dle-graph-toolbar-btn" title="Export as JSON">JSON</button>
             <span class="dle-graph-toolbar-sep"></span>
             <button id="dle-graph-analyze" class="menu_button dle-graph-toolbar-btn" title="Find gaps in your vault — highlights orphans, weak bridges, and missing connections"><i class="fa-solid fa-magnifying-glass-chart"></i> Find Gaps</button>
+            <button id="dle-graph-health" class="menu_button dle-graph-toolbar-btn" title="Vault Health — surface broken refs, orphans, contradictory gating, and budget hogs"><i class="fa-solid fa-stethoscope"></i> Health</button>
         </div>
         <div class="dle-graph-legend" id="dle-graph-legend">
             <span class="dle-graph-legend-item" data-edge-type="link" role="button" tabindex="0" aria-label="Toggle link edges"><span style="color: #aac8ff;">—</span> Link</span>
@@ -764,7 +772,7 @@ export async function showGraphPopup() {
         searchQuery: '', typeFilter: '', tagFilter: '',
         showLabels: settings.graphShowLabels !== false,
         // Focus Tree
-        focusTreeRoot: null, focusTreePhysics: false,
+        focusTreeRoot: null, layoutMode: 'force',
         // Rendering
         needsDraw: true, prevHoverNode: null,
         debugMouseX: 0, debugMouseY: 0,
@@ -788,6 +796,7 @@ export async function showGraphPopup() {
         _vaultIndex: graphEntries,
         gapAnalysis: null,
         gapAnalysisActive: false,
+        healthActive: false, healthFlagged: null,
     };
 
     // gs.buildAdjacency wraps the closure so degree-derived state stays consistent on every rebuild.
@@ -817,6 +826,8 @@ export async function showGraphPopup() {
     const physics = initPhysics(gs);
     initEvents(gs, dbg);
     initGraphSettings(gs, dbg);
+    initDagLayout(gs, dbg);
+    initHealth(gs, dbg);
 
     /** Clear saved layout and replay the BFS rollout animation. */
     gs.replayReveal = () => {
