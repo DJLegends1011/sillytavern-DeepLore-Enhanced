@@ -123,6 +123,7 @@ Size estimates: **[S]** small, **[M]** medium, **[L]** large.
 | **Lens Mode** | M | Magnifying glass cursor for exploring dense regions without zooming. Circle shows zoomed detail; everything outside fades. |
 | **Drag-to-Create Edges** | L | Alt+drag from node to node opens a dropdown to pick edge type (link/requires/excludes/cascade); writes to Obsidian frontmatter. Right-click edge to delete. |
 | **Minimap** | S | 150x150px corner minimap showing full graph with viewport rectangle. Click to navigate. |
+| **Graph popup i18n wiring** | M | The entire `/dle-graph` popup is hardcoded English — toolbar, legend, settings panel, Health panel, and the v2.5 Layout selector use zero `data-i18n` and never reference the ~150 existing `dle_graph_*` locale keys. Wire the whole popup (existing keys + new Layout/Health strings) through ST's `data-i18n` MutationObserver so all 7 locales translate it. Partial wiring (new strings only) deliberately avoided — a half-translated toolbar is worse than consistent English. Surfaced by 3-agent graph audit 2026-05-28. |
 
 ---
 

@@ -1136,3 +1136,31 @@ Edge cases: missing `source_hash` → infer from body vs canonical comparison; m
 - `test/prompts-api.test.mjs` — 40 assertions covering L4 pre-flight + L6 structural ("exactly one DELETE in `src/`, in `prompt-api.js`, with the `DLE_DELETE_PRIMITIVE` comment-tag").
 
 The L6 structural test is the load-bearing review backstop. If you ever see it fail, do not relax it — the failure means a new DELETE site landed that shouldn't have.
+
+## 71. Graph view modes — `layoutMode` discriminant + non-force restore discipline (v2.5)
+
+**Files:** `src/graph/graph-dag.js`, `src/graph/graph-health.js`, `graph.js`, `graph-physics.js`, `graph-render.js`, `graph-events.js`, `graph-focus.js`, `test/dag.test.mjs`, `test/health.test.mjs`. **Date:** 2026-05-28. Design: `audit/v2.5-graph-views/PLAN.md`.
+
+v2.5 reopened the graph (previously "complete" — supersedes `project_graph_complete.md`) to add alternate view modes. Wave 1 shipped **Layered DAG** + **Vault Health**. Invariants a future change MUST honor:
+
+- **`gs.layoutMode` is the single layout discriminant** (`'force' | 'focus' | 'dag'`). It replaced the old binary `focusTreePhysics` flag (fully removed — 6 writers, 1 reader). `graph-physics.js` `simulate()` early-returns unless `layoutMode === 'force'`, so EVERY non-force layout freezes the force sim. Adding a new deterministic layout = add a mode value, stage `_targetX/_targetY`, set `gs._egoLerpActive = true` (reuse `lerpEgoPositions` — it is layout-blind), set `layoutMode`. Do NOT reintroduce a per-feature physics-freeze flag.
+
+- **Force mode must stay byte-identical to pre-v2.5 behavior.** The layoutMode swap was behavior-preserving; the default open is `force`. Reveal animation, saved-layout restore, presets — untouched in force.
+
+- **Deterministic layouts (`dag` and any future) are NEVER persisted to `graphSavedLayout`.** That settings key is force-only and bare-title-keyed. The physics auto-save block sits AFTER the `layoutMode !== 'force'` early-return, so it cannot fire in another mode — keep it that way. DAG/Health recompute on enter.
+
+- **Enter/exit MUST restore state exactly** (mirror `enterFocusTree`/`exitFocusTree`): snapshot `_preLayoutPositions` + `_preLayoutEdgeVis` on enter; on exit restore positions, `edgeVisibility` (+ `buildAdjacency()`), `cachedVisibleCount` (→ `nodes.length`), and the hidden/reveal formula `n.hidden = n.orphan || (revealBatchIdx != null && revealBatchIdx >= revealedBatch && revealBatchIdx !== -1)`. Getting `cachedVisibleCount` wrong breaks `hitRadius()` → clicking. Getting the hidden formula wrong makes `applyFilters` / `e`-reset fight over hidden state. The `applyFilters` un-hide branch is gated on `layoutMode === 'force'`. Regression guards: `test/dag.test.mjs` "enter/exit state restore".
+
+- **DAG edges need a bright render branch.** Disparity-backbone dimming would otherwise draw requires/cascade at α 0.03 → invisible. `graph-render.js` has a `layoutMode === 'dag'` branch (α 0.85) ahead of the backbone/hover cascade, plus arrowhead drawing at the `to` end. DAG flips `edgeVisibility` to requires+cascade only via the existing `buildAdjacency()`.
+
+- **Cycle handling is DAG-local.** The legacy `circularPairs` (graph.js) only catches 2-cycles on `requires` and ignores cascade — insufficient for layering. DAG and Health do their own DFS back-edge break (`breakCycles` in `graph-dag.js`, reused by `graph-health.js detectCircular`). Unbroken cycles → NaN layers.
+
+- **Health panel is JS-created floating, NOT in container HTML.** `graph-health.js initHealth()` builds the side panel with `createElement` + inline styles on demand, appends to `.dle-graph-canvas-wrap`, removes on close — the tooltip/context-menu pattern, not the inline `container.innerHTML` pattern the settings panel uses. Keep new graph sub-UIs to this pattern (lean template, self-contained module). Detectors are pure (`detect*`) and unit-tested; `gs.healthFlagged` map keys are node ids, never bare titles (#50).
+
+- **Map keys = node id (`= index into gs._vaultIndex`) or `trackerKey`, never bare `entry.title`** (#50). New layout/analysis code in graph-dag/graph-health follows this.
+
+- **Programmatic layout exits MUST mirror the select's change handler** (2026-05-28 audit). Only the `#dle-graph-layout-mode` change handler used to call `exitDagLayout()`. The Reset button (`graph-events.js`) and Redraw/`replayReveal` (`graph.js`) drove their own un-pin/re-layout while leaving `layoutMode==='dag'` → frozen physics, DAG-restricted `edgeVisibility`, no recovery. Both now call `exitDagLayout()` AND set the layout `<select>`.value back to `'force'` when in DAG mode before their own work. Any future code path that resets/re-lays-out the graph must do the same: exit the deterministic layout + sync the select.
+
+- **`computeHealthFindings` degree is structural, NOT `gs.edgeCountByNode`** (2026-05-28 audit). `edgeCountByNode` is rebuilt under the active `edgeVisibility` filter — DAG mode hides link/excludes, the legend toggles edge types — so reading it makes `detectOrphans`/`detectThinHubs` falsely flag link-only/excludes-only entries when Health is opened in DAG mode or after a legend toggle. Degree is now derived from the full `gs.edges` set, visibility-independent (falls back to `edgeCountByNode` only when no edge list exists, i.e. headless detector tests). `detectCircular` covers requires **AND** `cascadeLinks` (invariant #4 above — it previously regressed to requires-only). `detectTokenBloat` returns `[]` when token sizes have no real spread (`max <= median*1.5`) so a uniform vault flags nothing, not every entry. `detectSelfRefs` (CRIT) catches entries whose requires/excludes/cascade name their own title. DAG `enter()` sets `n._revealScale = 1` on each staged participant so un-hidden nodes don't render invisible for ~10 frames.
+
+Wave 2 (Activity raster, Co-presence/co-injection, Health behavioral findings) needs a Verdict-store→graph read pipe — NOT built yet, and depends on the CHAT_CHANGED IDB-wipe fix (`audit/v2.5-release/INDEX.md` §1).

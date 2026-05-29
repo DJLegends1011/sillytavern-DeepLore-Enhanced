@@ -384,8 +384,12 @@ export function initRender(gs) {
                     ctx.lineWidth = 2;
                 }
 
-                // Alpha priority cascade: hover-dim → focus-tree-depth → filtered → frequency/standard.
-                if (hoverDistances && focusTreeRoot && focusTreeRoot._treeEdgeIdx) {
+                // Alpha priority cascade: DAG bright → hover-dim → focus-tree-depth → filtered → frequency/standard.
+                if (gs.layoutMode === 'dag') {
+                    // DAG edges must stay legible regardless of disparity-backbone dimming.
+                    ctx.globalAlpha = (fromFiltered || toFiltered) ? 0.22 : 0.85;
+                    ctx.lineWidth = 2;
+                } else if (hoverDistances && focusTreeRoot && focusTreeRoot._treeEdgeIdx) {
                     if (!focusTreeRoot._treeEdgeIdx.has(edge._idx)) continue;
                     const dm = focusTreeRoot._depthMap;
                     const hid = hoverNode ? hoverNode.id : -1;
@@ -478,6 +482,25 @@ export function initRender(gs) {
                 const a = toScreen(nodes[edge.from].x, nodes[edge.from].y);
                 const b = toScreen(nodes[edge.to].x, nodes[edge.to].y);
                 ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+
+                // DAG layout: arrowhead at the `to` end shows dependency direction.
+                if (gs.layoutMode === 'dag') {
+                    const ang = Math.atan2(b.y - a.y, b.x - a.x);
+                    const rTo = (gs.getNodeRadius ? gs.getNodeRadius(nodes[edge.to]) : 6) * gs.zoom + 3;
+                    const tipX = b.x - Math.cos(ang) * rTo;
+                    const tipY = b.y - Math.sin(ang) * rTo;
+                    const ah = 9;
+                    const prevA = ctx.globalAlpha;
+                    ctx.globalAlpha = Math.max(prevA, 0.7);
+                    ctx.fillStyle = edgeColors[type] || '#aac8ff';
+                    ctx.beginPath();
+                    ctx.moveTo(tipX, tipY);
+                    ctx.lineTo(tipX - ah * Math.cos(ang - 0.45), tipY - ah * Math.sin(ang - 0.45));
+                    ctx.lineTo(tipX - ah * Math.cos(ang + 0.45), tipY - ah * Math.sin(ang + 0.45));
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.globalAlpha = prevA;
+                }
             }
         }
         ctx.setLineDash([]); ctx.globalAlpha = 1; ctx.lineWidth = 1; ctx.shadowBlur = 0;
@@ -526,6 +549,23 @@ export function initRender(gs) {
             }
         }
         ctx.globalAlpha = 1;
+
+        // ─── Health overlay (severity rings around flagged nodes) ───
+        if (gs.healthActive && gs.healthFlagged && gs.healthFlagged.size) {
+            const HSEV = { 3: '#e15759', 2: '#f28e2b', 1: '#edc948' };
+            const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 600);
+            ctx.lineWidth = 2.5;
+            for (const [id, sev] of gs.healthFlagged) {
+                const n = nodes[id];
+                if (!n || n.hidden) continue;
+                const s = toScreen(n.x, n.y);
+                const r = getNodeRadius(n) * (n._revealScale || 1);
+                ctx.strokeStyle = HSEV[sev] || '#edc948';
+                ctx.globalAlpha = 0.45 + pulse * 0.35;
+                ctx.beginPath(); ctx.arc(s.x, s.y, (r + 6) * zoom, 0, Math.PI * 2); ctx.stroke();
+            }
+            ctx.globalAlpha = 1;
+        }
 
         // ─── Gap analysis overlay ───
         if (gs.gapAnalysisActive && gs.gapAnalysis) {

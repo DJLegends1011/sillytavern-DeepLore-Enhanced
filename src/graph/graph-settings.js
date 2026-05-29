@@ -206,7 +206,7 @@ export function initGraphSettings(gs, dbg) {
                     if (gs.focusTreeRoot._treeEdgeIdx) delete gs.focusTreeRoot._treeEdgeIdx;
                     gs.focusTreeRoot.pinned = false;
                     gs.focusTreeRoot = null;
-                    gs.focusTreePhysics = false;
+                    gs.layoutMode = 'force';
                     gs._egoLerpActive = false;
                     gs.enterFocusTree(root);
                 }

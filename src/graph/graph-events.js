@@ -308,6 +308,7 @@ export function initEvents(gs, dbg) {
     }, lOpt);
 
     canvas.addEventListener('dblclick', (e) => {
+        if (gs.layoutMode === 'dag') return; // double-click focus disabled in DAG layout
         if (gs.settlingUntil && Date.now() < gs.settlingUntil) return;
         const rect = freshRect();
         const mx = e.clientX - rect.left, my = e.clientY - rect.top;
@@ -323,7 +324,7 @@ export function initEvents(gs, dbg) {
                 if (gs.focusTreeRoot._depthMap) delete gs.focusTreeRoot._depthMap;
                 gs.focusTreeRoot.pinned = false;
                 gs.focusTreeRoot = null;
-                gs.focusTreePhysics = false;
+                gs.layoutMode = 'force';
             } else {
                 dbg(`dblclick: entering Focus Tree on "${closest.title}"`);
             }
@@ -490,6 +491,22 @@ export function initEvents(gs, dbg) {
             gs.updateTooltip();
         }, lOpt);
     }
+    const layoutModeEl = document.getElementById('dle-graph-layout-mode');
+    if (layoutModeEl) {
+        layoutModeEl.value = gs.layoutMode === 'dag' ? 'dag' : 'force';
+        layoutModeEl.addEventListener('change', () => {
+            const mode = layoutModeEl.value;
+            if (mode === 'dag' && gs.layoutMode !== 'dag') {
+                if (gs.layoutMode === 'focus' && gs.exitFocusTree) gs.exitFocusTree();
+                const ok = gs.enterDagLayout && gs.enterDagLayout();
+                if (!ok) layoutModeEl.value = 'force';
+            } else if (mode === 'force' && gs.layoutMode === 'dag') {
+                if (gs.exitDagLayout) gs.exitDagLayout();
+            }
+            dbg(`Layout mode select → ${gs.layoutMode}`);
+            gs.needsDraw = true;
+        }, lOpt);
+    }
     const backBtn = document.getElementById('dle-graph-back');
     if (backBtn) {
         backBtn.addEventListener('click', () => gs.exitFocusTree(), lOpt);
@@ -518,7 +535,7 @@ export function initEvents(gs, dbg) {
         if (gs.focusTreeRoot._hasDownwardChildSet) delete gs.focusTreeRoot._hasDownwardChildSet;
         gs.focusTreeRoot.pinned = false;
         gs.focusTreeRoot = null;
-        gs.focusTreePhysics = false;
+        gs.layoutMode = 'force';
         gs._egoLerpActive = false;
         gs.enterFocusTree(root);
         dbg(`Hop depth adjusted to ${newDepth}`);
@@ -540,6 +557,12 @@ export function initEvents(gs, dbg) {
     if (resetBtn) {
         resetBtn.addEventListener('click', () => {
             if (gs.focusTreeRoot) gs.exitFocusTree();
+            // Without this, Reset in DAG mode leaves layoutMode='dag' (physics frozen) +
+            // DAG-restricted edgeVisibility + pinned nodes → user stranded, no recovery.
+            if (gs.layoutMode === 'dag' && gs.exitDagLayout) {
+                gs.exitDagLayout();
+                if (layoutModeEl) layoutModeEl.value = 'force';
+            }
             for (const n of nodes) {
                 n.pinned = false;
                 n._treePinned = false;
@@ -652,6 +675,14 @@ export function initEvents(gs, dbg) {
                 gs.gapAnalysis = null;
             }
             gs.needsDraw = true;
+        }, lOpt);
+    }
+
+    const healthBtn = document.getElementById('dle-graph-health');
+    if (healthBtn) {
+        healthBtn.addEventListener('click', () => {
+            if (gs.toggleHealth) gs.toggleHealth();
+            healthBtn.classList.toggle('active', gs.healthActive);
         }, lOpt);
     }
 
