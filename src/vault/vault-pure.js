@@ -179,7 +179,10 @@ export function deduplicateMultiVault(entries, mode) {
                 }
                 if (entry.content && entry.content.trim()) {
                     existing.content = (existing.content || '') + '\n\n---\n\n' + entry.content;
-                    existing.tokenEstimate = Math.ceil(existing.content.length / 4.0); // BUG-H9: 4.0 chars/token
+                    // Sum tokenizer-accurate member estimates (computed before dedup at the
+                    // vault.js tokenize pass) instead of char/4, which diverged from the tokenizer
+                    // units used for every non-merged entry and skewed budget math for merged entries.
+                    existing.tokenEstimate = (existing.tokenEstimate || 0) + (entry.tokenEstimate || 0);
                     // BUG-378: do NOT recompute `_contentHash` — must equal the hash of the
                     // ORIGINAL first entry's file content for reuse-sync to skip re-parse.
                 }

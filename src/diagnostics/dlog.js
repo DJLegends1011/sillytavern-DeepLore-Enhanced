@@ -7,9 +7,10 @@
  * readable output. Native DevTools still renders correctly — just loses the
  * expandable-object affordance.
  *
- * Migrate `console.debug('[DLE][DIAG] ... %s %d', a, b)` by swapping in `ddebug`
- * (same signature). Trailing object args are JSON-stringified instead of
- * flattening to "[object Object]".
+ * Optional formatting helpers (`dlog`/`dwarn`/`derror`/`ddebug`) for tooling that
+ * can't parse DevTools format-args; not required for new code, which uses raw
+ * `console.*`. Trailing object args are JSON-stringified instead of flattening
+ * to "[object Object]".
  */
 
 function safeJson(v) {

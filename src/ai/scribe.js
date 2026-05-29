@@ -19,7 +19,7 @@ import { stripObsidianSyntax } from '../helpers.js';
 import {
     scribeInProgress, lastScribeSummary, chatEpoch,
     setScribeInProgress, setLastScribeSummary, setLastScribeChatLength,
-    tryAcquireHalfOpenProbe, recordAiSuccess, recordAiFailure,
+    tryAcquireHalfOpenProbe, recordAiSuccess, recordAiFailure, releaseHalfOpenProbe,
 } from '../state.js';
 import { dedupError, dedupWarning } from '../toast-dedup.js';
 import { pushEvent } from '../diagnostics/interceptors.js';
@@ -52,7 +52,7 @@ export async function callScribe(systemPrompt, userMessage, _settings) {
             // timedOut PLUS HTTP 401/403 (auth) and 429 (rate-limit). Bad API key isn't a
             // service-down signal; without this, the second scribe call after a typo'd key
             // tripped the breaker and locked every AI feature for 30s.
-            if (!isExcludedFromBreaker(err)) recordAiFailure();
+            if (!isExcludedFromBreaker(err)) recordAiFailure(); else releaseHalfOpenProbe(); // #11: free dangling half-open probe
             throw err;
         }
     }
@@ -107,7 +107,7 @@ export async function callScribe(systemPrompt, userMessage, _settings) {
         return result;
     } catch (err) {
         // BUG-116/BUG-252 + Wave-B contract: shared classifier — see note above.
-        if (!isExcludedFromBreaker(err)) recordAiFailure();
+        if (!isExcludedFromBreaker(err)) recordAiFailure(); else releaseHalfOpenProbe(); // #11: free dangling half-open probe
         throw err;
     } finally {
         if (onStop) { try { eventSource.removeListener(event_types.GENERATION_STOPPED, onStop); } catch { /* noop */ } }

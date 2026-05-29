@@ -86,7 +86,10 @@ async function _findUniquePath(vault, filename, folder) {
  */
 export async function importEntries(entries, folder, onProgress, options = {}) {
     const settings = getSettings();
-    const vault = getPrimaryVault(settings);
+    // #14: callers (e.g. the first-run wizard, before settings are persisted) may pass
+    // the live connection via options.vault so import targets the just-tested vault
+    // instead of the stale/default saved one.
+    const vault = options.vault || getPrimaryVault(settings);
     const lorebookTag = settings.lorebookTag;
     const compress = options.compress ?? settings.importCompressByDefault;
     // Wave 4 (WI parity): EM-position handling. 'append' (default) writes the

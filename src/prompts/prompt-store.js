@@ -11,9 +11,9 @@
  * tight loops (agentic loop, fence builders) without await overhead. The
  * cache is preloaded at boot, so every lookup is a Map hit.
  *
- * Vault override wiring lands in Commit 4. This commit ships the resolver
- * with only the compiled-in dict in the cache — runtime behavior matches
- * pre-feature exactly until the override layer activates.
+ * Vault override overlay is live: `loadPrompts()` fetches override files from
+ * the configured prompts folder and overlays them on the compiled-in baseline;
+ * `getPrompt(key)` returns the override when present, else the compiled-in dict.
  */
 
 import * as PromptsEn from '../i18n/prompts/en.js';
@@ -294,10 +294,10 @@ export async function loadPrompts(locale, connection) {
 }
 
 /**
- * Reload prompts. Wrapper that re-runs `loadPrompts()` with the current locale.
- * In Commit 4 this also re-reads the vault folder.
+ * Reload prompts: re-runs `loadPrompts()` with the current locale and last-used
+ * vault connection, re-reading any override files from the prompts folder.
  *
- * @returns {Promise<{ loaded: number, source: string }>}
+ * @returns {Promise<{ loaded: number, source: string, vaultCount: number, errors: Array, vaultListPartial: boolean }>}
  */
 export async function reloadPrompts() {
     return loadPrompts(_currentLocale, _lastConnection);

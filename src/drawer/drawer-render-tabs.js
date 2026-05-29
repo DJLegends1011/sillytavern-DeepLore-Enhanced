@@ -453,7 +453,7 @@ export function renderBrowseTab() {
 
         const tl = e.title.toLowerCase();
         const pbKey = `${e.vaultSource || ''}:${tl}`;
-        if (statusFilter === 'injected' && !injectedSet.has(tl)) return false;
+        if (statusFilter === 'injected' && !injectedSet.has(pbKey)) return false;
         if (statusFilter === 'pinned' && !pinSet.has(pbKey)) return false;
         if (statusFilter === 'blocked' && !blockSet.has(pbKey)) return false;
         if (statusFilter === 'constant' && !e.constant) return false;

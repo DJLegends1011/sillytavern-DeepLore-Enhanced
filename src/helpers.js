@@ -545,7 +545,8 @@ export function convertWiEntry(wiEntry, lorebookTag, options = {}) {
 
     const keys = [];
     if (Array.isArray(wiEntry.key)) {
-        keys.push(...wiEntry.key.filter(k => k && k.trim()));
+        // Coerce: ST occasionally exports numeric key elements; bare k.trim() throws on a number.
+        keys.push(...wiEntry.key.filter(k => k != null && String(k).trim()).map(k => String(k).trim()));
     } else if (typeof wiEntry.key === 'string' && wiEntry.key.trim()) {
         keys.push(...wiEntry.key.split(',').map(k => k.trim()).filter(Boolean));
     }
@@ -585,7 +586,7 @@ export function convertWiEntry(wiEntry, lorebookTag, options = {}) {
     }
     if (wiEntry.keysecondary && wiEntry.keysecondary.length > 0) {
         const secondary = Array.isArray(wiEntry.keysecondary)
-            ? wiEntry.keysecondary.filter(k => k && k.trim())
+            ? wiEntry.keysecondary.filter(k => k != null && String(k).trim()).map(k => String(k).trim())
             : wiEntry.keysecondary.split(',').map(k => k.trim()).filter(Boolean);
         if (secondary.length > 0) {
             fm.push(`refine_keys:`);
@@ -857,10 +858,12 @@ export function parseMatchReason(matchedBy) {
  */
 export function computeSourcesDiff(currentSources, previousSources) {
     if (!previousSources) return { added: [], removed: [] };
-    const prevMap = new Map(previousSources.map(s => [s.title, s]));
-    const currTitles = new Set(currentSources.map(s => s.title));
-    const added = currentSources.filter(s => !prevMap.has(s.title));
-    const removed = previousSources.filter(s => !currTitles.has(s.title)).map(s => {
+    // trackerKey-shaped key (gotcha #50): cross-vault same-title entries must diff distinctly.
+    const keyOf = s => `${s.vaultSource || ''}:${(s.title || '').toLowerCase()}`;
+    const prevMap = new Map(previousSources.map(s => [keyOf(s), s]));
+    const currKeys = new Set(currentSources.map(keyOf));
+    const added = currentSources.filter(s => !prevMap.has(keyOf(s)));
+    const removed = previousSources.filter(s => !currKeys.has(keyOf(s))).map(s => {
         const prevReason = (s.matchedBy || '').toLowerCase();
         let removalReason = 'No longer matched';
         if (prevReason.includes('bootstrap')) removalReason = 'Bootstrap fall-off';

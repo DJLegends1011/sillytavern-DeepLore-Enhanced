@@ -15,7 +15,7 @@ import { writeNote } from '../vault/obsidian-api.js';
 import { buildAiChatContext, yamlEscape, classifyError } from '../../core/utils.js';
 import { callAI, isExcludedFromBreaker } from './ai.js';
 import { extractAiResponseClient, stripObsidianSyntax } from '../helpers.js';
-import { getWriterVisibleEntries, chatEpoch, tryAcquireHalfOpenProbe, recordAiSuccess, recordAiFailure } from '../state.js';
+import { getWriterVisibleEntries, chatEpoch, tryAcquireHalfOpenProbe, recordAiSuccess, recordAiFailure, releaseHalfOpenProbe } from '../state.js';
 import { ensureIndexFresh, buildIndex } from '../vault/vault.js';
 import { pushEvent } from '../diagnostics/interceptors.js';
 import { resolvePromptOrOverride } from '../prompts/prompt-store.js';
@@ -75,7 +75,7 @@ export async function callAutoSuggest(systemPrompt, userMessage, toolKey = 'auto
         } catch (err) {
             // BUG-252 + Wave-B contract: shared classifier covers throttled / userAborted /
             // timedOut PLUS HTTP 401/403 (auth) and 429 (rate-limit). See scribe.js.
-            if (!isExcludedFromBreaker(err)) recordAiFailure();
+            if (!isExcludedFromBreaker(err)) recordAiFailure(); else releaseHalfOpenProbe(); // #11: free dangling half-open probe
             throw err;
         } finally {
             if (onStop) { try { eventSource.removeListener(event_types.GENERATION_STOPPED, onStop); } catch { /* noop */ } }
@@ -92,7 +92,7 @@ export async function callAutoSuggest(systemPrompt, userMessage, toolKey = 'auto
             return result;
         } catch (err) {
             // Wave-B contract: shared classifier — see scribe.js.
-            if (!isExcludedFromBreaker(err)) recordAiFailure();
+            if (!isExcludedFromBreaker(err)) recordAiFailure(); else releaseHalfOpenProbe(); // #11: free dangling half-open probe
             throw err;
         }
     }

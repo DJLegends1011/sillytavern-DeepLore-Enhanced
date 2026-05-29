@@ -6352,14 +6352,14 @@ test('deduplicateMultiVault: merge concatenates content', () => {
     assert(result[0].content.includes('---'), 'separator present');
 });
 
-test('deduplicateMultiVault: merge recalculates tokenEstimate', () => {
+test('deduplicateMultiVault: merge sums member tokenEstimates', () => {
     const entries = [
         makeEntry('Dragon', { content: 'Short.', tokenEstimate: 2 }),
         makeEntry('Dragon', { content: 'Also short.', tokenEstimate: 3 }),
     ];
     const result = deduplicateMultiVault(entries, 'merge');
-    const expectedLen = ('Short.' + '\n\n---\n\n' + 'Also short.').length;
-    assertEqual(result[0].tokenEstimate, Math.ceil(expectedLen / 4.0), 'token estimate recalculated');
+    // Sum tokenizer-accurate member estimates (not char/4, which diverged from tokenizer units).
+    assertEqual(result[0].tokenEstimate, 5, 'token estimate sums members');
 });
 
 test('deduplicateMultiVault: merge prefers first non-empty summary', () => {

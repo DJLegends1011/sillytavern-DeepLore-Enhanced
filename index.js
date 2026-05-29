@@ -69,6 +69,7 @@ import { runPipeline, matchTextForExternal } from './src/pipeline/pipeline.js';
 import { setupSyncPolling } from './src/vault/sync.js';
 import { runScribe } from './src/ai/scribe.js';
 import { pushEvent, consoleBuffer, networkBuffer, errorBuffer, aiCallBuffer, aiPromptBuffer, eventBuffer, abortWith } from './src/diagnostics/interceptors.js';
+import { scrubDeep } from './src/diagnostics/scrubber.js';
 import { generationBuffer } from './src/diagnostics/flight-recorder.js';
 import { runAutoSuggest, showSuggestionPopup } from './src/ai/auto-suggest.js';
 import { injectSourcesButton, showSourcesPopup, resetCartographer } from './src/ui/cartographer.js';
@@ -399,6 +400,29 @@ function capNotepad(text, opts = {}) {
         }
     }
 
+    if (text.length > AI_NOTEPAD_MAX_CHARS) {
+        // #10: pin-aware char backstop. The FIFO entry-cap above protects pinned lines, but the
+        // raw byte slice below would still drop a pinned line that happens to be oldest — breaking
+        // the documented "pins survive the cap" contract. First trim oldest NON-pinned lines until
+        // within budget; only if pinned content alone still exceeds the cap do we fall back to the
+        // blind byte slice (last resort — the pins genuinely can't all fit).
+        const pinList = Array.isArray(metadata.deeplore_ai_notepad_pins) ? metadata.deeplore_ai_notepad_pins : [];
+        const pinSet = new Set(pinList.filter(k => typeof k === 'string' && k));
+        if (pinSet.size > 0) {
+            const lines = text.split('\n');
+            let overBy = text.length - AI_NOTEPAD_MAX_CHARS;
+            const dropSet = new Set();
+            for (let i = 0; i < lines.length && overBy > 0; i++) {
+                const ln = lines[i];
+                if (!ln.trim() || pinSet.has(normalizeNotepadLine(ln))) continue;
+                dropSet.add(i);
+                overBy -= (ln.length + 1); // +1 for the joining newline
+            }
+            if (dropSet.size > 0) {
+                text = lines.filter((_, i) => !dropSet.has(i)).join('\n').replace(/^\n+/, '');
+            }
+        }
+    }
     if (text.length > AI_NOTEPAD_MAX_CHARS) {
         const trimmed = text.slice(text.length - AI_NOTEPAD_MAX_CHARS);
         const boundary = trimmed.indexOf('\n\n');
@@ -1319,7 +1343,10 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
                     maxHistory,
                 });
             }
-            saveMetadataDebounced();
+            // #10: NO separate save here — the per-chat counts block below persists the whole
+            // chat_metadata (incl. this injection-log entry) via an immediate saveMetadata().
+            // Saving them together atomically prevents a chat switch from persisting counts but
+            // dropping this same-turn injection-log row (which would let strip-dedup re-inject it).
         } else if (settings.debugMode) {
             console.debug('[DLE][DIAG] injection-log-write-SKIPPED', {
                 stripDuplicateInjections: settings.stripDuplicateInjections,
@@ -1660,7 +1687,10 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
                 _removePipelineStatus();
                 // Errors here must not propagate to the outer catch — that would show a misleading
                 // "Couldn't load your lore" toast on a successful generation.
-                try { await eventSource.emit(event_types.GENERATION_ENDED, chat.length); } catch { /* noop */ }
+                // 2nd arg mirrors ST's own emit (chat.length, getGenerationPromptCache()) so
+                // ecosystem listeners that destructure arg 2 don't get undefined on Librarian turns.
+                // DLE can't access ST's private prompt cache, so pass an empty shape.
+                try { await eventSource.emit(event_types.GENERATION_ENDED, chat.length, {}); } catch { /* noop */ }
             }
             return; // Don't fall through to ST's generation.
         }
@@ -2037,7 +2067,9 @@ async function _doInit() {
                     lastMessage.extra.deeplore_ai_notes = notes;
                     const existing = chat_metadata.deeplore_ai_notepad || '';
                     chat_metadata.deeplore_ai_notepad = capNotepad((existing + '\n' + notes).trim());
-                    saveMetadataDebounced();
+                    // #10: immediate save (BUG-306 pattern) — a debounced-only write is lost if the
+                    // user switches chat within 1s of the auto-extract. Notepad fires on every gen.
+                    try { saveMetadata(); } catch { saveMetadataDebounced(); }
                     pushEvent('ai_notepad', { action: 'tag_extracted', noteLength: notes.length });
                     if (settings.debugMode) console.debug('[DLE] Notepad: extracted %d chars from tags', notes.length);
                 }
@@ -2093,7 +2125,8 @@ async function _doInit() {
                             currentMsg.extra.deeplore_ai_notes = responseText;
                             const existing = chat_metadata.deeplore_ai_notepad || '';
                             chat_metadata.deeplore_ai_notepad = capNotepad((existing + '\n' + responseText).trim());
-                            saveMetadataDebounced();
+                            // #10: immediate save (BUG-306) — debounced-only loses the note on a fast chat switch.
+                            try { saveMetadata(); } catch { saveMetadataDebounced(); }
                             pushEvent('ai_notepad', { action: 'extract_completed', noteLength: responseText?.length || 0 });
                             if (getSettings().debugMode) console.debug('[DLE] Notepad: AI extracted %d chars', responseText.length);
                         } else if (responseText === 'NOTHING_TO_NOTE') {
@@ -2155,7 +2188,8 @@ async function _doInit() {
                                 const existing = chat_metadata.deeplore_ai_notepad || '';
                                 chat_metadata.deeplore_ai_notepad = capNotepad((existing + '\n' + notes).trim());
                             }
-                            saveMetadataDebounced();
+                            // #10: immediate save (BUG-306) — debounced-only loses the note on a fast chat switch.
+                            try { saveMetadata(); } catch { saveMetadataDebounced(); }
                             const mesBlock = document.querySelector(`#chat .mes[mesid="${messageId}"] .mes_text`);
                             if (mesBlock) mesBlock.innerHTML = messageFormatting(cleanedMessage, message.name, message.is_system, message.is_user, messageId);
                         }
@@ -2749,7 +2783,10 @@ async function _doInit() {
                 get buffers() {
                     return {
                         console: consoleBuffer.drain(),
-                        network: networkBuffer.drain(),
+                        // #12: network entries store raw request URLs + non-2xx bodies that can
+                        // echo Authorization headers/keys. Scrub at this read surface so a shared
+                        // screenshot/copy of __DLE_DEBUG.buffers.network can't leak a token.
+                        network: scrubDeep(networkBuffer.drain()),
                         errors: errorBuffer.drain(),
                         aiCalls: aiCallBuffer.drain(),
                         // PII-sensitive — only populated when debugMode=true. Local inspection only.

@@ -103,12 +103,15 @@ export function pseudonymizeTrace(trace, ctx) {
             if (out.matchedBy) out.matchedBy = pseudonymizeTitle(ctx, out.matchedBy);
             // AI reasons may embed character names or vault names — replace any KNOWN alias.
             if (typeof out.reason === 'string') {
-                for (const [real, pseudo] of ctx.titleMap.entries()) {
+                // Longest-first: replacing "Al" before "Alice" would turn "Alice" into
+                // "<title-1>ice", leaking "ice" and corrupting pseudonym cardinality.
+                const byLenDesc = (a, b) => b[0].length - a[0].length;
+                for (const [real, pseudo] of [...ctx.titleMap.entries()].sort(byLenDesc)) {
                     if (out.reason.includes(real)) {
                         out.reason = out.reason.replaceAll(real, pseudo);
                     }
                 }
-                for (const [real, pseudo] of ctx.vaultSourceMap.entries()) {
+                for (const [real, pseudo] of [...ctx.vaultSourceMap.entries()].sort(byLenDesc)) {
                     if (out.reason.includes(real)) {
                         out.reason = out.reason.replaceAll(real, pseudo);
                     }

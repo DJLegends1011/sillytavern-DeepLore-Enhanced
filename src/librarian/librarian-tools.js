@@ -50,6 +50,17 @@ export function clearSessionActivityLog() {
     sessionActivityLog = [];
 }
 
+/** FIFO cap — mirrors loreGaps (200); bounds growth within one long chat. */
+const SESSION_ACTIVITY_CAP = 200;
+
+/** Push an activity record, trimming oldest beyond the FIFO cap. */
+function recordSessionActivity(logEntry) {
+    sessionActivityLog.push(logEntry);
+    if (sessionActivityLog.length > SESSION_ACTIVITY_CAP) {
+        sessionActivityLog.splice(0, sessionActivityLog.length - SESSION_ACTIVITY_CAP);
+    }
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // Helpers
 // ════════════════════════════════════════════════════════════════════════════
@@ -305,11 +316,14 @@ function resolveLinkedEntries(entry, excludeTitles, max = 10, titleMap = null) {
     const linked = [];
     for (const linkTitle of entry.resolvedLinks) {
         if (linked.length >= max) break;
-        if (excludeTitles.has(linkTitle.toLowerCase())) continue;
         const found = titleMap
             ? titleMap.get(linkTitle.toLowerCase())
             : vaultIndex.find(e => e.title.toLowerCase() === linkTitle.toLowerCase());
-        if (found) linked.push(found);
+        if (!found) continue;
+        // trackerKey-shaped exclude check (gotcha #50): excludeTitles holds composite
+        // `${vaultSource}:${title}` keys, so honor the already-injected/shown set here too.
+        if (excludeTitles.has(`${found.vaultSource || ''}:${found.title.toLowerCase()}`)) continue;
+        linked.push(found);
     }
     return linked;
 }
@@ -423,6 +437,7 @@ export async function searchLoreAction(args) {
     let bestScore = -Infinity;
     let bestQuery = null;
     const perQueryCounts = new Map();
+    const allMatchedKeys = new Set(); // distinct trackerKeys across all queries — for accurate "other matches"
     const noResultQueries = [];
 
     for (const query of queries) {
@@ -453,6 +468,7 @@ export async function searchLoreAction(args) {
         }
 
         perQueryCounts.set(query, filtered.length);
+        for (const h of filtered) allMatchedKeys.add(`${h.entry.vaultSource || ''}:${h.entry.title.toLowerCase()}`);
 
         if (filtered[0].score > bestScore) {
             bestScore = filtered[0].score;
@@ -473,7 +489,7 @@ export async function searchLoreAction(args) {
 
     if (bestHit) {
         if (debug) console.debug('[DLE] searchLore: best hit="%s" (score=%.2f)', bestHit.title, bestScore);
-        shownTitles.add(bestHit.title.toLowerCase());
+        shownTitles.add(`${bestHit.vaultSource || ''}:${bestHit.title.toLowerCase()}`);
         allResultTitles.push(bestHit.title);
         totalTokens += bestHit.tokenEstimate || 0;
 
@@ -482,13 +498,16 @@ export async function searchLoreAction(args) {
         // Up to 3 direct graph edges, manifest format only.
         const linked = resolveLinkedEntries(bestHit, shownTitles, 3, titleMap);
         if (linked.length > 0) {
-            for (const le of linked) shownTitles.add(le.title.toLowerCase());
+            for (const le of linked) shownTitles.add(`${le.vaultSource || ''}:${le.title.toLowerCase()}`);
             allResultTitles.push(...linked.map(le => le.title));
             totalTokens += linked.reduce((s, e) => s + Math.min(e.tokenEstimate || 0, 100), 0);
             resultParts.push(`### Related entries:\n${formatLinkedManifest(linked)}`);
         }
 
-        const totalOtherMatches = [...perQueryCounts.values()].reduce((s, c) => s + c, 0) - 1;
+        // Count DISTINCT matched entries not already surfaced (best hit + linked), keyed by
+        // trackerKey. The old `sum(perQueryCounts) - 1` double-counted entries matching
+        // multiple queries and never subtracted shown linked entries.
+        const totalOtherMatches = [...allMatchedKeys].filter(k => !shownTitles.has(k)).length;
         if (totalOtherMatches > 0) {
             const otherQueries = [...perQueryCounts.keys()].filter(q => q !== bestQuery || perQueryCounts.get(q) > 1);
             if (otherQueries.length > 0) {
@@ -516,11 +535,15 @@ export async function searchLoreAction(args) {
         timestamp: Date.now(),
         generation: generationCount,
     };
-    sessionActivityLog.push(logEntry);
-    notifyLoreGapsChanged(); // re-render Activity sub-tab even when persistGaps didn't fire
-
-    updateAnalytics('totalGapSearches');
-    incrementStats('searchCalls', estimatedTokens);
+    // Epoch guard (mirrors the persistGaps guards above): if the chat switched during
+    // the multi-second agentic await, don't pollute the now-current chat's Activity feed
+    // or per-chat Librarian stats with this stale search (CRIT-LIB-1 class, SEARCH path).
+    if (epoch === chatEpoch) {
+        recordSessionActivity(logEntry);
+        notifyLoreGapsChanged(); // re-render Activity sub-tab even when persistGaps didn't fire
+        updateAnalytics('totalGapSearches');
+        incrementStats('searchCalls', estimatedTokens);
+    }
 
     if (allResultTitles.length === 0) {
         // Audit Q13 (S5-1): all queries returned zero hits — search delivered no value,
@@ -613,7 +636,7 @@ export async function flagLoreAction(args) {
         generation: generationCount,
         urgency,
     };
-    sessionActivityLog.push(logEntry);
+    recordSessionActivity(logEntry);
     notifyLoreGapsChanged();
 
     updateAnalytics('totalGapFlags');

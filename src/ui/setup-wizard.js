@@ -133,6 +133,17 @@ function wireNavigation() {
     });
 
     $wizard.find('#dle-wiz-finish').on('click', async () => {
+        // #16: Finish is reachable via clickable completed step-dots or by editing the
+        // API key after a successful test (which resets connectionVerified). Re-assert
+        // the gate here so we never silently commit enabled=true with an unverified
+        // connection. isPageValid() only guards the Page-2 → Page-3 transition.
+        if (!connectionVerified) {
+            const proceed = await callGenericPopup(
+                'Your Obsidian connection has not been verified on the Connection step. DeepLore will be enabled but may not work until the connection succeeds.\n\nFinish anyway?',
+                POPUP_TYPE.CONFIRM, '', { okButton: 'Finish anyway', cancelButton: 'Go back' },
+            );
+            if (!proceed) { goToPage(2); return; }
+        }
         try {
             await applyWizardSettings();
         } catch (err) {
@@ -362,6 +373,7 @@ function wireDemoVault() {
     });
 
     $wizard.find('#dle-wiz-demo-autofill').on('click', () => {
+        wizardState.demoAutofilled = true; // #67: gate demo tips on this, not a fuzzy name match
         $wizard.find('#dle-wiz-vault-name').val('Duskfrost Demo');
         $wizard.find('#dle-wiz-host').val('127.0.0.1');
         $wizard.find('#dle-wiz-port').val('27123');
@@ -436,6 +448,7 @@ function wireAiSetup() {
             const mode = $wizard.find('input[name="dle-wiz-ai-mode"]:checked').val();
             let ok = false;
             let detail = '';
+            let liveTested = false; // #15: did we actually probe the endpoint?
 
             if (mode === 'profile') {
                 const profileId = $wizard.find('#dle-wiz-ai-profile').val();
@@ -445,8 +458,12 @@ function wireAiSetup() {
                 if (!ConnectionManagerRequestService) throw new Error('Connection Manager not available');
                 const profile = ConnectionManagerRequestService.getProfile(profileId);
                 if (!profile) throw new Error('Selected profile not found');
+                // #15: selecting a profile is NOT a connectivity test — we send no request,
+                // so we must not claim "AI connection working". A bad key/endpoint only
+                // surfaces on first generation. Report honestly as "selected, not tested".
                 ok = true;
-                detail = `Profile: ${$wizard.find('#dle-wiz-ai-profile option:selected').text()}`;
+                liveTested = false;
+                detail = $wizard.find('#dle-wiz-ai-profile option:selected').text();
             } else {
                 const proxyUrl = $wizard.find('#dle-wiz-ai-proxy-url').val().trim();
                 const model = $wizard.find('#dle-wiz-ai-model').val().trim();
@@ -455,19 +472,27 @@ function wireAiSetup() {
                 const { testProxyConnection } = await import('../ai/proxy-api.js');
                 const result = await testProxyConnection(proxyUrl, model);
                 ok = result.ok;
+                liveTested = true;
                 detail = result.ok ? `Model: ${result.model || model}` : result.error;
             }
 
-            if (ok) {
+            if (ok && liveTested) {
                 $result
-                    .html(`<i class="fa-solid fa-circle-check"></i> AI connection working — ${detail}`)
+                    .html(`<i class="fa-solid fa-circle-check"></i> AI connection working — ${esc(detail)}`)
                     .removeClass('dle-wizard-result-error')
                     .addClass('dle-wizard-result-success')
                     .show();
                 $btn.html('<i class="fa-solid fa-circle-check"></i> Connected').addClass('dle-wizard-btn-verified');
+            } else if (ok) {
+                // profile selected but not live-tested — honest, neutral messaging
+                $result
+                    .html(`<i class="fa-solid fa-circle-info"></i> Profile selected: ${esc(detail)} — DLE will use it for AI search. Not live-tested here; a bad key or endpoint will surface on the first generation.`)
+                    .removeClass('dle-wizard-result-error dle-wizard-result-success')
+                    .show();
+                $btn.html('<i class="fa-solid fa-circle-check"></i> Profile selected').addClass('dle-wizard-btn-verified');
             } else {
                 $result
-                    .html(`<i class="fa-solid fa-circle-xmark"></i> ${detail}`)
+                    .html(`<i class="fa-solid fa-circle-xmark"></i> ${esc(detail)}`)
                     .removeClass('dle-wizard-result-success')
                     .addClass('dle-wizard-result-error')
                     .show();
@@ -501,9 +526,16 @@ async function loadAiProfiles() {
             return;
         }
         const s = getSettings();
+        const savedId = s.aiSearchProfileId;
+        const savedExists = savedId && profiles.some(p => p.id === savedId);
         let options = '<option value="">— Select a profile —</option>';
+        if (savedId && !savedExists) {
+            // #72: the saved profile was deleted/renamed in ST — warn instead of silently
+            // showing "— Select —" while a stale id lingers in settings.
+            options += '<option value="" disabled>⚠ Previously selected profile no longer exists — choose again</option>';
+        }
         for (const p of profiles) {
-            const selected = p.id === s.aiSearchProfileId ? ' selected' : '';
+            const selected = p.id === savedId ? ' selected' : '';
             const label = `${p.name} (${p.api}${p.model ? ' / ' + p.model : ''})`;
             options += `<option value="${p.id}"${selected}>${esc(label)}</option>`;
         }
@@ -745,10 +777,19 @@ function wireImport() {
         $result.html(`<i class="fa-solid fa-spinner fa-spin"></i> Importing 0/${entries.length}...`)
             .removeClass('dle-wizard-result-success dle-wizard-result-error').show();
 
+        // #14: pass the wizard's live connection — on first run nothing is saved yet,
+        // so importEntries' default getPrimaryVault() would hit the empty/default vault (401).
+        const wizVault = {
+            host: $wizard.find('#dle-wiz-host').val().trim() || '127.0.0.1',
+            port: parseInt($wizard.find('#dle-wiz-port').val(), 10) || 27123,
+            apiKey: $wizard.find('#dle-wiz-api-key').val().trim(),
+            https: $wizard.find('#dle-wiz-https').is(':checked'),
+        };
+
         try {
             const result = await importEntries(entries, folder, (done, total) => {
                 $result.html(`<i class="fa-solid fa-spinner fa-spin"></i> Importing ${done}/${total}...`);
-            });
+            }, { vault: wizVault });
 
             importResult = result;
             const renamedNote = result.renamed > 0 ? ` (${result.renamed} renamed to avoid overwrite)` : '';
@@ -825,8 +866,10 @@ function buildSummary() {
         items.push(`<i class="fa-solid fa-circle-check"></i> Imported <strong>${importResult.imported}</strong> entries${importResult.failed > 0 ? ` (${importResult.failed} failed)` : ''}`);
     }
 
+    // #67: gate on the explicit autofill flag (+ the real demo vault name) so a user who
+    // names a real vault "Demo World" doesn't get Duskfrost-specific tips.
     const vaultNameLower = vaultName.toLowerCase();
-    if (vaultNameLower.includes('duskfrost') || vaultNameLower.includes('demo')) {
+    if (wizardState.demoAutofilled || vaultNameLower.includes('duskfrost')) {
         items.push('<i class="fa-solid fa-flask"></i> <strong>Demo vault detected!</strong> Try mentioning "Duskfrost" or "Bellsummit" in chat to see lore injection.');
         items.push('<i class="fa-solid fa-lightbulb"></i> Run <code>/dle-health</code> to see the health check (edge-case entries will flag intentional warnings)');
         items.push('<i class="fa-solid fa-lightbulb"></i> Run <code>/dle-graph</code> to see the full relationship graph');
@@ -863,8 +906,13 @@ async function applyWizardSettings() {
     const settings = getSettings();
 
     const vaultName = $wizard.find('#dle-wiz-vault-name').val().trim() || 'Primary';
-    const host = $wizard.find('#dle-wiz-host').val().trim() || '127.0.0.1';
-    const port = parseInt($wizard.find('#dle-wiz-port').val()) || 27123;
+    // Normalize: strip an accidentally-pasted scheme/trailing slash so a pasted
+    // "http://127.0.0.1/" isn't persisted verbatim. Full host-format + SSRF checks
+    // still run in validateObsidianHost at request time.
+    const host = ($wizard.find('#dle-wiz-host').val().trim() || '127.0.0.1')
+        .replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+    // Clamp to a valid TCP port range (parseInt||default already handles blank/non-numeric).
+    const port = Math.min(65535, Math.max(1, parseInt($wizard.find('#dle-wiz-port').val(), 10) || 27123));
     const apiKey = $wizard.find('#dle-wiz-api-key').val().trim();
     const useHttps = $wizard.find('#dle-wiz-https').is(':checked');
 
@@ -875,7 +923,12 @@ async function applyWizardSettings() {
     if (!settings.vaults || settings.vaults.length === 0) {
         settings.vaults = [newVault];
     } else {
-        Object.assign(settings.vaults[0], newVault);
+        // #39: prefill reads getPrimaryVault() (first ENABLED vault, not necessarily
+        // index 0). Write back to the SAME slot the user was shown so a multi-vault
+        // re-run doesn't edit a different vault than the one prefilled.
+        const primary = getPrimaryVault(settings);
+        const idx = settings.vaults.indexOf(primary);
+        Object.assign(settings.vaults[idx >= 0 ? idx : 0], newVault);
     }
 
     settings.lorebookTag = $wizard.find('#dle-wiz-lorebook-tag').val().trim() || 'lorebook';

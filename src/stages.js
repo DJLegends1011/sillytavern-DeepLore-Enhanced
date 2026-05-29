@@ -296,6 +296,18 @@ export function applyReinjectionCooldown(entries, policy, injectionHistory, gene
  * @returns {{ result: Array, removed: Array }}
  */
 export function applyRequiresExcludesGating(entries, policy, debugMode, priorityReversed = false) {
+    // Perf: when NOTHING gates on requires/excludes (the common case) skip the fixpoint loop,
+    // the Set/Map builds, and the contradiction scan entirely — just return important-FIRST
+    // order (what downstream budget truncation needs). One O(N log N) sort instead of two
+    // sorts + up to 10 O(N) passes + 2 Set/Map builds.
+    const hasGating = entries.some(e => (e.requires && e.requires.length > 0) || (e.excludes && e.excludes.length > 0));
+    if (!hasGating) {
+        const sorted = [...entries].sort((a, b) =>
+            comparePriority(a, b, priorityReversed)
+            || a.title.localeCompare(b.title)
+            || (a.vaultSource || '').localeCompare(b.vaultSource || ''));
+        return { result: sorted, removed: [] };
+    }
     // BUG-029: order so HIGHER-priority entries are processed LAST (so their
     // excludes-targets may already be gone — the high-priority entry survives).
     // Default: lower priority-number = higher importance → descending raw.
@@ -346,7 +358,9 @@ export function applyRequiresExcludesGating(entries, policy, debugMode, priority
     // Detect contradictory gating for debugging.
     const resultSet = new Set(result);
     const removed = entries.filter(e => !resultSet.has(e));
-    if (removed.length > 0) {
+    // Perf: the contradiction-detection Map build + nested scans only produce a console.warn,
+    // so gate the whole thing behind debugMode (was always-on every generation).
+    if (debugMode && removed.length > 0) {
         const entryMap = new Map(entries.map(e => [e.title.toLowerCase(), e]));
         for (const r of removed) {
             if (r.requires && r.requires.length > 0) {

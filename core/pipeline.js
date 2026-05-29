@@ -265,6 +265,15 @@ export function parseVaultFile(file, tagConfig, fieldDefinitions, options = {}) 
     }
 
     const title = extractTitle(body, file.filename);
+    // Empty/whitespace title (untitled file, or an H1 that strips to nothing) would enter the
+    // index with title:'' → trackerKey "vaultSource:" → every empty-title entry collapses to one
+    // key (cooldown/analytics/pins collide). validateCachedEntry rejects it on reload
+    // (cache-validate.js:15), so a freshly-parsed one would vanish after restart. Skip here so
+    // fresh-parse and cache agree (gotcha #50 empty-title variant).
+    if (!title || !title.trim()) {
+        if (onSkip) onSkip('SKIP_EMPTY_TITLE');
+        return null;
+    }
     const links = extractWikiLinks(body);
     const content = cleanContent(body);
     const priorityCoerced = coerceNumber(frontmatter.priority, 'priority', warnings, lenient);

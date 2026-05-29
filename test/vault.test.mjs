@@ -282,15 +282,14 @@ test('B10: mode "merge" concatenates content with separator', () => {
     assert(result[0].content.includes('\n\n---\n\n'), 'separator present');
 });
 
-test('B11: mode "merge" recalculates tokenEstimate from merged content', () => {
+test('B11: mode "merge" sums member tokenEstimates', () => {
     const entries = [
         makeEntry('Dragon', { content: 'Short text.', tokenEstimate: 3 }),
         makeEntry('Dragon', { content: 'More text here.', tokenEstimate: 4 }),
     ];
     const result = deduplicateMultiVault(entries, 'merge');
-    const mergedContent = 'Short text.' + '\n\n---\n\n' + 'More text here.';
-    const expected = Math.ceil(mergedContent.length / 4.0);
-    assertEqual(result[0].tokenEstimate, expected, 'token estimate recalculated');
+    // Sum tokenizer-accurate member estimates (not char/4, which diverged from tokenizer units).
+    assertEqual(result[0].tokenEstimate, 7, 'token estimate sums members');
 });
 
 test('B12: mode "merge" summary prefers first non-empty', () => {

@@ -21,6 +21,7 @@
  */
 
 import { addLocaleData, getCurrentLocale, t, translate } from '../../../../../i18n.js';
+import { eventSource, event_types } from '../../../../../../script.js';
 import {
     SUPPORTED_LOCALES,
     resolveLocale,
@@ -96,6 +97,15 @@ export function initDleI18n() {
         // and addLocaleData populates it; for non-EN, addLocaleData merges into the
         // active dict so `data-i18n` lookups see our keys.
         addLocaleData(stLocale, activeDict);
+        // Boot-race guard: ST's addLocaleData silently no-ops if its own `localeData` isn't
+        // loaded yet (initLocales hasn't resolved). If DLE's init wins that race the ENTIRE
+        // dictionary is dropped with only a console.warn and no recovery. Re-register once at
+        // APP_READY (idempotent — merges the same dict) so a lost race self-heals.
+        try {
+            eventSource.once(event_types.APP_READY, () => {
+                try { addLocaleData(getCurrentLocale() || stLocale, activeDict); } catch { /* noop */ }
+            });
+        } catch { /* eventSource/APP_READY unavailable (e.g. tests) — initial call stands */ }
 
         console.log(`[DLE i18n] Loaded ${Object.keys(activeDict).length} keys for locale "${activeLocale}" (ST locale: "${stLocale}")`);
     })();

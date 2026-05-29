@@ -125,6 +125,19 @@ const PATTERNS = [
             return `${scheme}${pseudonym(ctx.host, host.toLowerCase(), 'host')}`;
         },
     },
+    // JWTs: three base64url segments joined by dots. The generic pass below excludes
+    // dots, so it would leave the dot-separated structure (and any <32-char segment)
+    // partly visible — redact the whole token here first.
+    {
+        re: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g,
+        fn: (_m, _o, _s, ctx) => { ctx.stats.longTokens++; return '<token>'; },
+    },
+    // Short prefixed provider tokens (Slack xox*, GitHub gh*, Google ya29.) that fall
+    // below the generic 32-char floor.
+    {
+        re: /\b(?:xox[baprs]|gh[pousr]|ya29)[-_.][A-Za-z0-9._-]{10,}/g,
+        fn: (_m, _o, _s, ctx) => { ctx.stats.longTokens++; return '<token>'; },
+    },
     // Generic high-entropy strings (32+ chars base64/hex-ish). Last so it can't
     // clobber more specific patterns. Uniformly redacted — no cardinality value.
     {

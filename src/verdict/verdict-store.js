@@ -431,9 +431,9 @@ export async function hydrateChat(chatId) {
 }
 
 /**
- * Internal: list all IDB rows for a chat. Iterates the verdicts store and
- * filters by chatId field. (No IDB index on chatId yet — store is small per
- * the per-chat cap, so a full scan is acceptable.)
+ * Internal: list all IDB rows for a chat. Scoped to the chat's key prefix via
+ * `IDBKeyRange.bound` (same range pruneCurrentChat uses) so only this chat's rows
+ * are deserialized — NOT every chat in the store. Key shape: `${chatId}:${msgIdx}:${ts}`.
  *
  * @param {string} chatId
  * @returns {Promise<import('./verdict-pure.js').Verdict[]>}
@@ -443,12 +443,16 @@ async function listIdbForChat(chatId) {
     try {
         const tx = db.transaction(VERDICT_STORE, 'readonly');
         const store = tx.objectStore(VERDICT_STORE);
-        const all = await new Promise((resolve, reject) => {
-            const req = store.getAll();
+        // Range-scope to this chat's keys so hydrate/getByMessage scale with the per-chat cap,
+        // not total cross-chat history. U+FFFF upper bound excludes longer-prefixed sibling ids.
+        const range = IDBKeyRange.bound(`${chatId}:`, `${chatId}:￿`);
+        const rows = await new Promise((resolve, reject) => {
+            const req = store.getAll(range);
             req.onsuccess = () => resolve(req.result || []);
             req.onerror = () => reject(req.error);
         });
-        return all.filter(v => v && v.chatId === chatId && validateVerdict(v));
+        // chatId field check kept as a belt-and-braces guard alongside the key-range scoping.
+        return rows.filter(v => v && v.chatId === chatId && validateVerdict(v));
     } finally {
         db.close();
     }

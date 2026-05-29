@@ -4989,6 +4989,7 @@ button.dle-chip-x:focus-visible { outline: 2px solid var(--dle-accent); outline-
     padding: 2px 10px;
     opacity: 0.7;
     width: 100%;
+    box-sizing: border-box; /* width:100% + card padding must not overflow the narrow chat-column grid track */
     margin-top: 4px;
 }
 
