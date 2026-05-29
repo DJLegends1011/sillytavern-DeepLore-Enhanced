@@ -5,6 +5,7 @@ import {
 } from '../../../../../../script.js';
 import { ConnectionManagerRequestService } from '../../../../shared.js';
 import { escapeHtml } from '../../../../../utils.js';
+import { applyHtmlI18n } from '../i18n/i18n.js';
 import { callGenericPopup, POPUP_TYPE, POPUP_RESULT } from '../../../../../popup.js';
 import { renderExtensionTemplateAsync } from '../../../../../extensions.js';
 import { accountStorage } from '../../../../../util/AccountStorage.js';
@@ -894,6 +895,7 @@ export async function openSettingsPopup(navigateTo = null) {
         'settings-popup',
     );
     const $container = $(html);
+    applyHtmlI18n($container[0]); // markup-bearing locale strings (data-i18n-html) — ST's data-i18n is textContent-only
 
     function switchSettingsTab($tab) {
         const tab = $tab.data('settings-tab');

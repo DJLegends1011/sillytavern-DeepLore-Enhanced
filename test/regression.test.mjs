@@ -6,6 +6,7 @@
 
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
     assert, assertEqual, assertNotEqual, assertGreaterThan, assertMatch,
     assertNull, assertNotNull, assertInstanceOf,
@@ -7358,6 +7359,38 @@ test('WI-PARITY-6: importEntries report shape stable (Wave 5 popup consumer cont
     assert(typeof r.emAppended === 'number', 'WI-PARITY-6: emAppended → number');
     assert(typeof r.emSkipped === 'number', 'WI-PARITY-6: emSkipped → number');
     assert(typeof r.hasAnyEm === 'boolean', 'WI-PARITY-6: hasAnyEm → boolean');
+});
+
+section('I18N-HTML — gotcha #72: markup-bearing locale strings must use data-i18n-html');
+
+test('I18N-HTML-1: no plain data-i18n on keys whose EN value contains HTML markup', () => {
+    // ST's data-i18n is textContent-only (escapes markup). A locale value containing
+    // tags (<strong>/<a>/<code>/<br>) bound via plain data-i18n renders the literal tags
+    // under any non-English locale. Such keys MUST use the custom data-i18n-html attribute
+    // (applied via applyHtmlI18n at mount). See docs/gotchas.md #72.
+    const winPath = (rel) => fileURLToPath(new URL(rel, import.meta.url));
+    const en = JSON.parse(readFileSync(winPath('../locales/dle.en.json'), 'utf8'));
+    const tagRe = /<[a-zA-Z/][^>]*>/;
+    const htmlKeys = new Set(Object.entries(en)
+        .filter(([, v]) => typeof v === 'string' && tagRe.test(v))
+        .map(([k]) => k));
+
+    const HTML_FILES = ['drawer.html', 'settings-popup.html', 'setup-wizard.html', 'settings.html'];
+    const attrRe = /data-i18n="([^"]+)"/g;
+    const violations = [];
+    for (const f of HTML_FILES) {
+        let content;
+        try { content = readFileSync(winPath('../' + f), 'utf8'); } catch { continue; }
+        let m;
+        while ((m = attrRe.exec(content)) !== null) {
+            for (const part of m[1].split(';')) {
+                if (/^\[\S+\]/.test(part)) continue; // [attr]key — real attribute, not textContent
+                if (htmlKeys.has(part)) violations.push(`${f}: data-i18n="${part}" (value has HTML — use data-i18n-html)`);
+            }
+        }
+    }
+    assertEqual(violations.length, 0,
+        `Markup-bearing locale keys must use data-i18n-html, not data-i18n (#72).\nViolations:\n  ${violations.join('\n  ')}`);
 });
 
 await summary('Regression Tests');

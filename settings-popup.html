@@ -584,7 +584,7 @@
                 <div class="dle-overlay-notice-card">
                     <i class="fa-solid fa-brain" aria-hidden="true" style="font-size: 1.4em; opacity: 0.6;"></i>
                     <p data-i18n="dle_ai_disabled_notice">AI search is currently disabled.</p>
-                    <p data-i18n="dle_ai_disabled_help">Set Search Mode to <strong>Two-Stage</strong> or <strong>AI Only</strong> in the
+                    <p data-i18n-html="dle_ai_disabled_help">Set Search Mode to <strong>Two-Stage</strong> or <strong>AI Only</strong> in the
                     <a href="#" id="dle-sp-goto-matching" class="dle-notice-link">Matching tab</a>
                     to configure these settings.</p>
                 </div>
@@ -605,7 +605,7 @@
             <p class="dle-section-desc" data-i18n="dle_ai_settings_desc">Configure the AI model that selects which entries to inject.</p>
 
             <div class="flex-container flexFlowColumn">
-                <span class="dle-text-xs dle-muted" data-i18n="dle_settings_connection_settings_note">Connection settings: <a href="#" class="dle-goto-ai-connections">AI Connections</a> in Connection tab.</span>
+                <span class="dle-text-xs dle-muted" data-i18n-html="dle_settings_connection_settings_note">Connection settings: <a href="#" class="dle-goto-ai-connections">AI Connections</a> in Connection tab.</span>
                 <div class="flex-container" style="gap: 6px;">
                     <div id="dle-sp-test-ai" class="menu_button menu_button_icon" role="button" tabindex="0" title="Test AI search connection." data-i18n="[title]dle_test_ai_tooltip">
                         <i class="fa-solid fa-brain"></i>
@@ -795,7 +795,7 @@
                         <span data-i18n="dle_open_notebook_button">Open Author Notebook</span>
                     </div>
                 </div>
-                <span class="dle-text-xs dle-muted" data-i18n="dle_settings_injection_pos_configured_note">Injection position: configured in the <a href="#" class="dle-goto-tab-link" data-goto-tab="injection">Injection tab</a>.</span>
+                <span class="dle-text-xs dle-muted" data-i18n-html="dle_settings_injection_pos_configured_note">Injection position: configured in the <a href="#" class="dle-goto-tab-link" data-goto-tab="injection">Injection tab</a>.</span>
             </div>
             </div>
             </div>
@@ -850,13 +850,13 @@
                         <input id="dle-sp-ai-notepad-fuzzy-threshold" type="number" class="text_pole" min="0.1" max="1" step="0.05" />
                     </div>
                 </div>
-                <span class="dle-text-xs dle-muted" data-i18n="dle_settings_injection_pos_configured_note">Injection position: configured in the <a href="#" class="dle-goto-tab-link" data-goto-tab="injection">Injection tab</a>.</span>
+                <span class="dle-text-xs dle-muted" data-i18n-html="dle_settings_injection_pos_configured_note">Injection position: configured in the <a href="#" class="dle-goto-tab-link" data-goto-tab="injection">Injection tab</a>.</span>
                 <div id="dle-sp-ai-notepad-tag-options">
                     <label for="dle-sp-ai-notepad-prompt"><small data-i18n="dle_ai_notepad_custom_tag_label_full">Custom Tag Instruction (leave empty for default)</small></label>
                     <textarea id="dle-sp-ai-notepad-prompt" class="text_pole" rows="3" placeholder="Leave empty for default. Instructs the AI to append &lt;dle-notes&gt; after its response."></textarea>
                 </div>
                 <div id="dle-sp-ai-notepad-extract-options" style="display: none;">
-                    <span class="dle-text-xs dle-muted" data-i18n="dle_settings_connection_settings_note">Connection settings: <a href="#" class="dle-goto-ai-connections">AI Connections</a> in Connection tab.</span>
+                    <span class="dle-text-xs dle-muted" data-i18n-html="dle_settings_connection_settings_note">Connection settings: <a href="#" class="dle-goto-ai-connections">AI Connections</a> in Connection tab.</span>
                     <label for="dle-sp-ai-notepad-extract-prompt"><small data-i18n="dle_ai_notepad_custom_extract_label_full">Custom Extraction Prompt (leave empty for default)</small></label>
                     <textarea id="dle-sp-ai-notepad-extract-prompt" class="text_pole" rows="3" placeholder="Leave empty for default. The extraction model receives the AI response and returns bullet-point notes." data-i18n="[placeholder]dle_ai_notepad_custom_extract_placeholder_full"></textarea>
                 </div>
@@ -892,7 +892,7 @@
                         <select id="dle-sp-scribe-write-vault" class="text_pole"></select>
                     </div>
                 </div>
-                <span class="dle-text-xs dle-muted" data-i18n="dle_settings_connection_settings_note">Connection settings: <a href="#" class="dle-goto-ai-connections">AI Connections</a> in Connection tab.</span>
+                <span class="dle-text-xs dle-muted" data-i18n-html="dle_settings_connection_settings_note">Connection settings: <a href="#" class="dle-goto-ai-connections">AI Connections</a> in Connection tab.</span>
                 <div class="flex-container">
                     <div class="flex1" title="Messages to include as context. Default: 20." data-i18n="[title]dle_scribe_scan_depth_tooltip">
                         <label for="dle-sp-scribe-scan-depth"><small data-i18n="dle_scribe_scan_depth_label">Messages to Include</small></label>
@@ -941,7 +941,7 @@
                     <input id="dle-sp-autosuggest-skip-review" type="checkbox" class="checkbox">
                     <span data-i18n="dle_autosuggest_skip_review_label">Write directly (skip review popup)</span>
                 </label>
-                <span class="dle-text-xs dle-muted" data-i18n="dle_settings_connection_settings_note">Connection settings: <a href="#" class="dle-goto-ai-connections">AI Connections</a> in Connection tab.</span>
+                <span class="dle-text-xs dle-muted" data-i18n-html="dle_settings_connection_settings_note">Connection settings: <a href="#" class="dle-goto-ai-connections">AI Connections</a> in Connection tab.</span>
                 <div title="Custom prompt for auto-suggest analysis. Leave empty for default." data-i18n="[title]dle_autosuggest_prompt_tooltip">
                     <div class="flex-container" style="align-items: center; gap: 6px;">
                         <label for="dle-sp-autosuggest-prompt"><small data-i18n="dle_autosuggest_prompt_label">Custom Prompt (empty = default)</small></label>
@@ -1085,7 +1085,7 @@
             <p class="dle-section-desc" data-i18n="dle_librarian_sessions_p">Controls for the Librarian's entry editor and AI assistant.</p>
 
             <div class="flex-container flexFlowColumn">
-                <span class="dle-text-xs dle-muted" data-i18n="dle_settings_connection_settings_note">Connection settings: <a href="#" class="dle-goto-ai-connections">AI Connections</a> in Connection tab.</span>
+                <span class="dle-text-xs dle-muted" data-i18n-html="dle_settings_connection_settings_note">Connection settings: <a href="#" class="dle-goto-ai-connections">AI Connections</a> in Connection tab.</span>
                 <div class="flex-container">
                     <div class="flex1" title="Folder path for written entries (relative to vault root). Leave blank for root." data-i18n="[title]dle_librarian_write_folder_tooltip">
                         <label for="dle-sp-librarian-write-folder"><small data-i18n="dle_librarian_write_folder_label">Write Folder</small></label>
@@ -1407,7 +1407,7 @@
             </div>
 
             <div style="text-align: center;" class="dle-my-3">
-                <span class="dle-text-xs dle-muted" data-i18n="dle_settings_about_credits_html">
+                <span class="dle-text-xs dle-muted" data-i18n-html="dle_settings_about_credits_html">
                     Made by <strong>pixelnull</strong> &middot; Licensed under <a href="https://github.com/pixelnull/sillytavern-DeepLore-Enhanced/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">MIT</a> &middot; Icons by <a href="https://www.flaticon.com" target="_blank" rel="noopener noreferrer">Flaticon</a>
                 </span>
             </div>

@@ -65,9 +65,9 @@
             <div class="dle-wizard-card">
                 <h3 data-i18n="dle_setup_wizard_how_works_h3"><i class="fa-solid fa-gears"></i> How does it work?</h3>
                 <ol>
-                    <li data-i18n="dle_setup_wizard_how_works_step_1"><strong data-i18n="dle_col_keywords">Keywords</strong> in chat text match against your vault entries</li>
-                    <li data-i18n="dle_setup_wizard_how_works_step_2"><strong>AI refinement</strong> (optional) picks the most relevant matches</li>
-                    <li data-i18n="dle_setup_wizard_how_works_step_3">Matched entries <strong>are injected</strong> into the AI's context window</li>
+                    <li data-i18n-html="dle_setup_wizard_how_works_step_1"><strong data-i18n="dle_col_keywords">Keywords</strong> in chat text match against your vault entries</li>
+                    <li data-i18n-html="dle_setup_wizard_how_works_step_2"><strong>AI refinement</strong> (optional) picks the most relevant matches</li>
+                    <li data-i18n-html="dle_setup_wizard_how_works_step_3">Matched entries <strong>are injected</strong> into the AI's context window</li>
                 </ol>
             </div>
 
@@ -77,7 +77,7 @@
         <!-- ═══ Page 2: Vault Connection ═══ -->
         <div id="dle-wizard-page-2" class="dle-wizard-page" data-wizard-page="2" role="tabpanel" aria-labelledby="dle-wizard-step-2">
             <h2 data-i18n="dle_wizard_connection_heading">Vault Connection</h2>
-            <p class="dle-wizard-subtitle" data-i18n="dle_setup_wizard_connection_subtitle">Connect to your Obsidian vault via the <a href="https://github.com/coddingtonbear/obsidian-local-rest-api" target="_blank">Local REST API</a> plugin.</p>
+            <p class="dle-wizard-subtitle" data-i18n-html="dle_setup_wizard_connection_subtitle">Connect to your Obsidian vault via the <a href="https://github.com/coddingtonbear/obsidian-local-rest-api" target="_blank">Local REST API</a> plugin.</p>
 
             <div class="dle-wizard-field">
                 <label for="dle-wiz-vault-name" data-i18n="dle_wizard_vault_name_label">Vault Name</label>
@@ -126,14 +126,14 @@
             <!-- Demo vault callout -->
             <div class="dle-wizard-card dle-wizard-demo-callout">
                 <h3 data-i18n="dle_setup_wizard_demo_card_h3"><i class="fa-solid fa-flask"></i> New to DeepLore? Try the demo vault</h3>
-                <p data-i18n="dle_setup_wizard_demo_card_p">257 pre-built entries — the fantasy city of <strong>Duskfrost</strong>. Characters, locations, lore, factions, species, and more. Perfect for exploring DLE before building your own vault.</p>
+                <p data-i18n-html="dle_setup_wizard_demo_card_p">257 pre-built entries — the fantasy city of <strong>Duskfrost</strong>. Characters, locations, lore, factions, species, and more. Perfect for exploring DLE before building your own vault.</p>
                 <button type="button" id="dle-wiz-demo-toggle" class="menu_button menu_button_icon" data-i18n="dle_setup_wizard_demo_show_me_how_btn">
                     <i class="fa-solid fa-folder-open"></i> Show me how
                 </button>
                 <div id="dle-wiz-demo-instructions" style="display: none;">
                     <ol>
-                        <li data-i18n="dle_setup_wizard_demo_step_1">In Obsidian, click the vault icon (bottom-left) → <strong>Open folder as vault</strong></li>
-                        <li data-i18n="dle_setup_wizard_demo_step_2_intro">Navigate to the <code>test-vault</code> folder inside the DLE extension directory:
+                        <li data-i18n-html="dle_setup_wizard_demo_step_1">In Obsidian, click the vault icon (bottom-left) → <strong>Open folder as vault</strong></li>
+                        <li data-i18n-html="dle_setup_wizard_demo_step_2_intro">Navigate to the <code>test-vault</code> folder inside the DLE extension directory:
                             <div class="dle-wizard-demo-path-row">
                                 <code id="dle-wiz-demo-path" class="dle-wizard-demo-path"></code>
                                 <button type="button" id="dle-wiz-demo-copy" class="menu_button menu_button_icon dle-wizard-demo-copy" title="Copy path" data-i18n="[title]dle_wizard_demo_copy_tooltip">
@@ -141,7 +141,7 @@
                                 </button>
                             </div>
                         </li>
-                        <li data-i18n="dle_setup_wizard_demo_step_3">Install &amp; enable the <strong>Local REST API</strong> community plugin in the demo vault</li>
+                        <li data-i18n-html="dle_setup_wizard_demo_step_3">Install &amp; enable the <strong>Local REST API</strong> community plugin in the demo vault</li>
                         <li data-i18n="dle_wizard_demo_step_4">Set an API key in the plugin settings, then come back here</li>
                     </ol>
                     <button type="button" id="dle-wiz-demo-autofill" class="menu_button dle-wizard-action-btn" data-i18n="dle_setup_wizard_demo_autofill_btn">
@@ -339,7 +339,7 @@
 
             <div class="dle-wizard-card dle-wizard-card-info">
                 <h3 data-i18n="dle_setup_wizard_librarian_what_is_h3"><i class="fa-solid fa-book-bookmark"></i> What is the Librarian?</h3>
-                <p data-i18n="dle_setup_wizard_librarian_what_is_p">The Librarian gives your writing AI two optional tools during generation: <strong data-i18n="dle_lib_summary_searches">search</strong> (look up vault entries the pipeline missed) and <strong>flag</strong> (note a gap in your lore for later). Flagged gaps appear in the drawer's Librarian tab, where you can review them and use an AI-assisted editor to create new entries.</p>
+                <p data-i18n-html="dle_setup_wizard_librarian_what_is_p">The Librarian gives your writing AI two optional tools during generation: <strong data-i18n="dle_lib_summary_searches">search</strong> (look up vault entries the pipeline missed) and <strong>flag</strong> (note a gap in your lore for later). Flagged gaps appear in the drawer's Librarian tab, where you can review them and use an AI-assisted editor to create new entries.</p>
                 <p data-i18n="dle_wizard_librarian_optional_note">This is completely optional and off by default. Most generations should have zero tool calls if your vault is well-maintained.</p>
             </div>
 
@@ -443,7 +443,7 @@
             <p class="dle-wizard-subtitle" data-i18n="dle_wizard_import_subtitle">Already have a SillyTavern lorebook? Import entries into your Obsidian vault.</p>
 
             <div class="dle-wizard-card dle-wizard-card-info">
-                <p data-i18n="dle_setup_wizard_optional_step_p"><i class="fa-solid fa-circle-info"></i> This step is optional. You can always import later with <code>/dle-import</code>.</p>
+                <p data-i18n-html="dle_setup_wizard_optional_step_p"><i class="fa-solid fa-circle-info"></i> This step is optional. You can always import later with <code>/dle-import</code>.</p>
             </div>
 
             <div class="dle-wizard-field">
@@ -553,7 +553,7 @@
                     <i class="fa-solid fa-book-open-reader"></i> Meet Emma
                 </button>
             </div>
-            <p style="text-align:center; opacity:0.75; margin-top:8px; font-size:0.9em;" data-i18n="dle_setup_wizard_done_emma_recommended_p">
+            <p style="text-align:center; opacity:0.75; margin-top:8px; font-size:0.9em;" data-i18n-html="dle_setup_wizard_done_emma_recommended_p">
                 <strong data-i18n="dle_wizard_done_emma_button">Meet Emma</strong> is the recommended next step — she'll walk you through writing your first style guide.
             </p>
 

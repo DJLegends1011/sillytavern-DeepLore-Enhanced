@@ -9,6 +9,7 @@ import { testConnection, writeNote, writeFieldDefinitions, buildConnectionGuidan
 import { buildIndex } from '../vault/vault.js';
 import { serializeFieldDefinitions, DEFAULT_FIELD_DEFINITIONS } from '../fields.js';
 import { parseWorldInfoJson, importEntries } from '../vault/import.js';
+import { applyHtmlI18n } from '../i18n/i18n.js';
 
 const TOTAL_PAGES = 9;
 
@@ -41,6 +42,7 @@ export async function showSetupWizard(startPage = 1) {
         onOpen: () => {
             $wizard = $('.dle-wizard');
             if (!$wizard.length) return;
+            applyHtmlI18n($wizard[0]); // markup-bearing locale strings (data-i18n-html)
             librarianToggleWired = false;
             resetWizardState(); // BUG-340: fresh state per open
 
