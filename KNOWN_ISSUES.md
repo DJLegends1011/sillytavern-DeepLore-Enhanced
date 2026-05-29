@@ -8,17 +8,23 @@ Obsidian API keys are stored as plaintext in SillyTavern's extension_settings JS
 ## AI Search Prompt Injection via Summaries
 Entry summaries are included in the AI search manifest. In multi-author vaults, a malicious summary could attempt to influence the AI's selection behavior. This is inherent to any AI retrieval system. **Mitigation:** The manifest uses XML structural delimiters and entity escaping to limit injection surface. Review summaries from untrusted authors.
 
-## No AI Call Rate Limiting
-All AI features (search, scribe, auto-suggest) make API calls without rate limiting. A fast typist or auto-generation could cause many calls in quick succession. This is a design decision — rate limiting would add latency. **Mitigation:** Each feature has configurable intervals and timeouts.
+## No AI Call Quota / Budget Cap
+DLE enforces a 500 ms minimum interval between AI calls (a throttle floor in `src/ai/ai.js`), but there is no per-minute quota or spending cap. Rapid generation or auto-features could still run many calls in a short window. Adding a hard cap would add latency and surprise stalls, so it is deliberately omitted. **Mitigation:** Each feature has configurable intervals and timeouts, and an AI circuit breaker trips after consecutive failures.
 
-## Librarian Auto-Enables Function Calling
-When the Librarian feature is enabled, DLE automatically enables function calling on the active API connection. Disabling function calling elsewhere while Librarian is active will break tool invocations. **Mitigation:** If you need function calling off, disable Librarian first.
+## Librarian Requires a Tool-Calling Provider
+The Librarian (Emma) uses native tool calling. It does not flip any global SillyTavern function-calling setting — instead it checks whether your selected connection profile/provider supports tools and falls back to its non-tool path otherwise. Reasoner-only models and providers without tool support will not drive the agentic loop. **Mitigation:** Route the Librarian to a tool-capable provider (Claude, Gemini, OpenAI-compatible, or Cohere).
 
 ## Guide Tag Conflict Resolution
 Entries tagged `lorebook-guide` that also carry conflicting tags (`lorebook-seed`, `lorebook-bootstrap`, or base `lorebook`) have runtime conflict resolution: `guide` wins. The entry will be treated as guide-only (never injected into the writing AI context). This is intentional but may surprise authors who expect seed/bootstrap behavior.
 
 ## Duplicate Entry Titles Across Vaults
-Entry titles must be unique across all enabled vaults. If two vaults contain entries with the same title (case-insensitive), DLE will show a warning and keep only the first vault's copy. Rename one copy to avoid data loss. This is a design constraint — many internal data structures key on entry title.
+Internal data structures key on `vaultSource:title`, so same-titled entries in different vaults no longer collide by default. The `multiVaultConflictResolution` setting controls what happens (`src/vault/vault-pure.js`):
+- **`all`** (default) — keep every copy; both entries coexist.
+- **`first`** — keep the first vault's copy, discard later duplicates.
+- **`last`** — keep the last vault's copy.
+- **`merge`** — union keys/tags/links, concatenate content, OR-merge flags into one entry.
+
+A diagnostic still warns about cross-vault title duplicates so you can decide intentionally. Pick `first`/`last`/`merge` if you want collapse behavior; leave it on `all` to keep duplicates.
 
 ## CMRS Timeout Enforcement
 SillyTavern's Connection Manager Request Service (CMRS) may not respect `AbortSignal` in all cases. DLE works around this with a `Promise.race` backup timer, but in rare cases an AI request may hang longer than the configured timeout before the backup fires. **Mitigation:** The backup timer fires 500ms after the configured timeout as a safety net.

@@ -22,9 +22,20 @@ enabled: true         # set to false to skip this entry entirely
 ---
 ```
 
-Optional lorebook fields: `requires`, `excludes`, `position`, `depth`, `role`, `scanDepth`, `excludeRecursion`, `outlet`, `graph`. Entries tagged `lorebook-always` = constants (always injected); `constant: true` in frontmatter equivalent. `lorebook-never` = excluded. `lorebook-seed` content force-injected into writing AI prompt AND prepended as story context in AI search prompt on new chats. `lorebook-bootstrap` force-injects when chat at or below `newChatThreshold` (default 3, uses `<=`). `lorebook-guide` = Librarian-only writing guides — never reach writing AI via any path. `enabled: false` skips entry entirely. `outlet` (string) enables macro-based injection via `{{outlet::name}}` instead of positional. `graph: false` excludes from relationship graph.
+Optional lorebook fields: `requires`, `excludes`, `position`, `depth`, `role`, `scanDepth`, `excludeRecursion`, `outlet`, `graph`. Entries tagged `lorebook-always` = constants (always injected); `constant: true` in frontmatter is the equivalent — it's the *only* one of the special behaviors with a frontmatter boolean. `lorebook-never` = excluded. `lorebook-seed` content force-injected into writing AI prompt AND prepended as story context in AI search prompt on new chats. `lorebook-bootstrap` force-injects when chat at or below `newChatThreshold` (default 3, uses `<=`). `lorebook-guide` = Librarian-only writing guides — never reach writing AI via any path. `enabled: false` skips entry entirely. `outlet` (string) enables macro-based injection via `{{outlet::name}}` instead of positional. `graph: false` excludes from relationship graph.
+
+> **`seed`, `bootstrap`, and `guide` are tag-only.** There is *no* `seed: true` / `bootstrap: true` / `guide: true` frontmatter field — writing one does nothing. Apply the behavior by adding the matching tag (`lorebook-seed`, `lorebook-bootstrap`, `lorebook-guide`) to your `tags` list. Only `constant` has both a tag (`lorebook-always`) and a frontmatter boolean.
 
 Full frontmatter field reference (including `guide`, `cooldown`, `warmup`, `probability`, `refine_keys`, `cascade_links`, gating fields, etc.) in table in `CLAUDE.md` next to this file.
+
+### Field name casing — the one footgun to memorize
+YAML keys are case-sensitive, and DLE's parser does **not** normalize casing for you. Worse, the canonical field names are *not* uniformly one style — they're split:
+
+- **camelCase:** `scanDepth`, `excludeRecursion`
+- **snake_case:** `scene_type`, `character_present`, `refine_keys`, `cascade_links`, `selective_logic`
+- **lowercase (single word):** `keys`, `priority`, `tags`, `requires`, `excludes`, `position`, `depth`, `role`, `cooldown`, `warmup`, `probability`, `summary`, `graph`, `enabled`, `constant`, `outlet`
+
+Write `scan_depth` or `excludeRecursion` as `exclude_recursion` and the field is silently ignored (treated as an unknown field). Write `sceneType` instead of `scene_type` and your gating field won't register. When in doubt, copy the exact spelling from the reference table in `CLAUDE.md` — don't guess from the surrounding fields' style.
 
 ## Summary Field Guidelines
 `summary` used ONLY in AI search manifest — helps Haiku decide whether to select entry. NOT injected into writing AI context (full content handles that). Truncated to ~600 chars in manifest (configurable via `aiSearchManifestSummaryLength`, default 600) — not hard authoring limit, beyond that silently cut.
@@ -43,17 +54,21 @@ Example (lore): "The biological dependency created when a vampire feeds from a m
 ## Common Mistakes
 Easy-to-hit frontmatter footguns. Each produces a warning in `/dle-lint` when `lenientAuthoring` is on, silent skip/drop when off. Diagnose single entry via `/dle-inspect` (see `diagnoseEntry()` in `src/ui/diagnostics.js`).
 
-**Field-name case.** YAML keys are case-sensitive. Canonical field names are lowercase.
+**Field-name case.** YAML keys are case-sensitive, and the canonical names are a *mix* of styles (see "Field name casing" above). Capitalizing a lowercase field, or using the wrong style on a multi-word field, silently drops it.
 ```yaml
 # WRONG
-Keys:
+Keys:            # capital K — ignored
   - foo
-Priority: 50
+Priority: 50     # capital P — ignored, falls back to default 100
+scan_depth: 2    # snake_case — wrong; the field is scanDepth (camelCase)
+sceneType: [day] # camelCase — wrong; the gating field is scene_type (snake_case)
 
 # RIGHT
 keys:
   - foo
 priority: 50
+scanDepth: 2
+scene_type: [day]
 ```
 
 **`keys` as comma-string instead of list.** A quoted comma-string is one key, not many.
@@ -76,6 +91,26 @@ probability: "0.5"
 
 # RIGHT
 priority: 3
+probability: 0.5
+```
+
+**`cooldown` / `warmup` of `0` (or negative) does nothing.** These gates only engage when the value is **greater than 0**. `cooldown: 0` is treated as "no cooldown," not "skip zero generations." Same for `warmup`. If you meant to disable the gate, just omit the field.
+```yaml
+# NO-OP — same as omitting the field
+cooldown: 0
+warmup: 0
+
+# ACTIVE — skip 2 generations after firing / require 2 hits before firing
+cooldown: 2
+warmup: 2
+```
+
+**`probability` outside 0–1 is silently clamped.** `probability` is a fraction (0.0–1.0), not a percentage. `probability: 50` is clamped to `1` (always fires), not "50%." Use `0.5` for a 50% chance.
+```yaml
+# WRONG — clamped to 1.0 (always)
+probability: 50
+
+# RIGHT — 50% chance
 probability: 0.5
 ```
 

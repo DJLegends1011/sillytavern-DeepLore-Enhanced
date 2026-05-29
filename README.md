@@ -9,7 +9,7 @@
 
 **World Info keyword matching breaks at scale. DeepLore reads your Obsidian vault instead: keywords plus AI retrieval, so the right lore fires even when the word wasn't typed.**
 
-![Version](https://img.shields.io/badge/version-2.0.2-blue)
+![Version](https://img.shields.io/badge/version-2.5.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![SillyTavern](https://img.shields.io/badge/SillyTavern-1.12.14+-orange)
 [![i18n](https://img.shields.io/badge/i18n-EN%20%7C%20ES%20%7C%20FR%20%7C%20DE%20%7C%20JA%20%7C%20ZH-purple)](https://github.com/pixelnull/sillytavern-DeepLore-Enhanced/wiki/Contributing-Translations)
@@ -214,9 +214,9 @@ Full feature docs: [**Wiki →**](https://github.com/pixelnull/sillytavern-DeepL
 
 ## Known rough edges
 
-- **Still beta.** ~350 bugs fixed going into 2.0, but the surface is big.
-- **World Info parity gaps:** no regex keys, no `sticky`/`delay`/`group` scoring, `selectiveLogic` is AND_ANY only. Import works; advanced WI features silently downgrade.
-- **Librarian auto-enables function calling** on the active connection. If you disable it elsewhere, tool invocations break.
+- **Still beta.** Hundreds of bugs fixed across the 2.x line, but the surface is big.
+- **World Info parity gaps:** no regex keys, and `sticky`/`delay`/`group` scoring is preserved on import but not acted on (round-tripped, not enforced). Case-sensitivity, whole-word matching, and all four `selective_logic` modes (`and_any`/`and_all`/`not_all`/`not_any`) are supported. Import handles the rest; a few advanced WI behaviors downgrade and are flagged by `/dle-lint`.
+- **Librarian needs a tool-calling provider.** Emma uses native tool calls; route her to Claude, Gemini, an OpenAI-compatible endpoint, or Cohere. Reasoner-only models can't drive the loop.
 - **Obsidian API keys stored plaintext** in ST's extension settings JSON (platform limitation). Use a dedicated lorebook vault, not your personal one.
 
 See [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) for the complete list.
