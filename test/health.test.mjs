@@ -5,7 +5,7 @@ import {
     detectBrokenRefs, detectContradictoryGating, detectCircular, detectOrphans,
     detectOverConstant, detectTokenBloat, detectThinHubs, detectSelfRefs, computeHealthFindings,
 } from '../src/graph/graph-health.js';
-import { test, section, summary, assert, assertEqual } from './helpers.mjs';
+import { test, section, summary, assert, assertEqual, assertNotNull } from './helpers.mjs';
 import { makeEntry } from './helpers.mjs';
 
 section('detectBrokenRefs');
@@ -125,12 +125,13 @@ test('flags high-degree low-token entries', () => {
 
 section('computeHealthFindings (integration)');
 
-test('aggregates findings + builds severity flag map', () => {
+test('aggregates findings + builds severity flag map (fallback edgeCountByNode branch)', () => {
     const entries = [
         makeEntry('Castle', { requires: ['Ghost'] }),         // 0: broken ref (CRIT)
         makeEntry('Lonely'),                                   // 1: orphan (WARN)
         makeEntry('Always', { constant: true, tokenEstimate: 200 }), // 2: over-constant (INFO)
     ];
+    // No gs.edges → exercises the headless fallback that derives degree from edgeCountByNode.
     const edgeCountByNode = new Map([[0, 2], [1, 0], [2, 3]]);
     const { findings, flagged } = computeHealthFindings({ _vaultIndex: entries, edgeCountByNode });
     assert(findings.some(f => f.key === 'broken-refs' && f.sev === 3), 'broken-refs CRIT present');
@@ -140,6 +141,47 @@ test('aggregates findings + builds severity flag map', () => {
     assertEqual(flagged.get(1), 2, 'orphan node flagged WARN');
     // findings sorted by severity descending
     assert(findings[0].sev >= findings[findings.length - 1].sev, 'sorted by severity');
+});
+
+// T-L6b — real gs.edges path: degree must come from the FULL edge set across ALL edge
+// types (link/requires/excludes/cascade), independent of edgeVisibility. A link-only or
+// excludes-only entry IS connected and must NOT be flagged as an orphan — that is the real
+// production invariant the fallback-branch test above cannot exercise (it only sees a degree
+// count, not the typed edge list). Edge shape mirrors graph.js addEdge:
+// { from, to, type, _idx, weight }.
+test('real gs.edges: link-only and excludes-only entries are NOT orphans; bare node is', () => {
+    const entries = [
+        makeEntry('KeywordHub'),  // 0: connected via a 'link' edge to node 1
+        makeEntry('LinkOnly'),    // 1: only structural connection is the link edge (no keyword edge)
+        makeEntry('ExcludesOnly'),// 2: only connected via an 'excludes' edge to node 3
+        makeEntry('Gateway'),     // 3: connected via the excludes edge to node 2
+        makeEntry('TrueOrphan'),  // 4: zero edges — the genuine orphan
+    ];
+    // FULL edge set — note: NO keyword edges touch nodes 1 or 2; their only connections are
+    // a 'link' edge (1) and an 'excludes' edge (2). With DAG mode / legend toggles those edge
+    // types can be hidden, which is exactly why degree must NOT be read from a visibility-filtered
+    // count for the orphan check.
+    const edges = [
+        { from: 0, to: 1, type: 'link', _idx: 0, weight: 1 },      // link-only connects node 1
+        { from: 2, to: 3, type: 'excludes', _idx: 1, weight: 1 },  // excludes-only connects nodes 2 & 3
+    ];
+    const { findings, flagged } = computeHealthFindings({ _vaultIndex: entries, edges });
+
+    const orphanFinding = findings.find(f => f.key === 'orphans');
+    assertNotNull(orphanFinding, 'an orphan finding exists (TrueOrphan)');
+    const orphanIds = orphanFinding ? orphanFinding.nodeIds : [];
+
+    // The real production invariant: link-only / excludes-only entries are connected.
+    assert(!orphanIds.includes(1), 'link-only entry (node 1) must NOT be flagged as an orphan');
+    assert(!orphanIds.includes(2), 'excludes-only entry (node 2) must NOT be flagged as an orphan');
+    assert(!orphanIds.includes(0), 'keyword-hub end of the link edge (node 0) is not an orphan');
+    assert(!orphanIds.includes(3), 'gateway end of the excludes edge (node 3) is not an orphan');
+    // The genuinely disconnected node IS an orphan — proves the detector still fires.
+    assert(orphanIds.includes(4), 'truly disconnected entry (node 4) IS flagged as an orphan');
+    assertEqual(orphanFinding ? orphanFinding.count : -1, 1, 'exactly one orphan (only TrueOrphan)');
+    assertEqual(flagged.get(4), 2, 'TrueOrphan flagged WARN; link/excludes-only nodes not flagged orphan');
+    assertEqual(flagged.has(1), false, 'link-only node not in the flagged map (no orphan, no other finding)');
+    assertEqual(flagged.has(2), false, 'excludes-only node not in the flagged map');
 });
 
 await summary('Vault Health Tests');

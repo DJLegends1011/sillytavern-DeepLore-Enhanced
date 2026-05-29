@@ -1365,6 +1365,62 @@ test('I10: Multiple pins from different vaults — both injected', () => {
 });
 
 // ============================================================================
+// J. Cross-Vault Requires Asymmetry (L13)
+// ============================================================================
+
+section('J. Cross-Vault Requires Asymmetry (L13)');
+
+test('J1 (L13 RED): gating-out one cross-vault duplicate must not orphan a requires on the surviving twin', () => {
+    // L13 (thermo-nuclear-review 2026-05-29, fix-plan §6): applyRequiresExcludesGating
+    // (src/stages.js:298) tracks active titles as a Set of lowercased BARE titles
+    // (`activeTitles = new Set(result.map(e => e.title.toLowerCase()))` at :327). When an
+    // entry is gated out it does `activeTitles.delete(entry.title.toLowerCase())`
+    // (:341 requires-fail, :349 excludes-fail). With TWO same-titled entries from
+    // DIFFERENT vaults, dropping ONE purges the title from the Set entirely — even though
+    // its same-titled twin is still active — so a third entry whose `requires:[Title]`
+    // should still be satisfied (by the surviving twin) WRONGLY fails gating.
+    //
+    // This is the destructive-delete-while-a-duplicate-survives asymmetry. It is DISTINCT
+    // from gotcha #50 item 7 (test MV-7 in regression.test.mjs), which pins the *permissive*
+    // cross-vault semantics that L13's fix must PRESERVE: a bare `requires:[Castle]` from any
+    // vault is satisfied by any vault's "Castle". This test only asserts that a LIVE "Castle"
+    // (the surviving twin) still satisfies that requires.
+    //
+    // Setup:
+    //   A: 'Castle' @vaultX, requires:['Ghost Town'] (absent) → A is gated OUT.
+    //   B: 'Castle' @vaultY, no deps                          → B SURVIVES.
+    //   C: 'Garrison' @vaultY, requires:['Castle']            → should SURVIVE (B is a live Castle).
+    //
+    // RED today: when A is dropped, `activeTitles.delete('castle')` removes 'castle' from the
+    // Set even though B remains. A's drop sets changed=true → a second fixpoint iteration runs
+    // in which C's `requires:['Castle']` checks `activeTitles.has('castle')` → false → C wrongly
+    // dropped. GREEN after Phase-1 L13 fix (refcount Map<titleLower,count>, or rebuild
+    // activeTitles from the surviving set each iteration) with NO edits to this test.
+    const A = makeEntry('Castle', { vaultSource: 'vaultX', requires: ['Ghost Town'], priority: 50 });
+    const B = makeEntry('Castle', { vaultSource: 'vaultY', priority: 50 });
+    const C = makeEntry('Garrison', { vaultSource: 'vaultY', requires: ['Castle'], priority: 60 });
+    const policy = buildExemptionPolicy([], [], []);
+
+    const { result, removed } = applyRequiresExcludesGating([A, B, C], policy, false);
+
+    // Setup sanity: A (the duplicate whose own requires fails) is gated out…
+    assert(
+        removed.some(e => e.title === 'Castle' && e.vaultSource === 'vaultX'),
+        'J1: vaultX:Castle (failing its own requires) should be removed',
+    );
+    // …while its same-titled twin B survives — so "Castle" is still a LIVE title.
+    assert(
+        result.some(e => e.title === 'Castle' && e.vaultSource === 'vaultY'),
+        'J1: vaultY:Castle (the surviving twin) should remain active',
+    );
+    // CORE ASSERTION (RED today): C requires "Castle"; B is a live Castle, so C must survive.
+    assert(
+        result.some(e => e.title === 'Garrison'),
+        'J1: Garrison requires Castle; vaultY:Castle is still live so Garrison must survive (L13)',
+    );
+});
+
+// ============================================================================
 // Summary
 // ============================================================================
 

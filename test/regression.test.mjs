@@ -55,6 +55,25 @@ import { buildVerdict, buildPerEntry, diffVerdicts, evictRing, selectPruneVictim
 import { isExcludedFromBreaker } from '../src/ai/breaker-pure.js';
 import { shouldBailDrawerDismiss } from '../src/drawer/drawer-dismiss-pure.js';
 
+// ── Real _runFlagIteration under test (T-L2) ──
+// `src/librarian/agentic-loop.js` statically imports two ST-only modules
+// (`agentic-api.js`, `librarian-tools.js`) that pull in shared.js/openai.js/
+// script.js/extensions.js — none of which resolve in plain Node. A test-only ESM
+// loader hook serves in-memory stubs for ONLY those two modules so the REAL
+// `_runFlagIteration` (and its real epoch/lock concurrency guard) can be driven
+// here. The stubs delegate to per-test fakes on globalThis.__DLE_TEST_HOOKS.
+// state.js, interceptors.js, and agentic-loop.js itself all load for real.
+// (setChatEpoch / setGenerationLockEpoch are already imported from state.js above.)
+import { register as _registerLoader } from 'node:module';
+_registerLoader('./_agentic-loop-stub-loader.mjs', import.meta.url, {
+    data: {
+        apiUrl: new URL('../src/librarian/agentic-api.js', import.meta.url).href,
+        toolsUrl: new URL('../src/librarian/librarian-tools.js', import.meta.url).href,
+    },
+});
+// Dynamic import AFTER register() so the loader intercepts the ST modules.
+const { _runFlagIterationForTests } = await import('../src/librarian/agentic-loop.js');
+
 console.log('DeepLore Enhanced — Regression Tests');
 console.log('Each test guards a specific BUG fix or gotcha.\n');
 
@@ -2430,6 +2449,98 @@ test('VRD-12: pruneCurrentChat under-cap path emits no deletes (preserves VRD-6 
 });
 
 // ============================================================================
+// L3 — verdict IDB rows leak per deleted chat (RED until index.js wires clearChatIdb)
+// On CHAT_DELETED / GROUP_CHAT_DELETED, ST wipes chat_metadata but the verdict
+// IDB store is a separate store — its per-chat rows persist forever. The handler
+// `_onChatDeleted` (index.js) only calls clearLibrarianSessionState(); it never
+// calls clearChatIdb(deletedId), so the rows leak.
+//
+// RESOLVED FIX TARGET (Phase 1): `_onChatDeleted` receives the deleted chat name
+// as its first arg (CHAT_DELETED emits filename-sans-.jsonl; GROUP_CHAT_DELETED
+// emits the group chat_id — both equal getCurrentChatId() i.e. the verdict IDB key
+// prefix) and calls clearChatIdb(name).
+//
+// L3-1 is a BEHAVIORAL test: it models the resolved handler (calls the real
+// clearChatIdb) against the fake-IDB shim and proves the deleted chat's rows are
+// gone while sibling chats survive. L3-2 is the RED signal: a source guard that
+// the production _onChatDeleted body actually calls clearChatIdb (absent today).
+// ============================================================================
+
+section('L3 — verdict IDB cleanup on chat delete (RED until handler wired)');
+
+// Build a valid-verdict IDB row whose _key matches buildIdbKey(value).
+function _verdictRow(chatId, msgIdx, ts) {
+    const value = {
+        chatId, msgIdx, ts, epoch: 0,
+        injectedSources: [{ title: `E${msgIdx}`, vaultSource: '' }],
+        perEntry: [], trace: null,
+    };
+    const key = `${chatId}:${String(msgIdx).padStart(6, '0')}:${ts}`;
+    return { _key: key, _value: value };
+}
+
+test('L3-VRD-1: deleting a chat removes ONLY that chat\'s verdict IDB rows (resolved-handler model)', async () => {
+    const store = await import('../src/verdict/verdict-store.js');
+    store.resetForTests();
+
+    // Two chats with rows in IDB; "chat-A" gets deleted.
+    const records = [
+        _verdictRow('chat-A', 0, 1000),
+        _verdictRow('chat-A', 1, 1001),
+        _verdictRow('chat-A', 2, 1002),
+        _verdictRow('chat-B', 0, 2000),
+        _verdictRow('chat-B', 1, 2001),
+    ];
+
+    const fake = makeFakeIdbForPrune(records);
+    const prevIdb = globalThis.indexedDB;
+    const prevRange = globalThis.IDBKeyRange;
+    globalThis.indexedDB = fake.indexedDB;
+    globalThis.IDBKeyRange = fake.IDBKeyRange;
+
+    try {
+        // Model the RESOLVED _onChatDeleted: it receives the deleted chat name and
+        // calls clearChatIdb(name). (Production wiring is asserted by L3-2.)
+        const deletedName = 'chat-A';
+        const _onChatDeletedModel = async (name) => { await store.clearChatIdb(name); };
+        await _onChatDeletedModel(deletedName);
+
+        const remainingA = records.filter(r => r._value.chatId === 'chat-A');
+        const remainingB = records.filter(r => r._value.chatId === 'chat-B');
+        assertEqual(remainingA.length, 0, 'L3-VRD-1: all chat-A verdict rows deleted on chat delete');
+        assertEqual(remainingB.length, 2, 'L3-VRD-1: sibling chat-B verdict rows untouched');
+        assertEqual(fake.calls.deletes.length, 3, 'L3-VRD-1: exactly chat-A\'s 3 keys were deleted');
+    } finally {
+        globalThis.indexedDB = prevIdb;
+        globalThis.IDBKeyRange = prevRange;
+        store.resetForTests();
+    }
+});
+
+test('L3-VRD-2: index.js _onChatDeleted handler must call clearChatIdb (source guard, RED)', async () => {
+    // The leak is in the WIRING: the production handler must invoke clearChatIdb for
+    // the deleted chat. RED today — _onChatDeleted only calls clearLibrarianSessionState().
+    const { readFile } = await import('node:fs/promises');
+    const src = await readFile(new URL('../index.js', import.meta.url), 'utf8');
+
+    // 1) clearChatIdb must be imported from the verdict store.
+    const imported = /import\s*\{[^}]*\bclearChatIdb\b[^}]*\}\s*from\s*['"][^'"]*verdict[^'"]*['"]/.test(src)
+        || /\bclearChatIdb\b/.test(src);
+    assert(imported, 'L3-VRD-2: index.js must reference clearChatIdb (import from verdict-store)');
+
+    // 2) The _onChatDeleted handler body must call clearChatIdb. Scope to the handler
+    //    so a stray mention elsewhere doesn't mask the leak.
+    const handlerStart = src.indexOf('_onChatDeleted');
+    assert(handlerStart >= 0, 'L3-VRD-2: _onChatDeleted handler must be present');
+    // Bound the region to the handler arrow body up to its registration calls.
+    const regAt = src.indexOf('_registerEs(event_types.CHAT_DELETED', handlerStart);
+    const handlerBody = src.slice(handlerStart, regAt >= 0 ? regAt : handlerStart + 600);
+    const callsClearInHandler = /clearChatIdb\s*\(/.test(handlerBody);
+    assert(callsClearInHandler,
+        'L3-VRD-2: _onChatDeleted must call clearChatIdb(<deleted chat name>) so deleted chats\' verdict IDB rows are removed. RED until index.js is wired.');
+});
+
+// ============================================================================
 // F3 / F4 — Wave A ship-blockers (2026-05-22)
 // F3: gotcha #43 expansion — agentic fallback branch needs post-await guards
 // F4: gotcha #51 — verdictMsgIdx anchors on global chat, not filtered chatMessages
@@ -2614,156 +2725,153 @@ test('F4c: hidden-message scenario produces chatMessages.length < chat.length', 
 // F6: proseMsg branch unguarded await (gotcha #43 expansion to second branch)
 // ============================================================================
 
-section('F5 — _runFlagIteration epoch guard (CRIT-LIB-1)');
+section('F5 — _runFlagIteration epoch guard (CRIT-LIB-1) — REAL FUNCTION');
 
-test('F5a: epoch-stable FLAG iteration processes flag normally', async () => {
-    // Baseline — when epoch and lockEpoch stable, the iteration runs to completion.
-    // Mirrors the actual structure in src/librarian/agentic-loop.js _runFlagIteration.
-    const capturedEpoch = 10;
-    const capturedLockEpoch = 3;
-    const liveEpoch = 10;
-    const liveLockEpoch = 3;
-    const sessionLog = [];
+// T-L2: these tests drive the REAL `_runFlagIteration` (imported as
+// `_runFlagIterationForTests`), NOT a copy. The function reads the live
+// chatEpoch / generationLockEpoch from the real state.js; we mutate those
+// between awaits to exercise the concurrency guard for real. callWithTools /
+// flagLoreAction are injected via globalThis.__DLE_TEST_HOOKS (served by the
+// stub loader registered at the top of this file).
+//
+// Signature (agentic-loop.js):
+//   _runFlagIteration(messages, tools, toolChoice, maxTokens, signal,
+//                     toolActivity, settings, debug, outerFlagCount, epoch, lockEpoch)
+
+function _installFlagHooks(hooks) {
+    globalThis.__DLE_TEST_HOOKS = hooks;
+}
+
+test('F5a: epoch-stable FLAG iteration processes flag normally (real fn)', async () => {
+    // Baseline — epoch/lock match the captured values, so the real function runs
+    // to completion: flagLoreAction fires once and toolActivity gets one record.
+    setChatEpoch(10);
+    setGenerationLockEpoch(3);
+    let flagCalled = 0;
+    _installFlagHooks({
+        callWithTools: async () => ({ toolCalls: [{ name: 'flag', id: 't1', input: { title: 'Castle', flag_type: 'gap', urgency: 'high' } }] }),
+        flagLoreAction: async () => { flagCalled++; return 'Flagged.'; },
+    });
     const toolActivity = [];
-    let statsIncremented = 0;
+    const messages = [];
+    const flagCount = await _runFlagIterationForTests(messages, [], 'auto', 256, { aborted: false }, toolActivity, {}, false, 0, 10, 3);
 
-    const fakeCallWithTools = async () => ({ toolCalls: [{ name: 'flag', id: 't1', input: { title: 'x', reason: 'y' } }] });
-    const fakeFlagLoreAction = async () => {
-        // Models the unconditional mutations at librarian-tools.js L564-568.
-        sessionLog.push({ type: 'flag', title: 'x' });
-        statsIncremented++;
-        return 'Flagged.';
-    };
-
-    // Simulated _runFlagIteration body with guards (mirrors agentic-loop.js).
-    const signal = { aborted: false };
-    if (signal.aborted) throw Object.assign(new Error('a'), { name: 'AbortError' });
-    if (capturedEpoch !== liveEpoch || capturedLockEpoch !== liveLockEpoch) return;
-    const resp = await fakeCallWithTools();
-    if (signal.aborted) throw Object.assign(new Error('a'), { name: 'AbortError' });
-    if (capturedEpoch !== liveEpoch || capturedLockEpoch !== liveLockEpoch) return;
-    for (const tc of resp.toolCalls) {
-        if (signal.aborted) throw Object.assign(new Error('a'), { name: 'AbortError' });
-        if (capturedEpoch !== liveEpoch || capturedLockEpoch !== liveLockEpoch) break;
-        await fakeFlagLoreAction(tc.input);
-        if (capturedEpoch !== liveEpoch || capturedLockEpoch !== liveLockEpoch) break;
-        toolActivity.push({ type: 'flag', query: tc.input.title });
-    }
-
-    assertEqual(sessionLog.length, 1, 'sessionLog got the one flag');
-    assertEqual(statsIncremented, 1, 'stats incremented once');
-    assertEqual(toolActivity.length, 1, 'toolActivity got the one flag');
+    assertEqual(flagCount, 1, 'F5a: real fn returns flagCount=1 for the one flag');
+    assertEqual(flagCalled, 1, 'F5a: real flagLoreAction invoked once');
+    assertEqual(toolActivity.length, 1, 'F5a: toolActivity got the one flag');
+    assertEqual(toolActivity[0]?.query, 'Castle', 'F5a: toolActivity carries the flag title');
+    assertEqual(toolActivity[0]?.subtype, 'gap', 'F5a: toolActivity carries the flag subtype');
 });
 
-test('F5b: CHAT_CHANGED mid-callWithTools prevents sessionLog+stats pollution', async () => {
-    // The actual bug: chat switches during callWithTools' await. Without the post-API
-    // re-check, the loop falls through and calls flagLoreAction → sessionActivityLog.push
-    // and incrementStats fire against the NEW chat's session/chat stats.
-    const capturedEpoch = 10;
-    const capturedLockEpoch = 3;
-    let liveEpoch = 10;
-    const liveLockEpoch = 3;
-    const sessionLog = [];
-    const toolActivity = [];
-    let statsIncremented = 0;
-
-    let flagActionCalled = false;
-    const fakeCallWithTools = async () => {
-        await new Promise(resolve => setImmediate(resolve));
-        liveEpoch += 1;  // CHAT_CHANGED mid-await
-        return { toolCalls: [{ name: 'flag', id: 't1', input: { title: 'x', reason: 'y' } }] };
-    };
-    const fakeFlagLoreAction = async () => {
-        flagActionCalled = true;
-        sessionLog.push({ type: 'flag', title: 'x' });
-        statsIncremented++;
-        return 'Flagged.';
-    };
-
-    const signal = { aborted: false };
-    let bailed = false;
-    await (async () => {
-        if (signal.aborted) throw Object.assign(new Error('a'), { name: 'AbortError' });
-        if (capturedEpoch !== liveEpoch || capturedLockEpoch !== liveLockEpoch) { bailed = true; return; }
-        const resp = await fakeCallWithTools();
-        // F5 GUARD: re-check after callWithTools
-        if (signal.aborted) throw Object.assign(new Error('a'), { name: 'AbortError' });
-        if (capturedEpoch !== liveEpoch || capturedLockEpoch !== liveLockEpoch) { bailed = true; return; }
-        for (const tc of resp.toolCalls) {
-            if (capturedEpoch !== liveEpoch || capturedLockEpoch !== liveLockEpoch) break;
-            await fakeFlagLoreAction(tc.input);
-            if (capturedEpoch !== liveEpoch || capturedLockEpoch !== liveLockEpoch) break;
-            toolActivity.push({ type: 'flag', query: tc.input.title });
-        }
-    })();
-
-    assert(bailed, 'F5 guard bails after CHAT_CHANGED mid-callWithTools');
-    assert(!flagActionCalled, 'flagLoreAction NOT called for stale-epoch flag');
-    assertEqual(sessionLog.length, 0, 'sessionActivityLog NOT polluted');
-    assertEqual(statsIncremented, 0, 'incrementStats NOT double-counted');
-    assertEqual(toolActivity.length, 0, 'toolActivity NOT polluted (no drawer leak)');
-});
-
-test('F5c: CHAT_CHANGED between flag calls stops remaining flags', async () => {
-    // Multi-flag-per-iteration scenario: three flag tool calls in one response.
-    // CHAT_CHANGED mid-await of the second flag must break the loop so the third
-    // does not run.
-    const capturedEpoch = 10;
-    const capturedLockEpoch = 3;
-    let liveEpoch = 10;
-    const liveLockEpoch = 3;
-    const sessionLog = [];
-    const toolActivity = [];
-
-    const flagCalls = [
-        { name: 'flag', id: 't1', input: { title: 'first', reason: 'r' } },
-        { name: 'flag', id: 't2', input: { title: 'second', reason: 'r' } },
-        { name: 'flag', id: 't3', input: { title: 'third', reason: 'r' } },
-    ];
-    let callIdx = 0;
-    const fakeFlagLoreAction = async (input) => {
-        callIdx++;
-        if (callIdx === 1) {
-            sessionLog.push({ type: 'flag', title: input.title });
-            return 'Flagged.';
-        }
-        if (callIdx === 2) {
+test('F5b: CHAT_CHANGED mid-callWithTools bails before any flag write (real fn)', async () => {
+    // The real bug surface: chat switches DURING callWithTools' await. The real
+    // post-API epoch guard must bail BEFORE calling flagLoreAction, so neither
+    // sessionActivityLog/stats nor toolActivity (drawer dropdown) are polluted.
+    setChatEpoch(10);
+    setGenerationLockEpoch(3);
+    let flagCalled = 0;
+    _installFlagHooks({
+        callWithTools: async () => {
             await new Promise(resolve => setImmediate(resolve));
-            liveEpoch += 1; // CHAT_CHANGED during the 2nd flag's await
-            sessionLog.push({ type: 'flag', title: input.title }); // in-flight; lands
-            return 'Flagged.';
-        }
-        sessionLog.push({ type: 'flag-LEAKED', title: input.title });
-        return 'Flagged.';
-    };
+            setChatEpoch(11); // CHAT_CHANGED mid-await (mutates the live epoch the real fn reads)
+            return { toolCalls: [{ name: 'flag', id: 't1', input: { title: 'Ghost', reason: 'y' } }] };
+        },
+        flagLoreAction: async () => { flagCalled++; return 'Flagged.'; },
+    });
+    const toolActivity = [];
+    const flagCount = await _runFlagIterationForTests([], [], 'auto', 256, { aborted: false }, toolActivity, {}, false, 0, 10, 3);
 
-    for (const tc of flagCalls) {
-        if (capturedEpoch !== liveEpoch || capturedLockEpoch !== liveLockEpoch) break;
-        await fakeFlagLoreAction(tc.input);
-        if (capturedEpoch !== liveEpoch || capturedLockEpoch !== liveLockEpoch) break;
-        toolActivity.push({ type: 'flag', query: tc.input.title });
-    }
-
-    assertEqual(callIdx, 2, 'second call ran; third was prevented by mid-loop guard');
-    assertEqual(sessionLog.length, 2, 'two flags persisted (second was in-flight when chat changed)');
-    assertEqual(toolActivity.length, 1, 'only first flag in toolActivity (second skipped after post-await check)');
-    assert(!sessionLog.some(e => e.title === 'third'), 'third flag never executed');
+    assertEqual(flagCount, 0, 'F5b: real fn returns 0 after post-API epoch mismatch');
+    assertEqual(flagCalled, 0, 'F5b: real flagLoreAction NOT called for stale-epoch flag');
+    assertEqual(toolActivity.length, 0, 'F5b: toolActivity NOT polluted (no drawer leak)');
 });
 
-test('F5d: signal.aborted at iteration top throws AbortError', () => {
-    // Abort guard mirrors the main loop. Must throw, not silently return — caller
-    // catches AbortError specifically and re-throws.
-    const signal = { aborted: true };
+test('F5b2: lockEpoch bump mid-callWithTools also bails (real fn — second guard axis)', async () => {
+    // Symmetric to F5b: the 30s stale-lock force-release bumps generationLockEpoch
+    // while chatEpoch is unchanged. The real fn's guard checks BOTH axes.
+    setChatEpoch(10);
+    setGenerationLockEpoch(3);
+    let flagCalled = 0;
+    _installFlagHooks({
+        callWithTools: async () => {
+            await new Promise(resolve => setImmediate(resolve));
+            setGenerationLockEpoch(4); // force-release bumped the lock epoch
+            return { toolCalls: [{ name: 'flag', id: 't1', input: { title: 'Z', reason: 'y' } }] };
+        },
+        flagLoreAction: async () => { flagCalled++; return 'Flagged.'; },
+    });
+    const toolActivity = [];
+    const flagCount = await _runFlagIterationForTests([], [], 'auto', 256, { aborted: false }, toolActivity, {}, false, 0, 10, 3);
+
+    assertEqual(flagCount, 0, 'F5b2: real fn returns 0 after lockEpoch mismatch');
+    assertEqual(flagCalled, 0, 'F5b2: flagLoreAction NOT called after lockEpoch bump');
+    assertEqual(toolActivity.length, 0, 'F5b2: toolActivity NOT polluted on lock axis');
+});
+
+test('F5c: CHAT_CHANGED during flagLoreAction skips the toolActivity push (real fn)', async () => {
+    // The narrower guard at agentic-loop.js: if epoch shifts DURING flagLoreAction's
+    // await, the flag write already landed (can't undo) but the real fn must still
+    // SKIP toolActivity.push so the drawer dropdown doesn't leak into the new chat.
+    setChatEpoch(10);
+    setGenerationLockEpoch(3);
+    let flagCalled = 0;
+    _installFlagHooks({
+        callWithTools: async () => ({ toolCalls: [{ name: 'flag', id: 't1', input: { title: 'Mid', reason: 'y' } }] }),
+        flagLoreAction: async () => {
+            flagCalled++;
+            await new Promise(resolve => setImmediate(resolve));
+            setChatEpoch(12); // CHAT_CHANGED during the flag's own await
+            return 'Flagged.';
+        },
+    });
+    const toolActivity = [];
+    const flagCount = await _runFlagIterationForTests([], [], 'auto', 256, { aborted: false }, toolActivity, {}, false, 0, 10, 3);
+
+    assertEqual(flagCalled, 1, 'F5c: flag already in-flight when chat changed — write landed');
+    assertEqual(flagCount, 1, 'F5c: real fn counts the in-flight flag');
+    assertEqual(toolActivity.length, 0, 'F5c: post-flagLoreAction guard SKIPS toolActivity push (no drawer leak)');
+});
+
+test('F5d: signal.aborted at iteration top throws AbortError (real fn)', async () => {
+    // Abort guard mirrors the main loop. The real fn must THROW (not silently
+    // return) so the caller's AbortError handling re-throws to the main loop.
+    setChatEpoch(10);
+    setGenerationLockEpoch(3);
+    _installFlagHooks({
+        callWithTools: async () => { throw new Error('should not be reached on abort'); },
+        flagLoreAction: async () => { throw new Error('should not be reached on abort'); },
+    });
     let threw = null;
     try {
-        if (signal.aborted) {
-            const err = new Error('Agentic loop aborted');
-            err.name = 'AbortError';
-            throw err;
-        }
+        await _runFlagIterationForTests([], [], 'auto', 256, { aborted: true }, [], {}, false, 0, 10, 3);
     } catch (e) { threw = e; }
-    assertNotNull(threw, 'AbortError thrown on signal.aborted');
-    assertEqual(threw.name, 'AbortError', 'name is AbortError so caller re-throws to main loop');
+    assertNotNull(threw, 'F5d: real fn throws on signal.aborted');
+    assertEqual(threw?.name, 'AbortError', 'F5d: name is AbortError so caller re-throws to main loop');
+});
+
+test('F5e: epoch mismatch BEFORE the API call bails without calling callWithTools (real fn)', async () => {
+    // Pre-call guard: if the live epoch already drifted from the captured one before
+    // the iteration even starts, the real fn must bail BEFORE callWithTools — never
+    // hitting the network/stub at all.
+    setChatEpoch(99); // live epoch != captured (10) at entry
+    setGenerationLockEpoch(3);
+    let apiCalled = 0;
+    let flagCalled = 0;
+    _installFlagHooks({
+        callWithTools: async () => { apiCalled++; return { toolCalls: [] }; },
+        flagLoreAction: async () => { flagCalled++; return 'Flagged.'; },
+    });
+    const toolActivity = [];
+    const flagCount = await _runFlagIterationForTests([], [], 'auto', 256, { aborted: false }, toolActivity, {}, false, 0, 10, 3);
+
+    assertEqual(flagCount, 0, 'F5e: real fn returns 0 on pre-call epoch mismatch');
+    assertEqual(apiCalled, 0, 'F5e: callWithTools NOT invoked (bailed before API)');
+    assertEqual(flagCalled, 0, 'F5e: flagLoreAction NOT invoked');
+    assertEqual(toolActivity.length, 0, 'F5e: no toolActivity');
+    // Restore epoch/lock state so downstream tests start from the baseline.
+    setChatEpoch(0);
+    setGenerationLockEpoch(0);
+    delete globalThis.__DLE_TEST_HOOKS;
 });
 
 section('F6 — proseMsg branch epoch guard (gotcha #43 expansion)');
@@ -2969,6 +3077,79 @@ test('WB-CB-17b: mixed sequence — 401 then 500 then 500 must trip (only 500s c
     wrapperBreakerStep(err500); // count — failures = 2 → trip
     assert(isAiCircuitOpen() === true, 'two 500s trip even with an interleaved 401');
     recordAiSuccess();
+});
+
+// ============================================================================
+// L8 — breaker classifier over-broad (RED until breaker-pure.js tightened)
+// The classifier (breaker-pure.js) (a) matches a bare `auth` SUBSTRING — so any
+// prose mentioning "auth"/"authentication"/"Author" is wrongly excluded — and
+// (b) scrapes the FIRST 4xx/5xx-shaped number out of arbitrary prose and treats
+// it as an HTTP status. Both make genuine service-down 5xx errors silently
+// EXCLUDED from the breaker (never trips → no protection). These are RED today.
+// Fix anchors the numeric scrape to a labeled status and word-bounds `auth`.
+// ============================================================================
+
+section('L8 — breaker classifier over-broad (RED until tightened)');
+
+test('L8-1: prose 5xx with stray "auth" word must TRIP (bare-substring bug)', () => {
+    // "auth backend 500 unavailable" — a genuine 5xx service-down whose message
+    // happens to contain the word "auth". Today: /auth/i matches the substring →
+    // isAuthError true → EXCLUDED → breaker never trips. MUST be false (trip).
+    const err = { message: 'auth backend 500 unavailable' };
+    assert(isExcludedFromBreaker(err) === false,
+        'L8-1: a 5xx whose prose contains "auth" MUST trip the breaker (not be excluded as an auth error)');
+});
+
+test('L8-2: prose with a scraped 3-digit (no real status) must TRIP (numeric-scrape bug)', () => {
+    // "request failed: 401 tokens requested" — no err.status; the message contains
+    // a 401-shaped number that is NOT an HTTP status. Today: the bare numeric scrape
+    // grabs 401 → isAuthError true → EXCLUDED. A real failure with such prose would
+    // never trip the breaker. MUST be false (trip).
+    const err = { message: 'request failed: 401 tokens requested' };
+    assert(isExcludedFromBreaker(err) === false,
+        'L8-2: a non-status 3-digit scraped from prose MUST NOT exclude a genuine failure');
+});
+
+test('L8-3: ordinary prose with an embedded digit-run is NOT mis-excluded (guard)', () => {
+    // "model claude-3 4o1 preview" — no auth/timeout/rate-limit signal and no
+    // genuine 3-digit run; must classify as a real failure (false). This guard
+    // documents the desired post-fix behavior and stays green.
+    const err = { message: 'model claude-3 4o1 preview' };
+    assert(isExcludedFromBreaker(err) === false,
+        'L8-3: benign model-name prose must classify as a real failure (trip)');
+});
+
+// ============================================================================
+// L12 — summarizeEntries breaker-probe leak (RED until commands-ai.js fixed)
+// `summarizeEntries` acquires a half-open probe per entry but its inner catch is
+// `if (!isExcludedFromBreaker(callErr)) recordAiFailure(); throw callErr;` — on an
+// EXCLUDED error (timeout/abort/401/403/429) it neither records a failure nor
+// releases the probe, so the half-open slot stays held for the full 60s and every
+// AI feature falls back. Every other breaker caller pairs `else releaseHalfOpenProbe()`.
+// summarizeEntries is not cleanly unit-invocable (dynamic imports of callAI, toastr
+// globals, popup loop), so this is a STRUCTURAL guard: the catch must release the
+// probe on the excluded branch. RED today (the `else` is absent).
+// ============================================================================
+
+section('L12 — summarizeEntries probe-release on excluded error (structural guard, RED)');
+
+test('L12-1: summarizeEntries catch releases the half-open probe on excluded errors', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const src = await readFile(new URL('../src/ui/commands-ai.js', import.meta.url), 'utf8');
+
+    // Scope to summarizeEntries' body so we don't accidentally match a sibling caller.
+    const fnStart = src.indexOf('export async function summarizeEntries');
+    assert(fnStart >= 0, 'L12-1: summarizeEntries must be present in commands-ai.js');
+    // End the scoped region at the next top-level export (or EOF) to bound the search.
+    const after = src.indexOf('\nexport ', fnStart + 1);
+    const body = src.slice(fnStart, after >= 0 ? after : src.length);
+
+    // The fix pairs the recordAiFailure branch with an else-release of the probe:
+    //   if (!isExcludedFromBreaker(callErr)) recordAiFailure(); else releaseHalfOpenProbe();
+    const releasesProbe = /else\s+releaseHalfOpenProbe\s*\(\s*\)/.test(body)
+        || /isExcludedFromBreaker\([^)]*\)\)\s*recordAiFailure\(\s*\)\s*;?\s*else\s+releaseHalfOpenProbe\s*\(/.test(body);
+    assert(releasesProbe,
+        'L12-1: summarizeEntries catch must `else releaseHalfOpenProbe()` on excluded errors (probe-leak fix). RED until commands-ai.js is patched.');
 });
 
 // ============================================================================

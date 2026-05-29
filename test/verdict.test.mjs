@@ -324,4 +324,275 @@ test('validateVerdict: accepts valid record', () => {
     assert(validateVerdict(built), 'buildVerdict() valid');
 });
 
+// ============================================================================
+// T-L10 — verdict prune/list cross-chat lexicographic-exclusion guard (GREEN)
+//
+// CONTEXT: an early review draft called the verdict prune a cross-chat
+// data-corruption bug — "deleting chat `Alice` also nukes `Alice2`/`Alicia`
+// because their keys share the `Alice` prefix." That premise is LEXICOGRAPHICALLY
+// FALSE. IDB keys are `${chatId}:${paddedMsgIdx}:${ts}` (see buildIdbKey), and
+// every chat-scoped op (listIdbForChat → hydrate/getByMessage/clearChatIdb, and
+// pruneCurrentChat) bounds its range to `IDBKeyRange.bound('Alice:', 'Alice:￿')`.
+// The `:` delimiter (0x3A) is what makes the prefix unambiguous:
+//   - 'Alice2…' : char after 'Alice' is '2' (0x32) < ':' (0x3A)
+//                 → sorts BELOW the lower bound 'Alice:' → EXCLUDED.
+//   - 'Alicia…' : char after 'Alice' is 'i' (0x69) > ':' (0x3A)
+//                 → sorts ABOVE the upper bound 'Alice:￿' → EXCLUDED.
+// So both siblings fall outside the range — for OPPOSITE lexicographic reasons.
+// This test pins that contract by driving the REAL production store code
+// (hydrateChat / pruneCurrentChat / clearChatIdb — all of which construct the
+// real range via the production IDBKeyRange.bound call) against a fake IDB that
+// honors IDBKeyRange.bound string-key semantics. A future delimiter change that
+// re-introduced the collision (e.g. switching `:` for something that doesn't sit
+// between the digits and the letters) would flip these assertions RED.
+//
+// Severity note: demoted CRITICAL → LOW per the thermo-nuclear verification pass
+// (a real `:`-in-chatId collision is impossible — ST sources chatId from chat
+// filenames, where sanitize-filename strips `:`). This is a hardening guard, not
+// a reproduce-test.
+// ============================================================================
+
+section('Verdict — T-L10 prune/list cross-chat lexicographic exclusion (guard)');
+
+/**
+ * Minimal in-memory IDB-shaped fake for the chat-scoped read/prune/delete paths.
+ *
+ * FIDELITY to the real IndexedDB / IDBKeyRange.bound that this test relies on:
+ *  - `IDBKeyRange.bound(lower, upper)` models the DEFAULT inclusive-inclusive
+ *    bounds (open=false) — matching how verdict-store.js calls it (two-arg form,
+ *    no open flags). Membership is pure string comparison `k >= lower && k <= upper`,
+ *    which is exactly the byte-order JS `<`/`>` use on strings and is the same
+ *    total ordering IndexedDB applies to string keys (UTF-16 code-unit order;
+ *    the BMP `￿` upper sentinel the production code uses behaves identically).
+ *    THIS is the load-bearing fidelity — the lexicographic exclusion under test.
+ *  - `getAll(range)` and `openKeyCursor(range, 'next')` both filter the seeded
+ *    rows by that range and (for the cursor) walk oldest-first via sorted keys.
+ *  - `put`/`delete`/`clear` mutate the backing array so post-op row counts assert
+ *    real deletion. `transaction().oncomplete` fires on a microtask so the live
+ *    `txDone` promise resolves.
+ *  - NOT modeled (irrelevant here): index/keyPath stores, versioning beyond a
+ *    no-op onupgradeneeded, error/abort injection, multi-arg range open flags.
+ *
+ * This is a from-scratch local fake (the regression.test.mjs makeFakeIdbForPrune
+ * shim is not exported); it deliberately mirrors that shim's IDBKeyRange.bound
+ * `includes` semantics so the two stay conceptually aligned.
+ */
+function makeFakeIdbForChats(records) {
+    const calls = {
+        cursorRanges: [],   // {lower, upper} for every openKeyCursor
+        getAllRanges: [],   // {lower, upper} for every getAll(range)
+        deletes: [],        // keys deleted
+    };
+    const fakeIDBKeyRange = {
+        bound(lower, upper) {
+            // Default inclusive bounds (open=false), pure string comparison —
+            // identical ordering to IndexedDB's string-key total order.
+            return { _lower: lower, _upper: upper, includes(k) { return k >= lower && k <= upper; } };
+        },
+    };
+    function inRange(range) {
+        return records.map(r => r._key).filter(k => range.includes(k)).sort();
+    }
+    function makeStore() {
+        return {
+            getAll(range) {
+                calls.getAllRanges.push(range ? { lower: range._lower, upper: range._upper } : null);
+                const keys = inRange(range);
+                const keySet = new Set(keys);
+                const req = { onsuccess: null, onerror: null, result: null };
+                queueMicrotask(() => {
+                    req.result = records.filter(r => keySet.has(r._key)).map(r => r._value);
+                    if (req.onsuccess) req.onsuccess();
+                });
+                return req;
+            },
+            openKeyCursor(range, direction) {
+                calls.cursorRanges.push({ lower: range._lower, upper: range._upper });
+                const keys = inRange(range);
+                let i = 0;
+                const req = { onsuccess: null, onerror: null, result: null };
+                const advance = () => {
+                    if (i >= keys.length) {
+                        req.result = null;
+                        if (req.onsuccess) req.onsuccess();
+                        return;
+                    }
+                    req.result = { key: keys[i], continue() { i++; queueMicrotask(advance); } };
+                    if (req.onsuccess) req.onsuccess();
+                };
+                queueMicrotask(advance);
+                return req;
+            },
+            delete(key) {
+                calls.deletes.push(key);
+                const idx = records.findIndex(r => r._key === key);
+                if (idx >= 0) records.splice(idx, 1);
+                return { onsuccess: null, onerror: null };
+            },
+            put(value, key) { records.push({ _key: key, _value: value }); return { onsuccess: null, onerror: null }; },
+            clear() { records.length = 0; return { onsuccess: null, onerror: null }; },
+        };
+    }
+    function makeDb() {
+        return {
+            objectStoreNames: { contains: () => true },
+            transaction() {
+                const store = makeStore();
+                const tx = { objectStore: () => store, oncomplete: null, onerror: null, onabort: null };
+                queueMicrotask(() => { if (tx.oncomplete) tx.oncomplete(); });
+                return tx;
+            },
+            close() {},
+        };
+    }
+    return {
+        indexedDB: {
+            open() {
+                const req = { onsuccess: null, onerror: null, onblocked: null, onupgradeneeded: null, result: makeDb() };
+                queueMicrotask(() => { if (req.onsuccess) req.onsuccess(); });
+                return req;
+            },
+        },
+        IDBKeyRange: fakeIDBKeyRange,
+        calls,
+    };
+}
+
+// Build a valid verdict IDB row whose _key matches buildIdbKey(value).
+function _row(chatId, msgIdx, ts) {
+    const value = {
+        chatId, msgIdx, ts, epoch: 0,
+        injectedSources: [{ title: `E${msgIdx}`, vaultSource: '' }],
+        perEntry: [], trace: null,
+    };
+    const key = `${chatId}:${String(msgIdx).padStart(6, '0')}:${ts}`;
+    return { _key: key, _value: value };
+}
+
+// Three lexicographic siblings: the `:` delimiter is the only thing keeping
+// 'Alice'`s namespace disjoint from 'Alice2' / 'Alicia'. Each chat gets 2 rows.
+function _siblingRecords() {
+    return [
+        _row('Alice', 0, 1000),
+        _row('Alice', 1, 1001),
+        _row('Alice2', 0, 2000),
+        _row('Alice2', 1, 2001),
+        _row('Alicia', 0, 3000),
+        _row('Alicia', 1, 3001),
+    ];
+}
+
+test('T-L10: lexical reality check — siblings are excluded by the `:` delimiter for OPPOSITE reasons', () => {
+    // Pin the byte-order facts the whole guard rests on. If a future delimiter
+    // change broke either inequality, the production range would stop excluding
+    // a sibling and the IDB tests below would (correctly) go red.
+    assert(':'.charCodeAt(0) === 0x3a, "':' is 0x3A");
+    assert('2'.charCodeAt(0) === 0x32, "'2' is 0x32");
+    assert('i'.charCodeAt(0) === 0x69, "'i' is 0x69");
+    assert('Alice2:' < 'Alice:', "'Alice2:' sorts BELOW lower bound 'Alice:' (digit < colon)");
+    assert('Alicia:' > 'Alice:￿', "'Alicia:' sorts ABOVE upper bound 'Alice:\\uFFFF' (letter > colon)");
+});
+
+test('T-L10: hydrateChat(\'Alice\') loads ONLY Alice rows — siblings excluded (real listIdbForChat range)', async () => {
+    const store = await import('../src/verdict/verdict-store.js');
+    store.resetForTests();
+
+    const records = _siblingRecords();
+    const fake = makeFakeIdbForChats(records);
+    const prevIdb = globalThis.indexedDB;
+    const prevRange = globalThis.IDBKeyRange;
+    globalThis.indexedDB = fake.indexedDB;
+    globalThis.IDBKeyRange = fake.IDBKeyRange;
+
+    try {
+        store.setCurrentChatId('Alice');
+        // hydrateChat drives the REAL listIdbForChat → real IDBKeyRange.bound('Alice:','Alice:￿').
+        const count = await store.hydrateChat('Alice');
+        assertEqual(count, 2, 'exactly Alice\'s 2 rows hydrated (Alice2/Alicia not pulled in)');
+
+        // The range actually requested by production must be the colon-delimited prefix.
+        assert(fake.calls.getAllRanges.length >= 1, 'getAll(range) was called');
+        const r = fake.calls.getAllRanges[0];
+        assertEqual(r.lower, 'Alice:', 'lower bound = chatId + ":"');
+        assert(r.upper.startsWith('Alice:'), 'upper bound stays inside the Alice: namespace');
+
+        // Every hydrated verdict belongs to Alice — no sibling leakage into the ring.
+        const ring = store._debugRingSnapshot();
+        assertEqual(ring.length, 2, 'ring holds exactly the 2 Alice verdicts');
+        assert(ring.every(v => v.chatId === 'Alice'), 'no Alice2/Alicia verdict leaked into the ring');
+    } finally {
+        globalThis.indexedDB = prevIdb;
+        globalThis.IDBKeyRange = prevRange;
+        store.resetForTests();
+    }
+});
+
+test('T-L10: pruneCurrentChat(\'Alice\') cursor range never visits sibling keys', async () => {
+    const store = await import('../src/verdict/verdict-store.js');
+    store.resetForTests();
+
+    // 5 Alice rows so prune has something to walk; siblings present but out of range.
+    const records = [
+        _row('Alice', 0, 1000), _row('Alice', 1, 1001), _row('Alice', 2, 1002),
+        _row('Alice', 3, 1003), _row('Alice', 4, 1004),
+        _row('Alice2', 0, 2000), _row('Alice2', 1, 2001),
+        _row('Alicia', 0, 3000), _row('Alicia', 1, 3001),
+    ];
+    const fake = makeFakeIdbForChats(records);
+    const prevIdb = globalThis.indexedDB;
+    const prevRange = globalThis.IDBKeyRange;
+    globalThis.indexedDB = fake.indexedDB;
+    globalThis.IDBKeyRange = fake.IDBKeyRange;
+
+    try {
+        store.setCurrentChatId('Alice');
+        store._setPruneSampleRateForTests(1); // force the scan
+        // Cap is 200 → no deletes expected here; the point is the cursor RANGE.
+        const deleted = await store._invokePruneForTests();
+        assertEqual(deleted, 0, 'under cap → no deletes (sibling safety, not eviction, is the subject)');
+
+        assertEqual(fake.calls.cursorRanges.length, 1, 'cursor opened exactly once');
+        const r = fake.calls.cursorRanges[0];
+        assertEqual(r.lower, 'Alice:', 'cursor lower bound = "Alice:"');
+        assert(r.upper.startsWith('Alice:'), 'cursor upper bound inside Alice: namespace');
+        // The fake walks only in-range keys — assert none of them belong to a sibling.
+        // (Re-derive what the production range would have matched.)
+        const matched = records.map(x => x._key).filter(k => fake.IDBKeyRange.bound(r.lower, r.upper).includes(k));
+        assert(matched.length === 5, 'range matched exactly Alice\'s 5 keys');
+        assert(matched.every(k => k.startsWith('Alice:')), 'no Alice2:/Alicia: key fell inside the prune range');
+    } finally {
+        globalThis.indexedDB = prevIdb;
+        globalThis.IDBKeyRange = prevRange;
+        store.resetForTests();
+    }
+});
+
+test('T-L10: clearChatIdb(\'Alice\') deletes ONLY Alice rows — Alice2 and Alicia survive', async () => {
+    const store = await import('../src/verdict/verdict-store.js');
+    store.resetForTests();
+
+    const records = _siblingRecords();
+    const fake = makeFakeIdbForChats(records);
+    const prevIdb = globalThis.indexedDB;
+    const prevRange = globalThis.IDBKeyRange;
+    globalThis.indexedDB = fake.indexedDB;
+    globalThis.IDBKeyRange = fake.IDBKeyRange;
+
+    try {
+        // clearChatIdb also routes through the REAL listIdbForChat range to find keys.
+        await store.clearChatIdb('Alice');
+
+        const left = (id) => records.filter(r => r._value.chatId === id).length;
+        assertEqual(left('Alice'), 0, 'all Alice rows deleted');
+        assertEqual(left('Alice2'), 2, 'Alice2 rows untouched (digit-prefix sibling excluded)');
+        assertEqual(left('Alicia'), 2, 'Alicia rows untouched (letter-prefix sibling excluded)');
+        assertEqual(fake.calls.deletes.length, 2, 'exactly Alice\'s 2 keys deleted, no sibling key touched');
+        assert(fake.calls.deletes.every(k => k.startsWith('Alice:')), 'every deleted key is in the Alice: namespace');
+    } finally {
+        globalThis.indexedDB = prevIdb;
+        globalThis.IDBKeyRange = prevRange;
+        store.resetForTests();
+    }
+});
+
 await summary('Verdict Tests');

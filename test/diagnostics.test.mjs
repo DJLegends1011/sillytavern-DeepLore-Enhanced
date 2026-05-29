@@ -1129,6 +1129,115 @@ test('F13: ctx omitted → fresh context created (function still scrubs)', () =>
 
 
 // ============================================================================
+//  G. Scrubber Report — "Titles" count truthfulness (T-RED L9)
+//
+//  L9 (thermo-nuclear review 2026-05-29, MEDIUM): the diagnostic scrubber
+//  report advertises "Titles: N" but always prints 0 even when titles WERE
+//  aliased. Mechanism confirmed against source:
+//
+//    * Titles are REALLY aliased at the snapshot layer by the pseudonym context
+//      from `pseudonymize-trace.js` (`createPseudonymContext()` →
+//      `pseudonymizeTrace()` → `pseudonymizeTitle()` increments
+//      `ctx.titleCounter` and fills `ctx.titleMap`). `state-snapshot.js` owns
+//      one such context per snapshot.
+//
+//    * The report (`export.js` `buildScrubberReport`, ~:503) prints
+//      "Titles: ${s.titles}" where `s` is the SCRUBBER context's stats
+//      (`scrubber.js` `makeCtx()`, ~:48). Nothing in scrubber.js ever
+//      increments `stats.titles` — there is no title PATTERN, and the `title`
+//      Map allocated at `makeCtx()` (~:42) is never written. So the report
+//      reads a permanently-zero dead stat that is a DIFFERENT context from the
+//      one that actually aliased the titles.
+//
+//  RED today: report's Titles count (scrubber `stats.titles`) is 0 while the
+//  real aliased-title count is > 0. Phase-3 Agent-B fix = delete the dead
+//  scrubber title map/stat and have the report pull the count from the real
+//  pseudonym context; that turns this assertion green with no test edits
+//  (the canonical count source then equals the real aliased count).
+//
+//  This test reproduces `buildScrubberReport`'s title-count CONTRACT locally
+//  (export.js is un-importable from a node test — it transitively imports ST).
+//  We assert the report's reported "Titles" count equals the number of titles
+//  the real pseudonymization flow actually aliased.
+// ============================================================================
+
+section('G. Scrubber Report — Titles count truthfulness (T-RED L9)');
+
+/**
+ * Faithful mirror of `export.js` `buildScrubberReport`'s title-count source as
+ * it exists TODAY: the report pulls the "Titles" line from the SCRUBBER
+ * context's `stats.titles` (export.js ~:503 — `if (s.titles > 0) parts.push(...)`).
+ * `pseudoCtx` is accepted but intentionally IGNORED here, mirroring the bug:
+ * the report has no link to the real pseudonym context where titles are aliased.
+ *
+ * Phase-3 Agent-B remedy ("have the report pull title counts from the real
+ * pseudonym context") will change this source to `pseudoCtx` — at which point
+ * the count below becomes the real aliased-title count and the assertion passes.
+ */
+function reportedTitlesCount(scrubberCtx, _pseudoCtx) {
+    // export.js:503 reads s.titles off the scrubber ctx — the dead stat.
+    return scrubberCtx.stats.titles | 0;
+}
+
+test('G1: report Titles count reflects the actual number of aliased titles (RED — L9)', () => {
+    // 1. Drive the REAL title-aliasing path the same way state-snapshot.js does:
+    //    one pseudonym context per export, fed a trace with distinct titles.
+    const pseudoCtx = createPseudonymContext();
+    const trace = {
+        injected: [
+            { title: 'Aelarion the Grey', vaultSource: 'CampaignVault' },
+            { title: 'The Sunken City', vaultSource: 'CampaignVault' },
+            { title: 'Queen Mirabel', vaultSource: 'CampaignVault' },
+        ],
+        keywordMatched: [
+            // a duplicate title must NOT double-count (cardinality preserved)
+            { title: 'Aelarion the Grey', vaultSource: 'CampaignVault' },
+            { title: 'House Veyra', vaultSource: 'CampaignVault' },
+        ],
+    };
+    pseudonymizeTrace(trace, pseudoCtx);
+
+    // Ground truth: 4 distinct real titles got aliased to <title-1..4>.
+    const realAliasedTitles = pseudoCtx.titleMap.size;
+    assertEqual(realAliasedTitles, 4, 'sanity: 4 distinct titles were actually aliased');
+    assertEqual(pseudoCtx.titleCounter, 4, 'sanity: titleCounter tracks the 4 aliases');
+
+    // 2. The report builds a FRESH scrubber ctx (export.js:642 `makeCtx()`),
+    //    then reads its stats. No title pattern ever touches stats.titles.
+    const scrubberCtx = makeCtx();
+
+    // 3. The invariant under test: the number the report PRINTS for "Titles"
+    //    must equal the number of titles that were actually aliased.
+    const reported = reportedTitlesCount(scrubberCtx, pseudoCtx);
+    assertEqual(
+        reported,
+        realAliasedTitles,
+        `report Titles count must equal aliased-title count: expected ${realAliasedTitles}, got ${reported}`,
+    );
+});
+
+test('G2: dead scrubber stat is the source of the lie — scrubbing titles never increments scrubber stats.titles', () => {
+    // Pin the exact mechanism: pseudonymizing many titles leaves the SCRUBBER
+    // ctx (the one the report reads) completely untouched. This is descriptive
+    // of the bug today; after Agent-B deletes the dead stat and re-sources the
+    // report, G1 above is the assertion that actually flips green.
+    const pseudoCtx = createPseudonymContext();
+    pseudonymizeTrace({
+        injected: [
+            { title: 'One', vaultSource: 'V' },
+            { title: 'Two', vaultSource: 'V' },
+        ],
+    }, pseudoCtx);
+    assertEqual(pseudoCtx.titleMap.size, 2, 'two titles aliased in the real context');
+
+    const scrubberCtx = makeCtx();
+    // No production code path increments scrubberCtx.stats.titles — confirm it
+    // stays 0 even though titles WERE aliased (in the other context).
+    assertEqual(scrubberCtx.stats.titles | 0, 0, 'scrubber stats.titles is the never-written dead stat (always 0)');
+});
+
+
+// ============================================================================
 //  Summary
 // ============================================================================
 

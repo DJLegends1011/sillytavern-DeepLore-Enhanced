@@ -188,6 +188,116 @@ test('full-parity: EM subheader entries round-trip through parser into normal va
 });
 
 // ============================================================================
+// T-RED WIEM — EM subheader idempotency `/m`-flag bug (thermo-nuclear WICL)
+//
+// `convertWiEntry` (src/helpers.js:739) gates the "## Example Dialogue" top
+// prepend on:
+//     !/^##\s+Example Dialogue\b/m.test(content.trimStart())
+// The `/m` flag makes `^## Example Dialogue` match at ANY line start, not just
+// the body start. So an EM entry whose body merely CONTAINS "## Example
+// Dialogue" as a LATER section (not at the very top) is wrongly judged as
+// "already has the subheader" and the prepend is skipped — leaving the body
+// NOT starting with the subheader. The Phase-3 Agent-G fix drops the `/m` flag
+// (keeps `trimStart()`) so the anchor binds only to the real body start; that
+// flips these red tests green with no test edits.
+//
+// RED today: the prepend is skipped, so the body does NOT start with the
+// subheader (the mid-body heading is its only occurrence).
+// ============================================================================
+
+test('T-RED WIEM: EM body with a LATER ## Example Dialogue section still gets the top subheader (out.content)', () => {
+    // ST Example-Messages entry (position 5). Body opens with a non-heading
+    // line, then has "## Example Dialogue" only as a SECOND section — exactly
+    // the shape the `/m` flag misfires on.
+    const wi = {
+        comment: 'EmLaterSection',
+        key: ['guard'],
+        content: 'Intro narration line that is NOT a heading.\n\n## Example Dialogue\n\nMid-body sample that should NOT satisfy the top-of-body check.',
+        position: 5,
+    };
+    const out = convertWiEntry(wi, 'lorebook');
+    assert(out._emPosition === 5, '_emPosition flag set (EM entry recognized)');
+    // Isolate the entry body: convertWiEntry wraps it as
+    //   `${fm}\n\n# ${title}\n\n${body}` (src/helpers.js:744).
+    // Split on the title H1 to get just the body the LLM will read.
+    const titleMarker = '\n\n# EmLaterSection\n\n';
+    const splitIdx = out.content.indexOf(titleMarker);
+    assert(splitIdx !== -1, 'title marker located (body isolation precondition)');
+    const body = out.content.slice(splitIdx + titleMarker.length);
+    assert(
+        body.trimStart().startsWith('## Example Dialogue'),
+        'EM body MUST start with the ## Example Dialogue subheader even when a later section already contains it (RED: /m flag wrongly skips the prepend)',
+    );
+});
+
+test('T-RED WIEM: EM body with a LATER ## Example Dialogue section starts with the subheader after parseVaultFile', () => {
+    // Same bug, asserted on the parsed VaultEntry body (cleanContent strips the
+    // # Title H1 but preserves H2 subheaders). When the prepend works, the
+    // cleaned body starts with "## Example Dialogue"; when it's wrongly skipped,
+    // it starts with the intro narration line instead.
+    const wi = {
+        comment: 'EmLaterSectionParsed',
+        key: ['guard2'],
+        content: 'Intro narration line that is NOT a heading.\n\n## Example Dialogue\n\nMid-body sample line.',
+        position: 6,
+    };
+    const out = convertWiEntry(wi, 'lorebook');
+    const vaultEntry = parseVaultFile({ filename: out.filename, content: out.content }, tagConfig);
+    assert(vaultEntry !== null, 'EM entry parses into a vault entry');
+    assert(
+        vaultEntry.content.trimStart().startsWith('## Example Dialogue'),
+        'parsed EM body MUST start with the ## Example Dialogue subheader (RED: /m flag wrongly skips the prepend when a later section already has the heading)',
+    );
+});
+
+test('T-RED WIEM (control): idempotency still holds — body ALREADY starting with the subheader is not double-prepended', () => {
+    // Guard the Agent-G fix from over-correcting: dropping `/m` must NOT break
+    // the legitimate idempotent case. A body that genuinely starts with the
+    // subheader must still be left with exactly ONE occurrence at the top.
+    const wi = {
+        comment: 'EmAlreadyTop',
+        key: ['ctl'],
+        content: '## Example Dialogue\n\nAlready-subheadered sample line.',
+        position: 5,
+    };
+    const out = convertWiEntry(wi, 'lorebook');
+    const occurrences = (out.content.match(/## Example Dialogue/g) || []).length;
+    assert(occurrences === 1, 'subheader appears exactly once (no double-stack) — green now AND after the fix');
+});
+
+// ============================================================================
+// T-RED WIEM (optional fidelity) — displayIndex:0 must round-trip
+//
+// convertWiEntry's round-trip emission (src/helpers.js:681) skips any field
+// whose value `=== 0`:  `if (raw == null || raw === false || raw === 0 ...)`.
+// `displayIndex` is a legitimate 0-valued ST field (the first entry's index),
+// so displayIndex:0 is silently dropped — the `display_index:` line never gets
+// emitted, and parseVaultFile never lands `display_index` in customFields.
+// Agent-G's optional WICL fidelity fix stops dropping displayIndex:0; that
+// flips this red test green. RED today: display_index absent from customFields.
+// ============================================================================
+
+test('T-RED WIEM: displayIndex:0 round-trips into customFields.display_index (not dropped by the raw===0 skip)', () => {
+    const wi = {
+        comment: 'DisplayIdxZero',
+        key: ['di'],
+        content: 'body',
+        displayIndex: 0,
+    };
+    const out = convertWiEntry(wi, 'lorebook');
+    assert(
+        out.content.includes('display_index:'),
+        'displayIndex:0 MUST emit a display_index frontmatter line (RED: raw===0 skip drops it)',
+    );
+    const vaultEntry = parseVaultFile({ filename: out.filename, content: out.content }, tagConfig);
+    assert(vaultEntry !== null, 'entry parses');
+    assert(
+        'display_index' in vaultEntry.customFields,
+        'display_index MUST land in customFields when displayIndex is 0 (RED: silently dropped pre-fix)',
+    );
+});
+
+// ============================================================================
 // Wave 1/3 negative paths — invalid enums omit, bump skipped counters
 // ============================================================================
 

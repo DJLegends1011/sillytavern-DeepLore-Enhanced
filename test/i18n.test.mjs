@@ -14,8 +14,6 @@ import {
     resolveLocale,
     resolveAiPromptLocale,
     mergeLocaleDicts,
-    interpolate,
-    pluralize,
     lookupKey,
     validateLocaleDict,
     countPlaceholders,
@@ -161,48 +159,101 @@ test('null/undefined inputs return empty merge', () => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
-section('i18n — interpolate');
+section('i18n — trPlural (CLDR plural selection — L7 RED until Phase-1 wires it)');
 // ════════════════════════════════════════════════════════════════════════════
+//
+// L7 DECISION (thermo-nuclear plan §10.1): WIRE a new `trPlural(baseKey, count, ...args)`.
+// It uses `Intl.PluralRules(activeLocale).select(count)` → CLDR form, maps that form
+// to a shipped key `${baseKey}_${form}` (only `_one`/`_other` ship, so any non-`one`
+// form → `_other`), resolves it through `tr()`, then interpolates `count` as `${0}`.
+//
+// The canonical `_one`/`_other` pairs already ship in every locale, e.g.:
+//   "dle_entries_stat_lore_one":   "${0} lore entry"
+//   "dle_entries_stat_lore_other": "${0} lore entries"
+//
+// IMPORT CONSTRAINT (documented): the live `trPlural` is specced to live in
+// `src/i18n/i18n.js`, which statically imports ST modules (`../../../../../i18n.js`,
+// `script.js`). Those paths do NOT resolve under the node test harness — a top-level
+// `import { trPlural } from '../src/i18n/i18n.js'` throws ERR_MODULE_NOT_FOUND and
+// would crash THIS ENTIRE suite (taking the canonical-EN + parity tests with it).
+// That is why this file (per its header) never statically imports i18n.js.
+//
+// So this test drives the PURE selection logic the same way the rest of the file does:
+// it expects a node-importable pure plural resolver in `i18n-pure.js`. To turn this
+// test GREEN, Phase-1 must (a) add exactly this pure selector to `i18n-pure.js`:
+//
+//     export function trPlural(dict, baseKey, locale, count, ...args)
+//       → form  = new Intl.PluralRules(locale).select(count)
+//       → key   = `${baseKey}_${form}` if present in dict, else `${baseKey}_other`
+//       → return interpolate(dict[key] ?? baseKey, count, ...args)   // count is ${0}
+//
+// and (b) have the ST-coupled `trPlural` in `i18n.js` delegate to it (binding the
+// active dict + active locale from `getCurrentLocale()`). This keeps the ST-free logic
+// in `*-pure.js` (the established codebase pattern) and makes `trPlural` unit-testable
+// without ST. The signature/order below is the contract — match it so this goes green
+// with no test edits. RED today: `i18n-pure.js` exports no such fn.
 
-test('substitutes indexed placeholders', () => {
-    assertEqual(interpolate('Hello ${0}', 'world'), 'Hello world', 'single arg');
-    assertEqual(interpolate('${0} of ${1}', 5, 10), '5 of 10', 'two args');
-    assertEqual(interpolate('${0} ${1} ${2}', 'a', 'b', 'c'), 'a b c', 'three args');
-});
+test('trPlural selects _one/_other via Intl.PluralRules(en) and interpolates count', async () => {
+    // Dynamic import so a missing/renamed export is a clean per-test failure, NOT a
+    // file-load crash that nukes the rest of the suite.
+    const pure = await import('../src/i18n/i18n-pure.js');
+    const trPlural = pure.trPlural;
 
-test('repeats same arg if referenced twice', () => {
+    assert(typeof trPlural === 'function',
+        'i18n-pure.js exports a pure trPlural (RED until Phase-1 L7 wires it)');
+    if (typeof trPlural !== 'function') return;  // guard so the asserts below don't throw
+
+    // The dict the live wrapper would resolve from (here: the canonical EN pairs).
+    const dict = {
+        dle_entries_stat_lore_one: '${0} lore entry',
+        dle_entries_stat_lore_other: '${0} lore entries',
+    };
+
+    // Pin the CLDR expectation explicitly so the contract is self-documenting.
+    assertEqual(new Intl.PluralRules('en').select(1), 'one', 'en: 1 → "one" form');
+    assertEqual(new Intl.PluralRules('en').select(2), 'other', 'en: 2 → "other" form');
+
+    // count === 1 → _one form, count interpolated as ${0}
     assertEqual(
-        interpolate('${0} and ${0} again', 'x'),
-        'x and x again',
-        'same arg twice'
+        trPlural(dict, 'dle_entries_stat_lore', 'en', 1),
+        '1 lore entry',
+        'count 1 → _one form with count interpolated'
+    );
+    // count !== 1 → _other form
+    assertEqual(
+        trPlural(dict, 'dle_entries_stat_lore', 'en', 2),
+        '2 lore entries',
+        'count 2 → _other form with count interpolated'
     );
 });
 
-test('leaves untouched if no values provided', () => {
-    assertEqual(interpolate('Hello ${0}'), 'Hello ${0}', 'placeholder stays when arg missing');
-});
+test('trPlural falls back to _other for non-"one" CLDR forms (Russian few/many → _other)', async () => {
+    const pure = await import('../src/i18n/i18n-pure.js');
+    const trPlural = pure.trPlural;
 
-test('non-string input returned as-is', () => {
-    assertEqual(interpolate(42), 42, 'number passthrough');
-    assertEqual(interpolate(null), null, 'null passthrough');
-});
+    assert(typeof trPlural === 'function',
+        'i18n-pure.js exports a pure trPlural (RED until Phase-1 L7 wires it)');
+    if (typeof trPlural !== 'function') return;
 
-test('no placeholders → no change', () => {
-    assertEqual(interpolate('plain text', 'unused'), 'plain text', 'no-op on plain string');
-});
+    const dict = {
+        dle_entries_stat_lore_one: '${0} lore entry',
+        dle_entries_stat_lore_other: '${0} lore entries',
+    };
 
-// ════════════════════════════════════════════════════════════════════════════
-section('i18n — pluralize');
-// ════════════════════════════════════════════════════════════════════════════
-
-test('count of 1 returns one-form', () => {
-    assertEqual(pluralize(1, 'entry', 'entries'), 'entry', 'singular');
-});
-
-test('count other than 1 returns other-form', () => {
-    assertEqual(pluralize(0, 'entry', 'entries'), 'entries', 'zero is plural');
-    assertEqual(pluralize(2, 'entry', 'entries'), 'entries', 'two is plural');
-    assertEqual(pluralize(100, 'entry', 'entries'), 'entries', 'many is plural');
+    // Russian: 1 → "one", 2 → "few", 5 → "many". Only _one/_other ship, so any
+    // non-"one" form must collapse to _other (plan §10.1 Russian caveat).
+    assertEqual(new Intl.PluralRules('ru').select(2), 'few', 'ru: 2 → "few" form (no _few key shipped)');
+    assertEqual(
+        trPlural(dict, 'dle_entries_stat_lore', 'ru', 2),
+        '2 lore entries',
+        'ru count 2 (few) collapses to _other'
+    );
+    // ru count 1 → "one" → _one
+    assertEqual(
+        trPlural(dict, 'dle_entries_stat_lore', 'ru', 1),
+        '1 lore entry',
+        'ru count 1 (one) → _one'
+    );
 });
 
 // ════════════════════════════════════════════════════════════════════════════

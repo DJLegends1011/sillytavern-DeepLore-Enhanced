@@ -1981,6 +1981,380 @@ test('O5: V-M5 documents Option B trade-off — trackers are not re-keyed', () =
 });
 
 // ============================================================================
+//  P. T-L6a — anchor the fullMentionWeights reference copy to PRODUCTION
+// ============================================================================
+//
+// Why this section exists (thermo-nuclear T1):
+//   The Section-L equivalence tests above compare `incrementalMentionWeights`
+//   against the REFERENCE copy `fullMentionWeights` (in vault-incremental.js).
+//   They never compare against the PRODUCTION full path, which is the
+//   mentionWeights block inside `computeDerivedIndexFields` (src/vault/vault.js,
+//   the `weights === null` branch). If the production block and the reference
+//   copy ever drift, every Section-L "incremental == full" test still passes
+//   while production silently diverges — pure theater.
+//
+//   vault.js imports ST globals (tokenizers.js / openai.js / script.js /
+//   settings.js) and cannot be import()'d in the node harness, AND
+//   `computeDerivedIndexFields` is not exported. So — exactly like the existing
+//   Section M / N / O source-guards — we anchor the reference to production with
+//   a TWO-PART guard:
+//     P1 (behavioral): run the reference `fullMentionWeights` on a FIXED small
+//         vault and assert it equals a hand-derived expected Map. This pins the
+//         reference copy's actual OUTPUT to a known-good ground truth.
+//     P2 (structural): read vault.js source and assert the production
+//         mentionWeights block uses the SAME four algorithm primitives the
+//         reference copy mirrors (trackerKey-keyed identity + last-write-wins
+//         contentLower, the `length <= 3` word-boundary rule, the length-desc
+//         sort, and self-skip by key identity). If production drifts from the
+//         reference's algorithm, P2 fails.
+//   Together: P1 fixes the reference's output to ground truth; P2 fixes
+//   production's algorithm to the reference's. A later fix (R6) collapses the
+//   two into one shared builder, at which point P1 directly guards production.
+//
+// gotcha #55 (hand-sync 3 copies of the mentionWeights algorithm) is exactly
+// the regression class these guards catch.
+
+section('P. T-L6a — anchor fullMentionWeights to production');
+
+test('P1: fullMentionWeights matches hand-derived ground truth for a fixed vault', () => {
+    // Fixed, hand-checkable vault. Identity keys are `vaultSource:title`
+    // (trackerKey / keyOf). Search-terms are title + keys >= 2 chars, lowercased.
+    //   Alpha  (keys: [orb])  content mentions "Beta" twice and "Gamma" once.
+    //   Beta   (keys: [])     content mentions "Alpha" once.
+    //   Gamma  (keys: [ray])  content mentions "Beta" once and "ray" (its own
+    //                         key — but a target self-skips, so Gamma→Gamma is 0;
+    //                         "ray" only matters as Gamma's search-term for OTHER
+    //                         sources).
+    const entries = [
+        makeEntry('Alpha', {
+            vaultSource: 'v1', filename: 'alpha.md', keys: ['orb'],
+            content: 'Alpha greets Beta. Beta nods. Then Gamma arrives.',
+        }),
+        makeEntry('Beta', {
+            vaultSource: 'v1', filename: 'beta.md', keys: [],
+            content: 'Beta remembers Alpha fondly.',
+        }),
+        makeEntry('Gamma', {
+            vaultSource: 'v1', filename: 'gamma.md', keys: ['ray'],
+            content: 'Gamma watched Beta from afar with the ray.',
+        }),
+    ];
+
+    // Hand-derived expected pairs (source\0target → match count):
+    //   Alpha content "alpha greets beta. beta nods. then gamma arrives."
+    //     → target Beta  ("beta"): matches 2  → v1:Alpha\0v1:Beta = 2
+    //     → target Gamma ("gamma"|"ray"): "gamma" matches 1, "ray" 0 → 1
+    //   Beta content "beta remembers alpha fondly."
+    //     → target Alpha ("alpha"|"orb"): "alpha" 1, "orb" 0 → 1
+    //     → target Gamma: 0
+    //   Gamma content "gamma watched beta from afar with the ray."
+    //     → target Alpha: 0
+    //     → target Beta ("beta"): 1 → v1:Gamma\0v1:Beta = 1
+    const expected = new Map([
+        ['v1:Alpha\0v1:Beta', 2],
+        ['v1:Alpha\0v1:Gamma', 1],
+        ['v1:Beta\0v1:Alpha', 1],
+        ['v1:Gamma\0v1:Beta', 1],
+    ]);
+
+    const w = fullMentionWeights(entries);
+    assertEqual(w.size, expected.size, 'reference produces exactly the expected pair count');
+    for (const [key, val] of expected) {
+        assertEqual(w.get(key), val, `reference pair ${key} == ${val}`);
+    }
+    // And no EXTRA pairs leaked beyond the hand-derived set.
+    for (const key of w.keys()) {
+        assert(expected.has(key), `no unexpected reference pair ${key}`);
+    }
+});
+
+test('P2: production computeDerivedIndexFields mention-weights block mirrors the reference algorithm', () => {
+    // vault.js can't be import()'d (ST module imports) — anchor at the source
+    // level, same convention as Sections M/N/O. Isolate the production full-
+    // rebuild block (the `weights === null` branch inside computeDerivedIndexFields)
+    // so we don't accidentally match the incremental call a few lines above it.
+    const src = readFileSync(join(REPO_ROOT, 'src/vault/vault.js'), 'utf8');
+
+    const fnStart = src.indexOf('function computeDerivedIndexFields');
+    assert(fnStart > 0, 'computeDerivedIndexFields located in vault.js');
+    // The full-rebuild branch begins at `if (weights === null)` and runs until
+    // setMentionWeights(weights). Slice that window.
+    const branchStart = src.indexOf('if (weights === null)', fnStart);
+    assert(branchStart > fnStart, 'production full-rebuild branch (weights === null) present');
+    const setIdx = src.indexOf('setMentionWeights(weights)', branchStart);
+    assert(setIdx > branchStart, 'setMentionWeights commit located after full-rebuild branch');
+    const block = src.slice(branchStart, setIdx);
+
+    // 1. IDENTITY/storage keyed by trackerKey (vaultSource:title) — NOT bare title.
+    //    Mirrors keyOf() in vault-incremental.js. The reference & production MUST
+    //    agree on this or cross-vault same-title entries diverge (gotcha #50).
+    assert(/targetNames\.set\(trackerKey\(entry\)/.test(block),
+        'production keys target names by trackerKey (matches reference keyOf)');
+    assert(/contentLower\.set\(trackerKey\(source\)/.test(block),
+        'production keys contentLower by trackerKey (matches reference keyOf)');
+
+    // 2. contentLower pre-populated LAST-WRITE-WINS over `entries` (a flat
+    //    for-loop assigning each source's lowered content). This is the exact
+    //    semantic the reference copy mirrors and the L11 bug (incremental's
+    //    first-write-wins lowerOf) violates. Confirm the production loop assigns
+    //    unconditionally (no `if (!contentLower.has(...))` first-wins guard).
+    assert(/for\s*\(const source of entries\)\s*\{\s*contentLower\.set\(trackerKey\(source\),\s*source\.content\.toLowerCase\(\)\);\s*\}/.test(block),
+        'production pre-populates contentLower last-write-wins over entries (no first-wins guard)');
+
+    // 3. Short-name (length <= 3) word-boundary rule — identical to the
+    //    reference's buildTargetRegex.
+    assert(/name\.length\s*<=\s*3\s*\?\s*`\\\\b\$\{escaped\}\\\\b`\s*:\s*escaped/.test(block),
+        'production word-bounds names of length <= 3 (matches reference buildTargetRegex)');
+
+    // 4. parts sorted longest-first, combined /gi regex — matches reference.
+    assert(/parts\.sort\(\(a,\s*b\)\s*=>\s*b\.length\s*-\s*a\.length\)/.test(block),
+        'production sorts regex parts by descending length (matches reference)');
+    assert(/new RegExp\(parts\.join\('\|'\),\s*'gi'\)/.test(block),
+        'production builds combined /gi regex (matches reference)');
+
+    // 5. Self-skip by KEY identity (targetKey === sourceKey), and weight key is
+    //    `${sourceKey}\0${targetKey}` — the exact storage-key shape the reference
+    //    and all Section-L tests assert against.
+    assert(/if\s*\(targetKey\s*===\s*sourceKey\)\s*continue/.test(block),
+        'production self-skips by key identity (matches reference)');
+    assert(/weights\.set\(`\$\{sourceKey\}\\0\$\{targetKey\}`,\s*count\)/.test(block),
+        'production stores weights under `${sourceKey}\\0${targetKey}` (matches reference key shape)');
+});
+
+// ============================================================================
+//  Q. T-RED L11 — incremental != full when same vaultSource + same title differ
+// ============================================================================
+//
+// RED reproduce-test for review finding L11 (HIGH). It encodes a CURRENT BUG and
+// is SUPPOSED TO FAIL until the L11 fix lands. Do NOT weaken the assertion.
+//
+// Bug: two entries share the same `vaultSource` AND the same `title` (so the
+// same keyOf = `vaultSource:title`) but have a DIFFERENT filename and DIFFERENT
+// content, and both are kept (multiVaultConflictResolution = 'all' — no dedup).
+//   - The PRODUCTION full path pre-populates contentLower LAST-WRITE-WINS
+//     (vault.js: `for (const source of entries) contentLower.set(trackerKey(...),
+//     source.content.toLowerCase())`) → the second duplicate's content wins.
+//   - The INCREMENTAL path memoizes content FIRST-WRITE-WINS via `lowerOf`
+//     (vault-incremental.js ~268-276: `let c = contentLower.get(k); if (c == null)
+//     { c = entry.content.toLowerCase(); ... }`) → the FIRST duplicate's content
+//     wins.
+// So a cold build (full) and a warm build (incremental) scan DIFFERENT source
+// content for that keyOf → mention-ranking drift cold-vs-warm. The equivalence
+// contract (vault-incremental.js header: "byte-identical to a full rebuild")
+// is violated.
+//
+// Because both entries collapse to ONE keyOf, the weights Map can only hold one
+// row/col for that identity — the question is WHOSE content sourced it. Full uses
+// the LAST duplicate's content (last-write-wins); incremental's `lowerOf` uses
+// the FIRST duplicate's content (first-write-wins). We make the two duplicates
+// mention DIFFERENT distinctive targets so the surviving weight key DIFFERS
+// between the two builds. For the divergence to surface, the duplicate identity
+// must be DIRTY (so incremental actually invokes `lowerOf` rather than reusing
+// the seeded prev-weights): the simplest realistic trigger is adding the second
+// duplicate on top of a prev that already holds the first.
+//
+// Observed today (the bug):
+//   full  → { dup:Hero \0 dup:Rival : 1 }   (heroB content wins → mentions Rival)
+//   inc   → { dup:Hero \0 dup:Mentor : 1 }  (heroA content wins → mentions Mentor)
+
+section('Q. T-RED L11 — same vaultSource+title, different content (incremental != full)');
+
+test('L11-RED: incremental mentionWeights == full for same-vault/same-title duplicates', () => {
+    // Distinctive targets: only heroA's content mentions Mentor; only heroB's
+    // content mentions Rival. Whichever content "wins" for keyOf `dup:Hero`
+    // decides which target it scores against.
+    const mentor = makeEntry('Mentor', {
+        vaultSource: 'dup', filename: 'mentor.md', keys: [],
+        content: 'Mentor is a wise teacher.', _contentHash: 'm1',
+    });
+    const rival = makeEntry('Rival', {
+        vaultSource: 'dup', filename: 'rival.md', keys: [],
+        content: 'Rival is a fierce competitor.', _contentHash: 'r1',
+    });
+
+    // Two "Hero" entries: SAME vaultSource ('dup'), SAME title ('Hero'),
+    // DIFFERENT filename + DIFFERENT content. heroA mentions Mentor; heroB
+    // mentions Rival. Both kept side-by-side (multiVaultConflictResolution='all'
+    // — no dedup; the index can legitimately carry both, e.g. before a merge).
+    const heroA = makeEntry('Hero', {
+        vaultSource: 'dup', filename: 'hero-a.md', keys: [],
+        content: 'The Hero trains under Mentor every dawn.', _contentHash: 'ha',
+    });
+    const heroB = makeEntry('Hero', {
+        vaultSource: 'dup', filename: 'hero-b.md', keys: [],
+        content: 'The Hero duels the Rival at dusk.', _contentHash: 'hb',
+    });
+
+    // prev holds heroA (the first duplicate). next ADDS heroB (the second
+    // duplicate, same keyOf). heroB is `added` → DIRTY → incremental scans it via
+    // `lowerOf`, which first-write-wins memoizes the keyOf `dup:Hero` content. The
+    // full path pre-populates contentLower last-write-wins → the two disagree.
+    const prev = [heroA, mentor, rival];
+    const next = [
+        { ...heroA }, { ...heroB }, { ...mentor }, { ...rival },
+    ];
+
+    const fullWeights = fullMentionWeights(next);
+    const diff = diffEntries(prev, next);
+    const incWeights = incrementalMentionWeights(fullMentionWeights(prev), prev, next, diff);
+
+    // Equivalence contract: incremental MUST equal full, byte-for-byte. These are
+    // the assertions that FAIL today — incremental sources heroA's content for the
+    // shared `dup:Hero` identity while full sources heroB's, so the surviving
+    // mention pair (and thus the Map) differs.
+    assertEqual(incWeights.size, fullWeights.size,
+        'L11: incremental pair count must equal full for same-vault/same-title duplicates');
+    for (const [key, val] of fullWeights) {
+        assertEqual(incWeights.get(key), val, `L11: pair ${key} (full=${val}) must match incremental`);
+    }
+    for (const key of incWeights.keys()) {
+        assert(fullWeights.has(key), `L11: incremental must not invent pair ${key} absent from full`);
+    }
+});
+
+// ============================================================================
+//  R. T-L5 — incremental BM25 structural invariants (pin before perf refactor)
+// ============================================================================
+//
+// Phase-2 (L5) will rewrite the incremental BM25 path to CARRY df + totalLen on
+// the index object and mutate them in addDoc/removeDoc instead of rebuilding df
+// from every doc's every term and re-summing totalLen on every call. These
+// tests pin the structural invariants the rewrite must preserve. They PASS today
+// (the current code derives the same OUTPUT), but they guard the contract so the
+// perf refactor can't silently corrupt df / totalLen.
+//
+// The returned index shape is { idf, docs, avgDl, invertedIndex } — df and
+// totalLen are NOT exposed, so we derive them from the public structure:
+//   df(term)  := number of docs whose tf contains term  (== invertedIndex posting size)
+//   totalLen  := sum of doc.len over all docs            (== avgDl * N)
+
+section('R. T-L5 — incremental BM25 df / totalLen invariants');
+
+// Derive df(term) from docs: count docs whose tf Map contains the term.
+function deriveDfFromDocs(index) {
+    const df = new Map();
+    for (const doc of index.docs.values()) {
+        for (const term of doc.tf.keys()) {
+            df.set(term, (df.get(term) || 0) + 1);
+        }
+    }
+    return df;
+}
+
+test('L5-inv1: after incremental update, df(term) === invertedIndex posting size for ALL terms', () => {
+    const prev = buildSyntheticVault(8);
+    const prevIndex = buildBM25Index(prev);
+
+    // Mix of add + remove + modify so removeDoc/addDoc both run.
+    const next = prev.slice(0, 7).map(e => ({ ...e })); // drop last (remove)
+    next[1].content = `Reworked ${next[1].title}: now about phoenix and griffin.`; // modify
+    next[1]._contentHash = 'h1-mod';
+    next.push(makeEntry('Newcomer', {                                              // add
+        filename: 'new.md', vaultSource: 'main', keys: ['fresh'],
+        content: 'Newcomer brings unique tokens quasar and pulsar.',
+        _contentHash: 'hnew',
+    }));
+
+    const diff = diffEntries(prev, next);
+    const incIndex = incrementalBM25Update(prevIndex, diff);
+    assertNotNull(incIndex, 'incremental returned an index');
+
+    const df = deriveDfFromDocs(incIndex);
+    // INVARIANT: df.get(term) === invertedIndex.get(term).size for every term.
+    for (const [term, posting] of incIndex.invertedIndex) {
+        assertEqual(df.get(term), posting.size,
+            `L5-inv1: df(${term}) must equal posting size`);
+    }
+    // And no posting list exists for a term with df 0, and no df-tracked term
+    // lacks a posting list (bijection between df keys and invertedIndex keys).
+    for (const term of df.keys()) {
+        assertNotNull(incIndex.invertedIndex.get(term),
+            `L5-inv1: term ${term} with df>0 has a posting list`);
+    }
+    assertEqual(df.size, incIndex.invertedIndex.size,
+        'L5-inv1: df key set and invertedIndex key set are the same size (bijection)');
+});
+
+test('L5-inv2: after incremental update, totalLen (sum doc.len) === avgDl * N', () => {
+    const prev = buildSyntheticVault(6);
+    const prevIndex = buildBM25Index(prev);
+
+    const next = prev.map(e => ({ ...e }));
+    next[2].content = `Lengthened content for ${next[2].title} with several extra distinct words here.`;
+    next[2]._contentHash = 'h2-mod';
+    next.push(makeEntry('Tail', {
+        filename: 'tail.md', vaultSource: 'main', keys: ['tailkey'],
+        content: 'Tail entry adds words: alpha beta gamma delta.',
+        _contentHash: 'htail',
+    }));
+
+    const diff = diffEntries(prev, next);
+    const incIndex = incrementalBM25Update(prevIndex, diff);
+    assertNotNull(incIndex, 'incremental returned an index');
+
+    let totalLen = 0;
+    for (const doc of incIndex.docs.values()) totalLen += doc.len;
+    const N = incIndex.docs.size;
+    // avgDl === totalLen / N  ⇒  totalLen === avgDl * N. This pins the totalLen
+    // bookkeeping the Phase-2 rewrite will mutate incrementally.
+    assert(Math.abs(incIndex.avgDl * N - totalLen) < 1e-9,
+        'L5-inv2: avgDl * N reproduces summed doc.len (totalLen consistent)');
+});
+
+test('L5-equiv: incremental BM25 == full rebuild for a small mixed delta (df+totalLen+idf)', () => {
+    const prev = buildSyntheticVault(7);
+    const prevIndex = buildBM25Index(prev);
+
+    const next = prev.slice(0, 6).map(e => ({ ...e })); // remove last
+    next[0].content = `Updated ${next[0].title} mentions nebula and comet now.`; // modify
+    next[0]._contentHash = 'h0-mod';
+    next.push(makeEntry('Extra', {                                               // add
+        filename: 'extra.md', vaultSource: 'main', keys: ['extrakey'],
+        content: 'Extra brings supernova and meteor tokens.',
+        _contentHash: 'hextra',
+    }));
+
+    const diff = diffEntries(prev, next);
+    const incIndex = incrementalBM25Update(prevIndex, diff);
+    const fullIndex = buildBM25Index(next);
+    assertNotNull(incIndex, 'incremental returned an index');
+
+    // df equivalence (derived both sides).
+    const incDf = deriveDfFromDocs(incIndex);
+    const fullDf = deriveDfFromDocs(fullIndex);
+    assertEqual(incDf.size, fullDf.size, 'L5-equiv: same df term count');
+    for (const [term, freq] of fullDf) {
+        assertEqual(incDf.get(term), freq, `L5-equiv: df(${term}) matches full`);
+    }
+
+    // totalLen equivalence.
+    let incTotal = 0, fullTotal = 0;
+    for (const doc of incIndex.docs.values()) incTotal += doc.len;
+    for (const doc of fullIndex.docs.values()) fullTotal += doc.len;
+    assertEqual(incTotal, fullTotal, 'L5-equiv: totalLen matches full rebuild');
+    assert(Math.abs(incIndex.avgDl - fullIndex.avgDl) < 1e-9, 'L5-equiv: avgDl matches');
+
+    // idf equivalence (the user-visible consequence of df/N being right).
+    assertEqual(incIndex.idf.size, fullIndex.idf.size, 'L5-equiv: same idf term count');
+    for (const [term, idfVal] of fullIndex.idf) {
+        const incIdf = incIndex.idf.get(term);
+        assertNotNull(incIdf, `L5-equiv: incremental has idf for ${term}`);
+        assert(Math.abs(incIdf - idfVal) < 1e-9, `L5-equiv: idf(${term}) matches full`);
+    }
+    // invertedIndex equivalence.
+    assertEqual(incIndex.invertedIndex.size, fullIndex.invertedIndex.size,
+        'L5-equiv: same inverted-index term count');
+    for (const [term, posting] of fullIndex.invertedIndex) {
+        const incPosting = incIndex.invertedIndex.get(term);
+        assertNotNull(incPosting, `L5-equiv: incremental has posting for ${term}`);
+        assertEqual(incPosting.size, posting.size, `L5-equiv: posting size for ${term}`);
+        for (const docId of posting) {
+            assert(incPosting.has(docId), `L5-equiv: posting[${term}] includes ${docId}`);
+        }
+    }
+});
+
+// ============================================================================
 // Summary
 // ============================================================================
 
