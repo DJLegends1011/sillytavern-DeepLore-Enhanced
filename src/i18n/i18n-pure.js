@@ -5,7 +5,7 @@
  * The ST-integrated loader lives in `i18n.js` and re-uses these.
  */
 
-export const SUPPORTED_LOCALES = ['en', 'es-es', 'fr-fr', 'de-de', 'ja-jp', 'zh-cn'];
+export const SUPPORTED_LOCALES = ['en', 'es-es', 'fr-fr', 'de-de', 'ja-jp', 'zh-cn', 'ru-ru'];
 
 /**
  * Resolve a locale request to one we ship. Falls back through:

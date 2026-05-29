@@ -28,14 +28,15 @@ import { test, section, summary, assert, assertEqual, assertArrayEquals } from '
 section('i18n — SUPPORTED_LOCALES shape');
 // ════════════════════════════════════════════════════════════════════════════
 
-test('SUPPORTED_LOCALES has expected 6 entries', () => {
-    assertEqual(SUPPORTED_LOCALES.length, 6, 'six locales (en + 5 translations)');
+test('SUPPORTED_LOCALES has expected 7 entries', () => {
+    assertEqual(SUPPORTED_LOCALES.length, 7, 'seven locales (en + 6 translations)');
     assert(SUPPORTED_LOCALES.includes('en'), 'has en');
     assert(SUPPORTED_LOCALES.includes('es-es'), 'has es-es');
     assert(SUPPORTED_LOCALES.includes('fr-fr'), 'has fr-fr');
     assert(SUPPORTED_LOCALES.includes('de-de'), 'has de-de');
     assert(SUPPORTED_LOCALES.includes('ja-jp'), 'has ja-jp');
     assert(SUPPORTED_LOCALES.includes('zh-cn'), 'has zh-cn');
+    assert(SUPPORTED_LOCALES.includes('ru-ru'), 'has ru-ru');
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -49,6 +50,7 @@ test('exact match returns input', () => {
     assertEqual(resolveLocale('de-de'), 'de-de', 'de-de');
     assertEqual(resolveLocale('ja-jp'), 'ja-jp', 'ja-jp');
     assertEqual(resolveLocale('zh-cn'), 'zh-cn', 'zh-cn');
+    assertEqual(resolveLocale('ru-ru'), 'ru-ru', 'ru-ru');
 });
 
 test('case-insensitive match', () => {
@@ -63,11 +65,12 @@ test('base-lang fallback', () => {
     assertEqual(resolveLocale('de'), 'de-de', 'de → de-de');
     assertEqual(resolveLocale('ja'), 'ja-jp', 'ja → ja-jp');
     assertEqual(resolveLocale('zh'), 'zh-cn', 'zh → zh-cn');
+    assertEqual(resolveLocale('ru'), 'ru-ru', 'ru → ru-ru');
 });
 
 test('unsupported region falls back to en', () => {
     assertEqual(resolveLocale('pt-br'), 'en', 'pt-br → en (Portuguese unsupported)');
-    assertEqual(resolveLocale('ru-ru'), 'en', 'ru-ru → en (Russian unsupported)');
+    assertEqual(resolveLocale('it-it'), 'en', 'it-it → en (Italian unsupported)');
     assertEqual(resolveLocale('ko-kr'), 'en', 'ko-kr → en (Korean unsupported)');
 });
 
@@ -117,7 +120,7 @@ test('falls through to en when all empty/unsupported', () => {
         'all empty → en'
     );
     assertEqual(
-        resolveAiPromptLocale({ settingValue: 'pt-br', override: 'ru-ru', uiLocale: 'ko-kr' }),
+        resolveAiPromptLocale({ settingValue: 'pt-br', override: 'it-it', uiLocale: 'ko-kr' }),
         'en',
         'all unsupported → en'
     );
@@ -371,10 +374,10 @@ test('no ternary expressions leaked into values', () => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
-section('i18n — all 5 translation locale files exist + parse');
+section('i18n — all 6 translation locale files exist + parse');
 // ════════════════════════════════════════════════════════════════════════════
 
-const TRANSLATION_LOCALES = ['es-es', 'fr-fr', 'de-de', 'ja-jp', 'zh-cn'];
+const TRANSLATION_LOCALES = ['es-es', 'fr-fr', 'de-de', 'ja-jp', 'zh-cn', 'ru-ru'];
 
 for (const loc of TRANSLATION_LOCALES) {
     test(`locales/dle.${loc}.json exists, parses, has __meta`, () => {
