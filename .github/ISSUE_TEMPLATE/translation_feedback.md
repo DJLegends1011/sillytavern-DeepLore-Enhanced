@@ -9,7 +9,7 @@ assignees: ''
 <!-- See https://github.com/pixelnull/sillytavern-DeepLore-Enhanced/wiki/Contributing-Translations for context. -->
 
 ## Locale
-<!-- One of: es-es, fr-fr, de-de, ja-jp, zh-cn -->
+<!-- One of: es-es, fr-fr, de-de, ja-jp, zh-cn, ru-ru -->
 
 ## Key
 <!-- The i18n key name from locales/dle.{locale}.json or src/i18n/prompts/{locale}.js -->

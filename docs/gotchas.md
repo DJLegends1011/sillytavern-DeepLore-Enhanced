@@ -626,7 +626,7 @@ Branch-specific risks: the `proseMsg` branch (b) is partially-safe because `pros
 
 ## 47. i18n Hooks Into ST's Built-in System — Do Not Roll Your Own
 
-**Rule:** All UI translation goes through `src/i18n/i18n.js` which wraps ST's `addLocaleData()` / `t``\` / `translate()` / `getCurrentLocale()` from `public/scripts/i18n.js`. Locale dicts live at `locales/dle.{lang}.json` (UI) and `src/i18n/prompts/{lang}.js` (AI-facing). English is canonical; the five translations (es-es, fr-fr, de-de, ja-jp, zh-cn) are machine-translated and refined by the community.
+**Rule:** All UI translation goes through `src/i18n/i18n.js` which wraps ST's `addLocaleData()` / `t``\` / `translate()` / `getCurrentLocale()` from `public/scripts/i18n.js`. Locale dicts live at `locales/dle.{lang}.json` (UI) and `src/i18n/prompts/{lang}.js` (AI-facing). English is canonical; the six translations (es-es, fr-fr, de-de, ja-jp, zh-cn, ru-ru) are machine-translated and refined by the community.
 
 **Why (v2.5 i18n rollout, 2026-05-22):** ST already has a `data-i18n="key"` MutationObserver that auto-translates injected DOM as soon as a key matches its locale dict. Rolling our own observer would (1) double-fire on every node ST already handles, (2) miss the ST-shipped UI chrome around our extension, and (3) force a second locale-switcher UI. Hooking ST's system means a user who switches ST to Spanish gets DLE in Spanish "for free" — no separate setting, no second reload.
 

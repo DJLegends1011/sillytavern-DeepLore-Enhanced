@@ -12,7 +12,7 @@
 ![Version](https://img.shields.io/badge/version-2.5.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![SillyTavern](https://img.shields.io/badge/SillyTavern-1.12.14+-orange)
-[![i18n](https://img.shields.io/badge/i18n-EN%20%7C%20ES%20%7C%20FR%20%7C%20DE%20%7C%20JA%20%7C%20ZH-purple)](https://github.com/pixelnull/sillytavern-DeepLore-Enhanced/wiki/Contributing-Translations)
+[![i18n](https://img.shields.io/badge/i18n-EN%20%7C%20ES%20%7C%20FR%20%7C%20DE%20%7C%20JA%20%7C%20ZH%20%7C%20RU-purple)](https://github.com/pixelnull/sillytavern-DeepLore-Enhanced/wiki/Contributing-Translations)
 
 [**Live demo →**](https://pixelnull.github.io/sillytavern-DeepLore-Enhanced/) · [Wiki](https://github.com/pixelnull/sillytavern-DeepLore-Enhanced/wiki)
 

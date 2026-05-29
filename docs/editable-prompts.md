@@ -24,7 +24,7 @@ src/prompts/
 
 src/ui/prompts-tab.js        — Settings popup Prompts tab (handlers, status grid, bulk-delete)
 
-src/i18n/prompts/{locale}.js — Canonical prompt dicts (en is canonical; 5 machine-translated)
+src/i18n/prompts/{locale}.js — Canonical prompt dicts (en is canonical; 6 machine-translated)
 
 test/prompts-delete-safety.test.mjs — 225 assertions for the cage
 test/prompts-store.test.mjs         — 269 assertions for resolver + overlay + status

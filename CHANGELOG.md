@@ -14,9 +14,9 @@ All notable changes to DeepLore Enhanced are documented here. This file follows
 
 ### Added
 
-#### Internationalization (6 locales)
+#### Internationalization (7 locales)
 
-- **6 locales out of the box** — English (canonical) plus German, Spanish, French, Japanese, Simplified Chinese. UI strings (~2100 keys) and AI prompts (30 modules) both translated. Coverage: 95.8–97.3% UI per locale, 100% AI prompts. Hooks ST's built-in `addLocaleData()` + `data-i18n` MutationObserver — no custom layer.
+- **7 locales out of the box** — English (canonical) plus German, Spanish, French, Japanese, Simplified Chinese, Russian. UI strings (~2292 keys) and AI prompts (30 modules) both translated. Coverage: 95.8–97.3% UI per locale, 100% AI prompts. Hooks ST's built-in `addLocaleData()` + `data-i18n` MutationObserver — no custom layer.
 - **AI prompt locale is a separate axis** — defaults to follow UI locale, can be pinned to English if you don't trust machine translations to preserve LLM behavior. Setting: `aiPromptLocale`.
 - **Placeholder validator with unique-index semantics** — `${0}` and `${1}` indexed only; re-references like `${0} ... ${0}` count as one index so translators can match grammatical agreement (ES adjective/noun, etc.) without tripping validation.
 
@@ -78,7 +78,7 @@ All notable changes to DeepLore Enhanced are documented here. This file follows
 - **Queue-based async runner** for the integration suite — no more flaky ordering on slow CI.
 - **VRD-1..VRD-12 regression guards** for the Verdict refactor, including Wave C P1 prune sampling and bounded-cursor invariants.
 - **PERF-P2-1..PERF-P2-5** for the exemption-policy cache.
-- **i18n parity tests** across all 5 translations: key-count match, key-set match, placeholder preservation, AI prompt-module export contract.
+- **i18n parity tests** across all 6 translations: key-count match, key-set match, placeholder preservation, AI prompt-module export contract.
 - **WI-import parity** — full-parity fixture + 84 `wi-import.test.mjs` assertions + 6 `WI-PARITY` regression guards (Tier A native, Tier C round-trip, EM subheader, no-silent-drop contract).
 - **Coverage backfill** for `cmrsResultToText` edges, `comparePriority` ([#16](https://github.com/pixelnull/sillytavern-DeepLore-Enhanced/issues/16)), `resetAiCircuitBreaker` (PR [#28.1](https://github.com/pixelnull/sillytavern-DeepLore-Enhanced/pull/28)), `summarize`, caveman extras, BUG-043 round-trip, pin invariants.
 
