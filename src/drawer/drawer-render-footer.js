@@ -144,7 +144,12 @@ export function renderFooter() {
             const isoTime = time.toISOString();
             feedHtml += `<div class="dle-activity-row">`;
             feedHtml += `<span class="dle-activity-time" title="${isoTime}">${timeStr}</span>`;
-            feedHtml += `<span class="dle-activity-mode">${a.mode}</span>`;
+            // D3 (v2.5 Wave 3): this is the run OUTCOME (Keywords / AI / Fallback), NOT the
+            // configured search mode shown in the header stat. "ran as" + the title disambiguate
+            // the two so one word ("mode") stops meaning two things. (a.mode = legacy in-memory
+            // fallback; activityLog is never persisted so old-shape rows are transient.)
+            const outcome = a.outcome ?? a.mode ?? '';
+            feedHtml += `<span class="dle-activity-outcome" title="Outcome — how lore selection resolved this run (independent of the configured search mode in the header)">ran as ${outcome}</span>`;
             let detail = `${a.injected} entr${a.injected === 1 ? 'y' : 'ies'}, ${formatTokensCompact(a.tokens)} tok`;
             if (a.folderFilter?.length) detail += ` [${a.folderFilter.length} folder${a.folderFilter.length !== 1 ? 's' : ''}]`;
             feedHtml += `<span>${detail}</span>`;
@@ -210,18 +215,21 @@ export function renderFooter() {
         const ageMs = Date.now() - indexTimestamp;
         const cacheTTL = (settings.cacheTTL || 300) * 1000;
         const ageSecs = Math.round(ageMs / 1000);
-        if (ageMs < cacheTTL) {
-            const cacheLabel = `Cache: fresh (${ageSecs} seconds old, ${vaultIndex.length} entries)`;
-            $cache.removeClass('dle-health-warn dle-health-error').addClass('dle-health-ok');
-            $cache.attr('aria-label', cacheLabel).attr('title', cacheLabel);
-        } else {
-            const cacheLabel = `Cache: stale (${ageSecs} seconds old, ${vaultIndex.length} entries) — click to view cache status`;
-            $cache.removeClass('dle-health-ok dle-health-error').addClass('dle-health-warn');
-            $cache.attr('aria-label', cacheLabel).attr('title', cacheLabel);
-        }
+        // D2 (v2.5 Wave 3): cache age is NEVER a warning. Past-TTL is a benign self-healing
+        // state — ensureIndexFresh refreshes it on the next generation. Both fresh and aged are
+        // green (healthy); the distinction lives in the tooltip, not the color. The old "stale"
+        // alarm copy + orange were dropped per the signal vocabulary (ORANGE = genuine attention
+        // needed, not "self-heals next gen"). See docs/gotchas.md #75.
+        const cacheLabel = ageMs < cacheTTL
+            ? `Cache: fresh (${ageSecs} seconds old, ${vaultIndex.length} entries)`
+            : `Cache: ready (${ageSecs} seconds old, ${vaultIndex.length} entries) — refreshes automatically on next generation`;
+        $cache.removeClass('dle-health-warn dle-health-error').addClass('dle-health-ok');
+        $cache.attr('aria-label', cacheLabel).attr('title', cacheLabel);
     } else if (vaultIndex.length > 0) {
-        const cacheLabel = `Cache: loaded from storage (${vaultIndex.length} entries, not yet refreshed)`;
-        $cache.removeClass('dle-health-ok dle-health-error').addClass('dle-health-warn');
+        // D2: an IDB-hydrated index (loaded from storage, awaiting first refresh) is also
+        // benign/OK — not a warning. Green with neutral copy.
+        const cacheLabel = `Cache: loaded from storage (${vaultIndex.length} entries) — refreshes on next generation`;
+        $cache.removeClass('dle-health-warn dle-health-error').addClass('dle-health-ok');
         $cache.attr('aria-label', cacheLabel).attr('title', cacheLabel);
     } else {
         $cache.removeClass('dle-health-ok dle-health-warn dle-health-error');

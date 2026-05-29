@@ -1226,6 +1226,13 @@ button.dle-chip-x:hover {
     border-bottom: 1px solid var(--dle-border);
 }
 
+/* D4 (v2.5 Wave 3): quick-actions toolbar lives in its own zone, lifted out of the
+   role="status" live region. Horizontal padding matches the status box (space-3) so the
+   buttons stay visually aligned under it; the row keeps its own flex layout below. */
+.dle-zone-actions {
+    padding: var(--dle-space-2) var(--dle-space-3);
+}
+
 .dle-action-row {
     display: flex;
     gap: var(--dle-space-1);
@@ -2060,7 +2067,8 @@ button.dle-browse-block.dle-block-active {
     .dle-zone-status .dle-token-bar-container,
     .dle-zone-status .dle-entries-bar-container,
     .dle-zone-status .dle-active-filters,
-    .dle-zone-status .dle-action-row {
+    /* D4: the action toolbar now lives in its own zone (lifted out of .dle-zone-status). */
+    .dle-zone-actions {
         display: none;
     }
     .dle-zone-status {
@@ -2391,6 +2399,22 @@ button.dle-browse-block.dle-block-active {
     font-size: var(--dle-text-xs);
     color: var(--dle-text-muted);
     font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+/* D5 (v2.5 Wave 3): session-scope marker. A small uppercase divider chip that flags the AI
+   stats as session-cumulative (all chats) so they don't read as this-chat next to the per-chat
+   health icons. Quieter than the figures it labels. */
+.dle-ai-stats-scope {
+    font-size: var(--dle-text-xs);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--dle-text-muted);
+    opacity: 0.7;
+    padding-right: 6px;
+    margin-right: 2px;
+    border-right: 1px solid var(--dle-border);
     white-space: nowrap;
 }
 

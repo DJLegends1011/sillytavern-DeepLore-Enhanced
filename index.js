@@ -1142,13 +1142,16 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
             // the verdict's epoch/lockEpoch tag carries the same staleness signal forward.
             if (epoch === chatEpoch && lockEpoch === generationLockEpoch) {
                 const aiUsed = trace.aiSelected?.length > 0;
-                const modeLabel = trace.mode === 'keywords-only' ? 'Keywords'
+                // D3 (v2.5 Wave 3): this is the run OUTCOME, not the configured mode. Field
+                // renamed mode→outcome so the activity feed stops colliding with the header
+                // "mode" stat (configured Two-Stage/AI Only/Keywords). See docs/gotchas.md #75.
+                const outcomeLabel = trace.mode === 'keywords-only' ? 'Keywords'
                     : aiUsed ? (trace.aiFallback ? 'Fallback' : 'AI')
                     : 'Keywords';
                 pushActivity({
                     ts: Date.now(),
                     injected: trace.injected?.length || 0,
-                    mode: modeLabel,
+                    outcome: outcomeLabel,
                     tokens: trace.totalTokens || 0,
                     folderFilter: trace.folderFilter?.folders || null,
                 });

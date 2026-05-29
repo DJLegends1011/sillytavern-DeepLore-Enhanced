@@ -1214,3 +1214,35 @@ The drawer status dot (`.dle-status-dot`) and the phase-text surfaces were two-a
 **C2 — health off the glyph.** The dot no longer adds `STATUS_CLASSES[status]` colors or the `dle-status-changed` transition pulse. `computeOverallStatus` is kept ONLY to drive the SR-only `announceToScreenReader('Status: …')` live-region signal (a11y, not a visible color). All *visible* system health lives in the footer health icons (vault/connection/pipeline/cache/ai). The dot's tooltip is now activity-oriented ("DeepLore activity: <label> — click for full status"), not "System status: …". Don't put health color back on the glyph.
 
 **C3 — ONE canonical phase→label map, set by phase KEY.** `state.PIPELINE_PHASE_LABELS` + `pipelineLabelFor(phase)` are the single source of truth for BOTH the chat toast (`#dle-pipeline-status` via `_updatePipelineStatus`) and the drawer `.dle-pipeline-label`. The fragile `text.includes('Consulting')` sniff in `index.js` (which broke if the label was relabeled or localized) is gone: `runPipeline`'s `onStatus` callback now receives a **phase key** (`'prefilter'`, `'consulting'`), and `_pipelineOnStatus` does `setPipelinePhase(key); _updatePipelineStatus(pipelineLabelFor(key))`. **Contract:** never infer pipeline phase by matching display text — set the phase deterministically with a key, derive the label from the map. The NEW `prefilter` phase ("Narrowing categories…") is emitted in `pipeline.js` only when `settings.hierarchicalPreFilter` is true (otherwise it would flicker for a no-op). Sub-second stages (gating/dedup/formatAndGroup) get NO phase — they'd only flicker — so they inherit the prior phase's label. The agentic-loop search status keeps its dynamic `(n/m)` progress but uses the canonical "Searching vault…" prefix so its phase still resolves via `startsWith('Searching')`.
+
+## 75. Signal-vocabulary color lock + IA coherence — one word, one meaning; one color, one meaning (v2.5 Wave 3, 2026-05-29)
+
+Wave 3 (D1–D5) closed the vocabulary/IA gaps left after the token-truth (Wave 1) and glyph (Wave 2) waves. The contract is `audit/v2.5-drawer-header-footer/FIX-CONTRACT.md`. Reviewers reject violations of the table below.
+
+**D1 — the locked color/signal vocabulary (canonical).** Every red/orange/green/neutral surface in the drawer MUST map to exactly one of these meanings:
+
+| Signal | Means | Does NOT mean |
+|---|---|---|
+| **RED** (+ hatch/glow) | Earned alarm: footer context window near overflow (used+reserved → max), or genuine fault (Obsidian unreachable, AI breaker open, vault errors). | Hitting a header cap you configured. **Header bars never go red.** |
+| **ORANGE / ⚠** | Genuine attention needed (real warnings). | A self-healing state (cache past TTL, IDB-hydrated). "You hit your own limit." |
+| **GREEN** | Healthy / connected (footer health icons + status). | Header bar fill (not a 4th meaning). |
+| **Header bar fill** | Calm NEUTRAL gray, always. "Full" = the limiter working, shown calmly. | Good (green) or bad (red). |
+| **Reserved-for-reply** | Distinct ghosted + hatched segment. | The "used" fill. Never counted as consumed. |
+
+**Audit result (every color site checked against the table):**
+- Footer health icons (vault / connection / pipeline / cache / ai): ok=green, warn=orange, error=red — genuine health. ✓
+- Footer context bar: `.dle-context-high` (orange ≥85%), `.dle-context-critical` (red ≥95%), threshold on used+reserved — earned overflow. ✓ (Wave 1 A3)
+- Header token + entries bars: neutral fill, hazard classes only ever removed, never added. ✓ (Wave 1 B1/B4)
+- Reasoning-effort misconfig chip: orange — genuine attention. ✓
+- Status glyph: no color (activity-only spinner / idle icon). ✓ (Wave 2 C2)
+- Setup banner: blue/info tint — informational, outside the red/orange/green health axis. ✓ (acceptable)
+- **Cache "stale" / IDB-hydrated → were orange; FIXED to green (D2 below).**
+- **Known borderline left as-is:** the AI health icon shows orange for "enabled but no calls yet" (`drawer-render-footer.js`). That is a benign pre-first-use state by the same logic as the cache fix — a candidate for neutralizing, but D2's contract scope named only the cache states, so it was intentionally NOT changed this wave. Flag if the same neutral treatment is wanted.
+
+**D2 — cache age is NEVER a warning.** `drawer-render-footer.js` cache health: a past-TTL index and an IDB-hydrated-not-yet-refreshed index are both **green** now (`dle-health-ok`), not orange. Both self-heal — `ensureIndexFresh` refreshes on the next generation. The "stale" alarm word was removed from the copy; fresh-vs-aged distinction lives in the tooltip only. Do NOT re-add `dle-health-warn` for cache age.
+
+**D3 — "mode" is the configured search mode; the activity feed shows the run OUTCOME.** The header `[data-stat="mode"]` stat is the configured mode (Two-Stage / AI Only / Keywords, from `MODE_LABELS`). The footer activity-feed field was also called `mode` but actually held the run outcome (Keywords / AI / Fallback) — one word, two meanings. The `pushActivity({...})` field was renamed `mode` → `outcome` (`index.js`), and the feed renders it as "ran as <outcome>" with a disambiguating title (`drawer-render-footer.js`, class `.dle-activity-outcome`). `activityLog` is in-memory only (never persisted), so there is no migration; the renderer keeps an `a.outcome ?? a.mode` fallback purely for transient in-flight rows. `trace.mode` (the configured mode used to derive the outcome) is unchanged.
+
+**D4 — the quick-actions toolbar is OUT of the `role="status"` live region.** `drawer.html`: the 7-button `.dle-action-row` was a child of `#dle-drawer-status` (`role="status"` ⇒ implicit `aria-live="polite"`), so button label changes (e.g. "Skip Librarian" → "Skipping Next") were announced as status. It now lives in its own sibling zone `#dle-drawer-actions.dle-zone-actions` between the status zone and the divider. The status zone stays a passive readout. **Event wiring is unaffected**: `wireStatusActions` delegates `click`/`keydown` for `.dle-action-btn[data-action]` from the `$drawer` root, not from the status zone, so the relocation is transparent. The `@container (max-height: 250px)` collapse rule was updated from `.dle-zone-status .dle-action-row` to `.dle-zone-actions` (the row no longer lives under `.dle-zone-status`). Do NOT move interactive controls back into a `role="status"`/`aria-live` region.
+
+**D5 — AI stats are session-scoped, and now say so visibly.** The footer `.dle-ai-stats` figures (calls / cached / tokens) are cumulative for the browser session across ALL chats (reset on reload), sitting right next to per-chat health icons — they read as "this chat" without a marker. A visible uppercase "SESSION" divider chip (`.dle-ai-stats-scope`) now precedes them. It is a plain English literal (NOT `data-i18n`), matching the dynamically-rendered stat text (also non-i18n) and deliberately avoiding all-locale parity churn (`test/i18n.test.mjs` key-set match) for a single word. The render path only touches `[data-ai-stat=...]` spans, so the static scope chip is never overwritten.

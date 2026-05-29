@@ -35,7 +35,17 @@
     <!-- Active gating filters (only shown when set) -->
     <div class="dle-active-filters" aria-label="Active gating filters"></div>
 
-    <!-- Quick actions -->
+    <!-- Active gating filters end the status (passive readout) zone. Quick actions moved below. -->
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     ZONE 1b: Quick Actions — D4 (v2.5 Wave 3): lifted OUT of the role="status"
+     aria-live region above, so button label changes (e.g. "Skip Librarian" →
+     "Skipping Next") are NOT announced as status. The status zone stays a passive
+     readout. Handlers delegate from the $drawer root (wireStatusActions), so the
+     relocation is transparent to event wiring. See docs/gotchas.md #75.
+     ═══════════════════════════════════════════════════════════════════════════ -->
+<div id="dle-drawer-actions" class="dle-zone-actions">
     <div class="dle-action-row" role="toolbar" aria-label="Quick actions" aria-orientation="horizontal">
         <button type="button" class="menu_button menu_button_icon dle-action-btn dle-action-btn-labeled" data-action="refresh" title="Reload lore from Obsidian" aria-label="Reload lore from Obsidian" data-i18n="[title]dle_refresh_tooltip;[aria-label]dle_refresh_tooltip">
             <i class="fa-solid fa-sync" aria-hidden="true"></i>
@@ -484,6 +494,12 @@
             </button>
         </div>
         <div class="dle-ai-stats" aria-label="AI search session statistics — cumulative for this browser session, not per-chat" data-i18n="[aria-label]dle_drawer_ai_stats_aria">
+            <!-- D5 (v2.5 Wave 3): visible scope marker. These figures are session-cumulative
+                 across ALL chats (reset on reload), NOT this chat — without the label they read
+                 as "this chat" next to the per-chat health icons. Plain English literal (matches
+                 the dynamically-rendered stat text, which is also non-i18n), so it adds no
+                 all-locale parity churn. See docs/gotchas.md #75. -->
+            <span class="dle-ai-stats-scope" title="Session totals — cumulative across all chats this browser session (reset on reload), not the current chat">Session</span>
             <span class="dle-ai-stat" data-ai-stat="calls" title="AI search calls made this browser session — resets when you reload" data-i18n="[title]dle_drawer_ai_stat_calls_tooltip">0 calls</span>
             <span class="dle-ai-stat" data-ai-stat="cached" title="Times AI search reused previous results instead of calling the API" data-i18n="[title]dle_drawer_ai_stat_cached_tooltip">0 cached</span>
             <span class="dle-ai-stat" data-ai-stat="tokens" title="Total tokens used by AI search this session" data-i18n="[title]dle_drawer_ai_stat_tokens_tooltip">0 tokens</span>
