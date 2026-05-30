@@ -220,13 +220,20 @@ export function computePromptStatus({ bodyHash, sourceHash, canonicalHash }) {
 }
 
 /**
- * Normalize a parsed body for hash + storage.
+ * Normalize a parsed body **for hashing only**.
  *
  * The frontmatter parser consumes the closing `---` and one trailing newline,
  * leaving a leading blank line in the body when the file used the canonical
- * `---\n\nBody` shape (which `buildPromptFileContent` produces). Strip up to
- * one leading newline so a freshly exported file's resolved body byte-equals
- * the canonical dict value.
+ * `---\n\nBody` shape (which `buildPromptFileContent` produces). This strips
+ * up to one leading newline AND all trailing whitespace so a freshly exported
+ * file's body hashes identically to the canonical dict value — that's what
+ * powers stable status detection (current_default vs customized).
+ *
+ * IMPORTANT: this is the HASH-side normalization. It is intentionally lossy
+ * (trailing whitespace is discarded), so it MUST NOT be used to derive the
+ * value delivered to the LLM — that would silently mutate a user's prompt.
+ * Use `stripBodyShimNewline` for the runtime-delivered body, which preserves
+ * trailing whitespace. See `buildPromptOverlay` for the split.
  *
  * @param {string} body
  * @returns {string}
@@ -238,6 +245,27 @@ export function normalizePromptBody(body) {
     // newline that the same builder appends). This keeps hash comparison
     // stable for unedited exports while still detecting genuine content edits.
     return body.replace(/^\r?\n/, '').replace(/\s+$/, '');
+}
+
+/**
+ * Strip ONLY the leading shim newline from a parsed body, preserving the body
+ * otherwise byte-for-byte (including any trailing whitespace the author put
+ * there on purpose).
+ *
+ * This is the DELIVERY-side counterpart to `normalizePromptBody`. The
+ * frontmatter parser leaves one leading blank line after the closing `---`
+ * for the canonical `---\n\nBody` shape; that artifact is removed here, but —
+ * unlike the hash-side normalizer — trailing whitespace is left intact so the
+ * runtime sends the user's prompt verbatim. The cache stores this value;
+ * `bodyHash` is still derived from `normalizePromptBody` so status detection
+ * is unaffected by trailing-whitespace differences.
+ *
+ * @param {string} body
+ * @returns {string}
+ */
+export function stripBodyShimNewline(body) {
+    if (typeof body !== 'string') return '';
+    return body.replace(/^\r?\n/, '');
 }
 
 /**
@@ -328,14 +356,20 @@ export function buildPromptOverlay(localeDict, overrides, acceptedKeys, enDict) 
             continue;
         }
 
-        // Override valid — use vault body (normalized), derive status from three hashes.
-        const normalizedBody = normalizePromptBody(parsed.body);
-        const bodyHash = promptHash(normalizedBody);
+        // Override valid — derive status from three hashes, but split hashing
+        // from delivery. The hash is computed from the lossy `normalizePromptBody`
+        // (trailing whitespace stripped) so an unedited export still reads as
+        // current_default; the cache stores the delivery body with only the
+        // leading shim newline removed, so the runtime sends the author's prompt
+        // verbatim (trailing whitespace preserved). See gotcha #70 + the
+        // normalizePromptBody / stripBodyShimNewline docs.
+        const bodyHash = promptHash(normalizePromptBody(parsed.body));
+        const deliveryBody = stripBodyShimNewline(parsed.body);
         const sourceHash = typeof parsed.frontmatter.source_hash === 'string' && parsed.frontmatter.source_hash
             ? parsed.frontmatter.source_hash
             : null;
         const status = computePromptStatus({ bodyHash, sourceHash, canonicalHash });
-        resolved.set(key, normalizedBody);
+        resolved.set(key, deliveryBody);
         meta.set(key, {
             source: 'vault',
             bodyHash,

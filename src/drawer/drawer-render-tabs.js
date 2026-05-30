@@ -961,6 +961,50 @@ export function renderGatingTab() {
         }
     }
 
+    // Precompute per-field exclusion counts in a SINGLE pass over vaultIndex instead of one
+    // vaultIndex.filter() per field (O(fields×entries) → O(entries)). Only fields with an active
+    // gating value contribute a count; the predicate per field is identical to the inline filters
+    // below (non-multi: entry's value present but != active; multi: entry's value(s) set but no
+    // overlap with the active selection). Keyed by fd.name → count of excluded entries.
+    const excludedCounts = new Map();
+    const activeFields = [];
+    for (const fd of fieldDefs) {
+        if (!fd.gating?.enabled) continue;
+        const value = ctx ? ctx[fd.contextKey] : null;
+        if (fd.multi) {
+            if (value && value.length > 0) {
+                activeFields.push({ name: fd.name, multi: true, activeSet: new Set(value.map(c => c.toLowerCase())) });
+                excludedCounts.set(fd.name, 0);
+            }
+        } else if (value) {
+            activeFields.push({ name: fd.name, multi: false, valueLower: value.toLowerCase() });
+            excludedCounts.set(fd.name, 0);
+        }
+    }
+    if (activeFields.length > 0) {
+        for (const e of vaultIndex) {
+            const cf = e.customFields;
+            if (!cf) continue;
+            for (const af of activeFields) {
+                const val = cf[af.name];
+                if (!val || (Array.isArray(val) && val.length === 0)) continue;
+                let excluded;
+                if (af.multi) {
+                    // entry has value(s) set but none overlap the active selection
+                    excluded = Array.isArray(val)
+                        ? !val.some(v => af.activeSet.has(v.toLowerCase()))
+                        : !af.activeSet.has(String(val).toLowerCase());
+                } else {
+                    // entry has a value but it doesn't match the active value
+                    excluded = Array.isArray(val)
+                        ? !val.some(v => v.toLowerCase() === af.valueLower)
+                        : String(val).toLowerCase() !== af.valueLower;
+                }
+                if (excluded) excludedCounts.set(af.name, excludedCounts.get(af.name) + 1);
+            }
+        }
+    }
+
     for (const fd of fieldDefs) {
         if (!fd.gating?.enabled) continue;
         const $group = $drawer.find(`.dle-gating-group[data-field="${fd.name}"]`);
@@ -973,13 +1017,8 @@ export function renderGatingTab() {
         if (!fd.multi) {
             if (value) {
                 $setBtn.before(`<span class="dle-chip">${escapeHtml(value)} <button class="dle-chip-x" data-field="${escapeHtml(fd.name)}" data-value="${escapeHtml(value)}" aria-label="Remove ${escapeHtml(value)}"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button></span><button class="dle-gating-clear-btn" type="button" data-action="clear-gating-field" data-field="${escapeHtml(fd.name)}" aria-label="Clear ${escapeHtml(fd.label)}">×</button>`);
-                // Impact count: entries with this field set that don't match the active value.
-                const filtered = vaultIndex.filter(e => {
-                    const val = e.customFields?.[fd.name];
-                    if (!val || (Array.isArray(val) && val.length === 0)) return false;
-                    if (Array.isArray(val)) return !val.some(v => v.toLowerCase() === value.toLowerCase());
-                    return String(val).toLowerCase() !== value.toLowerCase();
-                }).length;
+                // Impact count: entries with this field set that don't match the active value (precomputed above).
+                const filtered = excludedCounts.get(fd.name) || 0;
                 if (filtered > 0) {
                     $setBtn.before(`<span class="dle-gating-count" aria-label="Excluding ${filtered} entries" title="${filtered} entries don't match this value and will be filtered out">excluding ${filtered}</span>`);
                 }
@@ -992,12 +1031,8 @@ export function renderGatingTab() {
                 for (const c of value) {
                     $setBtn.before(`<span class="dle-chip">${escapeHtml(c)} <button class="dle-chip-x" data-field="${escapeHtml(fd.name)}" data-value="${escapeHtml(c)}" aria-label="Remove ${escapeHtml(c)}"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button></span>`);
                 }
-                // Impact count: entries with this field set but no value-overlap with the active selection.
-                const activeSet = new Set(value.map(c => c.toLowerCase()));
-                const filtered = vaultIndex.filter(e => {
-                    const eVal = e.customFields?.[fd.name];
-                    return eVal?.length && !eVal.some(v => activeSet.has(v.toLowerCase()));
-                }).length;
+                // Impact count: entries with this field set but no value-overlap with the active selection (precomputed above).
+                const filtered = excludedCounts.get(fd.name) || 0;
                 if (filtered > 0) {
                     $setBtn.before(`<span class="dle-gating-count" aria-label="Excluding ${filtered} entries" title="${filtered} entries don't match this value and will be filtered out">excluding ${filtered}</span>`);
                 }

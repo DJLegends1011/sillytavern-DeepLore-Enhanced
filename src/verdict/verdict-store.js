@@ -10,7 +10,7 @@
  *
  * Storage contract:
  *  - Ring buffer in memory: last RING_CAP verdicts across all chats this session.
- *    Used for fast read of getCurrent() / getPrevious() / getByMessage().
+ *    Used for fast read of getCurrent() / getPrevious() / getByMessageSync().
  *  - IDB store `verdicts` (in DB `DeepLoreEnhanced`, schema v2): per-chat persisted
  *    verdicts. Each chat's rows survive chat switches so resume-after-reload of
  *    any prior chat works. Per-chat cap (IDB_PER_CHAT_CAP) is enforced after each
@@ -21,12 +21,10 @@
  *  - writeVerdict(v): pushes to ring; spills async to IDB; fires observers.
  *  - getCurrent(): newest verdict (any chat in ring).
  *  - getPrevious(): second-newest verdict for the current chat (for cartographer diff).
- *  - getByMessage(msgIdx): looks up by chat.length at gen start.
+ *  - getByMessageSync(msgIdx): ring-only lookup by chat.length at gen start.
  *  - clearRing(): drops in-memory ring only, leaves all IDB rows intact. Used on
  *    CHAT_CHANGED so resume-after-reload of the destination chat works.
  *  - clearChatIdb(chatId): drops IDB rows for one chat (e.g. user deletes chat).
- *  - clearChat(chatId): wipes ring entries + IDB records for chatId. `null` wipes
- *    everything (only safe at full teardown / nuke from orbit).
  *  - hydrateChat(chatId): loads recent IDB records for chatId into ring. Called on CHAT_CHANGED.
  */
 
@@ -71,11 +69,31 @@ let ring = [];
 /** @type {string|null} The chat id currently in scope. Cleared on CHAT_CHANGED. */
 let currentChatId = null;
 
+/**
+ * Debug guard: the IDB key delimiter is `:` and the no-colon-in-chatId invariant
+ * (enforced by ST's `sanitize-filename`, see pruneCurrentChat) is load-bearing for
+ * the IDBKeyRange-scoped prune/hydrate scans. If a chatId ever DOES contain `:`,
+ * the range bound could split mid-id and a sibling chat's rows could be pruned.
+ * That should be impossible — but warn once (cheap, fire-and-forget) if it happens,
+ * so the violation surfaces instead of silently corrupting cross-chat history.
+ */
+let colonChatIdWarned = false;
+function assertNoColonChatId(chatId) {
+    if (!colonChatIdWarned && typeof chatId === 'string' && chatId.includes(':')) {
+        colonChatIdWarned = true;
+        console.warn(
+            '[DLE] Verdict store: chatId contains \':\' — violates the no-colon IDB-key invariant ' +
+            '(see verdict-store pruneCurrentChat). Range-scoped prune/hydrate may misbehave for this chat.',
+            { chatId },
+        );
+    }
+}
+
 /** @type {Set<() => void>} */
 const observers = new Set();
 
 /**
- * Subscribe to verdict-store changes. Fires on writeVerdict + clearChat + hydrateChat.
+ * Subscribe to verdict-store changes. Fires on writeVerdict + clearRing + hydrateChat.
  * Returns an unsubscribe function.
  * @param {() => void} cb
  * @returns {() => void}
@@ -165,8 +183,11 @@ export async function writeVerdict(verdict) {
         } finally {
             db.close();
         }
-        // Best-effort prune after write so the store never grows past cap.
-        pruneCurrentChat().catch(err => console.warn('[DLE] Verdict prune failed:', err?.message));
+        // Best-effort prune after write so the store never grows past cap. Pass the
+        // verdict's OWN chatId (deterministic, captured before any later CHAT_CHANGED)
+        // rather than letting the fire-and-forget prune read the mutable currentChatId
+        // global — so a chat switch racing the async prune can't retarget it.
+        pruneCurrentChat(verdict.chatId).catch(err => console.warn('[DLE] Verdict prune failed:', err?.message));
         pushEvent('verdict_write', { msgIdx: verdict.msgIdx, injected: verdict.injectedSources.length });
     } catch (err) {
         console.warn('[DLE] Verdict IDB write failed:', err?.message);
@@ -227,7 +248,8 @@ export function getPrevious() {
 
 /**
  * Sync ring-only lookup for a specific msgIdx in a specific chat. Returns null
- * if not in ring (no IDB fallback — use async getByMessage for that).
+ * if not in ring (no IDB fallback — this is the ring-only fast path; older
+ * out-of-ring messages return null rather than touching IDB).
  *
  * Used by sync UI consumers (cartographer popup) that need msgIdx-anchored
  * lookups without going async. Recent messages are almost always in the ring.
@@ -270,37 +292,11 @@ export function getPreviousForMessage(msgIdx, chatId) {
 }
 
 /**
- * Look up the verdict for a specific message index. Fast in-ring scan; falls
- * back to IDB query if absent.
- *
- * @param {number} msgIdx
- * @param {string|null} [chatId]
- * @returns {Promise<import('./verdict-pure.js').Verdict|null>}
- */
-export async function getByMessage(msgIdx, chatId) {
-    const cid = chatId ?? currentChatId;
-    // Search newest-to-oldest (most likely the recent one).
-    for (let i = ring.length - 1; i >= 0; i--) {
-        if (ring[i].msgIdx === msgIdx && (cid == null || ring[i].chatId === cid)) return ring[i];
-    }
-    if (cid == null) return null;
-    // Scan IDB for the requested chat (cheaper than a full prune scan since we early-exit).
-    try {
-        const records = await listIdbForChat(cid);
-        for (const rec of records) {
-            if (rec.msgIdx === msgIdx) return rec;
-        }
-    } catch (err) {
-        console.warn('[DLE] Verdict getByMessage IDB lookup failed:', err?.message);
-    }
-    return null;
-}
-
-/**
  * Set the in-scope chat id. Called on CHAT_CHANGED before hydrateChat.
  * @param {string|null} chatId
  */
 export function setCurrentChatId(chatId) {
+    assertNoColonChatId(chatId);
     currentChatId = chatId;
 }
 
@@ -338,48 +334,6 @@ export async function clearChatIdb(chatId) {
         } finally { db.close(); }
     } catch (err) {
         console.warn('[DLE] Verdict clearChatIdb failed:', err?.message);
-    }
-}
-
-/**
- * Drop ring entries + IDB records for a given chat. `null` wipes EVERYTHING
- * (in-memory + every chat's IDB rows) — only safe at full teardown / nuke
- * from orbit. For CHAT_CHANGED use clearRing() instead so resume-after-reload
- * still works for the destination chat.
- *
- * @param {string|null} chatId  If null, wipes everything (in-memory + all IDB rows).
- * @returns {Promise<void>}
- */
-export async function clearChat(chatId) {
-    if (chatId == null) {
-        ring = [];
-        notify();
-        try {
-            const db = await openDB();
-            try {
-                const tx = db.transaction(VERDICT_STORE, 'readwrite');
-                tx.objectStore(VERDICT_STORE).clear();
-                await txDone(tx);
-            } finally { db.close(); }
-        } catch (err) {
-            console.warn('[DLE] Verdict clear-all failed:', err?.message);
-        }
-        return;
-    }
-    ring = ring.filter(v => v.chatId !== chatId);
-    notify();
-    try {
-        const keys = (await listIdbForChat(chatId)).map(buildIdbKey);
-        if (keys.length === 0) return;
-        const db = await openDB();
-        try {
-            const tx = db.transaction(VERDICT_STORE, 'readwrite');
-            const store = tx.objectStore(VERDICT_STORE);
-            for (const k of keys) store.delete(k);
-            await txDone(tx);
-        } finally { db.close(); }
-    } catch (err) {
-        console.warn('[DLE] Verdict clearChat IDB failed:', err?.message);
     }
 }
 
@@ -443,8 +397,8 @@ async function listIdbForChat(chatId) {
     try {
         const tx = db.transaction(VERDICT_STORE, 'readonly');
         const store = tx.objectStore(VERDICT_STORE);
-        // Range-scope to this chat's keys so hydrate/getByMessage scale with the per-chat cap,
-        // not total cross-chat history. U+FFFF upper bound excludes longer-prefixed sibling ids.
+        // Range-scope to this chat's keys so hydrateChat/clearChatIdb scale with the per-chat
+        // cap, not total cross-chat history. U+FFFF upper bound excludes longer-prefixed sibling ids.
         const range = IDBKeyRange.bound(`${chatId}:`, `${chatId}:￿`);
         const rows = await new Promise((resolve, reject) => {
             const req = store.getAll(range);
@@ -475,15 +429,29 @@ async function listIdbForChat(chatId) {
  *
  * Key shape (from buildIdbKey): `${chatId}:${paddedMsgIdx}:${ts}`. Range
  * `[chatId+':', chatId+':￿']` scopes to that chat (U+FFFF is the highest
- * BMP code unit — every real key for this chat sorts strictly less). Assumes
- * ST chat IDs don't themselves contain `':'` (they're file basenames in
- * practice, no embedded colons). We never read values, so validateVerdict
- * isn't needed here.
+ * BMP code unit — every real key for this chat sorts strictly less).
  *
+ * No-colon invariant — ENFORCED, not assumed: ST chat IDs are chat-file
+ * basenames, and ST runs every chat filename / rename target through the
+ * `sanitize-filename` npm package server-side (SillyTavern
+ * `src/endpoints/chats.js` — `import sanitize from 'sanitize-filename'`, applied
+ * at save/rename/group-chat paths). `sanitize-filename` strips `:` (an illegal
+ * filename character cross-platform), `humanizedDateTime` never emits `:`, and
+ * group ids are `Date.now()` digit strings. So a chatId cannot contain `:`, the
+ * range bound can never split a key mid-chatId, and `Alice2`/`Alicia` sort
+ * strictly OUTSIDE `[Alice:, Alice:￿]` (verified by the T-L10 guard test). See
+ * docs/gotchas.md #52 + the thermo-nuclear L10 verification (NON-ISSUE; do NOT
+ * change the delimiter — that would orphan every existing verdict IDB row with
+ * no migration path). We never read values, so validateVerdict isn't needed here.
+ *
+ * @param {string|null} [chatId]  Chat to prune. Defaults to the live `currentChatId`.
+ *   Production passes the WRITING verdict's own chatId so a CHAT_CHANGED racing the
+ *   fire-and-forget prune can't retarget the scan at the now-current chat. The
+ *   no-arg form (test-only `_invokePruneForTests`) still uses the global.
  * @returns {Promise<number>}  Number of records deleted (0 if sampling skipped this call).
  */
-async function pruneCurrentChat() {
-    if (!currentChatId) return 0;
+async function pruneCurrentChat(chatId = currentChatId) {
+    if (!chatId) return 0;
     pruneCallCount++;
     if (!shouldRunPruneScan(pruneCallCount, PRUNE_SAMPLE_RATE)) return 0;
     pruneScanCount++;
@@ -494,8 +462,8 @@ async function pruneCurrentChat() {
         // Phase 1: oldest-first cursor walk, key-only (no value deserialization).
         const tx = db.transaction(VERDICT_STORE, 'readonly');
         const store = tx.objectStore(VERDICT_STORE);
-        const lower = `${currentChatId}:`;
-        const upper = `${currentChatId}:￿`;
+        const lower = `${chatId}:`;
+        const upper = `${chatId}:￿`;
         const range = IDBKeyRange.bound(lower, upper);
         const orderedKeys = await new Promise((resolve, reject) => {
             const keys = [];
@@ -532,7 +500,7 @@ async function pruneCurrentChat() {
 
 /**
  * Reset all in-memory state. Called from tests + module teardown. Does NOT
- * touch IDB (use clearChat(null) for that).
+ * touch IDB (use clearChatIdb(chatId) to drop a single chat's IDB rows).
  */
 export function resetForTests() {
     ring = [];
@@ -574,7 +542,7 @@ export async function _invokePruneForTests() {
 
 /**
  * Debug-only snapshot of the ring buffer. Don't use in prod consumers — read
- * via getCurrent / getPrevious / getByMessage instead.
+ * via getCurrent / getPrevious / getByMessageSync instead.
  * @returns {import('./verdict-pure.js').Verdict[]}
  */
 export function _debugRingSnapshot() {

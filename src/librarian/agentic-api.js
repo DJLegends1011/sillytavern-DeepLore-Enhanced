@@ -56,8 +56,8 @@ export function isReasoningOnlyModel(model) {
  * silently mis-resolve the model whenever the user's active profile differs from
  * the one wired into Librarian (the same root cause as #27 sym 2).
  */
-export function getResolvedModel() {
-    const connConfig = resolveConnectionConfig('librarian');
+export function getResolvedModel(connConfig) {
+    connConfig = connConfig || resolveConnectionConfig('librarian');
     if (connConfig.mode === 'proxy') {
         // v2.5 dead-head: Custom Proxy removed. Don't claim a proxy model exists —
         // dispatch (callAI / callWithTools) will refuse before any model is needed.
@@ -112,14 +112,21 @@ export function isToolCallingSupported(model) {
     return true;
 }
 
-/** Proxy mode is always Claude format. */
-export function getProviderFormat() {
+/**
+ * Proxy mode is always Claude format.
+ * @param {object} [connConfig] Pre-resolved Librarian connection config. When
+ *   omitted, resolves it (one `getSettings()`); callers in a hot loop should
+ *   pass the config they already resolved to avoid redundant resolves per
+ *   round-trip (the message builders thread it through).
+ */
+export function getProviderFormat(connConfig) {
     // v2.5 dead-head: Custom Proxy removed. Return null rather than 'claude' so
     // we don't suggest a working format for a refused-dispatch path. Callers
     // (buildAssistantMessage / buildToolResults) only run after callWithTools
     // would have dispatched — in proxy mode the dispatch throws first, so a
     // null format here is never reached at runtime.
-    if (getLibrarianMode() === 'proxy') return null;
+    const mode = connConfig ? connConfig.mode : getLibrarianMode();
+    if (mode === 'proxy') return null;
     const source = oai_settings?.chat_completion_source;
     if (source === 'claude') return 'claude';
     if (source === 'makersuite' || source === 'vertexai') return 'google';
@@ -132,10 +139,11 @@ export function getProviderFormat() {
  * Claude-specific mitigations (thinking-vs-tool_choice 400) without changing
  * the message parser, which must stay OpenAI-shape for OR responses.
  */
-export function isUnderlyingClaude(model) {
+export function isUnderlyingClaude(model, connConfig) {
     // Delegate the regex contract to the pure helper; only the ST-context
-    // fallback (getResolvedModel) lives here.
-    return isUnderlyingClaudeModel(model || getResolvedModel());
+    // fallback (getResolvedModel) lives here. `connConfig`, when supplied,
+    // is threaded so the fallback doesn't re-resolve the connection.
+    return isUnderlyingClaudeModel(model || getResolvedModel(connConfig));
 }
 
 /**
@@ -326,7 +334,10 @@ export async function callWithTools(messages, tools, toolChoice, maxTokens, sign
         throw new Error('Librarian needs a profile in AI Connections settings.');
     }
 
-    const format = getProviderFormat();
+    // Resolve once: `connConfig` (above) is the single resolve for this call.
+    // Thread it into format + underlying-Claude detection so neither re-calls
+    // resolveConnectionConfig('librarian') (→ getSettings()) again this round-trip.
+    const format = getProviderFormat(connConfig);
 
     // Normalize tool_choice per provider — ST wraps differently per backend:
     //   Claude backend: `{ type: request.body.tool_choice }` — needs Claude type strings.
@@ -360,7 +371,7 @@ export async function callWithTools(messages, tools, toolChoice, maxTokens, sign
     // model is Claude and OR forwards reasoning.effort to Anthropic. Without the
     // second arm, OR users on anthropic/claude-* hit the same 400. Parser stays
     // OpenAI-shape because OR returns OpenAI-shape regardless of upstream.
-    if (format === 'claude' || isUnderlyingClaude()) {
+    if (format === 'claude' || isUnderlyingClaude(undefined, connConfig)) {
         overridePayload.reasoning_effort = 'auto';
     }
 
@@ -584,9 +595,12 @@ export function getUsage(data) {
 /**
  * Preserves provider-native format so the API sees its own output shape on
  * the next turn.
+ * @param {object} data Raw provider response.
+ * @param {'claude'|'google'|'openai'|null} [format] Pre-resolved provider
+ *   format. When omitted, resolves it (one `getSettings()`); the agentic loop
+ *   resolves it once per round-trip and threads it here to avoid that.
  */
-export function buildAssistantMessage(data) {
-    const format = getProviderFormat();
+export function buildAssistantMessage(data, format = getProviderFormat()) {
 
     if (format === 'claude') {
         return { role: 'assistant', content: data.content };
@@ -634,10 +648,13 @@ export function buildAssistantMessage(data) {
 
 /**
  * C4: Claude requires all tool_result blocks in ONE user message.
+ * @param {Array<object>} results Tool results.
+ * @param {'claude'|'google'|'openai'|null} [format] Pre-resolved provider
+ *   format. When omitted, resolves it (one `getSettings()`); the agentic loop
+ *   resolves it once per round-trip and threads it here to avoid that.
  * @returns {object|Array<object>} Message(s) to append
  */
-export function buildToolResults(results) {
-    const format = getProviderFormat();
+export function buildToolResults(results, format = getProviderFormat()) {
 
     if (format === 'claude') {
         return {

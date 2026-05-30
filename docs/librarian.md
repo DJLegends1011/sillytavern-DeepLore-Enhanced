@@ -177,7 +177,9 @@ Uses accumulated `totalTokens` from real `entry.tokenEstimate` values. Falls bac
 
 **File:** `src/librarian/librarian-tools.js: flagLoreAction()`
 
-### `flagLoreAction(args) -> Promise<string>`
+### `flagLoreAction(args, callerEpoch?) -> Promise<string>`
+
+`callerEpoch` (optional) is the agentic loop's start-of-loop `chatEpoch`. When passed, `flagLoreAction` self-guards its `persistGaps` AND its activity/analytics side-effects behind `epoch === chatEpoch` (symmetric with `searchLoreAction`) so a chat switch during the multi-second agentic await can't pollute the now-current chat. Direct/test callers omit it and fall back to a fresh `chatEpoch` capture. The body is synchronous (`async` by signature only — no internal `await`).
 
 **Input shape:**
 ```js
@@ -201,7 +203,7 @@ Uses accumulated `totalTokens` from real `entry.tokenEstimate` values. Falls bac
   frequency: 1, urgency, hadResults: false, resultTitles: null }
 ```
 
-**Side effects:** Same pattern as searchLoreAction -- pushes to `sessionActivityLog` with epoch guards. Tokens estimated at 10 (minimal overhead).
+**Side effects:** Same pattern as searchLoreAction -- pushes to `sessionActivityLog`, fires `notifyLoreGapsChanged`, bumps `updateAnalytics('totalGapFlags')` and `incrementStats('flagCalls', 10)`. ALL of these (plus `persistGaps`) are gated behind `epoch === chatEpoch` so a mid-await chat switch can't pollute the new chat. Tokens estimated at 10 (minimal overhead).
 
 **Return text:** Includes instructions to not acknowledge the flag and continue.
 

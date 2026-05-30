@@ -9,69 +9,8 @@ import { SlashCommandArgument, ARGUMENT_TYPE } from '../../../../../slash-comman
 import { SlashCommandEnumValue } from '../../../../../slash-commands/SlashCommandEnumValue.js';
 import { vaultIndex, fieldDefinitions, folderList, notifyGatingChanged, notifyPinBlockChanged } from '../state.js';
 import { DEFAULT_FIELD_DEFINITIONS } from '../fields.js';
-import { classifyError } from '../../core/utils.js';
-import { ensureIndexFresh } from '../vault/vault.js';
-import { normalizePinBlock, matchesPinBlock, fuzzyTitleMatchAll } from '../helpers.js';
-
-/**
- * Resolve a user-typed entry name against a candidate set. Exact (case-insensitive)
- * match wins immediately. Otherwise tries fuzzy: 0 matches → toast + null; 1 →
- * info toast + use; 2+ → modal picker, returns null on cancel.
- *
- * Used by /dle-pin, /dle-unpin, /dle-block, /dle-unblock so a typo or partial
- * name no longer drops on the floor with "Couldn't find X" — common enough to
- * be frustrating.
- *
- * @param {string} name - raw user input
- * @param {Array<{title: string}>} candidates - objects with a .title field
- * @param {object} opts
- * @param {string} opts.commandLabel - shown in the picker title ("Pin", "Block", etc.)
- * @returns {Promise<object|null>} - the resolved candidate (full object), or null
- */
-async function resolveEntryByName(name, candidates, { commandLabel }) {
-    const exact = candidates.find(c => c.title.toLowerCase() === name.toLowerCase());
-    if (exact) return exact;
-
-    const titles = candidates.map(c => c.title);
-    const matches = fuzzyTitleMatchAll(name, titles, 0.6);
-    if (matches.length === 0) {
-        toastr.warning(`No entry matching "${name}".`, 'DeepLore Enhanced');
-        return null;
-    }
-    if (matches.length === 1) {
-        const match = candidates.find(c => c.title === matches[0].title);
-        toastr.info(`Matched "${match.title}" (${Math.round(matches[0].similarity * 100)}%).`, 'DeepLore Enhanced');
-        return match;
-    }
-
-    const top = matches.slice(0, 10);
-    const html = `<div class="dle-popup">
-        <h3>${escapeHtml(commandLabel)}: pick an entry</h3>
-        <p class="dle-text-xs dle-muted">No exact match for "${escapeHtml(name)}". Found ${matches.length} similar:</p>
-        <ol class="dle-fuzzy-picker-list">
-            ${top.map(m => `<li><button type="button" class="menu_button dle-fuzzy-pick" data-title="${escapeHtml(m.title)}">${escapeHtml(m.title)} <span class="dle-dimmed">(${Math.round(m.similarity * 100)}%)</span></button></li>`).join('')}
-        </ol>
-        ${matches.length > 10 ? `<p class="dle-text-xs dle-muted">…and ${matches.length - 10} more (not shown).</p>` : ''}
-    </div>`;
-
-    let picked = null;
-    await callGenericPopup(html, POPUP_TYPE.TEXT, '', {
-        wide: true,
-        // Scope queries to this popup's dialog so a stacked popup doesn't
-        // cross-fire (global document.querySelector* would pick up sibling popups).
-        onOpen: (popup) => {
-            popup.dlg.querySelectorAll('.dle-fuzzy-pick').forEach(btn => {
-                btn.addEventListener('click', () => {
-                    picked = btn.getAttribute('data-title');
-                    popup.okButton?.click();
-                });
-            });
-        },
-    });
-
-    if (!picked) return null;
-    return candidates.find(c => c.title === picked) || null;
-}
+import { normalizePinBlock, matchesPinBlock } from '../helpers.js';
+import { ensureFreshOrToast, resolveEntryByName } from './commands-shared.js';
 
 export function registerGatingCommands() {
     // ── Per-Chat Pin/Block ──
@@ -81,11 +20,7 @@ export function registerGatingCommands() {
         callback: async (_args, entryName) => {
             const name = (entryName || '').trim();
             if (!name) { toastr.info('Pin which entry? Try: /dle-pin Eris', 'DeepLore Enhanced'); return ''; }
-            try { await ensureIndexFresh(); } catch (err) {
-                toastr.error(`Could not refresh vault: ${classifyError(err)}`, 'DeepLore Enhanced');
-                console.error('[DLE] ensureIndexFresh failed in /dle-pin:', err);
-                return '';
-            }
+            if (!await ensureFreshOrToast('/dle-pin')) return '';
             const entry = await resolveEntryByName(name, vaultIndex, { commandLabel: 'Pin' });
             if (!entry) return '';
             if (!chat_metadata.deeplore_pins) chat_metadata.deeplore_pins = [];
@@ -147,11 +82,7 @@ export function registerGatingCommands() {
         callback: async (_args, entryName) => {
             const name = (entryName || '').trim();
             if (!name) { toastr.info('Block which entry? Try: /dle-block Eris', 'DeepLore Enhanced'); return ''; }
-            try { await ensureIndexFresh(); } catch (err) {
-                toastr.error(`Could not refresh vault: ${classifyError(err)}`, 'DeepLore Enhanced');
-                console.error('[DLE] ensureIndexFresh failed in /dle-block:', err);
-                return '';
-            }
+            if (!await ensureFreshOrToast('/dle-block')) return '';
             const entry = await resolveEntryByName(name, vaultIndex, { commandLabel: 'Block' });
             if (!entry) return '';
             if (!chat_metadata.deeplore_blocks) chat_metadata.deeplore_blocks = [];
@@ -341,34 +272,53 @@ export function registerGatingCommands() {
         });
     };
 
+    /**
+     * Shared scalar-field setter for the built-in era / location / scene-type
+     * commands. They are byte-identical apart from the field name and the user-
+     * facing label/plural strings; this collapses the three into one body so a
+     * copy can't drift. Behavior (scalar `ctx[contextKey] = v` storage, the rich
+     * "no entries match" popup listing available values, the success toast) is
+     * preserved exactly per field.
+     *
+     * @param {string} rawValue - the raw slash-command argument
+     * @param {object} cfg
+     * @param {string} cfg.browseLabel - proper-case label for the browse popup ("Era", "Scene Type")
+     * @param {string} cfg.field - customFields field name AND contextKey ("era", "scene_type")
+     * @param {string} cfg.setLabel - leading phrase in toasts/popup ("Era", "Scene type")
+     * @param {string} cfg.availableLabel - pluralized noun for the popup ("eras", "scene types")
+     */
+    const setScalarGatingField = async (rawValue, { browseLabel, field, setLabel, availableLabel }) => {
+        const v = (rawValue || '').trim();
+
+        if (!v) {
+            await showFieldSelectionPopup(browseLabel, field, field);
+            return;
+        }
+
+        const ctx = ensureCtx();
+        ctx[field] = v;
+        saveMetadataDebounced();
+        notifyGatingChanged();
+
+        const matchCount = countFieldMatches(field, v);
+        if (matchCount === 0) {
+            const valueMap = collectFieldValues(field);
+            const available = [...valueMap.values()].map(x => x.display);
+            const listStr = available.length > 0 ? available.join(', ') : 'none';
+            await callGenericPopup(
+                `<div class="dle-popup"><p>${setLabel} set to <strong>"${escapeHtml(v)}"</strong> — <span class="dle-warning">no entries match</span>.</p><p>Available ${availableLabel}: ${escapeHtml(listStr)}</p></div>`,
+                POPUP_TYPE.TEXT, '', { wide: false },
+            );
+        } else {
+            toastr.success(`${setLabel} set to "${v}" — ${matchCount} ${matchCount === 1 ? 'entry matches' : 'entries match'}.`, 'DeepLore Enhanced');
+        }
+    };
+
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'dle-set-era',
         aliases: ['dle-era'],
         callback: async (_args, value) => {
-            const v = (value || '').trim();
-
-            if (!v) {
-                await showFieldSelectionPopup('Era', 'era', 'era');
-                return '';
-            }
-
-            const ctx = ensureCtx();
-            ctx.era = v;
-            saveMetadataDebounced();
-            notifyGatingChanged();
-
-            const matchCount = countFieldMatches('era', v);
-            if (matchCount === 0) {
-                const valueMap = collectFieldValues('era');
-                const available = [...valueMap.values()].map(x => x.display);
-                const listStr = available.length > 0 ? available.join(', ') : 'none';
-                await callGenericPopup(
-                    `<div class="dle-popup"><p>Era set to <strong>"${escapeHtml(v)}"</strong> — <span class="dle-warning">no entries match</span>.</p><p>Available eras: ${escapeHtml(listStr)}</p></div>`,
-                    POPUP_TYPE.TEXT, '', { wide: false },
-                );
-            } else {
-                toastr.success(`Era set to "${v}" — ${matchCount} ${matchCount === 1 ? 'entry matches' : 'entries match'}.`, 'DeepLore Enhanced');
-            }
+            await setScalarGatingField(value, { browseLabel: 'Era', field: 'era', setLabel: 'Era', availableLabel: 'eras' });
             return '';
         },
         unnamedArgumentList: [SlashCommandArgument.fromProps({
@@ -384,30 +334,7 @@ export function registerGatingCommands() {
         name: 'dle-set-location',
         aliases: ['dle-loc'],
         callback: async (_args, value) => {
-            const v = (value || '').trim();
-
-            if (!v) {
-                await showFieldSelectionPopup('Location', 'location', 'location');
-                return '';
-            }
-
-            const ctx = ensureCtx();
-            ctx.location = v;
-            saveMetadataDebounced();
-            notifyGatingChanged();
-
-            const matchCount = countFieldMatches('location', v);
-            if (matchCount === 0) {
-                const valueMap = collectFieldValues('location');
-                const available = [...valueMap.values()].map(x => x.display);
-                const listStr = available.length > 0 ? available.join(', ') : 'none';
-                await callGenericPopup(
-                    `<div class="dle-popup"><p>Location set to <strong>"${escapeHtml(v)}"</strong> — <span class="dle-warning">no entries match</span>.</p><p>Available locations: ${escapeHtml(listStr)}</p></div>`,
-                    POPUP_TYPE.TEXT, '', { wide: false },
-                );
-            } else {
-                toastr.success(`Location set to "${v}" — ${matchCount} ${matchCount === 1 ? 'entry matches' : 'entries match'}.`, 'DeepLore Enhanced');
-            }
+            await setScalarGatingField(value, { browseLabel: 'Location', field: 'location', setLabel: 'Location', availableLabel: 'locations' });
             return '';
         },
         unnamedArgumentList: [SlashCommandArgument.fromProps({
@@ -422,30 +349,7 @@ export function registerGatingCommands() {
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'dle-set-scene',
         callback: async (_args, value) => {
-            const v = (value || '').trim();
-
-            if (!v) {
-                await showFieldSelectionPopup('Scene Type', 'scene_type', 'scene_type');
-                return '';
-            }
-
-            const ctx = ensureCtx();
-            ctx.scene_type = v;
-            saveMetadataDebounced();
-            notifyGatingChanged();
-
-            const matchCount = countFieldMatches('scene_type', v);
-            if (matchCount === 0) {
-                const valueMap = collectFieldValues('scene_type');
-                const available = [...valueMap.values()].map(x => x.display);
-                const listStr = available.length > 0 ? available.join(', ') : 'none';
-                await callGenericPopup(
-                    `<div class="dle-popup"><p>Scene type set to <strong>"${escapeHtml(v)}"</strong> — <span class="dle-warning">no entries match</span>.</p><p>Available scene types: ${escapeHtml(listStr)}</p></div>`,
-                    POPUP_TYPE.TEXT, '', { wide: false },
-                );
-            } else {
-                toastr.success(`Scene type set to "${v}" — ${matchCount} ${matchCount === 1 ? 'entry matches' : 'entries match'}.`, 'DeepLore Enhanced');
-            }
+            await setScalarGatingField(value, { browseLabel: 'Scene Type', field: 'scene_type', setLabel: 'Scene type', availableLabel: 'scene types' });
             return '';
         },
         unnamedArgumentList: [SlashCommandArgument.fromProps({

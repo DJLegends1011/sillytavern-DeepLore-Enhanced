@@ -51,6 +51,153 @@ export const WI_ROUND_TRIP_FIELDS = [
 ];
 
 /**
+ * S5c (WI parity) — data-driven native-field map for `convertWiEntry`.
+ *
+ * Replaces the prior ~15 hand-written `if` blocks that each emitted a native
+ * frontmatter line. Every native ST field that DLE acts on (rather than merely
+ * round-trips via WI_ROUND_TRIP_FIELDS) is one descriptor here. This FORCES each
+ * field to declare its report-accounting `bucket` up front — the silent-drop
+ * class (a field emitted with no report bump, or claimed-native-but-never-
+ * emitted like the old `cooldown`) cannot recur, because the descriptor pairs
+ * emission and accounting in one place.
+ *
+ * Descriptor shape:
+ *   wiKey   — the ST wiEntry field this reads (documentation/drift anchor)
+ *   bucket  — report bucket this field's accounting lives in
+ *             ('nativeApplied' | 'skipped' | null for no telemetry)
+ *   guard   — (wiEntry) => boolean — should this field emit at all?
+ *   transform — (wiEntry, ctx) => { lines?: string[], bump?: {bucket, field} }
+ *               returns the frontmatter line(s) to push AND/OR the report bump.
+ *               `lines` omitted = emit nothing; `bump` omitted = no telemetry.
+ *
+ * ORDER IS LOAD-BEARING: the array order defines frontmatter emission order and
+ * MUST stay byte-identical to the prior hand-written sequence (the wi-import
+ * full-parity suite pins this). `ctx` carries derived values computed once in
+ * `convertWiEntry` (e.g. the lossy `position` mapping) so transforms stay pure.
+ */
+export const NATIVE_FIELD_MAP = [
+    {
+        wiKey: 'position',
+        bucket: null,
+        guard: (_w, ctx) => !!ctx.position,
+        transform: (_w, ctx) => ({ lines: [`position: ${ctx.position}`] }),
+    },
+    {
+        wiKey: 'depth',
+        bucket: null,
+        guard: (w) => w.depth != null && w.depth > 0,
+        transform: (w) => ({ lines: [`depth: ${w.depth}`] }),
+    },
+    {
+        wiKey: 'probability',
+        bucket: null,
+        guard: (w) => w.probability != null && w.probability < 100,
+        transform: (w) => ({ lines: [`probability: ${(w.probability / 100).toFixed(2)}`] }),
+    },
+    {
+        wiKey: 'scanDepth',
+        bucket: null,
+        guard: (w) => !!w.scanDepth,
+        transform: (w) => ({ lines: [`scanDepth: ${w.scanDepth}`] }),
+    },
+    {
+        // Audit fix-up: cooldown was claimed native in FIELD_HOMES but never
+        // emitted — silent-downgrade class. Parser reads cooldown at line ~289
+        // of core/pipeline.js so the native plumbing exists; only the importer
+        // was missing the line.
+        wiKey: 'cooldown',
+        bucket: 'nativeApplied',
+        guard: (w) => w.cooldown != null && Number(w.cooldown) > 0,
+        transform: (w) => ({ lines: [`cooldown: ${Number(w.cooldown)}`], bump: { bucket: 'nativeApplied', field: 'cooldown' } }),
+    },
+    {
+        // Wave 1 — `disable: true` entries were getting imported as active,
+        // silently flipping authorial intent.
+        wiKey: 'disable',
+        bucket: 'nativeApplied',
+        guard: (w) => !!w.disable,
+        transform: () => ({ lines: ['enabled: false'], bump: { bucket: 'nativeApplied', field: 'enabled' } }),
+    },
+    {
+        // Wave 1 — honored by the pipeline (core/pipeline.js:245) but had no
+        // import-side emission. Accepts either camelCase or snake_case input.
+        wiKey: 'excludeRecursion',
+        bucket: 'nativeApplied',
+        guard: (w) => !!(w.excludeRecursion || w.exclude_recursion),
+        transform: () => ({ lines: ['excludeRecursion: true'], bump: { bucket: 'nativeApplied', field: 'excludeRecursion' } }),
+    },
+    {
+        // Wave 1 — ST role enum (0/1/2) → system/user/assistant. Unknown index
+        // emits nothing and bumps skipped.invalid_role rather than lying.
+        wiKey: 'role',
+        bucket: 'nativeApplied',
+        guard: (w) => w.role != null,
+        transform: (w) => {
+            const roleNames = ['system', 'user', 'assistant'];
+            const idx = typeof w.role === 'number' ? w.role : null;
+            const roleName = idx != null && idx >= 0 && idx < roleNames.length ? roleNames[idx] : null;
+            if (roleName) {
+                return { lines: [`role: ${roleName}`], bump: { bucket: 'nativeApplied', field: 'role' } };
+            }
+            // Unknown role index — don't lie. Skip emission, record for the report.
+            return { bump: { bucket: 'skipped', field: 'invalid_role' } };
+        },
+    },
+    {
+        // Wave 3 — native selective_logic enforcement. Map ST's integer enum to
+        // the snake_case symbolic name the parser + applySelectiveLogic both
+        // consume. Mode 0 (AND_ANY) is the implicit default — omit to keep the
+        // vault entry clean. Invalid integers bump skipped.invalid_selective_logic
+        // and emit nothing rather than lie.
+        wiKey: 'selectiveLogic',
+        bucket: 'nativeApplied',
+        guard: (w) => w.selectiveLogic != null,
+        transform: (w) => {
+            const SL_NAMES = ['and_any', 'not_all', 'not_any', 'and_all'];
+            const slIdx = typeof w.selectiveLogic === 'number' ? w.selectiveLogic : null;
+            const slName = slIdx != null && slIdx >= 0 && slIdx < SL_NAMES.length ? SL_NAMES[slIdx] : null;
+            if (slName && slName !== 'and_any') {
+                return { lines: [`selective_logic: ${slName}`], bump: { bucket: 'nativeApplied', field: 'selective_logic' } };
+            }
+            if (!slName) {
+                // Audit fix-up: only count invalid enums. Default 'and_any' is
+                // omitted silently — surfacing it as "selective_logic_default — N"
+                // in the popup leaked internal telemetry the user couldn't parse.
+                return { bump: { bucket: 'skipped', field: 'invalid_selective_logic' } };
+            }
+            return {};
+        },
+    },
+    {
+        // C.3: round-trip-only group fields — parseVaultFile emits
+        // W_NOT_IMPLEMENTED for these so /dle-lint surfaces them.
+        // (BUG-047 sticky, BUG-048 delay, BUG-052 group*)
+        wiKey: 'sticky',
+        bucket: null,
+        guard: (w) => w.sticky != null && w.sticky !== 0,
+        transform: (w) => ({ lines: [`sticky: ${Number(w.sticky)}`] }),
+    },
+    {
+        wiKey: 'delay',
+        bucket: null,
+        guard: (w) => w.delay != null && w.delay !== 0,
+        transform: (w) => ({ lines: [`delay: ${Number(w.delay)}`] }),
+    },
+    {
+        wiKey: 'group',
+        bucket: null,
+        guard: (w) => !!(w.group && typeof w.group === 'string' && w.group.trim()),
+        transform: (w) => ({ lines: [`group: ${yamlEscape(w.group.trim())}`] }),
+    },
+    {
+        wiKey: 'groupWeight',
+        bucket: null,
+        guard: (w) => w.groupWeight != null && Number(w.groupWeight) !== 100,
+        transform: (w) => ({ lines: [`group_weight: ${Number(w.groupWeight)}`] }),
+    },
+];
+
+/**
  * Update Existing Entries — surgical frontmatter-field update.
  *
  * Changes specific scalar fields in a markdown file's YAML frontmatter
@@ -595,76 +742,21 @@ export function convertWiEntry(wiEntry, lorebookTag, options = {}) {
             }
         }
     }
-    if (position) fm.push(`position: ${position}`);
-    if (wiEntry.depth != null && wiEntry.depth > 0) fm.push(`depth: ${wiEntry.depth}`);
-    if (wiEntry.probability != null && wiEntry.probability < 100) {
-        fm.push(`probability: ${(wiEntry.probability / 100).toFixed(2)}`);
-    }
-    if (wiEntry.scanDepth) fm.push(`scanDepth: ${wiEntry.scanDepth}`);
-    // Audit fix-up: cooldown was claimed native in FIELD_HOMES but never
-    // emitted — silent-downgrade class. Parser reads cooldown at line ~289
-    // of core/pipeline.js so the native plumbing exists; only the importer
-    // was missing the line.
-    if (wiEntry.cooldown != null && Number(wiEntry.cooldown) > 0) {
-        fm.push(`cooldown: ${Number(wiEntry.cooldown)}`);
-        bump('nativeApplied', 'cooldown');
-    }
-
-    // Wave 1 (WI parity) — Tier A: ST fields DLE supports natively but the
-    // importer used to drop on the floor. Most important: `disable: true`
-    // entries were getting imported as active, silently flipping authorial
-    // intent. excludeRecursion + role are honored by the pipeline already
-    // (core/pipeline.js:245 / line 285) but had no import-side emission.
-    if (wiEntry.disable) {
-        fm.push('enabled: false');
-        bump('nativeApplied', 'enabled');
-    }
-    if (wiEntry.excludeRecursion || wiEntry.exclude_recursion) {
-        fm.push('excludeRecursion: true');
-        bump('nativeApplied', 'excludeRecursion');
-    }
-    if (wiEntry.role != null) {
-        const roleNames = ['system', 'user', 'assistant'];
-        const idx = typeof wiEntry.role === 'number' ? wiEntry.role : null;
-        const roleName = idx != null && idx >= 0 && idx < roleNames.length ? roleNames[idx] : null;
-        if (roleName) {
-            fm.push(`role: ${roleName}`);
-            bump('nativeApplied', 'role');
-        } else {
-            // Unknown role index — don't lie. Skip emission, record for the report.
-            bump('skipped', 'invalid_role');
+    // S5c: native fields are emitted via the data-driven NATIVE_FIELD_MAP
+    // (declared at module scope above). The map preserves the exact prior
+    // emission ORDER and per-field accounting BUCKET — see its doc-comment.
+    // Comments that previously annotated individual `if` blocks now live on the
+    // descriptors (cooldown silent-drop, Wave 1 disable/excludeRecursion/role,
+    // Wave 3 selective_logic, C.3 group fields). `ctx` carries the lossy
+    // `position` mapping computed once above so transforms stay pure.
+    const nativeCtx = { position };
+    for (const desc of NATIVE_FIELD_MAP) {
+        if (!desc.guard(wiEntry, nativeCtx)) continue;
+        const result = desc.transform(wiEntry, nativeCtx) || {};
+        if (result.lines) {
+            for (const line of result.lines) fm.push(line);
         }
-    }
-
-    // Wave 3 (WI parity) — native selective_logic enforcement. Map ST's integer
-    // enum to the snake_case symbolic name the parser + applySelectiveLogic gate
-    // both consume. Mode 0 (AND_ANY) is the implicit default — omit to keep the
-    // vault entry clean. Invalid integers (out of 0..3 or non-number) bump
-    // skipped.invalid_selective_logic and emit nothing rather than lie.
-    if (wiEntry.selectiveLogic != null) {
-        const SL_NAMES = ['and_any', 'not_all', 'not_any', 'and_all'];
-        const slIdx = typeof wiEntry.selectiveLogic === 'number' ? wiEntry.selectiveLogic : null;
-        const slName = slIdx != null && slIdx >= 0 && slIdx < SL_NAMES.length ? SL_NAMES[slIdx] : null;
-        if (slName && slName !== 'and_any') {
-            fm.push(`selective_logic: ${slName}`);
-            bump('nativeApplied', 'selective_logic');
-        } else if (!slName) {
-            // Audit fix-up: only count invalid enums. Default 'and_any' is
-            // omitted silently — surfacing it as "selective_logic_default — N"
-            // in the popup leaked internal telemetry the user couldn't parse.
-            bump('skipped', 'invalid_selective_logic');
-        }
-    }
-
-    // C.3: round-trip-only — parseVaultFile emits W_NOT_IMPLEMENTED for these so
-    // /dle-lint surfaces them. (BUG-047 sticky, BUG-048 delay, BUG-052 group*)
-    if (wiEntry.sticky != null && wiEntry.sticky !== 0) fm.push(`sticky: ${Number(wiEntry.sticky)}`);
-    if (wiEntry.delay != null && wiEntry.delay !== 0) fm.push(`delay: ${Number(wiEntry.delay)}`);
-    if (wiEntry.group && typeof wiEntry.group === 'string' && wiEntry.group.trim()) {
-        fm.push(`group: ${yamlEscape(wiEntry.group.trim())}`);
-    }
-    if (wiEntry.groupWeight != null && Number(wiEntry.groupWeight) !== 100) {
-        fm.push(`group_weight: ${Number(wiEntry.groupWeight)}`);
+        if (result.bump) bump(result.bump.bucket, result.bump.field);
     }
 
     // Wave 2 (WI parity) — Tier C round-trip preservation. ST fields DLE does
@@ -676,9 +768,17 @@ export function convertWiEntry(wiEntry, lorebookTag, options = {}) {
     //
     // Skip-default policy: omit when null/undefined/false/0/'' so vault entries
     // stay quiet unless ST exported something the user actually set.
+    //
+    // WICL fidelity exception: ZERO_SIGNIFICANT_FIELDS hold fields where `0` is a
+    // legitimate authored value (NOT a "default/unset" sentinel). `displayIndex`
+    // is the first entry's index — `displayIndex: 0` is real, not the absence of
+    // a value — so the blanket `raw === 0` skip silently dropped it. For these
+    // fields a finite `0` round-trips like any other number.
+    const ZERO_SIGNIFICANT_FIELDS = new Set(['displayIndex']);
     for (const [wiKey, fmKey] of WI_ROUND_TRIP_FIELDS) {
         const raw = wiEntry[wiKey];
-        if (raw == null || raw === false || raw === 0 || raw === '') continue;
+        const zeroOk = raw === 0 && ZERO_SIGNIFICANT_FIELDS.has(wiKey);
+        if (raw == null || raw === false || (raw === 0 && !zeroOk) || raw === '') continue;
         if (typeof raw === 'string') {
             fm.push(`${fmKey}: ${yamlEscape(raw)}`);
         } else if (typeof raw === 'number') {
@@ -736,7 +836,13 @@ export function convertWiEntry(wiEntry, lorebookTag, options = {}) {
     // subheader (re-import of a previously-imported EM entry), don't stack a
     // second one. Re-imports normally land in a new _imported_N file via the
     // dedup probe, but a 'replace' policy upsert could trigger this.
-    if (isEmPosition && !/^##\s+Example Dialogue\b/m.test(content.trimStart())) {
+    // WICL: NO `/m` flag. With `/m`, `^## Example Dialogue` would match at ANY
+    // line start, so a body that merely CONTAINS the subheader as a LATER
+    // section would be wrongly judged "already subheadered" and the prepend
+    // skipped. Anchoring against `content.trimStart()` (no `/m`) binds `^` to
+    // the real body start only — idempotent for true re-imports (body already
+    // starts with the subheader) without misfiring on mid-body headings.
+    if (isEmPosition && !/^##\s+Example Dialogue\b/.test(content.trimStart())) {
         content = `## Example Dialogue\n\n${content}`;
     }
     void emHandling; // reserved for future per-call subheader-text override

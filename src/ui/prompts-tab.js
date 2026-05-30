@@ -44,26 +44,17 @@ import * as PromptsEn from '../i18n/prompts/en.js';
 
 /**
  * Build the vault connection bundle for a settings object. UI wrapper around
- * `buildPromptsConnectionFromSettings` — uses the canonical `getPrimaryVault`
- * to honor the legacy "primary or default" selection rule that the store-side
- * helper deliberately skips (the store stays settings.js-import-free).
+ * the canonical `buildPromptsConnectionFromSettings` — resolves the vault via
+ * `getPrimaryVault` first (the legacy "primary or default" selection rule the
+ * store-side helper deliberately skips so it stays settings.js-import-free),
+ * then hands the resolved vault to the single shared builder. Falls back to
+ * the boot path's first-enabled scan when no primary vault is configured.
  *
  * @param {object} settings
  * @returns {{ host: string, port: number, apiKey: string, prefix: string, useHttps: boolean } | null}
  */
 export function buildPromptsConnection(settings) {
-    const vault = getPrimaryVault(settings);
-    if (!vault || !vault.enabled || !vault.apiKey || !vault.port) {
-        // Fall through to the store-side helper for parity with the boot path.
-        return buildPromptsConnectionFromSettings(settings);
-    }
-    return {
-        host: vault.host || '127.0.0.1',
-        port: vault.port,
-        apiKey: vault.apiKey,
-        useHttps: !!vault.https,
-        prefix: sanitizePromptsFolderPath(settings.promptsFolderPath) || DLE_PROMPTS_DEFAULT_DIR,
-    };
+    return buildPromptsConnectionFromSettings(settings, getPrimaryVault(settings));
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -175,6 +166,12 @@ export async function bulkDeletePromptsThroughCage(connection, keys, onStatus) {
  * (compiled-in + anything other than current_default cannot happen because
  * `buildPromptOverlay` always reports current_default for compiled-in
  * sources) fall through to the status-only badge default with no actions.
+ *
+ * Note: the `'missing'` source/status only arises from the defensive
+ * pre-load `if (!meta)` branch in `getPromptStatusGrid`; a populated grid
+ * (the only state the live UI ever renders, since boot always runs
+ * `loadPrompts`) never carries it. So it has no enumerated rule — it falls
+ * through to the status-only badge default below.
  */
 const PROMPT_ROW_RULES = {
     'compiled-in:current_default':     { badge: { label: 'Default', tone: 'info' },                   actions: ['export-one'] },
@@ -182,7 +179,6 @@ const PROMPT_ROW_RULES = {
     'vault:stale_default':             { badge: { label: 'Stale Default', tone: 'warn' },             actions: ['update-one', 'revert-one'] },
     'vault:customized':                { badge: { label: 'Customized', tone: 'ok' },                  actions: ['revert-one'] },
     'vault:customized_stale_baseline': { badge: { label: 'Customized (stale baseline)', tone: 'warn' }, actions: ['revert-one'] },
-    'missing:missing':                 { badge: { label: 'Missing', tone: 'err' },                    actions: [] },
 };
 
 /**
@@ -195,7 +191,6 @@ const PROMPT_STATUS_BADGE_FALLBACK = {
     stale_default: { label: 'Stale Default', tone: 'warn' },
     customized: { label: 'Customized', tone: 'ok' },
     customized_stale_baseline: { label: 'Customized (stale baseline)', tone: 'warn' },
-    missing: { label: 'Missing', tone: 'err' },
 };
 
 /** Button factory entries. `data-prompt-action` is the key. */

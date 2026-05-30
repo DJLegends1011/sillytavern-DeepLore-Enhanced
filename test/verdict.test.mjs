@@ -331,7 +331,7 @@ test('validateVerdict: accepts valid record', () => {
 // data-corruption bug — "deleting chat `Alice` also nukes `Alice2`/`Alicia`
 // because their keys share the `Alice` prefix." That premise is LEXICOGRAPHICALLY
 // FALSE. IDB keys are `${chatId}:${paddedMsgIdx}:${ts}` (see buildIdbKey), and
-// every chat-scoped op (listIdbForChat → hydrate/getByMessage/clearChatIdb, and
+// every chat-scoped op (listIdbForChat → hydrateChat/clearChatIdb, and
 // pruneCurrentChat) bounds its range to `IDBKeyRange.bound('Alice:', 'Alice:￿')`.
 // The `:` delimiter (0x3A) is what makes the prefix unambiguous:
 //   - 'Alice2…' : char after 'Alice' is '2' (0x32) < ':' (0x3A)

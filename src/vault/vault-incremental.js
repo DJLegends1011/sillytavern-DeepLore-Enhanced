@@ -25,6 +25,7 @@
  */
 
 import { tokenize } from './bm25.js';
+import { escapeRegex } from '../../core/utils.js';
 
 // BM25 K1/B constants live in bm25.js and aren't needed here — incremental
 // update only manipulates df, idf, postings; it doesn't recompute scores.
@@ -45,12 +46,29 @@ function keyOf(entry) {
 }
 
 /**
- * Reference full mentionWeights builder — mirrors `computeDerivedIndexFields`'s
- * mentionWeights block in vault.js. Exists so the equivalence tests can compare
- * `incrementalMentionWeights(...)` against a known-good full rebuild without
- * pulling in ST imports. KEEP IN SYNC with vault.js if either path changes.
+ * Canonical full mentionWeights builder — the SINGLE source of truth for the
+ * full-rebuild mention-weights computation (R6, 2026-05-29).
+ *
+ * Both production (`computeDerivedIndexFields` in vault.js, the `weights === null`
+ * branch) and the equivalence tests call THIS function, so they can no longer
+ * drift. Pure (no ST imports) — vault.js imports it; the test harness import()s it
+ * directly. Output is byte-identical to the pre-R6 inline production block (pinned
+ * by test/vault.test.mjs section L equivalence + section P T-L6a).
+ *
+ * IDENTITY/storage keys use keyOf (vaultSource:title) — same as state.js
+ * `trackerKey` — so same-titled cross-vault entries don't collide (gotcha #50).
+ * Search-TERMS (the regex name list) stay title/keys-based by design. contentLower
+ * is pre-populated LAST-WRITE-WINS over `entries` (a same-keyOf duplicate's LAST
+ * content wins — the L11 invariant the incremental path must match).
+ *
+ * Collapses gotcha #55's old "hand-sync 3 copies" mandate to TWO copies: this
+ * shared full builder + the separate `incrementalMentionWeights` delta algorithm
+ * (a genuinely different algorithm, still pinned to this builder by section L).
+ *
+ * @param {Array} entries — VaultEntry array
+ * @returns {Map<string, number>} `${sourceKeyOf}\0${targetKeyOf}` → match count
  */
-export function fullMentionWeights(entries) {
+export function buildFullMentionWeights(entries) {
     const weights = new Map();
     // IDENTITY/storage keyed by keyOf (vaultSource:title); search-TERMS stay
     // title/keys-based. See keyOf() note above.
@@ -67,7 +85,7 @@ export function fullMentionWeights(entries) {
     for (const [key, names] of targetNames) {
         targetRegexes.set(key, buildTargetRegex(names));
     }
-    const contentLower = new Map(); // keyOf → lowered content
+    const contentLower = new Map(); // keyOf → lowered content (last-write-wins)
     for (const source of entries) {
         contentLower.set(keyOf(source), source.content.toLowerCase());
     }
@@ -82,6 +100,14 @@ export function fullMentionWeights(entries) {
     }
     return weights;
 }
+
+/**
+ * Reference alias for the equivalence tests + any legacy importer. Identical to
+ * `buildFullMentionWeights` — the "reference copy" and production are now the SAME
+ * function (R6). T-L6a (test/vault.test.mjs section P) guards that production calls
+ * this shared builder rather than reimplementing the algorithm inline.
+ */
+export const fullMentionWeights = buildFullMentionWeights;
 
 /**
  * Decide whether incremental updates are worthwhile.
@@ -186,7 +212,7 @@ function buildTargetNames(entry) {
 /** Compose one combined regex from a target's name list. Word-bounded for short names. */
 function buildTargetRegex(names) {
     const parts = names.map(name => {
-        const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const escaped = escapeRegex(name);
         return name.length <= 3 ? `\\b${escaped}\\b` : escaped;
     });
     parts.sort((a, b) => b.length - a.length);
@@ -616,7 +642,7 @@ export function incrementalEntityRegexes(newEntries, prevRegexes) {
         if (existing) {
             regexes.set(name, existing); // reuse compiled regex byte-for-byte
         } else {
-            const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const escaped = escapeRegex(name);
             regexes.set(name, new RegExp(`\\b${escaped}\\b`, 'i'));
         }
     }

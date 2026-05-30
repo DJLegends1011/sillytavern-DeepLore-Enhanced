@@ -78,25 +78,33 @@ export function resolvePromptOrOverride(key, userOverride) {
 
 /**
  * Build the vault connection bundle the prompt store needs to read/write
- * override files. Pulled from the primary enabled vault on `settings`.
- * Returns null when no enabled vault exists, so callers can fall back to
- * compiled-in only without rebuilding the shape literal at every site.
+ * override files. Returns null when no usable vault exists, so callers can
+ * fall back to compiled-in only without rebuilding the shape literal.
  *
  * Canonical home for the shape — every caller (boot loader + Prompts tab)
- * imports this rather than re-deriving the literal.
+ * routes through this single builder.
+ *
+ * Vault selection: `getPrimaryVault` lives in settings.js, and inlining its
+ * lookup here would create a circular import (settings.js indirectly pulls
+ * prompt-store via the AI subsystem). So the boot path (no resolved vault)
+ * falls back to a plain "first enabled vault" scan, while UI callers that
+ * already have the canonical primary-or-default vault pass it via
+ * `resolvedVault` to honor the legacy selection rule. Either way the output
+ * shape is identical.
  *
  * @param {object} settings
+ * @param {object} [resolvedVault] - Optional pre-resolved vault (e.g. from
+ *   `getPrimaryVault`). When omitted, the first enabled vault is used.
  * @returns {{ host: string, port: number, apiKey: string, prefix: string, useHttps: boolean } | null}
  */
-export function buildPromptsConnectionFromSettings(settings) {
+export function buildPromptsConnectionFromSettings(settings, resolvedVault) {
     if (!settings) return null;
-    // `getPrimaryVault` lives in settings.js. Inlining the lookup here would
-    // create a circular import (settings.js indirectly pulls prompt-store via
-    // the AI subsystem), so we accept the helper as a settings shape and let
-    // index.js / settings-ui pass the result.
-    const vaults = Array.isArray(settings.vaults) ? settings.vaults : [];
-    const vault = vaults.find(v => v && v.enabled) || null;
-    if (!vault || !vault.apiKey || !vault.port) return null;
+    let vault = resolvedVault || null;
+    if (!vault) {
+        const vaults = Array.isArray(settings.vaults) ? settings.vaults : [];
+        vault = vaults.find(v => v && v.enabled) || null;
+    }
+    if (!vault || !vault.enabled || !vault.apiKey || !vault.port) return null;
     return {
         host: vault.host || '127.0.0.1',
         port: vault.port,
@@ -174,10 +182,13 @@ let _lastConnection = null;
  * Resolve a prompt by key.
  *
  * Lookup order:
- *   1. promptCache Map — hot path, sync, populated at boot.
- *   2. compiled-in dict at `_currentLocale` (fallback).
- *   3. compiled-in EN dict (fallback of fallback).
- *   4. empty string + console warning (orphan key).
+ *   1. promptCache Map — hot path, sync, populated at boot. The cache already
+ *      holds the locale-resolved value (loadPrompts merges the active locale's
+ *      dict before stamping the cache), so there is no separate locale step.
+ *   2. compiled-in EN dict by key (fallback for a cache miss — pre-load, or a
+ *      key not yet loaded).
+ *   3. empty string + console warning (orphan key — should never happen for a
+ *      recognized key).
  *
  * @param {string} key
  * @returns {string}

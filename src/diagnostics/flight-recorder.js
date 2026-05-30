@@ -13,12 +13,19 @@ export const generationBuffer = new RingBuffer(50);
 let started = false;
 
 // Session-scoped: "entry X" in gen 5 is the same "entry X" in gen 12.
+//
+// DISTINCT NAMESPACE: this minter is SESSION-scoped (spans many generations),
+// whereas state-snapshot.js's pseudonym context (the single `<title-N>` aliaser
+// in pseudonymize-trace.js) is PER-SNAPSHOT. The two cardinalities are unrelated,
+// so the flight recorder uses a `<fr-title-N>` prefix to keep the two spaces from
+// colliding — `<title-3>` in the snapshot trace and `<fr-title-3>` here are not
+// claimed to be the same real entry. See gotcha (single-source pseudonymization).
 const _frTitleMap = new Map();
 let _frTitleN = 0;
 function pseudoTitle(title) {
     if (!title) return '?';
     let p = _frTitleMap.get(title);
-    if (!p) { p = `<title-${++_frTitleN}>`; _frTitleMap.set(title, p); }
+    if (!p) { p = `<fr-title-${++_frTitleN}>`; _frTitleMap.set(title, p); }
     return p;
 }
 

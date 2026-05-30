@@ -7,6 +7,11 @@ import {
     callWithTools, parseToolCalls, getTextContent, getUsage,
     buildAssistantMessage, buildToolResults,
 } from './agentic-api.js';
+// Namespace import for `getProviderFormat`: accessed off the namespace object
+// (not a named binding) so the test stub for `agentic-api.js` — which replaces
+// the module and does NOT export getProviderFormat — doesn't fail module
+// instantiation. `_resolveProviderFormat` reads it defensively at runtime.
+import * as agenticApi from './agentic-api.js';
 import { searchLoreAction, flagLoreAction } from './librarian-tools.js';
 import {
     chatEpoch, generationLockEpoch,
@@ -14,6 +19,18 @@ import {
     setPipelinePhase,
 } from '../state.js';
 import { pushEvent } from '../diagnostics/interceptors.js';
+
+/**
+ * Resolve the Librarian provider format once per loop, tolerating the
+ * test stub for `agentic-api.js` (which replaces the module and may not export
+ * `getProviderFormat`). Returns `undefined` in that case — the message builders
+ * then fall back to their own default-param resolution (a no-op in the stub,
+ * where the builders are replaced wholesale and ignore the format argument).
+ */
+function _resolveProviderFormat() {
+    const fn = agenticApi.getProviderFormat;
+    return typeof fn === 'function' ? fn() : undefined;
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // Tool Definitions (OpenAI function calling format)
@@ -124,6 +141,12 @@ export async function runAgenticLoop(options) {
     let exitReason = 'max_iterations';
     let iterations = 0;
 
+    // Resolve the provider format ONCE for the whole loop and thread it into the
+    // message builders, instead of each buildAssistantMessage/buildToolResults
+    // call re-resolving it (→ resolveConnectionConfig('librarian') → getSettings()).
+    // The Librarian connection is fixed for the duration of one generation.
+    const providerFormat = _resolveProviderFormat();
+
     for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
         iterations = iteration + 1;
         // Bail on chat switch or force-released lock.
@@ -221,7 +244,7 @@ export async function runAgenticLoop(options) {
         }
 
         // Provider-native format preserved.
-        const assistantMsg = buildAssistantMessage(response);
+        const assistantMsg = buildAssistantMessage(response, providerFormat);
         messages.push(assistantMsg);
 
         // C9: keepalive before tool processing.
@@ -380,8 +403,18 @@ export async function runAgenticLoop(options) {
                         break;
                     }
                     flagCount++;
-                    const flagResult = await flagLoreAction(tc.input || {});
+                    // Thread the loop's captured epoch so flagLoreAction's internal
+                    // guard skips activity/analytics if the chat switched mid-loop.
+                    const flagResult = await flagLoreAction(tc.input || {}, epoch);
                     results.push({ id: tc.id, name: tc.name, result: flagResult || 'Flag recorded.' });
+                    // Symmetric post-await epoch/lock guard (mirrors _runFlagIteration
+                    // and the SEARCH path): if the chat switched or the lock rolled
+                    // during the flag await, don't leak this stale flag into the new
+                    // chat's drawer-dropdown toolActivity.
+                    if (epoch !== chatEpoch || lockEpoch !== generationLockEpoch) {
+                        if (debug) console.debug('[DLE] agentic inline-flag: epoch mismatch after flagLoreAction, skip toolActivity push');
+                        break;
+                    }
                     toolActivity.push({
                         type: 'flag',
                         query: tc.input?.title || '',
@@ -398,7 +431,7 @@ export async function runAgenticLoop(options) {
         }
 
         // C4: batch all tool results into one message (or array for OpenAI).
-        const toolResultMsg = buildToolResults(results);
+        const toolResultMsg = buildToolResults(results, providerFormat);
         if (Array.isArray(toolResultMsg)) {
             messages.push(...toolResultMsg);
         } else {
@@ -466,7 +499,11 @@ async function _runFlagIteration(messages, tools, toolChoice, maxTokens, signal,
     const toolCalls = parseToolCalls(response);
     if (toolCalls.length === 0) return 0;
 
-    const assistantMsg = buildAssistantMessage(response);
+    // Resolve provider format ONCE for this flag iteration's message builders
+    // (same rationale as runAgenticLoop — avoid per-call resolveConnectionConfig).
+    const providerFormat = _resolveProviderFormat();
+
+    const assistantMsg = buildAssistantMessage(response, providerFormat);
     messages.push(assistantMsg);
 
     const results = [];
@@ -490,12 +527,16 @@ async function _runFlagIteration(messages, tools, toolChoice, maxTokens, signal,
             break;
         }
         flagCount++;
-        const flagResult = await flagLoreAction(tc.input || {});
-        // Post-await: flagLoreAction itself awaits internally and mutates
+        // Thread the loop's captured epoch into flagLoreAction so its OWN internal
+        // guard skips the persist + activity/analytics side-effects when the chat
+        // switched mid-loop (mirrors searchLoreAction). It mutates loreGaps,
         // sessionActivityLog + librarianSessionStats + librarianChatStats.
-        // If epoch shifted DURING the call, we already wrote to the wrong
-        // chat — can't undo. But we can prevent toolActivity (drawer dropdown)
-        // from leaking by checking here.
+        const flagResult = await flagLoreAction(tc.input || {}, epoch);
+        // Post-call guard. flagLoreAction has NO internal await — it runs
+        // synchronously (it's `async` only by signature). The epoch-sensitive
+        // side-effects now self-guard INSIDE flagLoreAction via the threaded
+        // epoch; this remaining guard only prevents the toolActivity (drawer
+        // dropdown) push below from leaking a stale flag into the new chat.
         if (epoch !== undefined && (epoch !== chatEpoch || lockEpoch !== generationLockEpoch)) {
             if (debug) console.debug('[DLE] _runFlagIteration: epoch mismatch after flagLoreAction, skip toolActivity push');
             results.push({ id: tc.id, name: tc.name, result: flagResult || 'Flag recorded.' });
@@ -510,7 +551,7 @@ async function _runFlagIteration(messages, tools, toolChoice, maxTokens, signal,
             timestamp: Date.now(),
         });
     }
-    const toolResultMsg = buildToolResults(results);
+    const toolResultMsg = buildToolResults(results, providerFormat);
     if (Array.isArray(toolResultMsg)) {
         messages.push(...toolResultMsg);
     } else {

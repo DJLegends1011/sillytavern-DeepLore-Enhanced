@@ -1863,12 +1863,16 @@ test('convertWiEntry: default-valued fields skipped (no noise)', () => {
     const out = convertWiEntry({
         comment: 'A', key: ['a'], content: 'c',
         vectorized: false, selective: false, useProbability: false,
-        automationId: '', displayIndex: 0, useGroupScoring: 0,
+        automationId: '', useGroupScoring: 0,
     }, 'lorebook');
     assert(!out.content.includes('vectorized:'), 'false bool skipped');
     assert(!out.content.includes('selective:'), 'false bool skipped');
     assert(!out.content.includes('automation_id:'), 'empty string skipped');
-    assert(!out.content.includes('display_index:'), 'zero number skipped');
+    // WICL: a 0 on a NON-zero-significant field (use_group_scoring) is still
+    // skipped as default noise. displayIndex is the deliberate exception
+    // (0 is a real authored index) — its 0-round-trip is covered in
+    // wi-import.test.mjs (T-RED WIEM displayIndex:0).
+    assert(!out.content.includes('use_group_scoring:'), 'zero number skipped');
 });
 
 test('convertWiEntry: null/undefined skipped', () => {

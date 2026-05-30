@@ -377,7 +377,9 @@ test('makeCtx returns object with expected Maps', () => {
     assertInstanceOf(ctx.email, Map, 'email should be a Map');
     assertInstanceOf(ctx.host, Map, 'host should be a Map');
     assertInstanceOf(ctx.userPath, Map, 'userPath should be a Map');
-    assertInstanceOf(ctx.title, Map, 'title should be a Map');
+    // NOTE: no `ctx.title` map — titles are aliased at the snapshot layer by the
+    // pseudonym context (pseudonymize-trace.js), NOT by the scrubber. The dead
+    // scrubber `title` map was removed (L9 fix, thermo-nuclear 2026-05-29).
 });
 
 test('makeCtx returns object with stats counters all at 0', () => {
@@ -387,7 +389,8 @@ test('makeCtx returns object with stats counters all at 0', () => {
     assertEqual(ctx.stats.emails, 0, 'emails starts at 0');
     assertEqual(ctx.stats.hosts, 0, 'hosts starts at 0');
     assertEqual(ctx.stats.userPaths, 0, 'userPaths starts at 0');
-    assertEqual(ctx.stats.titles, 0, 'titles starts at 0');
+    // NOTE: no `stats.titles` — the scrubber never aliased titles; the dead stat
+    // was removed (L9 fix). Title counts come from the snapshot pseudonym context.
     assertEqual(ctx.stats.bearerTokens, 0, 'bearerTokens starts at 0');
     assertEqual(ctx.stats.urlTokens, 0, 'urlTokens starts at 0');
     assertEqual(ctx.stats.openaiKeys, 0, 'openaiKeys starts at 0');
@@ -411,13 +414,13 @@ test('Maps are empty on creation', () => {
     assertEqual(ctx.email.size, 0, 'email map empty');
     assertEqual(ctx.host.size, 0, 'host map empty');
     assertEqual(ctx.userPath.size, 0, 'userPath map empty');
-    assertEqual(ctx.title.size, 0, 'title map empty');
+    // (no `title` map on the scrubber ctx — removed in L9 fix)
 });
 
 test('Stats has all expected counter fields', () => {
     const ctx = makeCtx();
     const expectedKeys = [
-        'ips', 'ipv6s', 'emails', 'hosts', 'userPaths', 'titles',
+        'ips', 'ipv6s', 'emails', 'hosts', 'userPaths',
         'bearerTokens', 'urlTokens', 'openaiKeys', 'longTokens', 'sensitiveFields',
     ];
     for (const key of expectedKeys) {
@@ -1164,19 +1167,20 @@ test('F13: ctx omitted → fresh context created (function still scrubs)', () =>
 section('G. Scrubber Report — Titles count truthfulness (T-RED L9)');
 
 /**
- * Faithful mirror of `export.js` `buildScrubberReport`'s title-count source as
- * it exists TODAY: the report pulls the "Titles" line from the SCRUBBER
- * context's `stats.titles` (export.js ~:503 — `if (s.titles > 0) parts.push(...)`).
- * `pseudoCtx` is accepted but intentionally IGNORED here, mirroring the bug:
- * the report has no link to the real pseudonym context where titles are aliased.
+ * Faithful mirror of `export.js` `buildScrubberReport`'s title-count source
+ * AFTER the Phase-3 Agent-B fix: the report now pulls "Titles: N" from the real
+ * per-snapshot pseudonym context (`state-snapshot.js` exposes
+ * `__pseudonymStats.titles = _pseudoCtx.titleCounter`, threaded into
+ * `buildScrubberReport(ctx, pseudonymStats)`), NOT the dead scrubber
+ * `stats.titles` (which has been deleted from `makeCtx()`).
  *
- * Phase-3 Agent-B remedy ("have the report pull title counts from the real
- * pseudonym context") will change this source to `pseudoCtx` — at which point
- * the count below becomes the real aliased-title count and the assertion passes.
+ * The count therefore equals the number of titles the real pseudonymization
+ * flow actually aliased — the `titleCounter` on the pseudonym context.
  */
-function reportedTitlesCount(scrubberCtx, _pseudoCtx) {
-    // export.js:503 reads s.titles off the scrubber ctx — the dead stat.
-    return scrubberCtx.stats.titles | 0;
+function reportedTitlesCount(_scrubberCtx, pseudoCtx) {
+    // export.js now sources the Titles line from the snapshot pseudonym context's
+    // titleCounter (== titleMap.size for distinct titles), not the scrubber ctx.
+    return pseudoCtx.titleCounter | 0;
 }
 
 test('G1: report Titles count reflects the actual number of aliased titles (RED — L9)', () => {

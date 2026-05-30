@@ -47,7 +47,7 @@ export let aiSearchStats = { calls: 0, cachedHits: 0, totalInputTokens: 0, total
 
 // REMOVED (Verdict refactor, 2026-05-22): lastInjectionSources, lastInjectionEpoch.
 // Replaced by src/verdict/verdict-store.js (per-turn record carrying injectedSources +
-// epoch + msgIdx + chatId + trace together; consumed via getCurrent() / getByMessage()).
+// epoch + msgIdx + chatId + trace together; consumed via getCurrent() / getByMessageSync()).
 
 /** Session Scribe: chat position tracking, lock, and prior note context */
 export let lastScribeChatLength = 0;
@@ -697,7 +697,7 @@ export function notifyChatInjectionCountsUpdated() {
 }
 
 // pipelineTraceCallbacks family removed in Verdict refactor. Use onVerdictChanged
-// from src/verdict/verdict-store.js — fires on every writeVerdict + clearChat + hydrateChat.
+// from src/verdict/verdict-store.js — fires on every writeVerdict + clearRing + hydrateChat.
 
 /**
  * Compute overall system status for the header badge. Pure (reads state).

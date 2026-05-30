@@ -480,7 +480,7 @@ function wireAiSetup() {
 
             if (ok && liveTested) {
                 $result
-                    .html(`<i class="fa-solid fa-circle-check"></i> AI connection working — ${esc(detail)}`)
+                    .html(`<i class="fa-solid fa-circle-check"></i> AI connection working — ${escapeHtml(detail)}`)
                     .removeClass('dle-wizard-result-error')
                     .addClass('dle-wizard-result-success')
                     .show();
@@ -488,13 +488,13 @@ function wireAiSetup() {
             } else if (ok) {
                 // profile selected but not live-tested — honest, neutral messaging
                 $result
-                    .html(`<i class="fa-solid fa-circle-info"></i> Profile selected: ${esc(detail)} — DLE will use it for AI search. Not live-tested here; a bad key or endpoint will surface on the first generation.`)
+                    .html(`<i class="fa-solid fa-circle-info"></i> Profile selected: ${escapeHtml(detail)} — DLE will use it for AI search. Not live-tested here; a bad key or endpoint will surface on the first generation.`)
                     .removeClass('dle-wizard-result-error dle-wizard-result-success')
                     .show();
                 $btn.html('<i class="fa-solid fa-circle-check"></i> Profile selected').addClass('dle-wizard-btn-verified');
             } else {
                 $result
-                    .html(`<i class="fa-solid fa-circle-xmark"></i> ${esc(detail)}`)
+                    .html(`<i class="fa-solid fa-circle-xmark"></i> ${escapeHtml(detail)}`)
                     .removeClass('dle-wizard-result-success')
                     .addClass('dle-wizard-result-error')
                     .show();
@@ -539,7 +539,7 @@ async function loadAiProfiles() {
         for (const p of profiles) {
             const selected = p.id === savedId ? ' selected' : '';
             const label = `${p.name} (${p.api}${p.model ? ' / ' + p.model : ''})`;
-            options += `<option value="${p.id}"${selected}>${esc(label)}</option>`;
+            options += `<option value="${p.id}"${selected}>${escapeHtml(label)}</option>`;
         }
         $select.html(options);
     } catch (err) {
@@ -762,7 +762,7 @@ function wireImport() {
         try {
             ({ entries, source } = parseWorldInfoJson(jsonText));
         } catch (err) {
-            $result.html(`<i class="fa-solid fa-circle-xmark"></i> ${esc(err.message)}`)
+            $result.html(`<i class="fa-solid fa-circle-xmark"></i> ${escapeHtml(err.message)}`)
                 .removeClass('dle-wizard-result-success').addClass('dle-wizard-result-error').show();
             return;
         }
@@ -796,15 +796,15 @@ function wireImport() {
             importResult = result;
             const renamedNote = result.renamed > 0 ? ` (${result.renamed} renamed to avoid overwrite)` : '';
             if (result.failed > 0) {
-                $result.html(`<i class="fa-solid fa-triangle-exclamation"></i> Imported ${result.imported}/${entries.length} from "${esc(source)}"${renamedNote}. ${result.failed} failed.`)
+                $result.html(`<i class="fa-solid fa-triangle-exclamation"></i> Imported ${result.imported}/${entries.length} from "${escapeHtml(source)}"${renamedNote}. ${result.failed} failed.`)
                     .addClass('dle-wizard-result-error').removeClass('dle-wizard-result-success').show();
             } else {
-                $result.html(`<i class="fa-solid fa-circle-check"></i> Imported ${result.imported} entries from "${esc(source)}"${renamedNote}`)
+                $result.html(`<i class="fa-solid fa-circle-check"></i> Imported ${result.imported} entries from "${escapeHtml(source)}"${renamedNote}`)
                     .addClass('dle-wizard-result-success').removeClass('dle-wizard-result-error').show();
             }
             $btn.html('<i class="fa-solid fa-circle-check"></i> Import Complete');
         } catch (err) {
-            $result.html(`<i class="fa-solid fa-circle-xmark"></i> Import error: ${esc(err.message)}`)
+            $result.html(`<i class="fa-solid fa-circle-xmark"></i> Import error: ${escapeHtml(err.message)}`)
                 .addClass('dle-wizard-result-error').removeClass('dle-wizard-result-success').show();
             $btn.html('<i class="fa-solid fa-file-import"></i> Import Entries').prop('disabled', false);
         }
@@ -821,7 +821,7 @@ async function loadImportLorebooks() {
         }
         let options = '<option value="">— Select a lorebook —</option>';
         for (const name of world_names) {
-            options += `<option value="${esc(name)}">${esc(name)}</option>`;
+            options += `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`;
         }
         $select.html(options);
     } catch (err) {
@@ -857,9 +857,9 @@ function buildSummary() {
     const sessionsCreated = wizardState.sessionsOutcome === 'created' || wizardState.sessionsOutcome === 'exists';
 
     const items = [
-        `<i class="fa-solid fa-circle-check"></i> Vault connected: <strong>${esc(vaultName)}</strong> on ${esc(host)}:${esc(port)}`,
-        `<i class="fa-solid fa-circle-check"></i> Search mode: <strong>${esc(modeLabel)}</strong>`,
-        `<i class="fa-solid fa-circle-check"></i> Matching: <strong>${esc(presetLabel)} preset</strong> (${maxEntries} entries, ${budget} token budget)`,
+        `<i class="fa-solid fa-circle-check"></i> Vault connected: <strong>${escapeHtml(vaultName)}</strong> on ${escapeHtml(host)}:${escapeHtml(port)}`,
+        `<i class="fa-solid fa-circle-check"></i> Search mode: <strong>${escapeHtml(modeLabel)}</strong>`,
+        `<i class="fa-solid fa-circle-check"></i> Matching: <strong>${escapeHtml(presetLabel)} preset</strong> (${maxEntries} entries, ${budget} token budget)`,
     ];
 
     if (fieldsCreated) items.push('<i class="fa-solid fa-circle-check"></i> Field definitions created');
@@ -982,8 +982,3 @@ function executeCommand(cmd) {
     }
 }
 
-function esc(str) {
-    const div = document.createElement('div');
-    div.textContent = String(str);
-    return div.innerHTML;
-}

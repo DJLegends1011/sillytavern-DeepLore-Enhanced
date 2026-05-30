@@ -492,15 +492,26 @@ REPORT THIS BUG?
 \`\`\`
 `;
 
-function buildScrubberReport(ctx) {
+/**
+ * @param {object} ctx — scrubber context (IPs / hosts / emails / tokens stats)
+ * @param {{titles?: number, vaults?: number}} [pseudonymStats] — real aliased
+ *   title/vault counts from the snapshot's pseudonym context (state-snapshot.js).
+ *   Titles/vaults are aliased at the snapshot layer, NOT by the scrubber regex
+ *   pass, so their counts live in a different context — pass them in so the
+ *   "Titles: N" line reflects reality instead of a permanently-zero dead stat.
+ */
+function buildScrubberReport(ctx, pseudonymStats = {}) {
     const s = ctx.stats;
+    const titles = pseudonymStats.titles | 0;
+    const vaults = pseudonymStats.vaults | 0;
     const parts = [];
     if (s.ips > 0)             parts.push(`IPs: ${s.ips}`);
     if (s.ipv6s > 0)           parts.push(`IPv6: ${s.ipv6s}`);
     if (s.hosts > 0)           parts.push(`Hostnames: ${s.hosts}`);
     if (s.emails > 0)          parts.push(`Emails: ${s.emails}`);
     if (s.userPaths > 0)       parts.push(`User paths: ${s.userPaths}`);
-    if (s.titles > 0)          parts.push(`Titles: ${s.titles}`);
+    if (titles > 0)            parts.push(`Titles: ${titles}`);
+    if (vaults > 0)            parts.push(`Vaults: ${vaults}`);
     if (s.sensitiveFields > 0) parts.push(`Sensitive fields: ${s.sensitiveFields}`);
     if (s.bearerTokens > 0)    parts.push(`Bearer tokens: ${s.bearerTokens}`);
     if (s.urlTokens > 0)       parts.push(`URL tokens: ${s.urlTokens}`);
@@ -508,7 +519,8 @@ function buildScrubberReport(ctx) {
     if (s.longTokens > 0)      parts.push(`Long tokens: ${s.longTokens}`);
 
     if (parts.length === 0) return '### Scrubber Report\n_No sensitive data patterns detected._\n';
-    return `### Scrubber Report\n- Pseudonymized: ${parts.filter(p => /^(IPs|IPv6|Host|Email|User|Title)/.test(p)).join(' | ')}\n- Redacted: ${parts.filter(p => !/^(IPs|IPv6|Host|Email|User|Title)/.test(p)).join(' | ')}\n`;
+    const isPseudonymized = (p) => /^(IPs|IPv6|Host|Email|User|Title|Vault)/.test(p);
+    return `### Scrubber Report\n- Pseudonymized: ${parts.filter(isPseudonymized).join(' | ')}\n- Redacted: ${parts.filter(p => !isPseudonymized(p)).join(' | ')}\n`;
 }
 
 const MAX_VERBOSE_SIZE = 5 * 1024 * 1024; // 5 MB pre-compression safety limit
@@ -636,6 +648,13 @@ export async function buildDiagnosticReport() {
     const rawMemory  = captureMemorySnapshot();
     const rawSnapshot = captureStateSnapshot();
 
+    // Real aliased title/vault counts from the snapshot's pseudonym context.
+    // Pulled off the RAW snapshot and removed before it enters the verbose blob,
+    // so the scrubber report can print the true "Titles: N" / "Vaults: N" the
+    // snapshot layer actually aliased (the scrubber regex pass never touches them).
+    const pseudonymStats = rawSnapshot.__pseudonymStats || {};
+    delete rawSnapshot.__pseudonymStats;
+
     // Shared scrub ctx — one pseudonym table for the whole report so <ip-1> means
     // the same real IP in summary and blob. Each scrubDeep call creates its own
     // _seen WeakMap; sharing would cause false [circular] detections.
@@ -685,7 +704,7 @@ export async function buildDiagnosticReport() {
 
     const { b64, compressed } = await gzipBase64(json);
     const aiInstructionsB64 = btoa(unescape(encodeURIComponent(AI_INSTRUCTIONS)));
-    const scrubberReport = buildScrubberReport(ctx);
+    const scrubberReport = buildScrubberReport(ctx, pseudonymStats);
     const referenceFile = buildConnectionsReference(rawSnapshot);
 
     const sizeKb = (json.length / 1024).toFixed(1);

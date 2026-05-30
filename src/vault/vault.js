@@ -45,6 +45,7 @@ export { computeEntityDerivedState, deduplicateMultiVault, detectCrossVaultDupli
 import {
     diffEntries, shouldUseIncremental,
     incrementalMentionWeights, incrementalBM25Update, incrementalEntityRegexes,
+    buildFullMentionWeights,
 } from './vault-incremental.js';
 
 // BUG-381: this is a toastr display duration, not a fetch/abort timeout.
@@ -127,51 +128,15 @@ function computeDerivedIndexFields(entries, settings, previousEntries) {
         }
     }
     if (weights === null) {
-        // Full rebuild — BUG-374 algorithm. One combined regex per target +
-        // pre-lowercased content once → O(N × total_content), NOT O(N × M × content).
-        weights = new Map();
-        // IDENTITY/storage keyed by trackerKey (vaultSource:title) so same-titled
-        // entries in different vaults don't collide (gotcha #50). The search-TERMS
-        // (`names`) stay title/keys-based — two vaults' "Castle" SHOULD both match
-        // the word "Castle" in text.
-        const targetNames = new Map(); // trackerKey → string[]
-        for (const entry of entries) {
-            const names = [entry.title.toLowerCase()];
-            for (const key of entry.keys) {
-                const keyLc = key.toLowerCase();
-                if (keyLc.length >= 2) names.push(keyLc);
-            }
-            targetNames.set(trackerKey(entry), names);
-        }
-        const targetRegexes = new Map();
-        for (const [key, names] of targetNames) {
-            const parts = names.map(name => {
-                const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                return name.length <= 3 ? `\\b${escaped}\\b` : escaped;
-            });
-            parts.sort((a, b) => b.length - a.length);
-            targetRegexes.set(key, new RegExp(parts.join('|'), 'gi'));
-        }
-        // Pair regexes with their owning entry so self-skip compares identity, not term.
-        const targetEntries = new Map(); // trackerKey → entry
-        for (const entry of entries) targetEntries.set(trackerKey(entry), entry);
-        const contentLower = new Map();
-        for (const source of entries) {
-            contentLower.set(trackerKey(source), source.content.toLowerCase());
-        }
-        for (const source of entries) {
-            const sourceKey = trackerKey(source);
-            const content = contentLower.get(sourceKey);
-            for (const [targetKey, regex] of targetRegexes) {
-                if (targetKey === sourceKey) continue;
-                regex.lastIndex = 0;
-                let count = 0;
-                while (regex.exec(content) !== null) count++;
-                if (count > 0) {
-                    weights.set(`${sourceKey}\0${targetKey}`, count);
-                }
-            }
-        }
+        // Full rebuild — delegates to the single shared builder in
+        // vault-incremental.js (R6, 2026-05-29). The builder IS the reference
+        // copy the section-L equivalence + T-L6a tests run, so production and the
+        // reference can no longer drift (collapses gotcha #55's "hand-sync 3
+        // copies" mandate to two: this builder + the separate incremental delta).
+        // Its keyOf (vaultSource:title) == trackerKey, so cross-vault same-title
+        // identity is preserved (gotcha #50); the BUG-374 algorithm (one combined
+        // regex per target + pre-lowered content, O(N × total_content)) is intact.
+        weights = buildFullMentionWeights(entries);
         if (settings?.debugMode) {
             console.debug(`[DLE] Built mention weights: ${weights.size} pairs (full)`);
         }

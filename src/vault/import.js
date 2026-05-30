@@ -123,6 +123,11 @@ export async function importEntries(entries, folder, onProgress, options = {}) {
     };
 
     let renamed = 0;
+    // WICL fidelity: skipped EM entries are neither imported nor failed, so a
+    // progress numerator of `imported + failed` stalls below `entries.length`
+    // whenever any entry is skipped — the bar never reaches 100%. Track skips
+    // separately and fold them into every onProgress numerator.
+    let skipped = 0;
     for (const wiEntry of entries) {
         try {
             const converted = convertWiEntry(wiEntry, lorebookTag, { compress, report, emHandling });
@@ -132,8 +137,9 @@ export async function importEntries(entries, folder, onProgress, options = {}) {
             // the title so the import report can list which entries didn't land.
             if (_emPosition != null && emHandling === 'skip') {
                 report.emSkipped++;
+                skipped++;
                 pushEmEntry({ title: entryTitle || filename.replace(/\.md$/, ''), filename, position: _emPosition, action: 'skipped' });
-                if (onProgress) onProgress(imported + failed, entries.length);
+                if (onProgress) onProgress(imported + failed + skipped, entries.length);
                 continue;
             }
             if (_emPosition != null && emHandling === 'append') {
@@ -183,7 +189,7 @@ export async function importEntries(entries, folder, onProgress, options = {}) {
             failed++;
             errors.push(`Entry: ${err.message}`);
         }
-        if (onProgress) onProgress(imported + failed, entries.length);
+        if (onProgress) onProgress(imported + failed + skipped, entries.length);
     }
 
     return { imported, failed, renamed, errors, report };

@@ -194,5 +194,7 @@ If you imported a SillyTavern World Info book via `/dle-import`, your entries ma
 
 **Example Messages entries** (ST positions 5 / 6) get a `## Example Dialogue` subheader prepended to the body on import — DLE has no EM injection slot, so the sample lines land as flavor content inside the entry body. Most users find a single short flavor quote per character entry is enough to teach the LLM the voice. The post-import popup offers a one-click "Skip Example Messages on future imports" toggle.
 
+The prepend anchors to the **body start only** — it is idempotent only when the body genuinely *begins* with `## Example Dialogue` (a re-import of an already-subheadered entry won't stack a second one). If you author a `## Example Dialogue` heading *in the middle* of an EM entry's body, it does NOT suppress the top prepend, so you may end up with two such headings — keep your own EM heading at the very top of the body, or let DLE add it.
+
 ## Vault Folder Structure
 Each entry's folder path extracted from filename (not frontmatter), used for folder-based filtering. Organize into subfolders (e.g., `Characters/`, `Locations/`, `Lore/`) enables per-folder filtering in UI and via `/dle-folder` command.

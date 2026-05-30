@@ -24,6 +24,8 @@ function _currentVerdictForChat() {
 import {
     createPseudonymContext,
     pseudonymizeTrace as pseudonymizeTracePure,
+    pseudonymizeTitle as pseudonymizeTitlePure,
+    pseudonymizeVaultSource as pseudonymizeVaultSourcePure,
 } from './pseudonymize-trace.js';
 
 // DLE version — fetched once from manifest.json and cached.
@@ -73,26 +75,15 @@ function resetMaskCaches() {
 
 // Per-snapshot pseudonym context — fresh per snapshot, cardinality preserved
 // so "entry X was selected → entry X hit cooldown" is still traceable.
-// Title and vaultSource pseudonymization are pure (extracted to
-// `./pseudonymize-trace.js` for unit-testability without ST imports).
+// Title and vaultSource aliasing is SINGLE-SOURCED in `./pseudonymize-trace.js`
+// (the only `<title-N>` / `<vault-N>` minter) — these thin wrappers just thread
+// the per-snapshot `_pseudoCtx` into the shared, unit-tested aliasers.
 let _pseudoCtx;
 function pseudonymizeTitle(title) {
-    if (!title) return null;
-    let p = _pseudoCtx.titleMap.get(title);
-    if (!p) {
-        p = `<title-${++_pseudoCtx.titleCounter}>`;
-        _pseudoCtx.titleMap.set(title, p);
-    }
-    return p;
+    return pseudonymizeTitlePure(_pseudoCtx, title);
 }
 function pseudonymizeVaultSource(vs) {
-    if (!vs) return vs;
-    let p = _pseudoCtx.vaultSourceMap.get(vs);
-    if (!p) {
-        p = `<vault-${++_pseudoCtx.vaultSourceCounter}>`;
-        _pseudoCtx.vaultSourceMap.set(vs, p);
-    }
-    return p;
+    return pseudonymizeVaultSourcePure(_pseudoCtx, vs);
 }
 
 /**
@@ -617,6 +608,16 @@ export function captureStateSnapshot() {
     try { snap.health = runHealthCheck(); } catch (e) { snap.health = { __error: String(e) }; }
 
     try { snap.chatMetadata = chatMetadataSnapshot(); } catch (e) { snap.chatMetadata = { __error: String(e) }; }
+
+    // Real aliased-title / -vault counts from THIS snapshot's pseudonym context —
+    // the single source the scrubber report reads to print "Titles: N" / "Vaults: N".
+    // Captured last so it reflects every pseudonymizeTitle/VaultSource call above.
+    // Read off the RAW snapshot before scrubDeep() (export.js) and stripped there,
+    // so it never reaches the shared verbose blob.
+    snap.__pseudonymStats = {
+        titles: _pseudoCtx.titleCounter,
+        vaults: _pseudoCtx.vaultSourceCounter,
+    };
 
     return snap;
 }

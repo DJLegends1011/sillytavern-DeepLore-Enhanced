@@ -560,9 +560,15 @@ export async function searchLoreAction(args) {
 /**
  * flag_lore: flag a lore gap for later review.
  * @param {{ title: string, reason: string, urgency?: string }} args
+ * @param {number} [callerEpoch] The agentic loop's captured epoch. When the
+ *   chat switched during the multi-second await before this call, the loop
+ *   passes its start-of-loop epoch so the activity/analytics side-effects below
+ *   self-guard against polluting the now-current chat (mirrors
+ *   searchLoreAction's internal epoch guard). Defaults to this call's own
+ *   `chatEpoch` capture for direct/test callers — same semantics as searchLore.
  */
-export async function flagLoreAction(args) {
-    const epoch = chatEpoch;
+export async function flagLoreAction(args, callerEpoch) {
+    const epoch = callerEpoch !== undefined ? callerEpoch : chatEpoch;
     const debug = getSettings().debugMode;
     const title = args?.title?.trim();
     const reason = args?.reason?.trim();
@@ -636,11 +642,19 @@ export async function flagLoreAction(args) {
         generation: generationCount,
         urgency,
     };
-    recordSessionActivity(logEntry);
-    notifyLoreGapsChanged();
-
-    updateAnalytics('totalGapFlags');
-    incrementStats('flagCalls', 10); // ~10 tokens for the confirmation string
+    // Epoch guard (mirrors searchLoreAction's SEARCH-path guard and the persist
+    // guard above): if the chat switched during the multi-second agentic await,
+    // don't pollute the now-current chat's Activity feed, session/chat stats, or
+    // all-time analytics with this stale flag. Self-defending so the action is
+    // symmetric with searchLoreAction rather than load-bearing on every caller.
+    if (epoch === chatEpoch) {
+        recordSessionActivity(logEntry);
+        notifyLoreGapsChanged();
+        updateAnalytics('totalGapFlags');
+        incrementStats('flagCalls', 10); // ~10 tokens for the confirmation string
+    } else if (debug) {
+        console.debug('[DLE] flagLore: epoch guard — skipped activity/analytics for "%s"', title);
+    }
 
     if (flagType === 'update' && entryTitle) {
         return `Flagged update: "${title}" (entry: ${entryTitle}). Do not acknowledge this flag — continue seamlessly.`;

@@ -1998,21 +1998,23 @@ test('O5: V-M5 documents Option B trade-off — trackers are not re-keyed', () =
 //   `computeDerivedIndexFields` is not exported. So — exactly like the existing
 //   Section M / N / O source-guards — we anchor the reference to production with
 //   a TWO-PART guard:
-//     P1 (behavioral): run the reference `fullMentionWeights` on a FIXED small
-//         vault and assert it equals a hand-derived expected Map. This pins the
-//         reference copy's actual OUTPUT to a known-good ground truth.
-//     P2 (structural): read vault.js source and assert the production
-//         mentionWeights block uses the SAME four algorithm primitives the
-//         reference copy mirrors (trackerKey-keyed identity + last-write-wins
-//         contentLower, the `length <= 3` word-boundary rule, the length-desc
-//         sort, and self-skip by key identity). If production drifts from the
-//         reference's algorithm, P2 fails.
-//   Together: P1 fixes the reference's output to ground truth; P2 fixes
-//   production's algorithm to the reference's. A later fix (R6) collapses the
-//   two into one shared builder, at which point P1 directly guards production.
+//     P1 (behavioral): run the shared builder `fullMentionWeights` (===
+//         `buildFullMentionWeights`) on a FIXED small vault and assert it equals a
+//         hand-derived expected Map. This pins the shared builder's actual OUTPUT
+//         to a known-good ground truth.
+//     P2 (structural): read vault.js source and assert the production full-rebuild
+//         branch IMPORTS and CALLS that same shared builder (delegation), rather
+//         than reimplementing a drift-prone copy of the algorithm inline.
 //
-// gotcha #55 (hand-sync 3 copies of the mentionWeights algorithm) is exactly
-// the regression class these guards catch.
+//   R6 (2026-05-29) collapsed the old hand-maintained reference copy and the inline
+//   production block into ONE shared `buildFullMentionWeights` in
+//   vault-incremental.js. So P1 now guards production DIRECTLY (it runs the exact
+//   function production calls), and P2 just confirms the delegation wiring stays
+//   intact. gotcha #55's "3 copies" mandate is now "2 copies": this shared full
+//   builder + the separate `incrementalMentionWeights` delta algorithm.
+//
+// gotcha #55 (mentionWeights algorithm drift) is exactly the regression class
+// these guards catch.
 
 section('P. T-L6a — anchor fullMentionWeights to production');
 
@@ -2068,12 +2070,21 @@ test('P1: fullMentionWeights matches hand-derived ground truth for a fixed vault
     }
 });
 
-test('P2: production computeDerivedIndexFields mention-weights block mirrors the reference algorithm', () => {
-    // vault.js can't be import()'d (ST module imports) — anchor at the source
-    // level, same convention as Sections M/N/O. Isolate the production full-
-    // rebuild block (the `weights === null` branch inside computeDerivedIndexFields)
-    // so we don't accidentally match the incremental call a few lines above it.
+test('P2: production computeDerivedIndexFields DELEGATES its full path to the shared builder', () => {
+    // R6 (2026-05-29): production no longer reimplements the mention-weights
+    // algorithm inline — it imports and CALLS the canonical `buildFullMentionWeights`
+    // from vault-incremental.js, which is the SAME function P1 exercises above (and
+    // the same `fullMentionWeights` the section-L equivalence tests run). So P1 now
+    // directly guards production's algorithm, and P2 only needs to confirm the
+    // delegation wiring is intact (drift can only happen if someone re-inlines a
+    // divergent copy). vault.js can't be import()'d (ST module imports) — anchor at
+    // the source level, same convention as Sections M/N/O.
     const src = readFileSync(join(REPO_ROOT, 'src/vault/vault.js'), 'utf8');
+
+    // 1. Production imports the canonical builder from vault-incremental.js. This is
+    //    the link that makes P1 a guard for production: same module, same function.
+    assert(/import\s*\{[^}]*\bbuildFullMentionWeights\b[^}]*\}\s*from\s*['"]\.\/vault-incremental\.js['"]/s.test(src),
+        'production imports buildFullMentionWeights from vault-incremental.js');
 
     const fnStart = src.indexOf('function computeDerivedIndexFields');
     assert(fnStart > 0, 'computeDerivedIndexFields located in vault.js');
@@ -2085,40 +2096,76 @@ test('P2: production computeDerivedIndexFields mention-weights block mirrors the
     assert(setIdx > branchStart, 'setMentionWeights commit located after full-rebuild branch');
     const block = src.slice(branchStart, setIdx);
 
-    // 1. IDENTITY/storage keyed by trackerKey (vaultSource:title) — NOT bare title.
-    //    Mirrors keyOf() in vault-incremental.js. The reference & production MUST
-    //    agree on this or cross-vault same-title entries diverge (gotcha #50).
-    assert(/targetNames\.set\(trackerKey\(entry\)/.test(block),
-        'production keys target names by trackerKey (matches reference keyOf)');
-    assert(/contentLower\.set\(trackerKey\(source\)/.test(block),
-        'production keys contentLower by trackerKey (matches reference keyOf)');
+    // 2. The full-rebuild branch DELEGATES to the shared builder over the full
+    //    entry set — it does NOT reimplement the algorithm inline. If a future edit
+    //    re-inlines a divergent mention-weights computation, this assertion fails
+    //    (the call disappears) and P1 stops guarding the real path.
+    assert(/weights\s*=\s*buildFullMentionWeights\(entries\)/.test(block),
+        'production full-rebuild delegates to buildFullMentionWeights(entries) (no inline reimplementation)');
 
-    // 2. contentLower pre-populated LAST-WRITE-WINS over `entries` (a flat
-    //    for-loop assigning each source's lowered content). This is the exact
-    //    semantic the reference copy mirrors and the L11 bug (incremental's
-    //    first-write-wins lowerOf) violates. Confirm the production loop assigns
-    //    unconditionally (no `if (!contentLower.has(...))` first-wins guard).
-    assert(/for\s*\(const source of entries\)\s*\{\s*contentLower\.set\(trackerKey\(source\),\s*source\.content\.toLowerCase\(\)\);\s*\}/.test(block),
-        'production pre-populates contentLower last-write-wins over entries (no first-wins guard)');
+    // 3. Guard against re-inlining: the dropped inline primitives (own targetNames
+    //    build, parts.sort, combined RegExp construction) must NOT reappear in the
+    //    branch — their presence would mean a second, drift-prone copy is back.
+    assert(!/parts\.sort\(/.test(block) && !/new RegExp\(parts\.join/.test(block),
+        'production full-rebuild branch holds no re-inlined regex assembly (single source of truth)');
+});
 
-    // 3. Short-name (length <= 3) word-boundary rule — identical to the
-    //    reference's buildTargetRegex.
-    assert(/name\.length\s*<=\s*3\s*\?\s*`\\\\b\$\{escaped\}\\\\b`\s*:\s*escaped/.test(block),
-        'production word-bounds names of length <= 3 (matches reference buildTargetRegex)');
+test('P3: shared buildFullMentionWeights preserves the algorithm properties P2 used to source-guard', () => {
+    // R6: the old P2 source-matched the inline production block for five algorithm
+    // primitives (trackerKey-keyed identity, last-write-wins contentLower, the
+    // `length <= 3` word-boundary rule, length-desc sort + combined /gi regex, and
+    // self-skip by key identity). Those primitives now live ONLY in the shared
+    // builder, so we re-assert them BEHAVIORALLY on `buildFullMentionWeights` —
+    // a stronger guard than the old source regex, and the function production calls.
 
-    // 4. parts sorted longest-first, combined /gi regex — matches reference.
-    assert(/parts\.sort\(\(a,\s*b\)\s*=>\s*b\.length\s*-\s*a\.length\)/.test(block),
-        'production sorts regex parts by descending length (matches reference)');
-    assert(/new RegExp\(parts\.join\('\|'\),\s*'gi'\)/.test(block),
-        'production builds combined /gi regex (matches reference)');
+    // (a) IDENTITY keyed by vaultSource:title — two vaults' same-titled "Castle"
+    //     stay DISTINCT identities (gotcha #50). Each source mentions only the OTHER
+    //     vault's distinctive target, so the surviving keys must carry the vault prefix.
+    const idEntries = [
+        makeEntry('Castle', { vaultSource: 'va', filename: 'a-castle.md', keys: [], content: 'The Castle guards Drake.' }),
+        makeEntry('Drake', { vaultSource: 'va', filename: 'a-drake.md', keys: [], content: 'Drake hoards gold.' }),
+        makeEntry('Castle', { vaultSource: 'vb', filename: 'b-castle.md', keys: [], content: 'The Castle shelters Wren.' }),
+        makeEntry('Wren', { vaultSource: 'vb', filename: 'b-wren.md', keys: [], content: 'Wren sings at dawn.' }),
+    ];
+    const idW = fullMentionWeights(idEntries);
+    // Both vaults' "Castle" produce DISTINCT identity keys (vaultSource:title), each
+    // scoring only its own vault's distinctive target — proves cross-vault
+    // same-title entries never collide (gotcha #50).
+    assert(idW.has('va:Castle\0va:Drake') && idW.has('vb:Castle\0vb:Wren'),
+        'identity keys are vaultSource:title — cross-vault same-title "Castle" stays distinct');
 
-    // 5. Self-skip by KEY identity (targetKey === sourceKey), and weight key is
-    //    `${sourceKey}\0${targetKey}` — the exact storage-key shape the reference
-    //    and all Section-L tests assert against.
-    assert(/if\s*\(targetKey\s*===\s*sourceKey\)\s*continue/.test(block),
-        'production self-skips by key identity (matches reference)');
-    assert(/weights\.set\(`\$\{sourceKey\}\\0\$\{targetKey\}`,\s*count\)/.test(block),
-        'production stores weights under `${sourceKey}\\0${targetKey}` (matches reference key shape)');
+    // (b) LAST-WRITE-WINS: two entries with the SAME keyOf (vaultSource:title) but
+    //     different content — the LAST one's content sources the scan (the L11
+    //     invariant). dupB (last) mentions Rival; dupA (first) mentions Mentor.
+    const lww = [
+        makeEntry('Hero', { vaultSource: 'd', filename: 'a.md', keys: [], content: 'Hero meets Mentor.' }),
+        makeEntry('Hero', { vaultSource: 'd', filename: 'b.md', keys: [], content: 'Hero fights Rival.' }),
+        makeEntry('Mentor', { vaultSource: 'd', filename: 'm.md', keys: [], content: 'Mentor teaches.' }),
+        makeEntry('Rival', { vaultSource: 'd', filename: 'r.md', keys: [], content: 'Rival schemes.' }),
+    ];
+    const lwwW = fullMentionWeights(lww);
+    assert(lwwW.has('d:Hero\0d:Rival') && !lwwW.has('d:Hero\0d:Mentor'),
+        'last-write-wins: the LAST same-keyOf entry content (mentions Rival) sources the scan');
+
+    // (c) Short-name (<=3 chars) WORD-BOUNDARY rule: a 3-char title "Orb" must NOT
+    //     match the substring inside "Absorbed"; a >3-char title matches as substring.
+    const wb = [
+        makeEntry('Orb', { vaultSource: 'w', filename: 'orb.md', keys: [], content: 'inert.' }),
+        makeEntry('Crystal', { vaultSource: 'w', filename: 'cry.md', keys: [], content: 'inert.' }),
+        makeEntry('Probe', { vaultSource: 'w', filename: 'pr.md', keys: [], content: 'The probe absorbed the Crystal fully.' }),
+    ];
+    const wbW = fullMentionWeights(wb);
+    assert(!wbW.has('w:Probe\0w:Orb'), 'short name (<=3) is word-bounded: "Orb" does NOT match inside "absorbed"');
+    assert(wbW.get('w:Probe\0w:Crystal') === 1, 'long name (>3) matches as substring ("Crystal")');
+
+    // (d) SELF-SKIP by identity: an entry that mentions its own title scores no
+    //     self-pair (targetKey === sourceKey is skipped).
+    const ss = [
+        makeEntry('Echo', { vaultSource: 's', filename: 'e.md', keys: [], content: 'Echo hears Echo echo Echo.' }),
+        makeEntry('Cliff', { vaultSource: 's', filename: 'c.md', keys: [], content: 'silent.' }),
+    ];
+    const ssW = fullMentionWeights(ss);
+    assert(!ssW.has('s:Echo\0s:Echo'), 'self-skip: an entry never scores a mention pair against itself');
 });
 
 // ============================================================================

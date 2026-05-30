@@ -52,7 +52,17 @@ export function createPseudonymContext() {
     };
 }
 
-function pseudonymizeTitle(ctx, title) {
+/**
+ * SINGLE SOURCE OF TRUTH for `<title-N>` aliasing. All title/vault
+ * pseudonymization across the diagnostics subsystem flows through these two
+ * exports so the `<title-N>` / `<vault-N>` namespaces don't collide (gotcha:
+ * three separate aliasers historically minted overlapping `<title-N>` spaces).
+ * `state-snapshot.js` imports these and threads its per-snapshot context.
+ *
+ * @param {ReturnType<typeof createPseudonymContext>} ctx
+ * @param {string} title
+ */
+export function pseudonymizeTitle(ctx, title) {
     // Matches original state-snapshot.js semantics: falsy → null (lossy but
     // legacy; shape is "title is a string-or-null" so empty-string callers
     // collapsed to null).
@@ -65,7 +75,11 @@ function pseudonymizeTitle(ctx, title) {
     return p;
 }
 
-function pseudonymizeVaultSource(ctx, vs) {
+/**
+ * @param {ReturnType<typeof createPseudonymContext>} ctx
+ * @param {string} vs
+ */
+export function pseudonymizeVaultSource(ctx, vs) {
     // Empty / single-vault case passes through unchanged (preserves shape).
     if (!vs) return vs;
     let p = ctx.vaultSourceMap.get(vs);

@@ -14,8 +14,8 @@ import {
     vaultIndex, aiSearchStats, indexTimestamp, trackerKey,
     fieldDefinitions, notifyDebugModeChanged,
 } from '../state.js';
-import { ensureIndexFresh } from '../vault/vault.js';
 import { loadIndexFromCache, clearIndexCache } from '../vault/cache.js';
+import { ensureFreshOrToast } from './commands-shared.js';
 import { runHealthCheck } from './diagnostics.js';
 import { showNotebookPopup, showAiNotepadPopup, buildCopyButton, attachCopyHandler } from './popups.js';
 import { consoleBuffer } from '../diagnostics/interceptors.js';
@@ -343,11 +343,7 @@ export function registerAdminCommands() {
         name: 'dle-health',
         aliases: ['dle-h'],
         callback: async () => {
-            try { await ensureIndexFresh(); } catch (err) {
-                toastr.error(`Could not refresh vault: ${classifyError(err)}`, 'DeepLore Enhanced');
-                console.error('[DLE] ensureIndexFresh failed in /dle-health:', err);
-                return '';
-            }
+            if (!await ensureFreshOrToast('/dle-health')) return '';
 
             const health = runHealthCheck();
             const { issues, errors, warnings } = health;
@@ -540,7 +536,12 @@ export function registerAdminCommands() {
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'dle-logs',
         callback: async (_args, value) => {
-            const n = Math.min(Math.max(parseInt(value) || 50, 1), 500);
+            // Honest parse: a real number (incl. an explicit small one) is clamped to
+            // the help-text range 1-500; only genuinely non-numeric / missing input
+            // falls back to the default 50. `parseInt(value) || 50` used to coerce 0
+            // AND garbage to 50 — masking a typed "0" and any unparseable arg alike.
+            const parsed = Number(value);
+            const n = Number.isFinite(parsed) ? Math.min(Math.max(parsed, 1), 500) : 50;
             const all = consoleBuffer.drain();
             const dleEntries = all.filter(e => e.dle || (e.msg && e.msg.includes('[DLE]')));
             const recent = dleEntries.slice(-n);

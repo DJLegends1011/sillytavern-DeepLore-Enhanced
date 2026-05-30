@@ -92,7 +92,9 @@ Per-file fetches run via `Promise.all` so cold boot doesn't serialize ~30 indepe
 
 Q11 A+. See `docs/gotchas.md` #70 for the 4-state table.
 
-Hash computation uses `simpleHash` from `core/utils.js` (not cryptographic; just stable). Both sides of every comparison go through `normalizePromptBody()` first — strips the leading blank line and trailing whitespace that `buildPromptFileContent()` adds via its shim. Without normalization, a freshly exported file would immediately register as `customized` purely from formatting.
+Hash computation uses `simpleHash` from `core/utils.js` (not cryptographic; just stable). Both sides of every status comparison go through `normalizePromptBody()` first — strips the leading shim newline AND trailing whitespace that `buildPromptFileContent()` adds via its shim. Without normalization, a freshly exported file would immediately register as `customized` purely from formatting.
+
+**Hash-side vs delivery-side are two different normalizers — keep them distinct.** `normalizePromptBody()` is the HASH side: intentionally lossy (it discards trailing whitespace) so unedited exports hash stable. The runtime-DELIVERED override body is produced by `stripBodyShimNewline()` instead, which strips ONLY the leading shim newline and preserves the author's trailing whitespace, so the prompt reaches the LLM byte-for-byte. `buildPromptOverlay()` (`src/prompts/prompt-store-pure.js`) computes `bodyHash` from `normalizePromptBody(parsed.body)` but caches `deliveryBody = stripBodyShimNewline(parsed.body)`. NEVER derive the delivered body from `normalizePromptBody` — that silently mutates the user's prompt (trailing whitespace stripped). Status detection is unaffected by trailing-whitespace differences because the hash side normalizes them away.
 
 ## Settings UI
 

@@ -332,9 +332,11 @@ if (lockEpoch === generationLockEpoch) setGenerationLock(false);
 
 **Rule:** The agentic loop MUST check `epoch !== chatEpoch || lockEpoch !== generationLockEpoch` at the TOP of every iteration, before any API call or state mutation. Also check `signal.aborted`. The FLAG-phase helper `_runFlagIteration` mirrors this guard — it accepts `epoch` and `lockEpoch` parameters and re-checks them around its own awaits (before `callWithTools`, after `callWithTools`, around each `flagLoreAction` call, and after each `flagLoreAction` returns before pushing to `toolActivity`).
 
-**Why:** The agentic loop runs multiple iterations (up to 15) with awaits between each. A chat switch or stop-button press during any iteration must bail the loop immediately. Without this, a stale loop writes tool results and creates messages in the wrong chat. For `_runFlagIteration` specifically (CRIT-LIB-1, 2026-05-22), the inner `flagLoreAction` has its own epoch check at `librarian-tools.js:544` that protects `persistGaps` (chat_metadata stays clean), but `sessionActivityLog.push` and `incrementStats` fire unconditionally — without the helper's own guards, an old-chat flag would pollute the NEW chat's Activity feed and double-count session/chat stats. `AbortError` in `_runFlagIteration` is re-thrown (not swallowed) so the main loop's catch can surface it via the standard abort path.
+**Why:** The agentic loop runs multiple iterations (up to 15) with awaits between each. A chat switch or stop-button press during any iteration must bail the loop immediately. Without this, a stale loop writes tool results and creates messages in the wrong chat.
 
-**Where:** `src/librarian/agentic-loop.js: runAgenticLoop()` — epoch + abort check at iteration start of the main `for` loop. `src/librarian/agentic-loop.js: _runFlagIteration()` — pre-call guard, post-`callWithTools` guard, mid-flag-loop guard, post-`flagLoreAction` guard (skips `toolActivity.push` on epoch shift). Tests: `test/regression.test.mjs` F5a–F5d (CRIT-LIB-1).
+**`flagLoreAction` now self-guards (Phase 3, 2026-05-29).** `flagLoreAction(args, callerEpoch)` takes the loop's captured epoch and guards BOTH its `persistGaps` (chat_metadata stays clean) AND its activity/analytics side-effects (`recordSessionActivity` / `notifyLoreGapsChanged` / `updateAnalytics` / `incrementStats`) behind `if (epoch === chatEpoch)` — symmetric with `searchLoreAction`. The loop threads its captured `epoch` in as the 2nd arg; direct/test callers omit it and fall back to a fresh `chatEpoch` capture. `flagLoreAction` is **synchronous internally** (no `await` — `async` only by signature), so when called the world can't shift underneath it; the loop's remaining post-call epoch/lock guard therefore only blocks the `toolActivity` (drawer-dropdown) push, NOT the persist/stats (those are already self-guarded inside `flagLoreAction`). `AbortError` in `_runFlagIteration` is re-thrown (not swallowed) so the main loop's catch can surface it via the standard abort path.
+
+**Where:** `src/librarian/agentic-loop.js: runAgenticLoop()` — epoch + abort check at iteration start of the main `for` loop; inline-flag path threads `epoch` into `flagLoreAction(tc.input, epoch)`. `src/librarian/agentic-loop.js: _runFlagIteration()` — pre-call guard, post-`callWithTools` guard, mid-flag-loop guard, `flagLoreAction(tc.input, epoch)`, post-`flagLoreAction` guard (skips only `toolActivity.push` on epoch shift). `src/librarian/librarian-tools.js: flagLoreAction()` — the `epoch === chatEpoch` self-guards around persist (L625) and activity/analytics (L650). Tests: `test/regression.test.mjs` F5a–F5d (CRIT-LIB-1).
 
 ---
 
@@ -598,15 +600,15 @@ Branch-specific risks: the `proseMsg` branch (b) is partially-safe because `pros
 
 ## 46. Verdict Store Replaces the Four Racing Globals
 
-**Rule:** Pipeline outputs (injected sources, full trace, previous-turn diff) live on a single per-turn record in `src/verdict/verdict-store.js`. Read via `getCurrent()` / `getPrevious()` / `getByMessage()`. The legacy globals (`lastInjectionSources`, `lastPipelineTrace`, `previousSources`, `lastInjectionEpoch`) are gone — references in new code must be replaced with verdict reads. Do not reintroduce module-level globals for this data.
+**Rule:** Pipeline outputs (injected sources, full trace, previous-turn diff) live on a single per-turn record in `src/verdict/verdict-store.js`. Read via `getCurrent()` / `getPrevious()` / `getByMessageSync()`. The legacy globals (`lastInjectionSources`, `lastPipelineTrace`, `previousSources`, `lastInjectionEpoch`) are gone — references in new code must be replaced with verdict reads. Do not reintroduce module-level globals for this data.
 
 **Why (D-05, 2026-05-22):** The four globals raced. `lastInjectionSources` was cleared on render but `lastPipelineTrace` survived → drawer fallback chains (`lastInjectionSources ?? lastPipelineTrace?.injected`) had to be threaded through every consumer. Cartographer + drawer + `/dle-inspect` could disagree across messages because they read different globals at different epoch boundaries. Swipes left partial state behind (rollback only touched some globals). "What did DLE inject on message #47?" was unanswerable — the data was overwritten on message #48. The verdict store fixes all three: one record per turn, msgIdx-anchored, ring buffer + per-chat IDB spill (cap 200, auto-pruned).
 
 **Storage rules:**
 - In-memory ring buffer (`RING_CAP=50`) is the fast path. `getCurrent()` / `getPrevious()` read from it synchronously.
 - IDB spill (`IDB_PER_CHAT_CAP=200`) is **per-chat, persistent across chat switches**. Each chat's rows survive when the user navigates away, so resume-after-reload of any prior chat replays its verdict history.
-- On CHAT_CHANGED: `clearRing()` drops the in-memory ring (synchronous, no IDB touch), `setCurrentChatId(newId)` rebinds scope, `hydrateChat(newId)` async-pulls IDB rows for the destination chat. **Do NOT call `clearChat(null)` here** — that's a nuke-from-orbit helper that wipes every chat's IDB rows, which makes the 200-row per-chat spill moot and permanently breaks resume-after-reload.
-- `clearChat(chatId)` (specific chatId) is for "user permanently deleted chat" flows; `clearChatIdb(chatId)` covers IDB-only removal without touching the ring.
+- On CHAT_CHANGED: `clearRing()` drops the in-memory ring (synchronous, no IDB touch), `setCurrentChatId(newId)` rebinds scope, `hydrateChat(newId)` async-pulls IDB rows for the destination chat. **Never wipe the whole IDB store on CHAT_CHANGED** — dropping every chat's rows makes the 200-row per-chat spill moot and permanently breaks resume-after-reload. Use the ring-only `clearRing()`.
+- The ring+IDB `clearChat(chatId)` helper was **removed in Phase 3** (along with the async `getByMessage`); the per-chat IDB drop for "user permanently deleted chat" flows is now `clearChatIdb(chatId)` (IDB-only, ring untouched — pair with `clearRing()` if you also need the ring cleared).
 - **NEVER** persist verdicts to `chat_metadata` — that would bloat chat files. The Roadmap explicitly rejected that variant.
 - Pipeline writes ONE verdict per turn at commit (after `setExtensionPrompt` calls). Empty-injection turns still write a verdict (`injectedSources: []`) so consumers see "nothing this turn" instead of the prior verdict bleeding through.
 
@@ -620,7 +622,7 @@ Branch-specific risks: the `proseMsg` branch (b) is partially-safe because `pros
 
 **Hydrate/write race (F2 fix, 2026-05-22):** `hydrateChat(chatId)` MUST NOT clobber verdicts that arrived in the ring while it was awaiting IDB. CHAT_CHANGED dispatches `clearRing() + setCurrentChatId(new) + hydrateChat(new)` (async); if the user triggers Generate before hydration resolves, `onGenerate` calls `writeVerdict` synchronously and the fresh verdict lands in the ring. The pre-fix code did `ring = ring.filter(v => v.chatId !== chatId); ring.push(...slice)` — which deleted the fresh write, so `getCurrent` / `getCurrentForChat` / `getByMessageSync` all lost that turn's verdict. Fix (Option A — merge instead of replace): preserve any ring entry for this chat whose `ts` is newer than the freshest hydrated `ts` and re-append at the tail. Ordering after merge: other chats unchanged → chronological hydrated slice → preserved-fresh at tail (so backward scans find the live verdict first). Regression guard: `VRD-9c` in `test/regression.test.mjs`.
 
-**Where:** `src/verdict/verdict-store.js` (live, exports `getCurrent` / `getCurrentForChat` / `getPrevious` / `getPreviousForMessage` / `getByMessage` / `getByMessageSync`), `src/verdict/verdict-pure.js` (testable helpers), `src/vault/cache.js` (shared IDB `DeepLoreEnhanced` schema v2). Consumer call sites: drawer (`drawer-render-tabs.js` / `-status.js` / `-footer.js` / `drawer.js` / `drawer-events.js`), `src/ui/cartographer.js`, `src/ui/commands-pipeline.js` (`/dle-inspect`), `src/ui/diagnostics.js`, `src/librarian/librarian-tools.js`, `src/diagnostics/flight-recorder.js`, `src/diagnostics/state-snapshot.js`. Tests: `test/verdict.test.mjs` (70 pure-helper), regression VRD-1..VRD-9c + VRD-13/13b/13c.
+**Where:** `src/verdict/verdict-store.js` (live, exports `getCurrent` / `getCurrentForChat` / `getPrevious` / `getPreviousForMessage` / `getByMessageSync`; the async `getByMessage` and ring+IDB `clearChat` were removed Phase 3), `src/verdict/verdict-pure.js` (testable helpers), `src/vault/cache.js` (shared IDB `DeepLoreEnhanced` schema v2). Consumer call sites: drawer (`drawer-render-tabs.js` / `-status.js` / `-footer.js` / `drawer.js` / `drawer-events.js`), `src/ui/cartographer.js`, `src/ui/commands-pipeline.js` (`/dle-inspect`), `src/ui/diagnostics.js`, `src/librarian/librarian-tools.js`, `src/diagnostics/flight-recorder.js`, `src/diagnostics/state-snapshot.js`. Tests: `test/verdict.test.mjs` (70 pure-helper), regression VRD-1..VRD-9c + VRD-13/13b/13c.
 
 ---
 
@@ -752,7 +754,7 @@ Branch-specific risks: the `proseMsg` branch (b) is partially-safe because `pros
 
 **Soft-limit consequences:**
 - Tools that introspect IDB row counts must NOT assert `count <= IDB_PER_CHAT_CAP`. Use `<= IDB_PER_CHAT_CAP + PRUNE_SAMPLE_RATE - 1` as the upper bound.
-- `clearChat(chatId)` and `clearChatIdb(chatId)` still touch every row for the target chat (no sampling). They use `listIdbForChat()` which performs an unconditional `getAll()` scoped to the chat — fine because they're rare admin ops, not per-generation.
+- `clearChatIdb(chatId)` still touches every row for the target chat (no sampling). It uses `listIdbForChat()` which performs an unconditional `getAll()` scoped to the chat — fine because it's a rare admin op, not per-generation. (The ring+IDB `clearChat` helper was removed Phase 3; `clearChatIdb` is now the only per-chat IDB drop.)
 - `hydrateChat` still uses `listIdbForChat()` (`getAll()`). That's correct — hydration needs every row to sort/slice. Don't sample hydration.
 
 **Test override:** `_setPruneSampleRateForTests(rate)` exists so tests can force `rate=1` (scan every call) or `rate=N` to assert sampling behavior. Production code MUST NOT call it. `resetForTests()` re-snaps the rate to 10.
@@ -814,7 +816,9 @@ Either way, the user's prose lands in chat and tool_calls get attached. The push
 
 ## 55. `finalizeIndex` Incremental Derived-State Updates (P3)
 
-**Rule:** When modifying `finalizeIndex`, `computeDerivedIndexFields`, BM25 construction, or `computeEntityDerivedState`, ANY change to the full-rebuild math MUST also be reflected in the incremental helpers in `src/vault/vault-incremental.js` (`incrementalMentionWeights`, `incrementalBM25Update`, `incrementalEntityRegexes`) AND the `fullMentionWeights` reference implementation used by the equivalence tests. Drift = silent ranking corruption (BM25) or wrong mention scores that degrade quality invisibly.
+**Rule:** When modifying `finalizeIndex`, `computeDerivedIndexFields`, BM25 construction, or `computeEntityDerivedState`, ANY change to the full-rebuild math MUST also be reflected in the incremental helpers in `src/vault/vault-incremental.js` (`incrementalMentionWeights`, `incrementalBM25Update`, `incrementalEntityRegexes`). Drift = silent ranking corruption (BM25) or wrong mention scores that degrade quality invisibly.
+
+**mentionWeights is now 2 copies, not 3 (R6, 2026-05-29).** The full-rebuild mention-weights algorithm lives in ONE place — `buildFullMentionWeights(entries)` in `src/vault/vault-incremental.js`. Both production (`computeDerivedIndexFields` in `vault.js`, the `weights === null` full-rebuild branch) AND the equivalence tests call it; the test alias `fullMentionWeights` IS that function (`export const fullMentionWeights = buildFullMentionWeights`). So the two remaining copies are (1) this shared full builder and (2) the separate `incrementalMentionWeights` delta algorithm (a genuinely different algorithm, still pinned to the full builder by `test/vault.test.mjs` section L). When changing full mention-weights math, edit `buildFullMentionWeights` ONLY — never re-inline it in `vault.js` (T-L6a, `test/vault.test.mjs` section P, guards the delegation and fails on an inline copy) — and keep `incrementalMentionWeights` in sync (section L enforces). The old 4× hand-rolled regex-escape is gone (the incremental module + the full builder now use `escapeRegex` from `core/utils.js`); ONE hand-rolled escape remains at `src/vault/vault-pure.js:27` (follow-up cleanup candidate).
 
 **Why (P3 perf fix, Wave C / 2026-05-22):** `finalizeIndex` is called on every `buildIndexWithReuse` tick, but its full rebuild is O(N²) for mentionWeights (every source × every target), O(N) for BM25 tokenization + O(M) IDF, and O(N×K) for `entityShortNameRegexes`. On a 500-entry vault that's ~100-500ms per sync-poll-with-changes. With incremental updates the cost is proportional to changed entries (~5-20ms typical).
 
@@ -828,7 +832,7 @@ Either way, the user's prose lands in chat and tool_calls get attached. The push
 - Same BM25 index (`docs.size`, `idf` values within 1e-9, `invertedIndex` postings, `avgDl`).
 - Same `entityNameSet` Set + same regex sources/flags (RegExp identity preserved via `prevRegexes` reuse for surviving names — this is what makes the path actually cheap).
 
-**Where:** `src/vault/vault.js: finalizeIndex()` + `computeDerivedIndexFields()` (incremental dispatch + full-rebuild fallback). `src/vault/vault-incremental.js` (pure helpers). `src/vault/bm25.js` (unchanged — full builder still used by `hydrateFromCache` + the fallback). Tests: `test/vault.test.mjs` section L (13 equivalence + threshold + rename + defensive-fallback guards, including `L1` mentionWeights mod / `L4` BM25 mod / `L7` entity regex parity / `L8` threshold / `L11` rename orphan cleanup).
+**Where:** `src/vault/vault.js: finalizeIndex()` + `computeDerivedIndexFields()` (incremental dispatch + full-rebuild fallback — the fallback delegates to `buildFullMentionWeights`, R6). `src/vault/vault-incremental.js` (pure helpers + the shared `buildFullMentionWeights` full builder + its `fullMentionWeights` test alias). `src/vault/bm25.js` (unchanged — full BM25 builder still used by `hydrateFromCache` + the fallback). Tests: `test/vault.test.mjs` section L (13 equivalence + threshold + rename + defensive-fallback guards, including `L1` mentionWeights mod / `L4` BM25 mod / `L7` entity regex parity / `L8` threshold / `L11` rename orphan cleanup) + section P `T-L6a` (production-delegates-to-shared-builder guard).
 
 ---
 
@@ -894,6 +898,8 @@ Four independent invariants surfaced by the v2.5 Librarian audit (2026-05-22). E
 **Why (a11y bundle, 2026-05-22):** ST's `callGenericPopup` wraps content in a `<dialog>` that may be parented inside a form (true for the wizard popup specifically — it has text inputs on multiple steps). A bare `<button>` inside any ancestor `<form>` submits that form when the user presses Enter inside an input — silently dismissing the popup mid-flow, losing entered data, and triggering whatever the form's default-submit handler does. The wizard was the urgent case (30 inputs across 9 steps); the drawer (59 buttons) and settings popup (15 buttons) were defensively patched at the same time so the invariant is global. Adding the attr is mechanical and never changes existing event handlers — every DLE click handler is `.on('click', ...)` (delegated or direct), unaffected by the type.
 
 **Also fixed in this bundle:** stray bare `/` between attributes (e.g. `placeholder="x" / data-i18n="..."`) — 18 inputs across the three templates. Modern browsers tolerate it but HTML5 linters, accessibility scanners, and the i18n key-extractor we ship for translators all choke. The slash served no purpose (HTML5 doesn't require self-closing on void elements).
+
+**Wizard escaping (Phase 3):** `src/ui/setup-wizard.js` now uses the shared `escapeHtml` (imported from ST's `utils.js`) for all dynamic interpolation; the file's local `esc()` helper was deleted. This matters at the `<option value="${escapeHtml(name)}">` / `<option value="${p.id}">` sites — the old local `esc` did NOT escape quotes, a latent attribute-breakout (a profile/lorebook name containing `"` could break out of the `value="…"` attribute). `escapeHtml` escapes `"` → `&quot;` and `'` → `&#39;`, closing it. Any future dynamic HTML in the wizard MUST use the shared `escapeHtml`, never a hand-rolled escaper that skips quotes.
 
 **Wizard a11y note (related, same bundle):** the wizard step buttons (`.dle-wizard-step`) are a tablist of 9 — `role="tablist"` on the `<nav>`, `role="tab"` + `aria-selected` + `aria-controls="dle-wizard-page-N"` on each button; the corresponding `<div class="dle-wizard-page">` panels carry `id="dle-wizard-page-N"` + `role="tabpanel"` + `aria-labelledby="dle-wizard-step-N"`. `goToPage()` in `src/ui/setup-wizard.js` updates `aria-selected` and `aria-current="step"` on switch. Settings popup sidebar's two `--header` divs (`Connection`, `Features`) are `role="presentation"` (NOT `role="tab"`) so their child subtab buttons can themselves carry `role="tab"` / `aria-selected` / `aria-controls` without violating the tablist pattern; `switchConnectionSubtab` / `switchFeaturesSubtab` in `src/ui/settings-ui.js` update `aria-selected` on switch.
 
@@ -1054,7 +1060,7 @@ Five small pipeline-stage fixes that each shut down a specific footgun. None cha
 
 ## 69. WI import is a contract, not a best-effort transform (v2.5 WI parity)
 
-**Files:** `src/helpers.js` (convertWiEntry + WI_ROUND_TRIP_FIELDS), `src/vault/import.js` (importEntries + upsertConvertedEntry), `core/pipeline.js` (parser-side WI_ROUND_TRIP_FIELDS), `core/matching.js` (applySelectiveLogic), `src/ui/wi-import-report-pure.js` (popup builder), `src/ui/wi-import-report.js` (popup wrapper), `settings.js` (wiImportEmHandling).
+**Files:** `src/helpers.js` (convertWiEntry + `NATIVE_FIELD_MAP` + WI_ROUND_TRIP_FIELDS + `ZERO_SIGNIFICANT_FIELDS`), `src/vault/import.js` (importEntries + upsertConvertedEntry + `imported+failed+skipped` progress numerator), `core/pipeline.js` (parser-side WI_ROUND_TRIP_FIELDS), `core/matching.js` (applySelectiveLogic), `src/ui/wi-import-report-pure.js` (popup builder), `src/ui/wi-import-report.js` (popup wrapper), `settings.js` (wiImportEmHandling).
 **Date:** 2026-05-27
 
 **The contract:** every ST World Info field has a documented home. No field silently drops on import. Three tiers:
@@ -1072,6 +1078,12 @@ Five small pipeline-stage fixes that each shut down a specific footgun. None cha
 **Wave 1 silent-downgrade fix:** pre-v2.5, `wiEntry.disable === true` silently became an active vault entry — most damaging silent downgrade in the importer. Now emits `enabled: false`, parser skips at load (`parseVaultFile:191`). `wiEntry.excludeRecursion` and `wiEntry.role` had similar drops despite DLE supporting them natively.
 
 **Wave 5 import report struct (`{nativeApplied, roundTripped, skipped, emAppended, emSkipped, emEntries}`)** is threaded through `convertWiEntry` via `options.report` (optional accumulator — harmless when omitted). `importEntries` + `upsertConvertedEntry` return it on result. Wave 5 popup consumes it. The skip policy for EM entries lives at the I/O layer (`importEntries`), not the converter — converter always emits the append form so single-entry callers (companion extensions) behave consistently with batch import.
+
+**Native-field emission is data-driven via `NATIVE_FIELD_MAP` (Phase 3, `src/helpers.js`).** The ~15 hand-written `if`-blocks that each emitted a native frontmatter line are collapsed into one descriptor array. **Array ORDER is load-bearing** — it defines frontmatter emission order and MUST stay byte-identical to the prior hand-written sequence (the wi-import full-parity suite pins it byte-significantly; reordering the array silently breaks round-trip fixtures). **Every native descriptor MUST declare its report-accounting `bucket`** (`'nativeApplied'` | `'skipped'` | `null` for no telemetry) — the silent-drop class (a field emitted with no report bump, or claimed-native-but-never-emitted like the old `cooldown`) cannot recur because the descriptor pairs emission and accounting in one place. Adding a native field = one descriptor (`{wiKey, bucket, guard, transform}`), not a new `if`-block + a separate report bump elsewhere.
+
+**`displayIndex` is in `ZERO_SIGNIFICANT_FIELDS` (`src/helpers.js`).** The blanket round-trip skip drops `raw == null || raw === false || raw === 0 || raw === ''` — but `displayIndex: 0` is a REAL authored index (the first entry), not an unset sentinel. `ZERO_SIGNIFICANT_FIELDS = new Set(['displayIndex'])` exempts it so a finite `0` round-trips like any other number. All OTHER `WI_ROUND_TRIP_FIELDS` members still skip on `0`. When adding a round-trip field where `0` is meaningful, add it to this set.
+
+**Import progress numerator is `imported + failed + skipped` (`src/vault/import.js`).** An EM entry skipped under `wiImportEmHandling='skip'` increments `skipped` (not `imported`/`failed`), so a numerator of just `imported + failed` would stall below `entries.length` and the progress bar would never reach 100% on a batch with EM skips. Every `onProgress(...)` call folds in `skipped`.
 
 **Test:** `test/wi-import.test.mjs` (Wave 7) holds the full-parity fixture + no-silent-drop guard. Drift-class regression coverage in `test/regression.test.mjs`.
 
@@ -1132,6 +1144,15 @@ Q11 A+ 4-state machine for the Prompts tab UI:
 | differ | differ | `customized_stale_baseline` (edited, baseline outdated) |
 
 Edge cases: missing `source_hash` → infer from body vs canonical comparison; missing canonical → `customized` (orphan key); all hashes null → `missing`.
+
+### Hash-side vs delivery-side normalization — keep them separate (Phase 3)
+
+Status comparison and runtime delivery use TWO different normalizers in `src/prompts/prompt-store-pure.js`, and they must NOT be unified:
+
+- **`normalizePromptBody(body)`** — HASH side. Strips the leading shim newline (`/^\r?\n/`) AND all trailing whitespace (`/\s+$/`). Intentionally lossy so a freshly exported file hashes identically to the canonical dict value (stable `current_default` detection). `buildPromptOverlay` derives `bodyHash` from this. **Lossy → MUST NOT feed the delivered prompt.**
+- **`stripBodyShimNewline(body)`** — DELIVERY side. Strips ONLY the leading shim newline; preserves the author's trailing whitespace byte-for-byte so the runtime sends the prompt verbatim. `buildPromptOverlay` caches `deliveryBody = stripBodyShimNewline(parsed.body)` separately from `bodyHash`.
+
+Why the split: the frontmatter parser leaves one leading blank line after the closing `---` (the canonical `---\n\nBody` shape `buildPromptFileContent` produces) — both normalizers remove that artifact. But trailing whitespace an author put in on purpose is meaningful to the LLM, so delivery preserves it while hashing discards it (status detection is whitespace-insensitive by design). Deriving the delivered body from `normalizePromptBody` would silently mutate the user's prompt. Round-trip coverage: `test/prompts-store.test.mjs`.
 
 ### Boot-time load
 
@@ -1266,3 +1287,28 @@ Wave 3 (D1–D5) closed the vocabulary/IA gaps left after the token-truth (Wave 
 ## 77. `matchesPinBlock` vs `matchesNormalizedPinBlock` — share the compare core, fast-path the hot loops (MPB, 2026-05-29)
 
 `matchesPinBlock(raw)` (`src/helpers.js`) normalizes then delegates to `matchesNormalizedPinBlock(pb, entry)` (which assumes an already-normalized `{title, vaultSource}`); they SHARE the comparison core and must never reimplement the title/vaultSource compare independently. Hot-path loops over entries × already-normalized pins (`buildExemptionPolicy`, `applyPinBlock` in `src/stages.js`) use the fast-path to avoid O(entries×pins) throwaway `normalizePinBlock` allocations per generation. Raw/external callers keep using `matchesPinBlock`.
+
+---
+
+## 78. Title/vault pseudonymization has ONE minter — the snapshot owns the `<title-N>`/`<vault-N>` alias space (Phase 3, 2026-05-29)
+
+**Rule:** `pseudonymizeTitle(ctx, title)` / `pseudonymizeVaultSource(ctx, vs)` (exported from `src/diagnostics/pseudonymize-trace.js`) are the ONLY minters of the `<title-N>` / `<vault-N>` alias spaces in the diagnostic snapshot. `src/diagnostics/state-snapshot.js` imports them (re-exported as local thin wrappers over its module-level `_pseudoCtx`) and has NO local alias map — do not reintroduce one.
+
+**Why:** Three layers used to alias titles independently, which double-aliased the same real title under different numbers and made the report's "Titles: N" count meaningless:
+- The **scrubber** (`src/diagnostics/scrubber.js`) does NOT alias titles at all — its dead `title` pseudonym map and the `titles` stat were deleted. Its generic `pseudonym()` helper only handles ip / ipv6 / email / host / user-path categories; the scrubber regex pass never touches entry titles or vault sources.
+- The report's **"Titles: N" / "Vaults: N"** lines come from the snapshot's pseudonym context (`_pseudoCtx.titleCounter` / `vaultSourceCounter`), surfaced as `snap.__pseudonymStats` (pulled off the RAW snapshot in `export.js` and passed to `buildScrubberReport`, which prints them). They reflect what the snapshot layer actually aliased — not a permanently-zero dead stat.
+- The **flight recorder** (`src/diagnostics/flight-recorder.js`) keeps its OWN session-scoped title minter but with a distinct `<fr-title-N>` prefix, so `<title-3>` (snapshot) and `<fr-title-3>` (recorder) are never the same alias space and can't collide in a combined report.
+
+**Where:** `src/diagnostics/pseudonymize-trace.js` (the sole minter + the `ctx.titleCounter`/`vaultSourceCounter` it bumps), `src/diagnostics/state-snapshot.js` (imports it, sets `__pseudonymStats`), `src/diagnostics/export.js` (`buildScrubberReport` consumes `__pseudonymStats` for the "Titles:/Vaults:" lines), `src/diagnostics/scrubber.js` (no title aliasing — generic categories only), `src/diagnostics/flight-recorder.js` (`<fr-title-N>` distinct namespace).
+
+---
+
+## 79. Drawer per-tick render perf — hash-gate the activity feed, single-pass the gating counts (Phase 3, 2026-05-29)
+
+**Rule:** `renderFooter` runs on every `CHAT_COMPLETION_PROMPT_READY` tick, but `activityLog` only mutates once per completed generation. The footer activity feed is therefore hash-gated via `_lastActivityFeedHash` in `src/drawer/drawer-render-footer.js` — the feed DOM is destroyed/rebuilt ONLY when the content hash (`ts|outcome/mode|injected|tokens|folderCount` per row) changes. Don't drop the gate; an unconditional rebuild thrashes the DOM every prompt-ready tick.
+
+`renderGatingTab` (`src/drawer/drawer-render-tabs.js`) computes per-field exclusion counts in a SINGLE pass over `vaultIndex` (one `excludedCounts` Map keyed by field name) instead of one `vaultIndex.filter()` per gating field (O(fields×entries) → O(entries)). Future per-field stats must fold into that single pass, not add another full scan.
+
+**Known follow-up (don't claim it's fixed):** the `$container.empty()` full rebuild of the gating-fields container in `renderGatingTab` remains unconditional — it is NOT yet hash-gated like the footer feed.
+
+**Where:** `src/drawer/drawer-render-footer.js` (`_lastActivityFeedHash` guard, ~L145-172), `src/drawer/drawer-render-tabs.js` (`renderGatingTab` `excludedCounts` single-pass, ~L964-1003; unconditional `$container.empty()` at ~L933).

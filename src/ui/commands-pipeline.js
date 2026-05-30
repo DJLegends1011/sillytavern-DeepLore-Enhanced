@@ -23,8 +23,8 @@ function _currentVerdictForChat() {
     return getCurrentVerdictForChat(cid);
 }
 import { DEFAULT_FIELD_DEFINITIONS } from '../fields.js';
-import { ensureIndexFresh } from '../vault/vault.js';
 import { runPipeline } from '../pipeline/pipeline.js';
+import { ensureFreshOrToast } from './commands-shared.js';
 import { showSourcesPopup } from './cartographer.js';
 import { runSimulation, showSimulationPopup, buildCopyButton, attachCopyHandler } from './popups.js';
 
@@ -36,11 +36,7 @@ export function registerPipelineCommands() {
                 toastr.info('No active chat.', 'DeepLore Enhanced');
                 return '';
             }
-            try { await ensureIndexFresh(); } catch (err) {
-                toastr.error(`Could not refresh vault: ${classifyError(err)}`, 'DeepLore Enhanced');
-                console.error('[DLE] ensureIndexFresh failed in /dle-simulate:', err);
-                return '';
-            }
+            if (!await ensureFreshOrToast('/dle-simulate')) return '';
             if (vaultIndex.length === 0) {
                 toastr.info(NO_ENTRIES_MSG, 'DeepLore Enhanced');
                 return '';
@@ -68,11 +64,7 @@ export function registerPipelineCommands() {
             }
             // Wait for any in-progress index build to prevent concurrent pipeline execution.
             if (buildPromise) await buildPromise;
-            try { await ensureIndexFresh(); } catch (err) {
-                toastr.error(`Could not refresh vault: ${classifyError(err)}`, 'DeepLore Enhanced');
-                console.error('[DLE] ensureIndexFresh failed in /dle-why:', err);
-                return '';
-            }
+            if (!await ensureFreshOrToast('/dle-why')) return '';
             if (vaultIndex.length === 0) {
                 toastr.info(NO_ENTRIES_MSG, 'DeepLore Enhanced');
                 return '';
@@ -172,6 +164,191 @@ export function registerPipelineCommands() {
             ];
             const hasTimingData = timingFields.some(([, v]) => v != null);
 
+            // ── Contextual-gating reason builder (shared by both renderers) ──
+            // The reason-list logic is identical for plain + HTML; only the
+            // escaping and the no-reason fallback text differ. Compute the raw
+            // reason fragments once per item.
+            const gatingCtx = chat_metadata?.deeplore_context || {};
+            const allDefs = fieldDefinitions.length > 0 ? fieldDefinitions : DEFAULT_FIELD_DEFINITIONS;
+            const contextualReasonStrs = (item) => {
+                const entry = vaultIndex.find(e => e.title === item.title);
+                const reasons = [];
+                if (entry?.customFields) {
+                    for (const fd of allDefs) {
+                        if (!fd.gating?.enabled) continue;
+                        const ev = entry.customFields[fd.name];
+                        const av = gatingCtx[fd.contextKey];
+                        if (ev == null || ev === '' || (Array.isArray(ev) && !ev.length)) continue;
+                        const evStr = Array.isArray(ev) ? ev.join(',') : String(ev);
+                        const avStr = av == null || av === '' || (Array.isArray(av) && !av.length) ? '(not set)' : (Array.isArray(av) ? av.join(',') : String(av));
+                        if (avStr === '(not set)' || evStr !== avStr) reasons.push({ name: fd.name, evStr, avStr });
+                    }
+                }
+                return reasons;
+            };
+
+            // ── Refine-key reason builder (shared) ──
+            // Both renderers run the same selective_logic switch; the HTML branch
+            // bolds the primary key + logic and word "found in scan text". Build a
+            // tiny descriptor and let each renderer assemble its own markup.
+            const refineReason = (e, bold) => {
+                const logic = e.selectiveLogic || 'and_any';
+                const pk = bold ? `<b>${escapeHtml(e.primaryKey)}</b>` : e.primaryKey;
+                const keysStr = bold ? e.refineKeys.map(k => escapeHtml(k)).join(', ') : e.refineKeys.join(', ');
+                const lg = (s) => bold ? `<b>${s}</b>` : s;
+                switch (logic) {
+                    case 'and_all':
+                        return `matched "${pk}" but selective_logic=${lg('and_all')} requires all of [${keysStr}] (not enough matched)`;
+                    case 'not_any':
+                        return `matched "${pk}" but selective_logic=${lg('not_any')} blocked because a refine key from [${keysStr}] appeared in the chat`;
+                    case 'not_all':
+                        return `matched "${pk}" but selective_logic=${lg('not_all')} blocked because ALL of [${keysStr}] matched`;
+                    case 'and_any':
+                    default:
+                        return bold
+                            ? `matched "${pk}" but none of [${keysStr}] found in scan text`
+                            : `matched "${pk}" but none of [${keysStr}] found`;
+                }
+            };
+
+            // ── Section descriptors ──
+            // One ordered list drives BOTH the plain-text copy buffer and the HTML
+            // popup, so a stanza can no longer drift between the two renders. Each
+            // descriptor supplies: the gate, the per-format heading, the items, and
+            // a per-format item formatter (item text is genuinely format-specific
+            // for several stanzas, so plain/html stay distinct closures). `htmlOk`
+            // picks the status glyph; `htmlTrailer` is HTML-only trailing markup.
+            const sections = [
+                {
+                    items: t.keywordMatched,
+                    plainHeading: () => `Keyword Matched (${t.keywordMatched.length}):`,
+                    htmlOk: true,
+                    htmlHeading: () => `Keyword Matched (${t.keywordMatched.length})`,
+                    plainItem: (m) => `${m.title} — ${m.matchedBy}`,
+                    htmlItem: (m) => `${escapeHtml(m.title)} — ${escapeHtml(m.matchedBy)}`,
+                },
+                {
+                    items: t.aiSelected,
+                    plainHeading: () => `AI Selected (${t.aiSelected.length}):`,
+                    htmlOk: true,
+                    htmlHeading: () => `AI Selected (${t.aiSelected.length})`,
+                    plainItem: (m) => `${m.title} [${m.confidence}] — ${m.reason}`,
+                    htmlItem: (m) => `${escapeHtml(m.title)} [${escapeHtml(m.confidence)}] — ${escapeHtml(m.reason)}`,
+                    htmlTrailer: `<p class="dle-text-xs dle-dimmed dle-mt-1"><b>Confidence:</b> HIGH = strong match, MEDIUM = likely relevant, LOW = loosely related or speculative</p>`,
+                },
+                {
+                    items: t.injected || [],
+                    plainHeading: () => `Injected (${t.injected.length}, ~${t.totalTokens || '?'} tokens${t.budgetLimit ? ` / ${t.budgetLimit} budget` : ''}):`,
+                    htmlOk: true,
+                    htmlHeading: () => `Injected (${t.injected.length}, ~${t.totalTokens || '?'} tokens${t.budgetLimit ? ` / ${t.budgetLimit} budget` : ''})`,
+                    plainItem: (e) => `${e.title} (~${e.tokens} tokens)${e.truncated ? ` [truncated from ~${e.originalTokens}]` : ''}`,
+                    htmlItem: (e) => `${escapeHtml(e.title)} (~${e.tokens} tokens)${e.truncated ? ` <span class="dle-text-warning">[truncated from ~${e.originalTokens}]</span>` : ''}`,
+                },
+                {
+                    items: t.contextualGatingRemoved,
+                    plainHeading: () => `Contextual Gating Removed (${t.contextualGatingRemoved.length}):`,
+                    htmlOk: false,
+                    htmlHeading: () => `Contextual Gating Removed (${t.contextualGatingRemoved.length})`,
+                    plainItem: (item) => {
+                        const reasons = contextualReasonStrs(item).map(r => `${r.name}: ${r.evStr} ≠ ${r.avStr}`);
+                        return `${item.title}${reasons.length ? ' — ' + reasons.join(', ') : ''}`;
+                    },
+                    htmlItem: (item) => {
+                        const reasons = contextualReasonStrs(item).map(r => `${escapeHtml(r.name)}: ${escapeHtml(r.evStr)} ≠ ${escapeHtml(r.avStr)}`);
+                        const detail = reasons.length ? ` — ${reasons.join(', ')}` : ' — filtered by contextual gating';
+                        return `${escapeHtml(item.title)}${detail}`;
+                    },
+                },
+                {
+                    items: t.cooldownRemoved,
+                    plainHeading: () => `Re-injection Cooldown Removed (${t.cooldownRemoved.length}):`,
+                    htmlOk: false,
+                    htmlHeading: () => `Re-injection Cooldown (${t.cooldownRemoved.length})`,
+                    plainItem: (item) => `${item.title}`,
+                    htmlItem: (item) => `${escapeHtml(item.title)} — recently injected, on cooldown`,
+                },
+                {
+                    items: t.gatedOut,
+                    plainHeading: () => `Gated Out (${t.gatedOut.length}):`,
+                    htmlOk: false,
+                    htmlHeading: () => `Gated Out (${t.gatedOut.length})`,
+                    plainItem: (e) => {
+                        const reasons = [];
+                        if (e.requires?.length > 0) reasons.push(`requires: ${e.requires.join(', ')}`);
+                        if (e.excludes?.length > 0) reasons.push(`excludes: ${e.excludes.join(', ')}`);
+                        return `${e.title} — ${reasons.join('; ') || 'gating rule'}`;
+                    },
+                    htmlItem: (e) => {
+                        const reasons = [];
+                        if (e.requires?.length > 0) {
+                            const missing = e.requires.filter(r => !keywordMatchedTitles.has(r.toLowerCase()));
+                            if (missing.length > 0) {
+                                reasons.push(`requires: ${e.requires.join(', ')} (missing: ${missing.join(', ')})`);
+                            } else {
+                                reasons.push(`requires: ${e.requires.join(', ')} (all present but removed by later stage)`);
+                            }
+                        }
+                        if (e.excludes?.length > 0) {
+                            const blocking = e.excludes.filter(r => keywordMatchedTitles.has(r.toLowerCase()));
+                            if (blocking.length > 0) {
+                                reasons.push(`excludes: ${e.excludes.join(', ')} (blocking: ${blocking.join(', ')})`);
+                            } else {
+                                reasons.push(`excludes: ${e.excludes.join(', ')}`);
+                            }
+                        }
+                        return `${escapeHtml(e.title)} — ${escapeHtml(reasons.join('; ') || 'gating rule')}`;
+                    },
+                },
+                {
+                    items: t.stripDedupRemoved,
+                    plainHeading: () => `Already Injected (${t.stripDedupRemoved.length}):`,
+                    htmlOk: false,
+                    htmlHeading: () => `Already Injected (${t.stripDedupRemoved.length})`,
+                    plainItem: (item) => `${item.title}`,
+                    htmlItem: (item) => `${escapeHtml(item.title)} — already injected in recent generation(s)`,
+                },
+                {
+                    items: t.probabilitySkipped,
+                    plainHeading: () => `Probability Skipped (${t.probabilitySkipped.length}):`,
+                    htmlOk: false,
+                    htmlHeading: () => `Probability Skipped (${t.probabilitySkipped.length})`,
+                    plainItem: (e) => `${e.title} (probability: ${e.probability}, rolled: ${e.roll.toFixed(3)})`,
+                    htmlItem: (e) => {
+                        const rollLabel = e.probability === 0 ? 'probability is 0 (never fires)' : `rolled ${e.roll.toFixed(3)} > ${e.probability}`;
+                        return `${escapeHtml(e.title)} — ${rollLabel}`;
+                    },
+                },
+                {
+                    items: t.warmupFailed,
+                    plainHeading: () => `Warmup Not Met (${t.warmupFailed.length}):`,
+                    htmlOk: false,
+                    htmlHeading: () => `Warmup Not Met (${t.warmupFailed.length})`,
+                    plainItem: (e) => `${e.title} (needed: ${e.needed}, found: ${e.found})`,
+                    htmlItem: (e) => `${escapeHtml(e.title)} — needs ${e.needed} keyword occurrences, found ${e.found}`,
+                },
+                {
+                    items: t.budgetCut,
+                    plainHeading: () => `Budget/Max Cut (${t.budgetCut.length}):`,
+                    htmlOk: false,
+                    htmlHeading: () => `Budget/Max Cut (${t.budgetCut.length})`,
+                    plainItem: (e) => `${e.title} (pri ${e.priority}, ~${e.tokens} tokens)`,
+                    htmlItem: (e) => `${escapeHtml(e.title)} (pri ${e.priority}, ~${e.tokens} tokens)`,
+                },
+                {
+                    items: t.refineKeyBlocked,
+                    plainHeading: () => `Refine Key Blocked (${t.refineKeyBlocked.length}):`,
+                    htmlOk: false,
+                    htmlHeading: () => `Refine Key Blocked (${t.refineKeyBlocked.length})`,
+                    // Audit fix-up: per-entry copy honors selective_logic mode (shared
+                    // refineReason builder). Pre-fix the hardcoded AND_ANY phrasing lied
+                    // for not_any / not_all entries where a refine MATCH blocked the gate.
+                    plainItem: (e) => `${e.title} — ${refineReason(e, false)}`,
+                    htmlItem: (e) => `${escapeHtml(e.title)} — ${refineReason(e, true)}`,
+                    htmlTrailer: `<p class="dle-text-xs dle-dimmed">Refine keys gating: behavior depends on each entry's selective_logic (and_any / and_all / not_all / not_any).</p>`,
+                },
+            ];
+
+            // ── Plain-text copy buffer ──
             const plainLines = [
                 'Entry Inspector',
                 `Mode: ${t.mode} | Indexed: ${t.indexed} | Bootstrap active: ${t.bootstrapActive ? 'yes' : 'no'} | AI fallback: ${t.aiFallback ? 'yes' : 'no'}`,
@@ -185,122 +362,38 @@ export function registerPipelineCommands() {
                 ] : []),
                 '',
             ];
-            if (t.keywordMatched.length > 0) {
-                plainLines.push(`Keyword Matched (${t.keywordMatched.length}):`);
-                for (const m of t.keywordMatched) plainLines.push(`  ${m.title} — ${m.matchedBy}`);
+            const pushPlainSection = (s) => {
+                if (!s.items || s.items.length === 0) return;
+                plainLines.push(s.plainHeading());
+                for (const item of s.items) plainLines.push(`  ${s.plainItem(item)}`);
                 plainLines.push('');
-            }
-            if (t.aiSelected.length > 0) {
-                plainLines.push(`AI Selected (${t.aiSelected.length}):`);
-                for (const m of t.aiSelected) plainLines.push(`  ${m.title} [${m.confidence}] — ${m.reason}`);
-                plainLines.push('');
-            }
+            };
+            // Order: keyword, aiSelected, [aiFallback line], fuzzy, injected,
+            // contextualGatingRemoved, [folderFilter], cooldown, gatedOut,
+            // stripDedup, probability, warmup, budget, refine.
+            pushPlainSection(sections[0]); // keyword
+            pushPlainSection(sections[1]); // aiSelected
             if (t.aiFallback) plainLines.push('WARNING: AI search failed — keyword results used as fallback', '');
             if (t.fuzzyStats?.active) {
                 plainLines.push(`Fuzzy Search: ${t.fuzzyStats.matched} matched from ${t.fuzzyStats.candidates} candidates (threshold: ${t.fuzzyStats.threshold})`);
                 plainLines.push('');
             }
-            if (t.injected && t.injected.length > 0) {
-                const budgetLabel = t.budgetLimit ? ` / ${t.budgetLimit} budget` : '';
-                plainLines.push(`Injected (${t.injected.length}, ~${t.totalTokens || '?'} tokens${budgetLabel}):`);
-                for (const e of t.injected) {
-                    const truncLabel = e.truncated ? ` [truncated from ~${e.originalTokens}]` : '';
-                    plainLines.push(`  ${e.title} (~${e.tokens} tokens)${truncLabel}`);
-                }
-                plainLines.push('');
-            }
-            if (t.contextualGatingRemoved && t.contextualGatingRemoved.length > 0) {
-                plainLines.push(`Contextual Gating Removed (${t.contextualGatingRemoved.length}):`);
-                const gatingCtx = chat_metadata?.deeplore_context || {};
-                const allDefs = fieldDefinitions.length > 0 ? fieldDefinitions : DEFAULT_FIELD_DEFINITIONS;
-                for (const item of t.contextualGatingRemoved) {
-                    const title = item.title;
-                    const entry = vaultIndex.find(e => e.title === title);
-                    const reasons = [];
-                    if (entry?.customFields) {
-                        for (const fd of allDefs) {
-                            if (!fd.gating?.enabled) continue;
-                            const ev = entry.customFields[fd.name];
-                            const av = gatingCtx[fd.contextKey];
-                            if (ev == null || ev === '' || (Array.isArray(ev) && !ev.length)) continue;
-                            const evStr = Array.isArray(ev) ? ev.join(',') : String(ev);
-                            const avStr = av == null || av === '' || (Array.isArray(av) && !av.length) ? '(not set)' : (Array.isArray(av) ? av.join(',') : String(av));
-                            if (avStr === '(not set)' || evStr !== avStr) reasons.push(`${fd.name}: ${evStr} ≠ ${avStr}`);
-                        }
-                    }
-                    plainLines.push(`  ${title}${reasons.length ? ' — ' + reasons.join(', ') : ''}`);
-                }
-                plainLines.push('');
-            }
+            pushPlainSection(sections[2]); // injected
+            pushPlainSection(sections[3]); // contextualGatingRemoved
             if (t.folderFilter) {
                 plainLines.push(`Folder Filter: ${t.folderFilter.folders.join(', ')} — ${t.folderFilter.removed} entries removed (${t.folderFilter.before} → ${t.folderFilter.after})`);
                 plainLines.push('');
             }
-            if (t.cooldownRemoved && t.cooldownRemoved.length > 0) {
-                plainLines.push(`Re-injection Cooldown Removed (${t.cooldownRemoved.length}):`);
-                for (const item of t.cooldownRemoved) plainLines.push(`  ${item.title}`);
-                plainLines.push('');
-            }
-            if (t.gatedOut && t.gatedOut.length > 0) {
-                plainLines.push(`Gated Out (${t.gatedOut.length}):`);
-                for (const e of t.gatedOut) {
-                    const reasons = [];
-                    if (e.requires?.length > 0) reasons.push(`requires: ${e.requires.join(', ')}`);
-                    if (e.excludes?.length > 0) reasons.push(`excludes: ${e.excludes.join(', ')}`);
-                    plainLines.push(`  ${e.title} — ${reasons.join('; ') || 'gating rule'}`);
-                }
-                plainLines.push('');
-            }
-            if (t.stripDedupRemoved && t.stripDedupRemoved.length > 0) {
-                plainLines.push(`Already Injected (${t.stripDedupRemoved.length}):`);
-                for (const item of t.stripDedupRemoved) plainLines.push(`  ${item.title}`);
-                plainLines.push('');
-            }
-            if (t.probabilitySkipped && t.probabilitySkipped.length > 0) {
-                plainLines.push(`Probability Skipped (${t.probabilitySkipped.length}):`);
-                for (const e of t.probabilitySkipped) plainLines.push(`  ${e.title} (probability: ${e.probability}, rolled: ${e.roll.toFixed(3)})`);
-                plainLines.push('');
-            }
-            if (t.warmupFailed && t.warmupFailed.length > 0) {
-                plainLines.push(`Warmup Not Met (${t.warmupFailed.length}):`);
-                for (const e of t.warmupFailed) plainLines.push(`  ${e.title} (needed: ${e.needed}, found: ${e.found})`);
-                plainLines.push('');
-            }
-            if (t.budgetCut && t.budgetCut.length > 0) {
-                plainLines.push(`Budget/Max Cut (${t.budgetCut.length}):`);
-                for (const e of t.budgetCut) plainLines.push(`  ${e.title} (pri ${e.priority}, ~${e.tokens} tokens)`);
-                plainLines.push('');
-            }
-            if (t.refineKeyBlocked && t.refineKeyBlocked.length > 0) {
-                plainLines.push(`Refine Key Blocked (${t.refineKeyBlocked.length}):`);
-                for (const e of t.refineKeyBlocked) {
-                    // Audit fix-up: copy buffer now honors selective_logic mode
-                    // (same fix as the HTML branch ~60 lines below). Pre-fix
-                    // this hardcoded AND_ANY phrasing lied for not_any / not_all
-                    // entries where a refine MATCH was what blocked the gate.
-                    const logic = e.selectiveLogic || 'and_any';
-                    const keysStr = e.refineKeys.join(', ');
-                    let reason;
-                    switch (logic) {
-                        case 'and_all':
-                            reason = `matched "${e.primaryKey}" but selective_logic=and_all requires all of [${keysStr}] (not enough matched)`;
-                            break;
-                        case 'not_any':
-                            reason = `matched "${e.primaryKey}" but selective_logic=not_any blocked because a refine key from [${keysStr}] appeared in the chat`;
-                            break;
-                        case 'not_all':
-                            reason = `matched "${e.primaryKey}" but selective_logic=not_all blocked because ALL of [${keysStr}] matched`;
-                            break;
-                        case 'and_any':
-                        default:
-                            reason = `matched "${e.primaryKey}" but none of [${keysStr}] found`;
-                    }
-                    plainLines.push(`  ${e.title} — ${reason}`);
-                }
-                plainLines.push('');
-            }
+            pushPlainSection(sections[4]); // cooldown
+            pushPlainSection(sections[5]); // gatedOut
+            pushPlainSection(sections[6]); // stripDedup
+            pushPlainSection(sections[7]); // probability
+            pushPlainSection(sections[8]); // warmup
+            pushPlainSection(sections[9]); // budget
+            pushPlainSection(sections[10]); // refine
             const plainText = plainLines.join('\n');
 
+            // ── HTML popup ──
             let html = `<div class="dle-popup">`;
             html += `<h3>Entry Inspector</h3>`;
             html += buildCopyButton(plainText);
@@ -328,163 +421,33 @@ export function registerPipelineCommands() {
                 html += `<p class="dle-text-warning">No entries matched. Check scan depth (currently ${settings.scanDepth}), keyword coverage, or run /dle-health.</p>`;
             }
 
-            if (t.keywordMatched.length > 0) {
-                html += `<h4>${statusIcon(true)} Keyword Matched (${t.keywordMatched.length})</h4><ul>`;
-                for (const m of t.keywordMatched) {
-                    html += `<li>${escapeHtml(m.title)} — ${escapeHtml(m.matchedBy)}</li>`;
-                }
+            const pushHtmlSection = (s) => {
+                if (!s.items || s.items.length === 0) return;
+                const cls = s.htmlOk ? '' : ' class="dle-text-warning"';
+                html += `<h4${cls}>${statusIcon(s.htmlOk)} ${s.htmlHeading()}</h4><ul>`;
+                for (const item of s.items) html += `<li>${s.htmlItem(item)}</li>`;
                 html += '</ul>';
-            }
-
-            if (t.aiSelected.length > 0) {
-                html += `<h4>${statusIcon(true)} AI Selected (${t.aiSelected.length})</h4><ul>`;
-                for (const m of t.aiSelected) {
-                    html += `<li>${escapeHtml(m.title)} [${escapeHtml(m.confidence)}] — ${escapeHtml(m.reason)}</li>`;
-                }
-                html += '</ul>';
-                html += `<p class="dle-text-xs dle-dimmed dle-mt-1"><b>Confidence:</b> HIGH = strong match, MEDIUM = likely relevant, LOW = loosely related or speculative</p>`;
-            }
-
+                if (s.htmlTrailer) html += s.htmlTrailer;
+            };
+            pushHtmlSection(sections[0]); // keyword
+            pushHtmlSection(sections[1]); // aiSelected
             if (t.aiFallback) {
                 html += `<p class="dle-text-warning">⚠ AI search failed — keyword results used as fallback</p>`;
             }
-
             if (t.fuzzyStats?.active) {
                 const fIcon = t.fuzzyStats.matched > 0 ? statusIcon(true) : 'ℹ';
                 html += `<h4>${fIcon} Fuzzy Search (BM25)</h4>`;
                 html += `<p>${t.fuzzyStats.matched} entries matched from ${t.fuzzyStats.candidates} candidates (min score threshold: ${t.fuzzyStats.threshold})</p>`;
             }
-
-            if (t.injected && t.injected.length > 0) {
-                const budgetLabel = t.budgetLimit ? ` / ${t.budgetLimit} budget` : '';
-                html += `<h4>${statusIcon(true)} Injected (${t.injected.length}, ~${t.totalTokens || '?'} tokens${budgetLabel})</h4><ul>`;
-                for (const e of t.injected) {
-                    const truncLabel = e.truncated ? ` <span class="dle-text-warning">[truncated from ~${e.originalTokens}]</span>` : '';
-                    html += `<li>${escapeHtml(e.title)} (~${e.tokens} tokens)${truncLabel}</li>`;
-                }
-                html += '</ul>';
-            }
-
-            if (t.contextualGatingRemoved && t.contextualGatingRemoved.length > 0) {
-                html += `<h4 class="dle-text-warning">${statusIcon(false)} Contextual Gating Removed (${t.contextualGatingRemoved.length})</h4><ul>`;
-                const gatingCtx = chat_metadata?.deeplore_context || {};
-                const allDefs = fieldDefinitions.length > 0 ? fieldDefinitions : DEFAULT_FIELD_DEFINITIONS;
-                for (const item of t.contextualGatingRemoved) {
-                    const title = item.title;
-                    const entry = vaultIndex.find(e => e.title === title);
-                    const reasons = [];
-                    if (entry?.customFields) {
-                        for (const fd of allDefs) {
-                            if (!fd.gating?.enabled) continue;
-                            const ev = entry.customFields[fd.name];
-                            const av = gatingCtx[fd.contextKey];
-                            if (ev == null || ev === '' || (Array.isArray(ev) && !ev.length)) continue;
-                            const evStr = Array.isArray(ev) ? ev.join(',') : String(ev);
-                            const avStr = av == null || av === '' || (Array.isArray(av) && !av.length) ? '(not set)' : (Array.isArray(av) ? av.join(',') : String(av));
-                            if (avStr === '(not set)' || evStr !== avStr) reasons.push(`${escapeHtml(fd.name)}: ${escapeHtml(evStr)} ≠ ${escapeHtml(avStr)}`);
-                        }
-                    }
-                    const detail = reasons.length ? ` — ${reasons.join(', ')}` : ' — filtered by contextual gating';
-                    html += `<li>${escapeHtml(title)}${detail}</li>`;
-                }
-                html += '</ul>';
-            }
-
-            if (t.cooldownRemoved && t.cooldownRemoved.length > 0) {
-                html += `<h4 class="dle-text-warning">${statusIcon(false)} Re-injection Cooldown (${t.cooldownRemoved.length})</h4><ul>`;
-                for (const item of t.cooldownRemoved) {
-                    html += `<li>${escapeHtml(item.title)} — recently injected, on cooldown</li>`;
-                }
-                html += '</ul>';
-            }
-
-            if (t.gatedOut && t.gatedOut.length > 0) {
-                html += `<h4 class="dle-text-warning">${statusIcon(false)} Gated Out (${t.gatedOut.length})</h4><ul>`;
-                for (const e of t.gatedOut) {
-                    const reasons = [];
-                    if (e.requires?.length > 0) {
-                        const missing = e.requires.filter(r => !keywordMatchedTitles.has(r.toLowerCase()));
-                        if (missing.length > 0) {
-                            reasons.push(`requires: ${e.requires.join(', ')} (missing: ${missing.join(', ')})`);
-                        } else {
-                            reasons.push(`requires: ${e.requires.join(', ')} (all present but removed by later stage)`);
-                        }
-                    }
-                    if (e.excludes?.length > 0) {
-                        const blocking = e.excludes.filter(r => keywordMatchedTitles.has(r.toLowerCase()));
-                        if (blocking.length > 0) {
-                            reasons.push(`excludes: ${e.excludes.join(', ')} (blocking: ${blocking.join(', ')})`);
-                        } else {
-                            reasons.push(`excludes: ${e.excludes.join(', ')}`);
-                        }
-                    }
-                    html += `<li>${escapeHtml(e.title)} — ${escapeHtml(reasons.join('; ') || 'gating rule')}</li>`;
-                }
-                html += '</ul>';
-            }
-
-            if (t.stripDedupRemoved && t.stripDedupRemoved.length > 0) {
-                html += `<h4 class="dle-text-warning">${statusIcon(false)} Already Injected (${t.stripDedupRemoved.length})</h4><ul>`;
-                for (const item of t.stripDedupRemoved) {
-                    html += `<li>${escapeHtml(item.title)} — already injected in recent generation(s)</li>`;
-                }
-                html += '</ul>';
-            }
-
-            if (t.probabilitySkipped && t.probabilitySkipped.length > 0) {
-                html += `<h4 class="dle-text-warning">${statusIcon(false)} Probability Skipped (${t.probabilitySkipped.length})</h4><ul>`;
-                for (const e of t.probabilitySkipped) {
-                    const rollLabel = e.probability === 0 ? 'probability is 0 (never fires)' : `rolled ${e.roll.toFixed(3)} > ${e.probability}`;
-                    html += `<li>${escapeHtml(e.title)} — ${rollLabel}</li>`;
-                }
-                html += '</ul>';
-            }
-
-            if (t.warmupFailed && t.warmupFailed.length > 0) {
-                html += `<h4 class="dle-text-warning">${statusIcon(false)} Warmup Not Met (${t.warmupFailed.length})</h4><ul>`;
-                for (const e of t.warmupFailed) {
-                    html += `<li>${escapeHtml(e.title)} — needs ${e.needed} keyword occurrences, found ${e.found}</li>`;
-                }
-                html += '</ul>';
-            }
-
-            if (t.budgetCut && t.budgetCut.length > 0) {
-                html += `<h4 class="dle-text-warning">${statusIcon(false)} Budget/Max Cut (${t.budgetCut.length})</h4><ul>`;
-                for (const e of t.budgetCut) {
-                    html += `<li>${escapeHtml(e.title)} (pri ${e.priority}, ~${e.tokens} tokens)</li>`;
-                }
-                html += '</ul>';
-            }
-
-            if (t.refineKeyBlocked && t.refineKeyBlocked.length > 0) {
-                // Audit fix-up: per-entry copy now respects selective_logic mode.
-                // Pre-fix this hard-coded AND_ANY phrasing for every entry, which
-                // was wrong (and confusing) for entries using not_any / not_all
-                // where a refine MATCH was what blocked the gate.
-                html += `<h4 class="dle-text-warning">${statusIcon(false)} Refine Key Blocked (${t.refineKeyBlocked.length})</h4><ul>`;
-                for (const e of t.refineKeyBlocked) {
-                    const logic = e.selectiveLogic || 'and_any';
-                    const keysStr = e.refineKeys.map(k => escapeHtml(k)).join(', ');
-                    let reason;
-                    switch (logic) {
-                        case 'and_all':
-                            reason = `matched "<b>${escapeHtml(e.primaryKey)}</b>" but selective_logic=<b>and_all</b> requires all of [${keysStr}] (not enough matched)`;
-                            break;
-                        case 'not_any':
-                            reason = `matched "<b>${escapeHtml(e.primaryKey)}</b>" but selective_logic=<b>not_any</b> blocked because a refine key from [${keysStr}] appeared in the chat`;
-                            break;
-                        case 'not_all':
-                            reason = `matched "<b>${escapeHtml(e.primaryKey)}</b>" but selective_logic=<b>not_all</b> blocked because ALL of [${keysStr}] matched`;
-                            break;
-                        case 'and_any':
-                        default:
-                            reason = `matched "<b>${escapeHtml(e.primaryKey)}</b>" but none of [${keysStr}] found in scan text`;
-                    }
-                    html += `<li>${escapeHtml(e.title)} — ${reason}</li>`;
-                }
-                html += '</ul>';
-                html += `<p class="dle-text-xs dle-dimmed">Refine keys gating: behavior depends on each entry's selective_logic (and_any / and_all / not_all / not_any).</p>`;
-            }
+            pushHtmlSection(sections[2]); // injected
+            pushHtmlSection(sections[3]); // contextualGatingRemoved
+            pushHtmlSection(sections[4]); // cooldown
+            pushHtmlSection(sections[5]); // gatedOut
+            pushHtmlSection(sections[6]); // stripDedup
+            pushHtmlSection(sections[7]); // probability
+            pushHtmlSection(sections[8]); // warmup
+            pushHtmlSection(sections[9]); // budget
+            pushHtmlSection(sections[10]); // refine
 
             html += '</div>';
             await callGenericPopup(html, POPUP_TYPE.TEXT, '', {

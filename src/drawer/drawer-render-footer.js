@@ -20,6 +20,12 @@ import { callGenericPopup, POPUP_TYPE } from '../../../../../popup.js';
 
 const AI_CIRCUIT_COOLDOWN_MS = 30_000; // mirror state.js — drawer doesn't import the constant directly
 
+// Hash of the last activity-feed render inputs — skip the destroy/rebuild when unchanged.
+// renderFooter is driven by the high-frequency CHAT_COMPLETION_PROMPT_READY event (every
+// prompt-ready tick), but activityLog only mutates once per completed generation (pushActivity).
+// Mirrors the _lastInjectionRenderHash pattern in drawer-render-tabs.js.
+let _lastActivityFeedHash = null;
+
 // ════════════════════════════════════════════════════════════════════════════
 // Footer Zone — Health Icons + AI Stats + Context Bar
 // ════════════════════════════════════════════════════════════════════════════
@@ -137,25 +143,35 @@ export function renderFooter() {
     const $activityFeed = $footer.find('.dle-activity-feed');
     $activityFeed.attr('role', 'log').attr('aria-live', 'polite');
     if ($activityFeed.length && activityLog.length > 0) {
-        let feedHtml = '';
-        for (const a of activityLog) {
-            const time = new Date(a.ts);
-            const timeStr = time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            const isoTime = time.toISOString();
-            feedHtml += `<div class="dle-activity-row">`;
-            feedHtml += `<span class="dle-activity-time" title="${isoTime}">${timeStr}</span>`;
-            // D3 (v2.5 Wave 3): this is the run OUTCOME (Keywords / AI / Fallback), NOT the
-            // configured search mode shown in the header stat. "ran as" + the title disambiguate
-            // the two so one word ("mode") stops meaning two things. (a.mode = legacy in-memory
-            // fallback; activityLog is never persisted so old-shape rows are transient.)
-            const outcome = a.outcome ?? a.mode ?? '';
-            feedHtml += `<span class="dle-activity-outcome" title="Outcome — how lore selection resolved this run (independent of the configured search mode in the header)">ran as ${outcome}</span>`;
-            let detail = `${a.injected} entr${a.injected === 1 ? 'y' : 'ies'}, ${formatTokensCompact(a.tokens)} tok`;
-            if (a.folderFilter?.length) detail += ` [${a.folderFilter.length} folder${a.folderFilter.length !== 1 ? 's' : ''}]`;
-            feedHtml += `<span>${detail}</span>`;
-            feedHtml += `</div>`;
+        // Content-hash guard — the feed DOM only changes when activityLog mutates (once per
+        // completed generation), but renderFooter runs every CHAT_COMPLETION_PROMPT_READY tick.
+        // Skip the destroy/rebuild when the underlying rows are unchanged. Hash the same fields
+        // the markup is derived from (ts, outcome/mode, injected, tokens, folder count).
+        const _feedHash = activityLog
+            .map(a => `${a.ts}|${a.outcome ?? a.mode ?? ''}|${a.injected}|${a.tokens}|${a.folderFilter?.length || 0}`)
+            .join(';');
+        if (_feedHash !== _lastActivityFeedHash) {
+            _lastActivityFeedHash = _feedHash;
+            let feedHtml = '';
+            for (const a of activityLog) {
+                const time = new Date(a.ts);
+                const timeStr = time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                const isoTime = time.toISOString();
+                feedHtml += `<div class="dle-activity-row">`;
+                feedHtml += `<span class="dle-activity-time" title="${isoTime}">${timeStr}</span>`;
+                // D3 (v2.5 Wave 3): this is the run OUTCOME (Keywords / AI / Fallback), NOT the
+                // configured search mode shown in the header stat. "ran as" + the title disambiguate
+                // the two so one word ("mode") stops meaning two things. (a.mode = legacy in-memory
+                // fallback; activityLog is never persisted so old-shape rows are transient.)
+                const outcome = a.outcome ?? a.mode ?? '';
+                feedHtml += `<span class="dle-activity-outcome" title="Outcome — how lore selection resolved this run (independent of the configured search mode in the header)">ran as ${outcome}</span>`;
+                let detail = `${a.injected} entr${a.injected === 1 ? 'y' : 'ies'}, ${formatTokensCompact(a.tokens)} tok`;
+                if (a.folderFilter?.length) detail += ` [${a.folderFilter.length} folder${a.folderFilter.length !== 1 ? 's' : ''}]`;
+                feedHtml += `<span>${detail}</span>`;
+                feedHtml += `</div>`;
+            }
+            $activityFeed.html(feedHtml);
         }
-        $activityFeed.html(feedHtml);
     }
 
     // ── Health icons ──

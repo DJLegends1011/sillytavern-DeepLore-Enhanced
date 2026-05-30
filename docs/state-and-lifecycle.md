@@ -75,11 +75,9 @@ deserialization). 90% of generations no-op the scan. See `docs/gotchas.md` #52.
 | `getPrevious()` | Second-newest for the current chat (replaces `previousSources` diff anchor). |
 | `getByMessageSync(msgIdx, chatId?)` | Ring-only sync lookup (no IDB fallback). For sync UI consumers (cartographer popup). |
 | `getPreviousForMessage(msgIdx, chatId?)` | Ring verdict with the largest `msgIdx' < msgIdx` — "what changed since the prior turn" when inspecting an OLDER message. Sync. |
-| `getByMessage(msgIdx, chatId?)` | Async verdict-by-message lookup; ring first, falls back to range-scoped IDB scan. |
 | `setCurrentChatId(chatId)` | Rebind scope on CHAT_CHANGED. |
 | `clearRing()` | Drop in-memory ring only (sync, no IDB touch). **Use on CHAT_CHANGED** so the destination chat's IDB rows survive for hydrate. |
-| `clearChatIdb(chatId)` | Drop IDB rows for one chat (e.g. user deletes chat). Ring untouched. |
-| `clearChat(chatId)` | Drop ring + IDB records for a chat. `null` = wipe everything (nuke-from-orbit only; **never** call on CHAT_CHANGED — it deletes every chat's persisted verdicts). |
+| `clearChatIdb(chatId)` | Drop IDB rows for one chat (e.g. user deletes chat). Ring untouched. (The async `getByMessage` and the ring+IDB `clearChat` were removed Phase 3 — use `getByMessageSync` and `clearRing` / `clearChatIdb` instead.) |
 | `hydrateChat(chatId)` | Pull recent IDB records for resume-after-reload. F2 race fix: merges (not replaces) mid-hydration writes whose `ts` beats the freshest hydrated row. See gotchas #46. |
 | `onVerdictChanged(cb)` | Observer; fires on every write / clear / hydrate. |
 
@@ -279,8 +277,10 @@ clearVerdictRing()                // clearRing — in-memory ring ONLY, no IDB t
 setVerdictChatId(newVerdictChatId) // setCurrentChatId — rebind scope
 if (newVerdictChatId) hydrateVerdictChat(newVerdictChatId)  // async, fire-and-forget
 ```
-**Do NOT call `clearChat(null)` here** — that nukes every chat's IDB rows and defeats the
-per-chat spill (resume-after-reload). `clearRing()` is the only correct call on chat switch.
+**Never wipe the whole IDB store here** — dropping every chat's rows defeats the
+per-chat spill (resume-after-reload). `clearRing()` (in-memory ring only) is the sole correct
+call on chat switch. (The ring+IDB `clearChat` helper was removed Phase 3; the per-chat IDB
+drop is now `clearChatIdb(chatId)`, used by the CHAT_DELETED handler — not on chat switch.)
 See `docs/gotchas.md` #46. `index.js` imports these aliased: `clearRing as clearVerdictRing`,
 `setCurrentChatId as setVerdictChatId`, `hydrateChat as hydrateVerdictChat` (index.js :90-93).
 

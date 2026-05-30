@@ -94,7 +94,6 @@ import {
     writeVerdict as _writeVerdict,
     getCurrent as getCurrentVerdict,
     getPrevious as getPreviousVerdict,
-    clearChat as clearVerdictChat,
     setCurrentChatId as setVerdictChatId,
     resetForTests as resetVerdictForTests,
 } from '../src/verdict/verdict-store.js';
