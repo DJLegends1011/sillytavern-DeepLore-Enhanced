@@ -132,8 +132,8 @@ under `multiVaultConflictResolution='all'` (CLAUDE.md trackerKey invariant).
 | `autoSuggestMessageCount` | `number` | Chat (→0) | CHARACTER_MESSAGE_RENDERED, CHAT_CHANGED | auto-suggest trigger |
 | `notepadExtractInProgress` | `boolean` | Chat (→false) | GENERATION_ENDED, CHAT_CHANGED | extract lock |
 | `lastHealthResult` | `{errors, warnings}\|null` | Session | /dle-health command | settings badge |
-| `claudeAutoEffortBad` | `boolean` | Session | init pre-flight | drawer chip, settings banner |
-| `claudeAutoEffortDetail` | `object\|null` | Session | init pre-flight | toast message |
+| `claudeAutoEffortBad` | `boolean` | Session | ~~init pre-flight~~ **DORMANT (gotcha #82)** — no writer sets true anymore | drawer chip, settings banner (dormant) |
+| `claudeAutoEffortDetail` | `object\|null` | Session | ~~init pre-flight~~ **DORMANT (gotcha #82)** | toast message (dormant) |
 | `ds.browseRowModel` | `Array<{type:'header'\|'entry'...}>` | Chat (→[]) | `renderBrowseTab()` | `renderBrowseWindow()` virtual scroll |
 | `ds.browseFolderGrouping` | `boolean` | Session (NOT reset on CHAT_CHANGED — UI pref) | group-toggle button | `renderBrowseTab()` row-model builder |
 | `ds.browseExpandedFolders` | `Set<string>` | Session (NOT reset on CHAT_CHANGED) | group toggle (seed), folder-header click | `buildBrowseRowModel()` |
@@ -202,7 +202,7 @@ Each observable is a `Set<() => void>`. Registration returns an unsubscribe func
 | Field definitions | `onFieldDefinitionsUpdated` | `notifyFieldDefinitionsUpdated` | setFieldDefinitions | drawer gating tab, rule builder |
 | Indexing state | `onIndexingChanged` | `notifyIndexingChanged` | setIndexing | drawer status |
 | Lore gaps | `onLoreGapsChanged` | `notifyLoreGapsChanged` | setLoreGaps | drawer librarian tab |
-| Claude auto-effort | `onClaudeAutoEffortChanged` | (inline in setter) | setClaudeAutoEffortState | drawer chip, settings banner |
+| Claude auto-effort **(DORMANT, gotcha #82)** | `onClaudeAutoEffortChanged` | (inline in setter) | ~~setClaudeAutoEffortState~~ no live caller | drawer chip, settings banner (dormant) |
 | Pipeline phase | `onPipelinePhaseChanged` | `notifyPipelinePhase` (via `setPipelinePhase`) | `setPipelinePhase()` | drawer status display |
 
 **Side effects in notify functions:**

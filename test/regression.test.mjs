@@ -72,7 +72,7 @@ _registerLoader('./_agentic-loop-stub-loader.mjs', import.meta.url, {
     },
 });
 // Dynamic import AFTER register() so the loader intercepts the ST modules.
-const { _runFlagIterationForTests } = await import('../src/librarian/agentic-loop.js');
+const { _runFlagIterationForTests, runAgenticLoop } = await import('../src/librarian/agentic-loop.js');
 
 console.log('DeepLore Enhanced — Regression Tests');
 console.log('Each test guards a specific BUG fix or gotcha.\n');
@@ -2874,6 +2874,108 @@ test('F5e: epoch mismatch BEFORE the API call bails without calling callWithTool
     delete globalThis.__DLE_TEST_HOOKS;
 });
 
+// ============================================================================
+// F5-BG — runAgenticLoop BACKGROUNDS the FLAG (gap-finder) turn (Issue-1)
+// ============================================================================
+// Drives the REAL runAgenticLoop end-to-end through the stub hooks. Proves the
+// gap-finder no longer blocks generation: write() delivers prose + the loop
+// RETURNS with a detached `pendingFlag` thunk instead of running the flag API
+// round-trip synchronously. The caller (index.js) fires the thunk AFTER lock
+// release. See agentic-loop.js + index.js Issue-1 changes.
+
+section('F5-BG — runAgenticLoop backgrounds the FLAG turn (Issue-1)');
+
+test('F5-BG-1: write delivers prose synchronously; FLAG turn deferred to pendingFlag', async () => {
+    setChatEpoch(20);
+    setGenerationLockEpoch(5);
+    let apiCalls = 0;
+    let flagCalled = 0;
+    let proseDelivered = null;
+    _installFlagHooks({
+        getUsage: () => ({ input_tokens: 0, output_tokens: 0 }),
+        callWithTools: async () => {
+            apiCalls++;
+            if (apiCalls === 1) {
+                // SEARCH/write phase: model writes prose immediately.
+                return { toolCalls: [{ name: 'write', id: 'w1', input: { content: 'Once upon a time.' } }] };
+            }
+            // FLAG turn — only reached when pendingFlag() runs.
+            return { toolCalls: [{ name: 'flag', id: 'f1', input: { title: 'Castle', reason: 'missing', flag_type: 'gap', urgency: 'high' } }] };
+        },
+        flagLoreAction: async () => { flagCalled++; return 'Flagged.'; },
+    });
+    const result = await runAgenticLoop({
+        messages: [{ role: 'user', content: 'hi' }],
+        maxSearches: 2, searchEnabled: true, flagEnabled: true,
+        maxTokens: 256, signal: { aborted: false }, epoch: 20, lockEpoch: 5,
+        onStatus: () => {}, onProse: async (p) => { proseDelivered = p; },
+        injectedTitles: new Set(), settings: {},
+    });
+
+    assertEqual(result.prose, 'Once upon a time.', 'F5-BG-1: prose returned from write');
+    assertEqual(proseDelivered, 'Once upon a time.', 'F5-BG-1: onProse fired (prose shown before any flag)');
+    assertEqual(apiCalls, 1, 'F5-BG-1: only ONE API call during the blocking loop — FLAG turn NOT synchronous');
+    assertEqual(flagCalled, 0, 'F5-BG-1: flagLoreAction NOT called while generation was locked');
+    assertEqual(typeof result.pendingFlag, 'function', 'F5-BG-1: pendingFlag thunk returned for the caller to background');
+
+    // Caller fires the deferred flag turn AFTER lock release.
+    const flagRes = await result.pendingFlag();
+    assertEqual(apiCalls, 2, 'F5-BG-1: pendingFlag() makes the deferred FLAG API call');
+    assertEqual(flagCalled, 1, 'F5-BG-1: flagLoreAction fires in the backgrounded turn');
+    assertEqual(flagRes.flagActivity.length, 1, 'F5-BG-1: flagActivity carries the flag for the caller to append');
+    assertEqual(flagRes.flagActivity[0].query, 'Castle', 'F5-BG-1: flag title carried in activity');
+
+    setChatEpoch(0); setGenerationLockEpoch(0); delete globalThis.__DLE_TEST_HOOKS;
+});
+
+test('F5-BG-2: flagEnabled=false → no pendingFlag (nothing to background)', async () => {
+    setChatEpoch(20);
+    setGenerationLockEpoch(5);
+    let apiCalls = 0;
+    _installFlagHooks({
+        getUsage: () => ({ input_tokens: 0, output_tokens: 0 }),
+        callWithTools: async () => { apiCalls++; return { toolCalls: [{ name: 'write', id: 'w1', input: { content: 'X.' } }] }; },
+        flagLoreAction: async () => 'Flagged.',
+    });
+    const result = await runAgenticLoop({
+        messages: [], maxSearches: 2, searchEnabled: true, flagEnabled: false,
+        maxTokens: 256, signal: { aborted: false }, epoch: 20, lockEpoch: 5,
+        onStatus: () => {}, onProse: async () => {}, injectedTitles: new Set(), settings: {},
+    });
+    assertEqual(result.prose, 'X.', 'F5-BG-2: prose delivered');
+    assertEqual(result.pendingFlag, null, 'F5-BG-2: pendingFlag is null when flagging disabled');
+    assertEqual(apiCalls, 1, 'F5-BG-2: single API call, no deferred flag turn');
+
+    setChatEpoch(0); setGenerationLockEpoch(0); delete globalThis.__DLE_TEST_HOOKS;
+});
+
+test('F5-BG-3: a new generation (lockEpoch bump) auto-cancels the backgrounded flag', async () => {
+    setChatEpoch(20);
+    setGenerationLockEpoch(5);
+    let apiCalls = 0;
+    let flagCalled = 0;
+    _installFlagHooks({
+        getUsage: () => ({ input_tokens: 0, output_tokens: 0 }),
+        callWithTools: async () => { apiCalls++; return { toolCalls: [{ name: 'write', id: 'w1', input: { content: 'Y.' } }] }; },
+        flagLoreAction: async () => { flagCalled++; return 'Flagged.'; },
+    });
+    const result = await runAgenticLoop({
+        messages: [], maxSearches: 2, searchEnabled: true, flagEnabled: true,
+        maxTokens: 256, signal: { aborted: false }, epoch: 20, lockEpoch: 5,
+        onStatus: () => {}, onProse: async () => {}, injectedTitles: new Set(), settings: {},
+    });
+    assertEqual(typeof result.pendingFlag, 'function', 'F5-BG-3: pendingFlag returned');
+
+    // Simulate a NEW generation acquiring the lock before the background flag runs.
+    setGenerationLockEpoch(6);
+    const flagRes = await result.pendingFlag();
+    assertEqual(apiCalls, 1, 'F5-BG-3: deferred FLAG API call NOT made — superseded generation (lockEpoch pre-call guard)');
+    assertEqual(flagCalled, 0, 'F5-BG-3: flagLoreAction not called for the stale background flag');
+    assertEqual(flagRes.flagActivity.length, 0, 'F5-BG-3: no flag activity to append');
+
+    setChatEpoch(0); setGenerationLockEpoch(0); delete globalThis.__DLE_TEST_HOOKS;
+});
+
 section('F6 — proseMsg branch epoch guard (gotcha #43 expansion)');
 
 test('F6a: proseMsg branch with stable epoch injects dropdown', async () => {
@@ -4498,6 +4600,180 @@ test('AI-M3-2: dispatch error message interpolates the bad mode for diagnosabili
     const src = await fs.readFile(path.resolve(__dirname, '../src/ai/ai.js'), 'utf8');
     // The thrown error must interpolate ${mode} so logs/toasts say WHICH bad value arrived.
     assertMatch(src, /unknown connection mode "\$\{mode\}"/, 'error message interpolates ${mode}');
+});
+
+// THINK-OFF — JSON-returning utility AI calls must suppress Claude thinking.
+// ST staging #5236 (2026-03-03) gated isAdaptiveModel behind config
+// claude.enableAdaptiveThinking. For NON-adaptive Claude thinking models, an
+// undefined reasoning_effort (preset 'auto' → client drops it → server
+// Math.max(0,1024)) forces thinking ON. Thinking eats the response budget /
+// leaks reasoning → JSON parse fails → circuit breaker → keyword fallback.
+// Fix: every JSON-parse-dependent utility call passes disableThinkingOnClaude:true
+// so callViaProfile sends reasoning_effort='auto' (→ ST returns null budget →
+// no thinking). Drift guard so nobody silently drops the flag and re-opens the
+// fallback. Prose calls (scribe summary, summaryGen) are intentionally NOT
+// included — thinking is harmless on prose and can help quality.
+test('THINK-OFF-1: aiSearch + hierarchicalPreFilter suppress Claude thinking', async () => {
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const url = await import('node:url');
+    const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
+    const src = await fs.readFile(path.resolve(__dirname, '../src/ai/ai.js'), 'utf8');
+
+    assertMatch(src, /caller: 'aiSearch',[\s\S]{0,700}?disableThinkingOnClaude: true/,
+        'aiSearch callAI config sets disableThinkingOnClaude: true');
+    assertMatch(src, /caller: 'hierarchicalPreFilter',[\s\S]{0,400}?disableThinkingOnClaude: true/,
+        'hierarchicalPreFilter callAI config sets disableThinkingOnClaude: true');
+    // The flag actuates inside callViaProfile (Claude-gated): thinkingSuppressed is
+    // derived from disableThinkingOnClaude && isClaudeModel, and gates reasoning_effort='auto'
+    // (ST maps that to a null budget → no thinking).
+    assertMatch(src, /thinkingSuppressed\s*=\s*disableThinkingOnClaude && isClaudeModel/,
+        'callViaProfile derives thinkingSuppressed from the flag + Claude');
+    assertMatch(src, /if \(thinkingSuppressed\)[\s\S]{0,120}?reasoning_effort = 'auto'/,
+        "callViaProfile sets reasoning_effort='auto' when thinkingSuppressed");
+});
+
+// JSON-SCHEMA-CLAUDE (gotcha #84): when thinking is suppressed, json_schema (→ forced
+// tool_choice on Claude) is ENABLED so weak Claude models (Haiku) can't return prose
+// instead of the structured shape. The old skip only applied because thinking + forced
+// tool_choice = 400; reasoning_effort='auto' removes thinking, so the conflict is gone.
+test('JSON-SCHEMA-CLAUDE-1: json_schema enabled for Claude when thinking suppressed (forced tool_choice)', async () => {
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const url = await import('node:url');
+    const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
+    const src = await fs.readFile(path.resolve(__dirname, '../src/ai/ai.js'), 'utf8');
+    // The schema override gate must allow Claude when thinkingSuppressed.
+    assertMatch(src, /jsonSchema && \(!isClaudeModel \|\| thinkingSuppressed\)/,
+        'JSON-SCHEMA-CLAUDE-1: json_schema set for non-Claude OR (Claude with thinking suppressed)');
+    // Belt-and-suspenders: the bare "skip for ALL Claude" form must be gone.
+    assert(!/jsonSchema && !isClaudeModel\)/.test(src),
+        'JSON-SCHEMA-CLAUDE-1: the unconditional Claude json_schema skip must be replaced by the thinkingSuppressed gate');
+});
+
+test('THINK-OFF-2: callAutoSuggest profile path suppresses Claude thinking', async () => {
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const url = await import('node:url');
+    const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
+    const src = await fs.readFile(path.resolve(__dirname, '../src/ai/auto-suggest.js'), 'utf8');
+    // Serves both autoSuggest (JSON) and optimizeKeys keyword-gen (popups.js) — both
+    // extractAiResponseClient the result, so both need thinking suppressed.
+    assertMatch(src, /caller: 'autoSuggest', disableThinkingOnClaude: true/,
+        'callAutoSuggest profile callAI sets disableThinkingOnClaude: true');
+});
+
+// ADAPTIVE-REACTIVE — the claude-adaptive-check warning is REACTIVE-ONLY (gotcha #82).
+// The PROACTIVE surfaces (startup sweep in index.js, pre-flight toast + setClaudeAutoEffortState
+// in ai.js callViaProfile) are dead-headed because on ST staging reasoning_effort 'auto'/unset
+// maps to a null thinking budget (no 400) — the warning was a false alarm AND its advice
+// re-forced thinking ON, breaking the disableThinkingOnClaude fix. Only a genuine 400/thinking
+// error is rewritten reactively. These guards stop the proactive nag from creeping back.
+test('ADAPTIVE-REACTIVE-1: ai.js callViaProfile has NO proactive adaptive surfaces (toast/state)', async () => {
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const url = await import('node:url');
+    const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
+    const src = await fs.readFile(path.resolve(__dirname, '../src/ai/ai.js'), 'utf8');
+    // No proactive setter or one-shot toast slot anywhere in ai.js.
+    assert(!/setClaudeAutoEffortState/.test(src),
+        'ADAPTIVE-REACTIVE-1: ai.js must not set claudeAutoEffort state (proactive surface dead-headed)');
+    assert(!/claimClaudeAdaptiveToastSlot/.test(src),
+        'ADAPTIVE-REACTIVE-1: ai.js must not fire the proactive adaptive toast');
+    // The REACTIVE path survives: lazy detect in the catch, gated by detail.bad, 'error' surface.
+    assertMatch(src, /detectClaudeAdaptiveIssue\(resolvedProfileId, resolvedModel\)[\s\S]{0,120}?detail\.bad/,
+        'ADAPTIVE-REACTIVE-1: catch must lazily detect + gate on detail.bad');
+    assertMatch(src, /buildClaudeAdaptiveMessage\(detail, 'error'\)/,
+        "ADAPTIVE-REACTIVE-1: reactive rewrite uses the 'error' surface");
+});
+
+test('ADAPTIVE-REACTIVE-2: index.js has NO proactive adaptive startup sweep', async () => {
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const url = await import('node:url');
+    const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
+    const src = await fs.readFile(path.resolve(__dirname, '../index.js'), 'utf8');
+    assert(!/shouldCheckClaudeAdaptiveForFeature/.test(src),
+        'ADAPTIVE-REACTIVE-2: index.js must not run the proactive feature sweep');
+    assert(!/setClaudeAutoEffortState\s*\(\s*true/.test(src),
+        'ADAPTIVE-REACTIVE-2: index.js must not set claudeAutoEffortBad=true (proactive surface dead-headed)');
+    assert(!/claimClaudeAdaptiveToastSlot/.test(src),
+        'ADAPTIVE-REACTIVE-2: index.js must not fire the proactive adaptive toast at startup');
+});
+
+// OBSIDIAN-OPEN — gotcha #83: obsidian:// links must NOT navigate the ST top frame.
+// A plain <a href="obsidian://…"> (no target) or a targetless anchor.click() unloads
+// the whole SPA → DLE drawer vanishes until reload. openObsidianUri launches via a
+// hidden iframe (top frame untouched); render sites also carry target=_blank as a
+// markup safety net, and a delegated handler preventDefaults the native nav.
+test('OBSIDIAN-OPEN-1: openObsidianUri launches via a hidden iframe, never the top frame', async () => {
+    const { openObsidianUri } = await import('../src/helpers.js');
+    const created = [];
+    let appended = null;
+    const origDoc = globalThis.document;
+    const timers = [];
+    const origSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = (fn) => { timers.push(fn); return 0; }; // capture, don't dangle
+    globalThis.document = {
+        createElement: (tag) => { const el = { tag, style: {}, setAttribute() {}, remove() {} }; created.push(el); return el; },
+        body: { appendChild: (el) => { appended = el; } },
+    };
+    try {
+        openObsidianUri('obsidian://open?vault=V&file=Note');
+        assertEqual(created.length, 1, 'OBSIDIAN-OPEN-1: creates exactly one element');
+        assertEqual(created[0].tag, 'iframe', 'OBSIDIAN-OPEN-1: the element is an iframe (not an anchor → no top-frame nav)');
+        assertEqual(created[0].src, 'obsidian://open?vault=V&file=Note', 'OBSIDIAN-OPEN-1: iframe.src is the obsidian URI');
+        assertEqual(appended, created[0], 'OBSIDIAN-OPEN-1: iframe appended to document.body');
+    } finally {
+        globalThis.document = origDoc;
+        globalThis.setTimeout = origSetTimeout;
+    }
+});
+
+test('OBSIDIAN-OPEN-2: openObsidianUri no-ops on empty/invalid input', async () => {
+    const { openObsidianUri } = await import('../src/helpers.js');
+    const origDoc = globalThis.document;
+    let touched = false;
+    globalThis.document = { createElement: () => { touched = true; return {}; }, body: { appendChild() {} } };
+    try {
+        openObsidianUri('');
+        openObsidianUri(null);
+        openObsidianUri(undefined);
+        assert(!touched, 'OBSIDIAN-OPEN-2: falsy uri must not create any element');
+    } finally {
+        globalThis.document = origDoc;
+    }
+});
+
+test('OBSIDIAN-OPEN-3: source guards — delegated handler + safe-open, no targetless anchor.click', async () => {
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const url = await import('node:url');
+    const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
+    const events = await fs.readFile(path.resolve(__dirname, '../src/drawer/drawer-events.js'), 'utf8');
+    const tabs = await fs.readFile(path.resolve(__dirname, '../src/drawer/drawer-render-tabs.js'), 'utf8');
+    const graph = await fs.readFile(path.resolve(__dirname, '../src/graph/graph-events.js'), 'utf8');
+    const helpers = await fs.readFile(path.resolve(__dirname, '../src/helpers.js'), 'utf8');
+
+    // Delegated drawer handler: preventDefault + openObsidianUri.
+    assertMatch(events, /\.dle-obsidian-link['"]\s*,\s*function[\s\S]{0,160}?preventDefault\(\)[\s\S]{0,80}?openObsidianUri/,
+        'OBSIDIAN-OPEN-3: drawer delegates .dle-obsidian-link → preventDefault + openObsidianUri');
+    // Render sites carry the markup safety net.
+    assertMatch(tabs, /class="dle-obsidian-link" target="_blank" rel="noopener noreferrer"/,
+        'OBSIDIAN-OPEN-3: render-tabs obsidian anchors have target=_blank rel=noopener');
+    assertMatch(events, /class="dle-obsidian-link" target="_blank" rel="noopener noreferrer"/,
+        'OBSIDIAN-OPEN-3: drawer-events preview obsidian anchor has target=_blank rel=noopener');
+    // Graph opens via openObsidianUri, NOT a bare anchor.click().
+    assertMatch(graph, /openObsidianUri\(uri\)/,
+        'OBSIDIAN-OPEN-3: graph obsidian action uses openObsidianUri');
+    assert(!/a\.href\s*=\s*uri\s*;\s*a\.click\(\)/.test(graph),
+        'OBSIDIAN-OPEN-3: graph must NOT use targetless anchor.click() (top-frame nav footgun)');
+    // The helper itself uses an iframe, not a top-frame location assignment.
+    const fnIdx = helpers.indexOf('export function openObsidianUri');
+    const fnBody = helpers.slice(fnIdx, fnIdx + 900);
+    assertMatch(fnBody, /createElement\(['"]iframe['"]\)/, 'OBSIDIAN-OPEN-3: openObsidianUri creates an iframe');
+    assert(!/location\.href\s*=|location\.assign|top\.location/.test(fnBody),
+        'OBSIDIAN-OPEN-3: openObsidianUri must not navigate the top frame');
 });
 
 // M5: scrubber redaction must run BEFORE truncation so a key starting in the last
@@ -7329,6 +7605,70 @@ test('AGENTIC-LOOP-S9: agentic-loop.js does NOT call getActiveProfileId (uses co
         fs.promises.readFile('src/librarian/agentic-loop.js', 'utf8'));
     assert(!/getActiveProfileId/.test(src),
         'AGENTIC-LOOP-S9: agentic-loop.js must not call getActiveProfileId (use Librarian configured profile)');
+});
+
+// ── Issue-1: backgrounded FLAG turn — source drift guards ──
+test('AGENTIC-LOOP-S10: runAgenticLoop returns a pendingFlag thunk (Issue-1 backgrounding)', async () => {
+    const src = await import('node:fs').then(fs =>
+        fs.promises.readFile('src/librarian/agentic-loop.js', 'utf8'));
+    assertMatch(src, /return\s*\{\s*prose:[^}]*\btoolActivity\b[^}]*\busage\b[^}]*\bpendingFlag\b[^}]*\}/,
+        'AGENTIC-LOOP-S10: main return must include pendingFlag alongside prose/toolActivity/usage');
+    assertMatch(src, /pendingFlag\s*=\s*async\s*\(\s*\)\s*=>/,
+        'AGENTIC-LOOP-S10: pendingFlag must be a deferred thunk (async () => ...)');
+    assertMatch(src, /pendingFlag[\s\S]{0,400}?_runFlagIteration\(/,
+        'AGENTIC-LOOP-S10: the pendingFlag thunk must call _runFlagIteration (the deferred flag round-trip)');
+});
+
+test('AGENTIC-LOOP-S11: loop breaks once write delivers prose — FLAG turn is NOT run in-loop (Issue-1)', async () => {
+    const src = await import('node:fs').then(fs =>
+        fs.promises.readFile('src/librarian/agentic-loop.js', 'utf8'));
+    // Loop must break on writeDone so the lock releases before the flag round-trip.
+    // Pin the SPECIFIC break: `if (writeDone) { exitReason = 'completed'; break; }`.
+    // Requiring exitReason='completed' between the two distinguishes it from the
+    // double-write guard's `break` (which has no such assignment) — so shortening an
+    // unrelated error string can't make this regex latch onto the wrong break.
+    assertMatch(src, /if\s*\(\s*writeDone\s*\)\s*\{\s*exitReason\s*=\s*['"]completed['"]\s*;\s*break\s*;/,
+        'AGENTIC-LOOP-S11: loop must break (with exitReason=completed) when writeDone, instead of running another iteration');
+    // The old synchronous in-loop FLAG iteration must be gone: no in-loop
+    // _runFlagIteration call gated on phase, and no 'flagging' pipeline phase set.
+    assert(!/setPipelinePhase\(\s*['"]flagging['"]\s*\)/.test(src),
+        'AGENTIC-LOOP-S11: setPipelinePhase(\'flagging\') must be gone — flagging no longer blocks generation');
+    assert(!/if\s*\(\s*phase\s*===\s*PHASE_FLAG\s*\)\s*\{[\s\S]{0,200}?_runFlagIteration\(/.test(src),
+        'AGENTIC-LOOP-S11: no in-loop "if (phase === PHASE_FLAG) { ... _runFlagIteration }" block (flag turn is backgrounded)');
+});
+
+test('AGENTIC-LOOP-S12: index.js fires pendingFlag DETACHED (not awaited) after the prose save (Issue-1)', async () => {
+    const src = await import('node:fs').then(fs =>
+        fs.promises.readFile('index.js', 'utf8'));
+    assertMatch(src, /if\s*\(\s*result\.pendingFlag\s*\)/,
+        'AGENTIC-LOOP-S12: index.js must branch on result.pendingFlag');
+    // Detached IIFE — invoked fire-and-forget via `(async () => { ... })().catch(...)`
+    // so the generation lock / send-button release in finally does not wait on the
+    // flag turn. (The thunk IS awaited INSIDE the IIFE — that's expected; what must
+    // not happen is the OUTER dispatch awaiting the IIFE itself.)
+    const bgRegion = (src.split('if (result.pendingFlag)')[1] || '').slice(0, 3000);
+    assertMatch(bgRegion, /\(async\s*\(\s*\)\s*=>\s*\{[\s\S]*?\}\)\(\)\s*\.catch\(/,
+        'AGENTIC-LOOP-S12: pendingFlag must run in a detached async IIFE with a .catch (fire-and-forget)');
+    assert(!/await\s*\(async\s*\(\s*\)\s*=>/.test(bgRegion),
+        'AGENTIC-LOOP-S12: the background IIFE must NOT be awaited by the dispatch (would re-block the lock)');
+    // Background staleness check must cover ALL THREE axes: chatEpoch (chat switch),
+    // generationLockEpoch (newer generation), AND swipe_id (the user navigated to a
+    // different alternate of the prose message — swipe nav bumps NEITHER epoch but ST
+    // swaps message.extra per swipe, so an un-guarded late write lands on the wrong
+    // swipe). See gotcha #81 + the HIGH peer-review finding.
+    assertMatch(bgRegion, /_bgEpoch\s*!==\s*chatEpoch/,
+        'AGENTIC-LOOP-S12: staleness check covers chatEpoch (chat switch)');
+    assertMatch(bgRegion, /_bgLockEpoch\s*!==\s*generationLockEpoch/,
+        'AGENTIC-LOOP-S12: staleness check covers generationLockEpoch (superseding generation)');
+    assertMatch(bgRegion, /_bgSwipeId\s*=\s*_bgProseMsg\.swipe_id/,
+        'AGENTIC-LOOP-S12: must capture the prose swipe_id at dispatch');
+    assertMatch(bgRegion, /\(\s*_bgProseMsg\.swipe_id\s*\?\?\s*0\s*\)\s*!==\s*_bgSwipeId/,
+        'AGENTIC-LOOP-S12: staleness check covers swipe_id (wrong-swipe contamination guard)');
+    // The staleness guard must fire BEFORE the destructive write to extra.deeplore_tool_calls.
+    const guardIdx = bgRegion.indexOf('swipe_id ?? 0) !== _bgSwipeId');
+    const writeIdx = bgRegion.indexOf('_bgProseMsg.extra.deeplore_tool_calls = prior.concat');
+    assert(guardIdx >= 0 && writeIdx >= 0 && guardIdx < writeIdx,
+        'AGENTIC-LOOP-S12: the swipe/epoch staleness guard must run BEFORE the extra.deeplore_tool_calls write');
 });
 
 section('AGENTIC-DISPATCH — suppressNextAgenticLoop reset placement (Gotcha #33)');

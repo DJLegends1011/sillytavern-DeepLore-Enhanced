@@ -87,7 +87,11 @@ export async function callAutoSuggest(systemPrompt, userMessage, toolKey = 'auto
         // S4-2: mutation gate (see above).
         if (!tryAcquireHalfOpenProbe()) throw new Error('AI circuit breaker is open — skipping auto-suggest');
         try {
-            const result = await callAI(systemPrompt, userMessage, { ...resolved, caller: 'autoSuggest' });
+            // disableThinkingOnClaude: this profile path serves both autoSuggest
+            // (JSON-parsed at line ~135) and optimizeKeys keyword-gen (popups.js).
+            // Both extractAiResponseClient the result, so forced Claude thinking
+            // (ST staging #5236) breaks the parse → keyword fallback. Suppress it.
+            const result = await callAI(systemPrompt, userMessage, { ...resolved, caller: 'autoSuggest', disableThinkingOnClaude: true });
             recordAiSuccess();
             return result;
         } catch (err) {

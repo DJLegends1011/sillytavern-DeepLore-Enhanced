@@ -31,3 +31,6 @@ SillyTavern's Connection Manager Request Service (CMRS) may not respect `AbortSi
 
 ## Graph Focus Mode Exit Key
 Graph focus mode exits with the `e` key, not Escape. Escape bubbles up to SillyTavern's popup event handler and would close the graph dialog instead of just exiting focus mode.
+
+## Librarian Gap-Flagging Runs in the Background (and Can't Be Stopped Mid-Flight)
+The Librarian's gap-finder (FLAG) step runs *after* your message is already written and shown — it no longer blocks generation. As a result, the small extra AI request that looks for lore gaps fires in the background, and the **Stop** button cannot cancel it once it has started: Stop ends the visible generation (your message is delivered, the input is re-enabled), but the in-flight gap request still completes server-side and its result is simply discarded. The only cost is one small extra tool-call's tokens if you Stop during the brief window after the message appears. The flagged gap (if any) is still recorded; if you switch chats or start a new generation, the stale background result is dropped safely. **Mitigation:** None needed — it's harmless and best-effort by design. Turn off Librarian flagging in DLE Settings → Features → Librarian if you don't want the background gap calls at all.

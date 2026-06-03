@@ -1640,6 +1640,72 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
                     if (settings.librarianShowToolCalls && result.toolActivity.length > 0) {
                         injectLibrarianDropdown(chat.length - 1, result.toolActivity);
                     }
+
+                    // Issue-1: background the FLAG (gap-finder) turn. runAgenticLoop
+                    // now returns a detached `pendingFlag` thunk instead of blocking
+                    // the loop on a full flag API round-trip. Fire it WITHOUT await so
+                    // the generation lock + send button release immediately (outer
+                    // finally below) — the user is no longer held while gaps are found.
+                    // When the flag turn lands, append its activity to the already-saved
+                    // prose message and refresh the dropdown.
+                    //   - proseMsg is a stable OBJECT ref (captured in onProse), so the
+                    //     extra.deeplore_tool_calls write lands on the right message.
+                    //   - epoch + lockEpoch must BOTH still match: same chat (chatEpoch)
+                    //     AND not superseded by a newer generation (lockEpoch bumps on
+                    //     the next setGenerationLock(true) — see state.js). A new gen
+                    //     therefore auto-cancels this stale background flag.
+                    //   - swipe_id must ALSO still match. Swipe navigation does NOT bump
+                    //     either epoch, yet ST swaps `message.extra` per swipe (structuredClone
+                    //     in syncSwipeToMes) and the MESSAGE_SWIPED handler deletes the
+                    //     swapped-in `deeplore_tool_calls`. Without this guard a flag turn in
+                    //     flight while the user swipes to a DIFFERENT alternate would write its
+                    //     activity onto (and inject a dropdown over) the wrong swipe, then
+                    //     persist it. So we capture the prose swipe_id and bail if it changed.
+                    //     (Navigating away and BACK to the same swipe is fine — swipe_id matches
+                    //     and ST restored that swipe's extra incl. the search tool_calls.) The
+                    //     gap itself is still recorded in loreGaps by flagLoreAction regardless;
+                    //     only the per-message dropdown activity is dropped, which is acceptable.
+                    //   - dropdown re-inject is idempotent (librarian-ui removes any
+                    //     existing .dle-librarian-details first), so the second inject
+                    //     replaces the search-only dropdown with search+flags.
+                    if (result.pendingFlag) {
+                        const _bgProseMsg = proseMsg;
+                        const _bgEpoch = epoch;
+                        const _bgLockEpoch = lockEpoch;
+                        const _bgSwipeId = _bgProseMsg.swipe_id ?? 0;
+                        // True if the chat switched, a newer generation superseded us, or the
+                        // user navigated to a different swipe of the prose message.
+                        const _bgStale = () =>
+                            _bgEpoch !== chatEpoch
+                            || _bgLockEpoch !== generationLockEpoch
+                            || (_bgProseMsg.swipe_id ?? 0) !== _bgSwipeId;
+                        // Detached on purpose — do NOT await.
+                        (async () => {
+                            const flagRes = await result.pendingFlag();
+                            if (!flagRes || !flagRes.flagActivity?.length) return;
+                            if (_bgStale()) return;
+                            _bgProseMsg.extra = _bgProseMsg.extra || {};
+                            const prior = Array.isArray(_bgProseMsg.extra.deeplore_tool_calls)
+                                ? _bgProseMsg.extra.deeplore_tool_calls
+                                : [];
+                            _bgProseMsg.extra.deeplore_tool_calls = prior.concat(flagRes.flagActivity);
+                            try {
+                                await saveChatConditional();
+                            } catch (saveErr) {
+                                console.warn('[DLE] Background flag save failed:', saveErr?.message || saveErr);
+                                return;
+                            }
+                            if (_bgStale()) return;
+                            if (settings.librarianShowToolCalls) {
+                                // Re-resolve the live index from the object ref — robust
+                                // to in-chat message shifts the epoch guards don't catch.
+                                const liveIdx = chat.indexOf(_bgProseMsg);
+                                if (liveIdx >= 0) injectLibrarianDropdown(liveIdx, _bgProseMsg.extra.deeplore_tool_calls);
+                            }
+                        })().catch(bgErr => {
+                            console.warn('[DLE] Background flag dispatch error:', bgErr?.message || bgErr);
+                        });
+                    }
                 } else if (result.prose) {
                     // Fallback path: onProse never fired (text-only response, no write() tool call).
                     // saveReply gives us the proper message lifecycle (global chat, events, swipe_info).
@@ -1857,43 +1923,14 @@ async function _doInit() {
             console.warn('[DLE] Librarian visibility init failed:', err.message);
         }
 
-        // Pre-flight Claude adaptive-thinking misconfiguration sweep across all 3 AI features.
-        // Surfaces warning at startup rather than on first generation.
-        try {
-            const {
-                detectClaudeAdaptiveIssue,
-                buildClaudeAdaptiveMessage,
-                shouldCheckClaudeAdaptiveForFeature,
-                claimClaudeAdaptiveToastSlot,
-            } = await import('./src/ai/claude-adaptive-check.js');
-            const { setClaudeAutoEffortState } = await import('./src/state.js');
-            const { dedupWarning } = await import('./src/toast-dedup.js');
-            const s = getSettings();
-            // Only check features in `profile` mode. Proxy mode routes through a local proxy
-            // that handles thinking itself, so the native-preset check is a false positive.
-            const checks = [
-                { id: s.aiSearchProfileId, model: s.aiSearchModel, label: 'AI Search', feature: 'aiSearch' },
-                { id: s.scribeProfileId, model: s.scribeModel, label: 'Session Scribe', feature: 'scribe' },
-                { id: s.autoSuggestProfileId, model: s.autoSuggestModel, label: 'Auto Lorebook', feature: 'autoSuggest' },
-            ].filter(c => shouldCheckClaudeAdaptiveForFeature(s, c.feature));
-            let firstBad = null;
-            for (const c of checks) {
-                const d = detectClaudeAdaptiveIssue(c.id, c.model);
-                if (d.bad) { firstBad = { ...d, feature: c.label }; break; }
-            }
-            if (firstBad) {
-                // The persistent surfaces (drawer chip + settings banner) are driven
-                // by this state; the toast is a one-shot heads-up only.
-                setClaudeAutoEffortState(true, firstBad);
-                if (claimClaudeAdaptiveToastSlot(firstBad)) {
-                    dedupWarning(buildClaudeAdaptiveMessage(firstBad, 'toast'), 'claude_auto_effort', { timeOut: 12000 });
-                }
-            } else {
-                setClaudeAutoEffortState(false, null);
-            }
-        } catch (err) {
-            console.debug('[DLE] Claude adaptive-thinking pre-flight check skipped:', err?.message);
-        }
+        // Claude adaptive-thinking warning is REACTIVE-ONLY (gotcha #82). The proactive
+        // startup sweep that used to run here (scan AI Search / Scribe / Auto Lorebook
+        // profiles for adaptive-model + auto/unset-preset and toast/chip/banner) is
+        // dead-headed: on current ST staging reasoning_effort 'auto'/unset → null thinking
+        // budget → no 400, so it was a false alarm, and its advice re-forced thinking ON
+        // (breaking the JSON utility calls). The drawer chip / settings banner remain in
+        // the codebase but stay dormant — nothing sets `claudeAutoEffortBad` true anymore.
+        // A genuine 400 is still rewritten reactively in callViaProfile (ai.js).
 
         // First-run wizard. MUST wait for APP_READY (fires after ST's onboarding popup is dismissed),
         // otherwise our wizard lands on top of ST's persona-name popup on brand-new installs.

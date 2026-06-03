@@ -68,7 +68,7 @@ Unified router. All AI features call this, never `callViaProfile`/`callProxyViaC
 
 ```js
 callAI(systemPrompt, userMessage, connectionConfig) -> {text, usage}
-// connectionConfig: { mode, profileId, proxyUrl, model, maxTokens, timeout, cacheHints, signal, skipThrottle, caller }
+// connectionConfig: { mode, profileId, proxyUrl, model, maxTokens, timeout, cacheHints, signal, skipThrottle, caller, jsonSchema, disableThinkingOnClaude }
 ```
 
 Dispatches to `callViaProfile()` when `mode === 'profile'`, or ~~`callProxyViaCorsBridge()` when `mode === 'proxy'`~~ **(DEPRECATED v2.5 — throws `"Custom Proxy mode was removed in v2.5..."`)**. Proxy mode default model `'claude-haiku-4-5-20251001'` is dead code retained for rollback. See gotcha #68.
@@ -76,6 +76,8 @@ Dispatches to `callViaProfile()` when `mode === 'profile'`, or ~~`callProxyViaCo
 **Dispatch is an explicit whitelist** (AI-M3, 2026-05-22): the dispatch is `if (mode === 'profile') ... else if (mode === 'proxy') throw ... else throw`. `'inherit'` MUST be resolved by `resolveConnectionConfig` upstream — `callAI` throws loudly if it ever sees `'inherit'` or any other unknown value rather than silently falling through to the proxy branch with an empty `proxyUrl` (which would trip the circuit breaker on the second call). If you add a new mode, extend the whitelist explicitly — never widen the `else` branch. **v2.5 update:** the `'proxy'` branch now throws unconditionally (was: call `callProxyViaCorsBridge()`); the rollback path restores the dispatch.
 
 **`caller` label**: All callers now pass a `caller` string (e.g. `'aiSearch'`, `'scribe'`, `'autoSuggest'`, `'hierarchicalPreFilter'`, `'aiNotepad'`, `'optimizeKeys'`). This label is recorded in the `aiCallBuffer` for per-call diagnostics.
+
+**`disableThinkingOnClaude`** (2026-06-02): JSON-returning utility calls (`aiSearch`, `hierarchicalPreFilter`, `callAutoSuggest` profile path) pass this `true` so `callViaProfile` sends `reasoning_effort='auto'` on Claude → ST omits the `thinking` block. Without it, ST staging (#5236) forces thinking ON for non-adaptive Claude thinking models when `reasoning_effort` resolves to undefined → reasoning eats the JSON budget → parse fail → circuit breaker → keyword fallback. Prose callers (`scribe`, `summaryGen`) intentionally omit it. **Full rationale + non-Claude/older-ST caveats: gotcha #80.**
 
 **`aiCallBuffer` recording**: `callAI()` wraps the actual dispatch in a recording layer that pushes to the `aiCallBuffer` (RingBuffer 40 in `src/diagnostics/interceptors.js`). Each entry captures: `caller`, `mode`, `model`, `systemLen` (system prompt length), `userLen` (user message length), `timeoutMs`, `durationMs`, `status` (success/error/timeout/abort), `responseLen`, `tokens` (usage object), `error` (truncated error message on failure), `abortReason` (string|null — populated when call ended via abort; identifies source, e.g. `'ai:timeout'`, `'popup_closing'`, `'controller_replace'`).
 
@@ -443,28 +445,25 @@ const VALID_EFFORTS = new Set(['low', 'medium', 'high']);         // claude-adap
 
 **Wrapped in try/catch** (in `detectClaudeAdaptiveIssue()`): Detection must never throw -- returns `{bad: false}` on any error.
 
-### Pre-flight in `callViaProfile()` -- ai.js
+### REACTIVE-ONLY since 2026-06-03 (gotcha #82) — proactive surfaces dead-headed
 
-Dynamic-imported at call time (`await import('./claude-adaptive-check.js')`). When `bad === true` (inside `callViaProfile()`):
-- Sets `claudeAutoEffortState` via `setClaudeAutoEffortState(true, detail)` (state.js:`setClaudeAutoEffortState()`), which notifies UI observers
-- One-shot toast via `claimClaudeAdaptiveToastSlot(detail)`
-- Stores detail for error rewriting in the catch block
+The proactive adaptive-thinking warning is **dead-headed**. On current ST staging, `reasoning_effort` `'auto'`/unset maps to a **null** thinking budget (no 400) — so the old "will fail with 400" warning was a **false alarm**, and its advice (set Low/Med/High) **re-forces thinking ON**, breaking the JSON utility calls that `disableThinkingOnClaude` fixes (gotcha #80). Removed:
+- the startup sweep in `index.js` (scanned AI Search / Scribe / Auto Lorebook profiles, fired toast + `setClaudeAutoEffortState(true, …)`),
+- the pre-flight block in `callViaProfile()` (toast + `setClaudeAutoEffortState(true)` + `claimClaudeAdaptiveToastSlot`).
 
-### Error rewriting -- ai.js (in `callViaProfile()` catch block)
+Nothing sets `claudeAutoEffortBad` true anymore, so the **drawer chip + settings banner stay dormant**. The chip/banner/state/i18n keys + `claimClaudeAdaptiveToastSlot` / `resolveFeatureConnectionMode` / `shouldCheckClaudeAdaptiveForFeature` are kept (not deleted) to avoid churning 7 locale files + i18n parity tests, and so a future ST build that genuinely 400s on adaptive+auto can re-wire the proactive path. Guarded by `ADAPTIVE-REACTIVE-1/2`.
 
-When the actual API call fails AND `claudeAdaptiveDetail` was set pre-flight AND the error message matches `400|bad request|top_k|thinking|reasoning_effort`, the error is rewritten to a human-readable message from `buildClaudeAdaptiveMessage(detail, 'error')`. The import is wrapped separately (BUG-069) so import failure doesn't mask the original error.
+### Reactive error rewriting -- ai.js (in `callViaProfile()` catch block)
 
-### `claimClaudeAdaptiveToastSlot(detail)` -- claude-adaptive-check.js
+This is the ONLY live adaptive surface. When the actual API call fails AND the error message matches `400|bad request|top_k|thinking|reasoning_effort`, the catch **lazily** imports + calls `detectClaudeAdaptiveIssue(resolvedProfileId, resolvedModel)`; if `detail.bad`, the error is rewritten to a human-readable message from `buildClaudeAdaptiveMessage(detail, 'error')`. Detection is lazy (no pre-flight) so the happy path never pays for it; `detail.bad` gates the rewrite to a real adaptive-model + auto/unset-preset misconfig. The import is wrapped separately (BUG-069) so import failure doesn't mask the original error. On current ST this branch is effectively dormant (auto→null→no 400).
 
-Session-scoped one-shot tracking. Key is `profileName|modelName|presetName`. Returns `true` (show toast) only the first time per combo per browser session. The `_sessionToastShown` Set (claude-adaptive-check.js: module-top const) is never persisted.
+### `claimClaudeAdaptiveToastSlot(detail)` -- claude-adaptive-check.js (DORMANT)
 
-### `resolveFeatureConnectionMode(settings, feature)` -- claude-adaptive-check.js
+Session-scoped one-shot tracking, key `profileName|modelName|presetName`. No longer called (proactive toast dead-headed); retained for a possible future re-wire.
 
-Resolves inherit chain: `settings[featureConnectionModeKey]` -> if `'inherit'`, falls back to `settings.aiSearchConnectionMode || 'profile'`.
+### `resolveFeatureConnectionMode(settings, feature)` / `shouldCheckClaudeAdaptiveForFeature(settings, feature)` -- claude-adaptive-check.js (DORMANT)
 
-### `shouldCheckClaudeAdaptiveForFeature(settings, feature)` -- claude-adaptive-check.js
-
-Returns true only when the feature's effective mode is `'profile'`. Proxy mode routes through a local proxy that handles thinking itself, so the native-Anthropic preset check would be a false positive.
+`resolveFeatureConnectionMode` resolves the inherit chain (`'inherit'` → `settings.aiSearchConnectionMode || 'profile'`); `shouldCheckClaudeAdaptiveForFeature` returns true only for `'profile'` mode. Both were only used by the now-removed startup sweep — retained for a possible future re-wire.
 
 ---
 

@@ -639,6 +639,31 @@ export function buildObsidianURI(vaultName, filename) {
 }
 
 /**
+ * Launch an `obsidian://` (custom-protocol) URL WITHOUT navigating the SillyTavern
+ * top frame. A plain `<a href="obsidian://…">` (no target) — or a programmatic
+ * `anchor.click()` without `target` — navigates the top document, so the whole ST
+ * SPA unloads and DLE's drawer vanishes until a page reload (gotcha #83). A hidden
+ * iframe absorbs the protocol navigation: the OS handler still fires (Obsidian
+ * opens) but the top frame stays put. window.open is the fallback (a separate
+ * browsing context — never the top frame; may leave a blank tab but keeps ST alive).
+ * @param {string} uri
+ */
+export function openObsidianUri(uri) {
+    if (!uri || typeof uri !== 'string') return;
+    try {
+        const frame = document.createElement('iframe');
+        frame.style.display = 'none';
+        frame.setAttribute('aria-hidden', 'true');
+        frame.src = uri;
+        document.body.appendChild(frame);
+        // Give the OS protocol handler a tick to fire, then clean up the iframe.
+        setTimeout(() => { try { frame.remove(); } catch { /* noop */ } }, 1500);
+    } catch {
+        try { window.open(uri, '_blank', 'noopener,noreferrer'); } catch { /* noop */ }
+    }
+}
+
+/**
  * Convert a SillyTavern World Info entry into an Obsidian note with frontmatter.
  * @param {object} wiEntry
  * @param {string} lorebookTag

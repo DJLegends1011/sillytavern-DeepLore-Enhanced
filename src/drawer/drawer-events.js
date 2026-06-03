@@ -26,7 +26,7 @@ function _currentVerdictForChat() {
     return getCurrentVerdictForChat(cid);
 }
 import { DEFAULT_FIELD_DEFINITIONS } from '../fields.js';
-import { normalizePinBlock, buildObsidianURI } from '../helpers.js';
+import { normalizePinBlock, buildObsidianURI, openObsidianUri } from '../helpers.js';
 import { buildIndex } from '../vault/vault.js';
 import { openRuleBuilder } from '../ui/rule-builder.js';
 import {
@@ -486,6 +486,16 @@ export function wireBrowseTab($drawer) {
         toastr.info('Filters cleared.', 'DeepLore Enhanced', { timeOut: 2000 });
     });
 
+    // gotcha #83: open obsidian:// links WITHOUT navigating the ST top frame. A plain
+    // <a href="obsidian://…"> (no target) unloads the whole SPA → DLE vanishes until
+    // reload. Delegated on $drawer so it covers every .dle-obsidian-link (browse
+    // preview AND the sources/verdict tab). preventDefault kills the native top-frame
+    // nav; openObsidianUri launches via a hidden iframe instead.
+    $drawer.on('click', '.dle-obsidian-link', function (e) {
+        e.preventDefault();
+        openObsidianUri(this.getAttribute('href'));
+    });
+
     // BUG-AUDIT-3: Store {title, vaultSource} objects to match slash-command format.
     // normalizePinBlock() handles both legacy bare strings and structured objects.
     $drawer.find('.dle-browse-list').on('click', '.dle-browse-pin', function () {
@@ -614,7 +624,7 @@ export function wireBrowseTab($drawer) {
             ? settings.vaults.find(v => v.name === entry.vaultSource) : null;
         const vaultName = srcVault ? srcVault.name : (settings.vaults?.[0]?.name || '');
         const uri = entry.filename ? buildObsidianURI(vaultName, entry.filename) : null;
-        const linkHtml = uri ? ` <a href="${escapeHtml(uri)}" class="dle-obsidian-link" aria-label="Open in Obsidian">Open in Obsidian</a>` : '';
+        const linkHtml = uri ? ` <a href="${escapeHtml(uri)}" class="dle-obsidian-link" target="_blank" rel="noopener noreferrer" aria-label="Open in Obsidian">Open in Obsidian</a>` : '';
 
         let fieldsHtml = '';
         if (entry.customFields && Object.keys(entry.customFields).length > 0) {

@@ -1,5 +1,5 @@
 import { getVaultByName } from '../../settings.js';
-import { buildObsidianURI } from '../helpers.js';
+import { buildObsidianURI, openObsidianUri } from '../helpers.js';
 import { computeGapAnalysis } from './graph-analysis.js';
 import { escapeHtml } from './graph-util.js';
 
@@ -121,10 +121,11 @@ export function initEvents(gs, dbg) {
                 const uri = vault ? buildObsidianURI(vault.name, entry.filename) : null;
                 dbg(`Open in Obsidian: vault=${vault?.name || 'NONE'}, uri=${uri || 'NULL'}`);
                 if (uri) {
-                    // Anchor.click() works for custom protocols; some browsers block window.open() with non-http schemes.
-                    const a = document.createElement('a');
-                    a.href = uri;
-                    a.click();
+                    // gotcha #83: open via a hidden iframe, NOT a bare anchor.click().
+                    // A targetless anchor.click() navigates the ST top frame to the
+                    // obsidian:// scheme → the whole SPA unloads (drawer vanishes until
+                    // reload). openObsidianUri absorbs the protocol nav in an iframe.
+                    openObsidianUri(uri);
                 } else {
                     dbg('WARNING: No vault found for entry, cannot build Obsidian URI');
                 }

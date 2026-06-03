@@ -97,23 +97,14 @@ export async function callViaProfile(systemPrompt, userMessage, maxTokens, timeo
         throw new Error(`Connection profile not found or invalid. Select one in AI Search settings, or create one in SillyTavern's Connection Manager.`);
     }
 
-    // Pre-flight Claude adaptive-thinking detection. No toast here — chip + banner
-    // are the persistent surfaces, and the catch block rewrites the 400 into actionable
-    // text. callViaProfile is profile-mode only, so the proxy false-positive can't reach.
-    let claudeAdaptiveDetail = null;
-    try {
-        const { detectClaudeAdaptiveIssue, claimClaudeAdaptiveToastSlot, buildClaudeAdaptiveMessage } = await import('./claude-adaptive-check.js');
-        const detail = detectClaudeAdaptiveIssue(resolvedProfileId, resolvedModel);
-        if (detail.bad) {
-            claudeAdaptiveDetail = detail;
-            const { setClaudeAutoEffortState } = await import('../state.js');
-            setClaudeAutoEffortState(true, detail);
-            // One-shot heads-up per (profile,model,preset) per session.
-            if (claimClaudeAdaptiveToastSlot(detail)) {
-                dedupWarning(buildClaudeAdaptiveMessage(detail, 'toast'), 'claude_auto_effort', { timeOut: 12000 });
-            }
-        }
-    } catch { /* detection must never block the call */ }
+    // Claude adaptive-thinking handling is REACTIVE-ONLY (gotcha #82). The PROACTIVE
+    // surfaces — this pre-flight toast, the startup sweep (index.js), the drawer chip,
+    // and the settings banner — are dead-headed. On current ST staging reasoning_effort
+    // 'auto'/unset maps to a null thinking budget (no 400), so the old "will fail with
+    // 400" warning was a false alarm; worse, its advice (set Low/Med/High) re-forces
+    // thinking ON and breaks the JSON utility calls `disableThinkingOnClaude` fixes.
+    // We now only REACTIVELY rewrite a genuine 400/thinking error into actionable text,
+    // lazily detecting in the catch below (no pre-flight cost on the happy path).
 
     // aiForceUserRole merges system into user message for providers that reject the
     // system role entirely (e.g. some Z.AI GLM versions); otherwise CMRS handles
@@ -158,25 +149,40 @@ export async function callViaProfile(systemPrompt, userMessage, maxTokens, timeo
         });
         // ST translates `json_schema` per-provider on chat-completions (strict json_schema
         // on OpenAI/OR/Groq/xAI/etc., forced tool_choice on Claude, responseSchema on
-        // Gemini, soft json_object on Mistral/DeepSeek/Moonshot/Z.ai). Skip on Claude:
-        // forced tool_choice + extended thinking = 400 ("Thinking may not be enabled
-        // when tool_choice forces tool use."), thinking is ON by default in Claude 4.x
-        // presets, and we can't disable it per-request without breaking the user's
-        // unrelated tooling. Prompt + robust JSON extraction still covers Claude.
+        // Gemini, soft json_object on Mistral/DeepSeek/Moonshot/Z.ai).
+        //
+        // gotcha #84: json_schema on Claude was HISTORICALLY skipped because forced
+        // tool_choice + extended thinking = 400 ("Thinking may not be enabled when
+        // tool_choice forces tool use"), and Claude 4.x presets default thinking ON.
+        // But when the caller passes `disableThinkingOnClaude` we already send
+        // reasoning_effort='auto' → ST's calculateClaudeBudgetTokens returns null → no
+        // `thinking` block → the 400 conflict is gone. So we can ENABLE json_schema for
+        // Claude in exactly that case, which makes ST force tool_choice and the model
+        // MUST return the structured shape. Without it, weak Claude models (Haiku) often
+        // ignore the JSON-only instruction and return prose/refusals/clarifications →
+        // extractAiResponseClient finds no array → "unparseable response" → keyword
+        // fallback. Verified end-to-end against a claude-code-proxy + claude-haiku-4-5:
+        // forced tool_choice returns a clean tool_use {selected:[…]} even with zero
+        // context, whereas the plain prompt returns prose. The schema-skip stays in
+        // place for Claude calls that did NOT suppress thinking (none today pass a
+        // jsonSchema without also setting disableThinkingOnClaude).
         const effectiveModel = resolvedModel || (() => {
             try { return ConnectionManagerRequestService.getProfile(resolvedProfileId)?.model || ''; }
             catch { return ''; }
         })();
         // Shared helper detects OR-Claude (anthropic/claude-*) too; bare ^claude-/i misses it.
         const isClaudeModel = isUnderlyingClaude(effectiveModel);
+        // Thinking is suppressed → forced tool_choice (from json_schema) is safe on Claude.
+        const thinkingSuppressed = disableThinkingOnClaude && isClaudeModel;
         const overridePayload = {};
         if (resolvedModel) overridePayload.model = resolvedModel;
-        if (jsonSchema && !isClaudeModel) overridePayload.json_schema = jsonSchema;
+        if (jsonSchema && (!isClaudeModel || thinkingSuppressed)) overridePayload.json_schema = jsonSchema;
         // Sidestep Claude's "thinking + forced tool_choice" 400: setting reasoning_effort='auto'
         // makes ST's calculateClaudeBudgetTokens return null, so ST omits requestBody.thinking.
         // Per-request only — doesn't mutate the user's preset. Claude-only to keep the
-        // override surface minimal.
-        if (disableThinkingOnClaude && isClaudeModel) {
+        // override surface minimal. MUST accompany the json_schema enable above so the
+        // forced tool_choice doesn't 400 against extended thinking.
+        if (thinkingSuppressed) {
             overridePayload.reasoning_effort = 'auto';
         }
         const result = await Promise.race([
@@ -246,19 +252,27 @@ export async function callViaProfile(systemPrompt, userMessage, maxTokens, timeo
                 { timeOut: 10000 },
             );
         }
-        // Rewrite only if pre-flight flagged it AND the error matches the 400/top_k/thinking signature.
-        if (claudeAdaptiveDetail && /400|bad request|top_k|thinking|reasoning_effort/i.test(err.message || '')) {
+        // Reactive adaptive-thinking rewrite (gotcha #82): only a GENUINE error matching
+        // the 400/thinking signature triggers detection + rewrite. Detection is LAZY here
+        // (no pre-flight), so the happy path never pays for it; `detail.bad` gates the
+        // rewrite to a real adaptive-model + auto/unset-preset misconfig (e.g. an older ST
+        // build that truly rejects auto). Current ST staging maps auto→null (no 400), so
+        // this branch is effectively dormant there.
+        if (/400|bad request|top_k|thinking|reasoning_effort/i.test(err.message || '')) {
             // BUG-069: Wrap the dynamic import so a module-load failure can't mask the
             // original AI error — fall through to the generic rethrow below which
             // preserves the original error context.
-            let buildClaudeAdaptiveMessage;
+            let detectClaudeAdaptiveIssue, buildClaudeAdaptiveMessage;
             try {
-                ({ buildClaudeAdaptiveMessage } = await import('./claude-adaptive-check.js'));
+                ({ detectClaudeAdaptiveIssue, buildClaudeAdaptiveMessage } = await import('./claude-adaptive-check.js'));
             } catch (importErr) {
                 console.warn('[DLE] Could not load claude-adaptive-check.js:', importErr.message);
             }
-            if (buildClaudeAdaptiveMessage) {
-                throw new Error(buildClaudeAdaptiveMessage(claudeAdaptiveDetail, 'error') + profileLabel + modelLabel);
+            if (detectClaudeAdaptiveIssue && buildClaudeAdaptiveMessage) {
+                const detail = detectClaudeAdaptiveIssue(resolvedProfileId, resolvedModel);
+                if (detail.bad) {
+                    throw new Error(buildClaudeAdaptiveMessage(detail, 'error') + profileLabel + modelLabel);
+                }
             }
         }
         // Preserve err.name on generic rethrow so AbortError/etc. classification survives.
@@ -454,6 +468,9 @@ Example: ["Characters - Inner Circle", "Locations - Districts", "Lore - Magic Sy
     try {
         const result = await callAI(categoryPrompt, categoryUserMessage, {
             caller: 'hierarchicalPreFilter',
+            // Same forced-thinking fallback class as aiSearch (ST staging #5236) —
+            // this JSON category-selection call must also suppress Claude thinking.
+            disableThinkingOnClaude: true,
             mode: settings.aiSearchConnectionMode,
             profileId: settings.aiSearchProfileId,
             proxyUrl: settings.aiSearchProxyUrl,
@@ -887,6 +904,14 @@ export async function aiSearch(chat, candidateManifest, candidateHeader, snapsho
 
         const aiResult = await callAI(systemPrompt, effectiveUserMessage, {
             caller: 'aiSearch',
+            // BUG (ST staging #5236): non-adaptive Claude thinking models default
+            // thinking ON when reasoning_effort resolves to undefined (preset 'auto'
+            // → client drops it → server Math.max(0,1024)). Thinking eats the JSON
+            // budget / leaks reasoning → parse fail → circuit breaker → keyword
+            // fallback. Mirror the Librarian: force reasoning_effort='auto' on Claude
+            // so ST's calculateClaudeBudgetTokens returns null and omits thinking.
+            // Claude-only (zero non-Claude regression); fires for any Claude model.
+            disableThinkingOnClaude: true,
             mode: settings.aiSearchConnectionMode,
             profileId: settings.aiSearchProfileId,
             proxyUrl: settings.aiSearchProxyUrl,

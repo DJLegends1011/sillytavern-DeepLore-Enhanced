@@ -16,7 +16,6 @@ import { searchLoreAction, flagLoreAction } from './librarian-tools.js';
 import {
     chatEpoch, generationLockEpoch,
     setGenerationLockTimestamp,
-    setPipelinePhase,
 } from '../state.js';
 import { pushEvent } from '../diagnostics/interceptors.js';
 
@@ -117,7 +116,9 @@ const PHASE_FLAG = 'FLAG';
  * @param {number} options.lockEpoch - generationLockEpoch snapshot
  * @param {function} options.onStatus
  * @param {function} options.onProse - Called when write() fires; awaited so saveReply
- *   completes before FLAG phase.
+ *   completes before the loop returns. The FLAG turn is now backgrounded (see the
+ *   `pendingFlag` thunk in the return value) — onProse no longer gates a synchronous
+ *   flag round-trip, so prose delivery + lock release don't wait on gap-flagging.
  * @param {Set<string>} options.injectedTitles - lowercased
  * @param {object} options.settings
  */
@@ -179,11 +180,13 @@ export async function runAgenticLoop(options) {
             if (searchEnabled && searchCount < maxSearches) {
                 tools.push(TOOL_SEARCH);
             }
-        } else if (phase === PHASE_FLAG) {
-            if (flagEnabled && flagCount < MAX_FLAG_CALLS) {
-                tools.push(TOOL_FLAG);
-            }
         }
+        // Issue-1: the FLAG phase no longer runs an in-loop iteration. Once write
+        // delivers prose we break and hand the caller a detached `pendingFlag` thunk
+        // (built after the loop) so the flag API round-trip runs AFTER lock release.
+        // Inline flags (a write+flag in ONE response) are still processed in the
+        // per-toolCall switch below — `phase === PHASE_FLAG`, set by the write case,
+        // gates them. So phase=PHASE_FLAG is now only an in-response sentinel.
 
         if (tools.length === 0) { exitReason = 'no_tools'; break; }
 
@@ -205,26 +208,10 @@ export async function runAgenticLoop(options) {
 
         if (debug) console.debug(`[DLE] Agentic loop: iteration ${iteration}, phase=${phase}, tools=[${tools.map(t => t.function.name)}]`);
 
-        // H8: FLAG is best-effort — prose already delivered, so errors here must
-        // not crash generation. AbortError still throws. Phase label 'flagging'
-        // surfaces the silent wrap-up stage in drawer-render-status.js.
-        // FLAG is terminal, so finally always restores 'idle'.
-        if (phase === PHASE_FLAG) {
-            setPipelinePhase('flagging');
-            try {
-                flagCount += await _runFlagIteration(messages, tools, toolChoice, maxTokens, signal, toolActivity, settings, debug, flagCount, epoch, lockEpoch);
-            } catch (flagErr) {
-                if (flagErr?.name === 'AbortError') throw flagErr;
-                console.warn('[DLE] Flag phase error (prose already delivered):', flagErr?.message || flagErr);
-            } finally {
-                setPipelinePhase('idle');
-            }
-            // FLAG runs at most one iteration.
-            exitReason = 'completed';
-            break;
-        }
-
-        // SEARCH phase — errors fatal here (no prose yet).
+        // SEARCH phase — errors fatal here (no prose yet). The FLAG turn is no
+        // longer run in-loop (Issue-1 backgrounding): once write delivers prose we
+        // break out below and the caller fires the detached `pendingFlag` thunk
+        // after releasing the generation lock.
         const response = await callWithTools(messages, tools, toolChoice, maxTokens, signal);
 
         const responseUsage = getUsage(response);
@@ -437,6 +424,16 @@ export async function runAgenticLoop(options) {
         } else {
             messages.push(toolResultMsg);
         }
+
+        // Issue-1: prose delivered this iteration → stop the synchronous loop.
+        // `messages` now carries the assistant write (+ any inline flag) call and
+        // its tool-result (the flagging instructions), i.e. exactly the state
+        // _runFlagIteration needs. The detached `pendingFlag` thunk (built after
+        // the loop) resumes from here AFTER the caller releases the generation lock.
+        if (writeDone) {
+            exitReason = 'completed';
+            break;
+        }
     }
 
     // prose='' is legitimate (every write rejected by H10 empty-content guard).
@@ -445,12 +442,43 @@ export async function runAgenticLoop(options) {
         if (debug) console.debug('[DLE] Agentic loop: exited without prose (writeDone=%s, iterations=%d, exit=%s)', writeDone, iterations, exitReason);
     }
 
-    if (debug) console.log('[DLE] Librarian: %d iterations, %d searches, %d flags, prose=%d chars, exit=%s',
-        iterations, searchCount, flagCount, (prose || '').length, exitReason);
+    // Issue-1: build the detached FLAG turn. Only when prose was delivered AND
+    // flagging is on AND the per-loop flag cap isn't already spent by inline
+    // flags (write+flag in one response). The caller fires this AFTER releasing
+    // the generation lock, so it self-guards on chatEpoch + lockEpoch (threaded
+    // into _runFlagIteration): lockEpoch SURVIVES a plain lock release (state.js
+    // bumps the epoch only on ACQUIRE) but flips when a NEW generation supersedes
+    // this one — auto-cancelling the now-stale background flag. `flagActivity` is
+    // a FRESH array so the caller appends ONLY the new flag entries to the prose
+    // message's already-saved tool_calls (search + inline flags).
+    let pendingFlag = null;
+    if (writeDone && flagEnabled && flagCount < MAX_FLAG_CALLS) {
+        const capturedFlagCount = flagCount;
+        pendingFlag = async () => {
+            const flagActivity = [];
+            let flagged = 0;
+            try {
+                flagged = await _runFlagIteration(
+                    messages, [TOOL_FLAG], 'auto', maxTokens, signal,
+                    flagActivity, settings, debug, capturedFlagCount, epoch, lockEpoch,
+                );
+            } catch (flagErr) {
+                // Best-effort: prose already delivered, so a backgrounded flag
+                // failure is invisible. Swallow everything incl. AbortError.
+                if (flagErr?.name !== 'AbortError') {
+                    console.warn('[DLE] Background flag turn error (prose already delivered):', flagErr?.message || flagErr);
+                }
+            }
+            return { flagCount: flagged, flagActivity };
+        };
+    }
 
-    pushEvent('librarian', { action: 'completed', iterations, searches: searchCount, flags: flagCount, hadProse: !!prose });
+    if (debug) console.log('[DLE] Librarian: %d iterations, %d searches, %d flags, prose=%d chars, exit=%s, bgFlag=%s',
+        iterations, searchCount, flagCount, (prose || '').length, exitReason, !!pendingFlag);
 
-    return { prose: prose || '', toolActivity, usage };
+    pushEvent('librarian', { action: 'completed', iterations, searches: searchCount, flags: flagCount, hadProse: !!prose, backgroundFlag: !!pendingFlag });
+
+    return { prose: prose || '', toolActivity, usage, pendingFlag };
 }
 
 // ════════════════════════════════════════════════════════════════════════════

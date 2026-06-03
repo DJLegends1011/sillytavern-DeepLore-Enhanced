@@ -157,7 +157,15 @@ export function setScribeInProgress(v) { scribeInProgress = v; }
 export let notepadExtractInProgress = false;
 export function setNotepadExtractInProgress(v) { notepadExtractInProgress = v; }
 
-/** Claude adaptive-thinking misconfiguration flag (any feature in bad combo) */
+/** Claude adaptive-thinking misconfiguration flag (any feature in bad combo).
+ *  DEAD-HEADED (gotcha #82, 2026-06-03): the proactive surfaces that set this true
+ *  (index.js startup sweep + ai.js pre-flight) were removed because ST staging maps
+ *  reasoning_effort 'auto'/unset → null thinking budget → no 400, making the warning a
+ *  false alarm whose "set Low/Med/High" advice re-forces thinking ON. No code sets this
+ *  true anymore, so the drawer chip + settings banner stay dormant. Kept (not deleted)
+ *  to avoid churning 7 locale files + i18n parity tests, and so a future ST build that
+ *  genuinely 400s on adaptive+auto can re-wire the proactive path. The reactive 400
+ *  rewrite in callViaProfile (ai.js) still fires. Do NOT delete without re-checking ST. */
 export let claudeAutoEffortBad = false;
 export let claudeAutoEffortDetail = null;
 const claudeAutoEffortObservers = new Set();

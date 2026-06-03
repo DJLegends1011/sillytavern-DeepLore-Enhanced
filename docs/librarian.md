@@ -42,15 +42,21 @@ If `isToolCallingSupported()` is false, falls through to ST's normal generation 
 ```
 SEARCH phase:
   Available tools: search + write (search capped by maxSearches)
-  write() call → captures prose → transitions to FLAG phase
+  write() call → captures prose → onProse (saveReply) → loop BREAKS
 
-FLAG phase:
-  Available tools: flag (capped at MAX_FLAG_CALLS = 5)
-  AI ends turn (no tool calls) → DONE
+DONE (synchronous):
+  Return { prose, toolActivity, usage, pendingFlag }
+    - toolActivity = search results + INLINE flags (write+flag in one response)
+    - pendingFlag  = detached FLAG-turn thunk (or null) — see below
 
-DONE:
-  Return { prose, toolActivity, usage }
+FLAG turn (BACKGROUNDED — fired by index.js AFTER lock release):
+  pendingFlag() → _runFlagIteration (one extra callWithTools, flag tool only,
+                  capped at MAX_FLAG_CALLS = 5)
+              → resolves { flagCount, flagActivity }
+              → caller appends flagActivity to the saved prose msg + refreshes dropdown
 ```
+
+The FLAG turn is **backgrounded** (Issue-1, 2026-06-02): it is NOT a synchronous loop iteration. Once `write` delivers prose the loop breaks; the generation lock + send button release immediately and `pendingFlag` runs fire-and-forget so the user is never held through the gap-finder's extra API round-trip. `pendingFlag` self-guards on `chatEpoch` + `lockEpoch` + `swipe_id` (chat switch / a new generation / swipe-to-another-alternate all cancel the stale write — `generationLockEpoch` bumps only on lock ACQUIRE; swipe nav bumps neither epoch but swaps `message.extra`). The in-flight flag API call itself is best-effort and not cancellable once the dispatch returns. See `docs/gotchas.md` #81. Inline flags (write+flag in one response) still process synchronously — they cost no extra round-trip. `pendingFlag` is `null` when flagging is disabled, the flag cap is already spent by inline flags, or on the CRIT-LIB-3 onProse-error degraded path.
 
 Constants: `MAX_ITERATIONS = 15`, `MAX_FLAG_CALLS = 5`.
 
@@ -61,8 +67,8 @@ Three tools in OpenAI function calling format:
 | Tool | Phase | Purpose |
 |---|---|---|
 | `search` | SEARCH | BM25 vault search (delegates to `searchLoreAction`) |
-| `write` | SEARCH | Submit final prose response — triggers SEARCH->FLAG transition |
-| `flag` | FLAG | Flag lore gaps/updates (delegates to `flagLoreAction`) |
+| `write` | SEARCH | Submit final prose response — delivers prose then breaks the loop (FLAG turn backgrounded) |
+| `flag` | FLAG turn / inline | Flag lore gaps/updates (delegates to `flagLoreAction`). Runs in the backgrounded FLAG turn, or inline when emitted in the same response as `write` |
 
 `write` is always available in SEARCH phase. When it is the only tool left (search limit reached), the system prompt instructs the AI to call it — no `toolChoice` forcing needed (see H1 comment in `agentic-loop.js`, inside the main iteration loop: `toolChoice` is always `'auto'`).
 
