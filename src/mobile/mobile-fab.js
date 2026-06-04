@@ -62,20 +62,26 @@ export function savePosition(left, top) {
 }
 
 export function defaultPosition(viewportWidth = 390, viewportHeight = 844, inputBarTop = viewportHeight, safeInsets = {}) {
-    const inputTop = Number.isFinite(inputBarTop) ? inputBarTop : viewportHeight;
     const x = viewportWidth - FAB_SIZE - EDGE_MARGIN - (safeInsets.right || 0);
-    const availableTop = EDGE_MARGIN + (safeInsets.top || 0);
-    const availableBottom = Math.max(availableTop, inputTop - FAB_SIZE - EDGE_MARGIN);
-    const y = Math.round(availableTop + (availableBottom - availableTop) * 0.6);
-    const clamped = clampPosition(x, y, viewportWidth, viewportHeight, inputBarTop, safeInsets);
+    const y = viewportHeight - FAB_SIZE - EDGE_MARGIN - (safeInsets.bottom || 0);
+    const clamped = clampPosition(x, y, viewportWidth, viewportHeight, viewportHeight, safeInsets);
     return { left: clamped.x, top: clamped.y };
+}
+
+export function resolveVisiblePosition(desiredPosition, viewportWidth, viewportHeight, inputBarTop, safeInsets = {}) {
+    const desiredX = Number.isFinite(desiredPosition?.x) ? desiredPosition.x : desiredPosition?.left;
+    const desiredY = Number.isFinite(desiredPosition?.y) ? desiredPosition.y : desiredPosition?.top;
+    const pos = Number.isFinite(desiredX) && Number.isFinite(desiredY)
+        ? { left: desiredX, top: desiredY }
+        : defaultPosition(viewportWidth, viewportHeight, inputBarTop, safeInsets);
+    const clamped = clampPosition(pos.left, pos.top, viewportWidth, viewportHeight, inputBarTop, safeInsets);
+    return { x: clamped.x, y: clamped.y };
 }
 
 export function resolveInitialPosition(viewportWidth, viewportHeight, inputBarTop, safeInsets = {}) {
     const saved = loadPosition();
     const pos = saved || defaultPosition(viewportWidth, viewportHeight, inputBarTop, safeInsets);
-    const clamped = clampPosition(pos.left, pos.top, viewportWidth, viewportHeight, inputBarTop, safeInsets);
-    return { x: clamped.x, y: clamped.y };
+    return resolveVisiblePosition(pos, viewportWidth, viewportHeight, inputBarTop, safeInsets);
 }
 
 export function shouldHideForStSurface(surfaceState = {}) {
@@ -106,6 +112,7 @@ let badgeEl = null;
 let dragState = null;
 let onTapCallback = null;
 let currentPosition = { x: 0, y: 0 };
+let desiredPosition = { x: 0, y: 0 };
 let reclampRafId = null;
 let viewportResizeHandler = null;
 let inputResizeObserver = null;
@@ -154,9 +161,8 @@ function reclampPosition() {
     const vh = window.innerHeight || 844;
     const inputTop = getInputBarTop();
     const insets = getSafeInsets();
-    const clamped = clampPosition(currentPosition.x, currentPosition.y, vw, vh, inputTop, insets);
+    const clamped = resolveVisiblePosition(desiredPosition, vw, vh, inputTop, insets);
     applyPosition(clamped.x, clamped.y, true);
-    savePosition(clamped.x, clamped.y);
 }
 
 function scheduleReclamp() {
@@ -177,8 +183,9 @@ function settlePosition(x, y, animate = true) {
     const inputTop = getInputBarTop();
     const insets = getSafeInsets();
     const clamped = clampPosition(x, y, vw, vh, inputTop, insets);
+    desiredPosition = { x: clamped.x, y: clamped.y };
     applyPosition(clamped.x, clamped.y, animate);
-    savePosition(clamped.x, clamped.y);
+    savePosition(desiredPosition.x, desiredPosition.y);
 }
 
 function isElementVisible(el) {
@@ -346,7 +353,10 @@ export function createFab({ onTap, container } = {}) {
     const vh = window.innerHeight || 844;
     const inputTop = getInputBarTop();
     const insets = getSafeInsets();
-    const initial = resolveInitialPosition(vw, vh, inputTop, insets);
+    const saved = loadPosition();
+    const desired = saved || defaultPosition(vw, vh, inputTop, insets);
+    desiredPosition = { x: desired.left, y: desired.top };
+    const initial = resolveVisiblePosition(desiredPosition, vw, vh, inputTop, insets);
     currentPosition = { x: initial.x, y: initial.y };
     applyPosition(initial.x, initial.y, false);
 
@@ -397,6 +407,8 @@ export function destroyFab() {
     badgeEl = null;
     dragState = null;
     onTapCallback = null;
+    currentPosition = { x: 0, y: 0 };
+    desiredPosition = { x: 0, y: 0 };
     inputBarEl = null;
     inputTextEl = null;
     desiredVisible = true;

@@ -21,6 +21,7 @@ import {
     savePosition,
     defaultPosition,
     resolveInitialPosition,
+    resolveVisiblePosition,
     renderFabHtml,
     shouldHideForStSurface,
     FAB_SIZE,
@@ -163,10 +164,10 @@ test('loadPosition: missing absolute coordinate returns null', () => {
     assertEqual(loadPosition(), null);
 });
 
-test('defaultPosition: returns absolute viewport coordinates above the input bar', () => {
+test('defaultPosition: returns bottom-right desired viewport coordinates', () => {
     const pos = defaultPosition(390, 844, 700);
     assertEqual(pos.left, 390 - FAB_SIZE - EDGE_MARGIN);
-    assertLessThan(pos.top + FAB_SIZE, 700, 'default bottom edge should stay above input bar');
+    assertEqual(pos.top, 844 - FAB_SIZE - EDGE_MARGIN);
 });
 
 section('FAB — resolveInitialPosition');
@@ -183,6 +184,7 @@ test('resolveInitialPosition: falls back to default when no saved', () => {
     mockStorage.clear();
     const result = resolveInitialPosition(390, 844, 700, {});
     assertEqual(result.x, 390 - FAB_SIZE - EDGE_MARGIN);
+    assertLessThan(result.y + FAB_SIZE, 700, 'visible default should still stay above input bar');
 });
 
 test('resolveInitialPosition: clamps a saved position above a grown input bar', () => {
@@ -190,6 +192,15 @@ test('resolveInitialPosition: clamps a saved position above a grown input bar', 
     savePosition(300, 680);
     const result = resolveInitialPosition(390, 844, 620, {});
     assertLessThan(result.y + FAB_SIZE, 620, 'saved position should reclamp above input bar');
+});
+
+test('resolveVisiblePosition: restores bottom desired position after input shrinks', () => {
+    const desired = { x: 330, y: 720 };
+    const grownInput = resolveVisiblePosition(desired, 390, 844, 620, {});
+    assertLessThan(grownInput.y + FAB_SIZE, 620, 'visible position should move above grown input');
+
+    const collapsedInput = resolveVisiblePosition(desired, 390, 844, 780, {});
+    assertEqual(collapsedInput.y, 720);
 });
 
 section('FAB — ST Surface Visibility');
