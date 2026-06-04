@@ -123,7 +123,7 @@ export function shouldHideForStSurface(surfaceState = {}) {
         || surfaceState.openPopups > 0
         || surfaceState.shadowPopupVisible
         || surfaceState.extensionMenuVisible
-        || surfaceState.characterLibraryUxVisible
+        || surfaceState.characterLibraryEmbeddedVisible
         || surfaceState.optionMenusVisible > 0
         || surfaceState.customModalsVisible > 0
     );
@@ -316,13 +316,9 @@ function isInputBarVisible() {
     }
 }
 
-function isCharacterLibraryUxVisible() {
+function isCharacterLibraryEmbeddedVisible() {
     try {
-        return [
-            '#charlib-embedded-container',
-            '#charlib-launcher-dropdown.visible',
-            '.charlib-launcher-scrim.visible',
-        ].some((selector) => isElementVisible(document.querySelector(selector)));
+        return isElementVisible(document.querySelector('#charlib-embedded-container'));
     } catch {
         return false;
     }
@@ -345,7 +341,7 @@ function readStSurfaceState() {
         shadowPopupVisible: isElementVisible(document.getElementById('shadow_popup'))
             || isElementVisible(document.getElementById('bulk_tag_shadow_popup')),
         extensionMenuVisible: isElementVisible(document.getElementById('extensionsMenu')),
-        characterLibraryUxVisible: isCharacterLibraryUxVisible(),
+        characterLibraryEmbeddedVisible: isCharacterLibraryEmbeddedVisible(),
         optionMenusVisible: countVisible('.options-content, .popper-modal'),
         customModalsVisible: countVisible('[role="dialog"]:not(#dle-mobile-sheet), [aria-modal="true"]:not(#dle-mobile-sheet)'),
     };

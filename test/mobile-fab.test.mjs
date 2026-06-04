@@ -25,6 +25,8 @@ import {
     selectBottomObstructionTop,
     renderFabHtml,
     shouldHideForStSurface,
+    createFab,
+    destroyFab,
     FAB_SIZE,
     DRAG_THRESHOLD,
     EDGE_MARGIN,
@@ -283,7 +285,7 @@ test('shouldHideForStSurface: hides for CharacterLibrary embedded UX', () => {
         extensionMenuVisible: false,
         optionMenusVisible: 0,
         customModalsVisible: 0,
-        characterLibraryUxVisible: true,
+        characterLibraryEmbeddedVisible: true,
     }), 'CharacterLibrary embedded panel should hide the DeepLore FAB even when ST input still exists');
 });
 
@@ -297,6 +299,111 @@ test('shouldHideForStSurface: remains visible when chat input bar is present', (
         optionMenusVisible: 0,
         customModalsVisible: 0,
     }), 'visible ST chat input bar should allow the FAB when no overlays are open');
+});
+
+function makeVisibleElement(rect = {}) {
+    return {
+        hidden: false,
+        open: false,
+        style: {},
+        children: [],
+        attributes: new Map(),
+        className: '',
+        innerHTML: '',
+        setAttribute(name, value) { this.attributes.set(name, String(value)); },
+        getAttribute(name) { return this.attributes.get(name) ?? null; },
+        appendChild(child) {
+            child.parentNode = this;
+            this.children.push(child);
+            return child;
+        },
+        remove() {
+            if (!this.parentNode) return;
+            this.parentNode.children = this.parentNode.children.filter((child) => child !== this);
+            this.parentNode = null;
+        },
+        addEventListener() {},
+        removeEventListener() {},
+        setPointerCapture() {},
+        releasePointerCapture() {},
+        closest() { return null; },
+        getBoundingClientRect() {
+            return {
+                top: 700,
+                bottom: 744,
+                width: 390,
+                height: 44,
+                ...rect,
+            };
+        },
+    };
+}
+
+function withCharacterLibraryDom({ launcherVisible = false, embeddedVisible = false }, callback) {
+    const previousDocument = globalThis.document;
+    const previousWindow = globalThis.window;
+    const previousGetComputedStyle = globalThis.getComputedStyle;
+    const formSheld = makeVisibleElement({ top: 700, bottom: 744, width: 390, height: 44 });
+    const launcher = makeVisibleElement({ top: 80, bottom: 160, width: 220, height: 80 });
+    const embedded = makeVisibleElement({ top: 0, bottom: 844, width: 390, height: 844 });
+    const body = makeVisibleElement({ top: 0, bottom: 844, width: 390, height: 844 });
+    const documentElement = makeVisibleElement({ top: 0, bottom: 844, width: 390, height: 844 });
+
+    globalThis.window = {
+        innerWidth: 390,
+        innerHeight: 844,
+        addEventListener() {},
+        removeEventListener() {},
+    };
+    globalThis.getComputedStyle = (el) => ({
+        display: el?.style?.display || 'block',
+        visibility: el?.style?.visibility || 'visible',
+        position: el?.style?.position || 'fixed',
+        opacity: el?.style?.opacity || '1',
+        getPropertyValue() { return ''; },
+    });
+    globalThis.document = {
+        body,
+        documentElement,
+        createElement: () => makeVisibleElement({ top: 0, bottom: 44, width: FAB_SIZE, height: FAB_SIZE }),
+        getElementById(id) {
+            if (id === 'form_sheld') return formSheld;
+            return null;
+        },
+        querySelector(selector) {
+            if (selector === '#charlib-launcher-dropdown.visible' && launcherVisible) return launcher;
+            if (selector === '#charlib-embedded-container' && embeddedVisible) return embedded;
+            return null;
+        },
+        querySelectorAll() {
+            return [];
+        },
+    };
+
+    try {
+        return callback();
+    } finally {
+        destroyFab();
+        globalThis.document = previousDocument;
+        globalThis.window = previousWindow;
+        globalThis.getComputedStyle = previousGetComputedStyle;
+    }
+}
+
+test('createFab: remains visible for CharacterLibrary launcher picker', () => {
+    withCharacterLibraryDom({ launcherVisible: true }, () => {
+        const wrapper = createFab();
+        assertEqual(wrapper.style.opacity, '1');
+        assertEqual(wrapper.style.pointerEvents, 'auto');
+    });
+});
+
+test('createFab: hides for CharacterLibrary embedded panel', () => {
+    withCharacterLibraryDom({ embeddedVisible: true }, () => {
+        const wrapper = createFab();
+        assertEqual(wrapper.style.opacity, '0');
+        assertEqual(wrapper.style.pointerEvents, 'none');
+    });
 });
 
 section('FAB — Badge Rendering');
