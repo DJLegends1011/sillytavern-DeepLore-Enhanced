@@ -262,6 +262,30 @@ test('shouldHideForStSurface: hides for extension menus and custom option menus'
     }), 'visible custom option menu should hide FAB');
 });
 
+test('shouldHideForStSurface: hides when chat input bar is missing', () => {
+    assert(shouldHideForStSurface({
+        inputBarVisible: false,
+        openDrawers: 0,
+        openPopups: 0,
+        shadowPopupVisible: false,
+        extensionMenuVisible: false,
+        optionMenusVisible: 0,
+        customModalsVisible: 0,
+    }), 'FAB should disappear on custom screens without the ST chat input bar');
+});
+
+test('shouldHideForStSurface: remains visible when chat input bar is present', () => {
+    assert(!shouldHideForStSurface({
+        inputBarVisible: true,
+        openDrawers: 0,
+        openPopups: 0,
+        shadowPopupVisible: false,
+        extensionMenuVisible: false,
+        optionMenusVisible: 0,
+        customModalsVisible: 0,
+    }), 'visible ST chat input bar should allow the FAB when no overlays are open');
+});
+
 section('FAB — Badge Rendering');
 
 test('renderFabHtml: no badge when count is 0', () => {

@@ -118,7 +118,8 @@ export function selectBottomObstructionTop(candidates = [], viewportWidth = 390,
 
 export function shouldHideForStSurface(surfaceState = {}) {
     return Boolean(
-        surfaceState.openDrawers > 0
+        surfaceState.inputBarVisible === false
+        || surfaceState.openDrawers > 0
         || surfaceState.openPopups > 0
         || surfaceState.shadowPopupVisible
         || surfaceState.extensionMenuVisible
@@ -294,12 +295,21 @@ function settlePosition(x, y, animate = true) {
 
 function isElementVisible(el) {
     if (!el) return false;
+    if (el.hidden || el.getAttribute?.('aria-hidden') === 'true') return false;
     if (el.open) return true;
     try {
         const style = getComputedStyle(el);
         if (style.display === 'none' || style.visibility === 'hidden') return false;
         const rect = el.getBoundingClientRect();
         return rect.width > 0 && rect.height > 0;
+    } catch {
+        return false;
+    }
+}
+
+function isInputBarVisible() {
+    try {
+        return isElementVisible(document.getElementById('form_sheld'));
     } catch {
         return false;
     }
@@ -316,6 +326,7 @@ function countVisible(selector) {
 function readStSurfaceState() {
     if (typeof document === 'undefined') return {};
     return {
+        inputBarVisible: isInputBarVisible(),
         openDrawers: countVisible('.openDrawer'),
         openPopups: countVisible('dialog.popup[open], .popup[open]'),
         shadowPopupVisible: isElementVisible(document.getElementById('shadow_popup'))
@@ -346,6 +357,7 @@ function scheduleVisibilityCheck() {
 }
 
 function scheduleSurfaceUpdate() {
+    observeInputBar();
     scheduleVisibilityCheck();
     scheduleReclamp();
 }
@@ -417,12 +429,23 @@ function onPointerEnd(e) {
 }
 
 function observeInputBar() {
-    inputBarEl = document.getElementById('form_sheld');
-    inputTextEl = document.getElementById('send_textarea');
-    inputTextEl?.addEventListener?.('input', scheduleReclamp);
+    const nextInputBarEl = document.getElementById('form_sheld');
+    const nextInputTextEl = document.getElementById('send_textarea');
 
-    if (typeof ResizeObserver !== 'undefined' && inputBarEl) {
-        inputResizeObserver = new ResizeObserver(scheduleReclamp);
+    if (inputTextEl !== nextInputTextEl) {
+        inputTextEl?.removeEventListener?.('input', scheduleSurfaceUpdate);
+        inputTextEl = nextInputTextEl;
+        inputTextEl?.addEventListener?.('input', scheduleSurfaceUpdate);
+    }
+
+    if (inputBarEl !== nextInputBarEl) {
+        inputResizeObserver?.disconnect();
+        inputResizeObserver = null;
+        inputBarEl = nextInputBarEl;
+    }
+
+    if (typeof ResizeObserver !== 'undefined' && inputBarEl && !inputResizeObserver) {
+        inputResizeObserver = new ResizeObserver(scheduleSurfaceUpdate);
         inputResizeObserver.observe(inputBarEl);
     }
 }
@@ -500,7 +523,7 @@ export function destroyFab() {
         window.removeEventListener('resize', viewportResizeHandler);
         window.visualViewport?.removeEventListener('resize', viewportResizeHandler);
     }
-    inputTextEl?.removeEventListener?.('input', scheduleReclamp);
+    inputTextEl?.removeEventListener?.('input', scheduleSurfaceUpdate);
     inputResizeObserver?.disconnect();
     inputResizeObserver = null;
     overlayObserver?.disconnect();
