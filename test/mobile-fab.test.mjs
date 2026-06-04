@@ -22,6 +22,7 @@ import {
     defaultPosition,
     resolveInitialPosition,
     resolveVisiblePosition,
+    selectBottomObstructionTop,
     renderFabHtml,
     shouldHideForStSurface,
     FAB_SIZE,
@@ -201,6 +202,35 @@ test('resolveVisiblePosition: restores bottom desired position after input shrin
 
     const collapsedInput = resolveVisiblePosition(desired, 390, 844, 780, {});
     assertEqual(collapsedInput.y, 720);
+});
+
+test('selectBottomObstructionTop: detects custom fixed bottom navigation bars', () => {
+    const top = selectBottomObstructionTop([
+        { top: 760, bottom: 844, width: 390, height: 84, position: 'fixed', display: 'flex', visibility: 'visible' },
+    ], 390, 844);
+    assertEqual(top, 760);
+});
+
+test('selectBottomObstructionTop: detects absolute bottom navigation inside custom shells', () => {
+    const top = selectBottomObstructionTop([
+        { top: 760, bottom: 844, width: 390, height: 84, position: 'absolute', display: 'flex', visibility: 'visible' },
+    ], 390, 844);
+    assertEqual(top, 760);
+});
+
+test('selectBottomObstructionTop: ignores small floating action buttons', () => {
+    const top = selectBottomObstructionTop([
+        { top: 705, bottom: 777, width: 72, height: 72, position: 'fixed', display: 'flex', visibility: 'visible' },
+    ], 390, 844);
+    assertEqual(top, null);
+});
+
+test('resolveVisiblePosition: clamps above detected custom bottom navigation', () => {
+    const navTop = selectBottomObstructionTop([
+        { top: 760, bottom: 844, width: 390, height: 84, position: 'fixed', display: 'flex', visibility: 'visible' },
+    ], 390, 844);
+    const result = resolveVisiblePosition({ x: 334, y: 788 }, 390, 844, navTop, {});
+    assertLessThan(result.y + FAB_SIZE, 760, 'visible position should stay above custom bottom nav');
 });
 
 section('FAB — ST Surface Visibility');

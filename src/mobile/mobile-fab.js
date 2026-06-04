@@ -84,6 +84,38 @@ export function resolveInitialPosition(viewportWidth, viewportHeight, inputBarTo
     return resolveVisiblePosition(pos, viewportWidth, viewportHeight, inputBarTop, safeInsets);
 }
 
+export function selectBottomObstructionTop(candidates = [], viewportWidth = 390, viewportHeight = 844) {
+    const minWidth = Math.max(160, viewportWidth * 0.45);
+    const minTop = viewportHeight * 0.55;
+    const maxHeight = Math.max(140, viewportHeight * 0.35);
+    const bottomTolerance = 24;
+    let top = null;
+
+    for (const candidate of candidates) {
+        if (candidate?.excluded) continue;
+
+        const rectTop = Number(candidate?.top);
+        const rectBottom = Number(candidate?.bottom);
+        const width = Number(candidate?.width);
+        const height = Number(candidate?.height);
+        const position = String(candidate?.position || '').toLowerCase();
+        const display = String(candidate?.display || '').toLowerCase();
+        const visibility = String(candidate?.visibility || '').toLowerCase();
+        const opacity = String(candidate?.opacity ?? '1');
+
+        if (!['absolute', 'fixed', 'sticky'].includes(position)) continue;
+        if (display === 'none' || visibility === 'hidden' || Number(opacity) === 0) continue;
+        if (![rectTop, rectBottom, width, height].every(Number.isFinite)) continue;
+        if (width < minWidth || height < 32 || height > maxHeight) continue;
+        if (rectTop < minTop) continue;
+        if (rectBottom < viewportHeight - bottomTolerance || rectBottom > viewportHeight + bottomTolerance) continue;
+
+        top = top == null ? rectTop : Math.min(top, rectTop);
+    }
+
+    return top;
+}
+
 export function shouldHideForStSurface(surfaceState = {}) {
     return Boolean(
         surfaceState.openDrawers > 0
@@ -122,12 +154,84 @@ let inputBarEl = null;
 let inputTextEl = null;
 let desiredVisible = true;
 
+const BOTTOM_OBSTRUCTION_SELECTOR = [
+    'nav',
+    'footer',
+    '[role="navigation"]',
+    '[class*="nav"]',
+    '[class*="Nav"]',
+    '[class*="tab"]',
+    '[class*="Tab"]',
+    '[class*="dock"]',
+    '[class*="Dock"]',
+    '[class*="bar"]',
+    '[class*="Bar"]',
+    '[class*="bottom"]',
+    '[class*="Bottom"]',
+    '[id*="nav"]',
+    '[id*="Nav"]',
+    '[id*="tab"]',
+    '[id*="Tab"]',
+    '[id*="dock"]',
+    '[id*="Dock"]',
+    '[id*="bar"]',
+    '[id*="Bar"]',
+    '[id*="bottom"]',
+    '[id*="Bottom"]',
+].join(',');
+
+function isOwnUiElement(el) {
+    return Boolean(el?.closest?.('#dle-mobile-root, .dle-mobile-fab-anchor, .dle-mobile-fab, .dle-mobile-sheet, .stwii--trigger'));
+}
+
+function readBottomObstructionCandidates(viewportWidth, viewportHeight) {
+    try {
+        if (typeof document === 'undefined' || typeof getComputedStyle !== 'function') return [];
+        return Array.from(document.querySelectorAll(BOTTOM_OBSTRUCTION_SELECTOR)).map((el) => {
+            const rect = el.getBoundingClientRect?.();
+            const style = getComputedStyle(el);
+            return {
+                top: rect?.top,
+                bottom: rect?.bottom,
+                width: rect?.width,
+                height: rect?.height,
+                position: style.position,
+                display: style.display,
+                visibility: style.visibility,
+                opacity: style.opacity,
+                excluded: isOwnUiElement(el)
+                    || rect?.bottom < viewportHeight * 0.55
+                    || rect?.width > viewportWidth * 1.2,
+            };
+        });
+    } catch {
+        return [];
+    }
+}
+
 function getInputBarTop() {
+    const viewportWidth = typeof window !== 'undefined' ? window.innerWidth || 390 : 390;
+    const viewportHeight = typeof window !== 'undefined' ? window.innerHeight || 844 : 844;
+    const tops = [];
+
     try {
         const formSheld = document.getElementById('form_sheld');
-        if (formSheld?.getBoundingClientRect) return formSheld.getBoundingClientRect().top;
+        if (formSheld?.getBoundingClientRect && isElementVisible(formSheld)) {
+            const rect = formSheld.getBoundingClientRect();
+            if (Number.isFinite(rect.top) && rect.top >= 0 && rect.top < viewportHeight) {
+                tops.push(rect.top);
+            }
+        }
     } catch { /* test environment */ }
-    return (typeof window !== 'undefined' ? window.innerHeight : 844) - 76;
+
+    const customBottomTop = selectBottomObstructionTop(
+        readBottomObstructionCandidates(viewportWidth, viewportHeight),
+        viewportWidth,
+        viewportHeight,
+    );
+    if (Number.isFinite(customBottomTop)) tops.push(customBottomTop);
+
+    return tops.length ? Math.min(...tops) : viewportHeight;
 }
 
 function getSafeInsets() {
@@ -241,6 +345,11 @@ function scheduleVisibilityCheck() {
     });
 }
 
+function scheduleSurfaceUpdate() {
+    scheduleVisibilityCheck();
+    scheduleReclamp();
+}
+
 function onPointerDown(e) {
     if (!fabEl) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
@@ -320,7 +429,7 @@ function observeInputBar() {
 
 function observeStSurfaces() {
     if (typeof MutationObserver === 'undefined' || !document.body) return;
-    overlayObserver = new MutationObserver(scheduleVisibilityCheck);
+    overlayObserver = new MutationObserver(scheduleSurfaceUpdate);
     overlayObserver.observe(document.body, {
         childList: true,
         subtree: true,
