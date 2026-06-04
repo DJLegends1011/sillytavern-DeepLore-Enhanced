@@ -6,8 +6,6 @@
 import {
     assert,
     assertEqual,
-    assertApprox,
-    assertGreaterThan,
     assertLessThan,
     test,
     section,
@@ -24,6 +22,7 @@ import {
     defaultPosition,
     resolveInitialPosition,
     renderFabHtml,
+    shouldHideForStSurface,
     FAB_SIZE,
     DRAG_THRESHOLD,
     EDGE_MARGIN,
@@ -134,11 +133,11 @@ test('clampPosition: normal position is unchanged', () => {
 
 section('FAB — Position Persistence');
 
-test('savePosition + loadPosition round-trip', () => {
+test('savePosition + loadPosition round-trip with absolute viewport coordinates', () => {
     mockStorage.clear();
-    savePosition('left', 0.4);
+    savePosition(123, 456);
     const loaded = loadPosition();
-    assertEqual(loaded, { edge: 'left', y: 0.4 });
+    assertEqual(loaded, { left: 123, top: 456 });
 });
 
 test('loadPosition: empty storage returns null', () => {
@@ -152,41 +151,74 @@ test('loadPosition: corrupted JSON returns null', () => {
     assertEqual(loadPosition(), null);
 });
 
-test('loadPosition: invalid edge returns null', () => {
+test('loadPosition: legacy edge-snap storage returns null', () => {
     mockStorage.clear();
-    mockStorage.set(STORAGE_KEY, JSON.stringify({ edge: 'center', y: 0.5 }));
+    mockStorage.set(STORAGE_KEY, JSON.stringify({ edge: 'right', y: 0.5 }));
     assertEqual(loadPosition(), null);
 });
 
-test('loadPosition: missing y returns null', () => {
+test('loadPosition: missing absolute coordinate returns null', () => {
     mockStorage.clear();
-    mockStorage.set(STORAGE_KEY, JSON.stringify({ edge: 'right' }));
+    mockStorage.set(STORAGE_KEY, JSON.stringify({ left: 120 }));
     assertEqual(loadPosition(), null);
 });
 
-test('defaultPosition: returns right edge at 60%', () => {
-    const pos = defaultPosition();
-    assertEqual(pos.edge, 'right');
-    assertApprox(pos.y, 0.6, 0.01, 'default y should be 0.6');
+test('defaultPosition: returns absolute viewport coordinates above the input bar', () => {
+    const pos = defaultPosition(390, 844, 700);
+    assertEqual(pos.left, 390 - FAB_SIZE - EDGE_MARGIN);
+    assertLessThan(pos.top + FAB_SIZE, 700, 'default bottom edge should stay above input bar');
 });
 
 section('FAB — resolveInitialPosition');
 
 test('resolveInitialPosition: uses saved position', () => {
     mockStorage.clear();
-    savePosition('left', 0.3);
+    savePosition(80, 300);
     const result = resolveInitialPosition(390, 844, 700, {});
-    assertEqual(result.edge, 'left');
-    assertEqual(result.x, EDGE_MARGIN);
-    assertGreaterThan(result.y, EDGE_MARGIN, 'y should be positive');
-    assertLessThan(result.y + FAB_SIZE + EDGE_MARGIN, 700, 'must stay above input bar');
+    assertEqual(result.x, 80);
+    assertEqual(result.y, 300);
 });
 
 test('resolveInitialPosition: falls back to default when no saved', () => {
     mockStorage.clear();
     const result = resolveInitialPosition(390, 844, 700, {});
-    assertEqual(result.edge, 'right');
     assertEqual(result.x, 390 - FAB_SIZE - EDGE_MARGIN);
+});
+
+test('resolveInitialPosition: clamps a saved position above a grown input bar', () => {
+    mockStorage.clear();
+    savePosition(300, 680);
+    const result = resolveInitialPosition(390, 844, 620, {});
+    assertLessThan(result.y + FAB_SIZE, 620, 'saved position should reclamp above input bar');
+});
+
+section('FAB — ST Surface Visibility');
+
+test('shouldHideForStSurface: hides for open drawers', () => {
+    assert(shouldHideForStSurface({
+        openDrawers: 1,
+        openPopups: 0,
+        shadowPopupVisible: false,
+        extensionMenuVisible: false,
+        optionMenusVisible: 0,
+    }), 'open ST drawer should hide FAB');
+});
+
+test('shouldHideForStSurface: hides for extension menus and custom option menus', () => {
+    assert(shouldHideForStSurface({
+        openDrawers: 0,
+        openPopups: 0,
+        shadowPopupVisible: false,
+        extensionMenuVisible: true,
+        optionMenusVisible: 0,
+    }), 'visible extension menu should hide FAB');
+    assert(shouldHideForStSurface({
+        openDrawers: 0,
+        openPopups: 0,
+        shadowPopupVisible: false,
+        extensionMenuVisible: false,
+        optionMenusVisible: 2,
+    }), 'visible custom option menu should hide FAB');
 });
 
 section('FAB — Badge Rendering');

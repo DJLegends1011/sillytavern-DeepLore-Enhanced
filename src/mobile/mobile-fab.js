@@ -6,7 +6,7 @@ const STORAGE_KEY = 'dleMobileFabPosition';
 
 export { FAB_SIZE, DRAG_THRESHOLD, EDGE_MARGIN, STORAGE_KEY };
 
-// ─── Pure helpers (testable without DOM) ────────────────────────────────────
+// Pure helpers (testable without DOM)
 
 export function computeEdgeSnap(x, viewportWidth) {
     const midpoint = viewportWidth / 2;
@@ -18,15 +18,18 @@ export function computeSnapX(edge, viewportWidth, safeLeft = 0, safeRight = 0) {
     return viewportWidth - FAB_SIZE - EDGE_MARGIN - safeRight;
 }
 
-export function clampPosition(x, y, viewportWidth, viewportHeight, inputBarTop, safeInsets = {}) {
+export function clampPosition(x, y, viewportWidth, viewportHeight, inputBarTop = viewportHeight, safeInsets = {}) {
     const safeTop = safeInsets.top || 0;
     const safeLeft = safeInsets.left || 0;
     const safeRight = safeInsets.right || 0;
+    const safeBottom = safeInsets.bottom || 0;
 
     const minX = EDGE_MARGIN + safeLeft;
     const maxX = viewportWidth - FAB_SIZE - EDGE_MARGIN - safeRight;
     const minY = EDGE_MARGIN + safeTop;
-    const maxY = Math.min(viewportHeight - FAB_SIZE - EDGE_MARGIN, inputBarTop - FAB_SIZE - EDGE_MARGIN);
+    const viewportMaxY = viewportHeight - FAB_SIZE - EDGE_MARGIN - safeBottom;
+    const inputMaxY = Number.isFinite(inputBarTop) ? inputBarTop - FAB_SIZE - EDGE_MARGIN : viewportMaxY;
+    const maxY = Math.max(minY, Math.min(viewportMaxY, inputMaxY));
 
     return {
         x: Math.max(minX, Math.min(maxX, x)),
@@ -45,44 +48,72 @@ export function loadPosition() {
         const raw = globalThis.localStorage?.getItem(STORAGE_KEY);
         if (!raw) return null;
         const parsed = JSON.parse(raw);
-        if (parsed && (parsed.edge === 'left' || parsed.edge === 'right') && typeof parsed.y === 'number') {
+        if (parsed && Number.isFinite(parsed.left) && Number.isFinite(parsed.top)) {
             return parsed;
         }
     } catch { /* corrupted data */ }
     return null;
 }
 
-export function savePosition(edge, y) {
+export function savePosition(left, top) {
     try {
-        globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify({ edge, y }));
+        globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify({ left, top }));
     } catch { /* storage full or unavailable */ }
 }
 
-export function defaultPosition() {
-    return { edge: 'right', y: 0.6 };
+export function defaultPosition(viewportWidth = 390, viewportHeight = 844, inputBarTop = viewportHeight, safeInsets = {}) {
+    const inputTop = Number.isFinite(inputBarTop) ? inputBarTop : viewportHeight;
+    const x = viewportWidth - FAB_SIZE - EDGE_MARGIN - (safeInsets.right || 0);
+    const availableTop = EDGE_MARGIN + (safeInsets.top || 0);
+    const availableBottom = Math.max(availableTop, inputTop - FAB_SIZE - EDGE_MARGIN);
+    const y = Math.round(availableTop + (availableBottom - availableTop) * 0.6);
+    const clamped = clampPosition(x, y, viewportWidth, viewportHeight, inputBarTop, safeInsets);
+    return { left: clamped.x, top: clamped.y };
 }
 
 export function resolveInitialPosition(viewportWidth, viewportHeight, inputBarTop, safeInsets = {}) {
     const saved = loadPosition();
-    const pos = saved || defaultPosition();
-    const snapX = computeSnapX(pos.edge, viewportWidth, safeInsets.left || 0, safeInsets.right || 0);
-    const absoluteY = typeof pos.y === 'number' && pos.y <= 1
-        ? pos.y * (inputBarTop - FAB_SIZE - EDGE_MARGIN * 2 - (safeInsets.top || 0)) + EDGE_MARGIN + (safeInsets.top || 0)
-        : pos.y;
-    const clamped = clampPosition(snapX, absoluteY, viewportWidth, viewportHeight, inputBarTop, safeInsets);
-    return { x: clamped.x, y: clamped.y, edge: pos.edge };
+    const pos = saved || defaultPosition(viewportWidth, viewportHeight, inputBarTop, safeInsets);
+    const clamped = clampPosition(pos.left, pos.top, viewportWidth, viewportHeight, inputBarTop, safeInsets);
+    return { x: clamped.x, y: clamped.y };
 }
 
-// ─── DOM-coupled FAB (browser only) ────────────────────────────────────────
+export function shouldHideForStSurface(surfaceState = {}) {
+    return Boolean(
+        surfaceState.openDrawers > 0
+        || surfaceState.openPopups > 0
+        || surfaceState.shadowPopupVisible
+        || surfaceState.extensionMenuVisible
+        || surfaceState.optionMenusVisible > 0
+        || surfaceState.customModalsVisible > 0
+    );
+}
+
+export function renderFabHtml(injectionCount = 0) {
+    const badgeHtml = injectionCount > 0
+        ? `<span class="dle-mobile-fab__badge">${injectionCount > 99 ? '99+' : injectionCount}</span>`
+        : '';
+    return `<button class="dle-mobile-fab" type="button" aria-label="Open DeepLore panel" touch-action="none">
+    <i class="fa-solid fa-book-open" aria-hidden="true"></i>${badgeHtml}
+</button>`;
+}
+
+// DOM-coupled FAB (browser only)
 
 let fabEl = null;
 let fabWrapper = null;
 let badgeEl = null;
 let dragState = null;
 let onTapCallback = null;
-let currentPosition = { x: 0, y: 0, edge: 'right' };
+let currentPosition = { x: 0, y: 0 };
 let reclampRafId = null;
 let viewportResizeHandler = null;
+let inputResizeObserver = null;
+let overlayObserver = null;
+let overlayRafId = null;
+let inputBarEl = null;
+let inputTextEl = null;
+let desiredVisible = true;
 
 function getInputBarTop() {
     try {
@@ -100,25 +131,22 @@ function getSafeInsets() {
                 top: parseInt(style.getPropertyValue('env(safe-area-inset-top)'), 10) || 0,
                 left: parseInt(style.getPropertyValue('env(safe-area-inset-left)'), 10) || 0,
                 right: parseInt(style.getPropertyValue('env(safe-area-inset-right)'), 10) || 0,
+                bottom: parseInt(style.getPropertyValue('env(safe-area-inset-bottom)'), 10) || 0,
             };
         }
     } catch { /* test environment */ }
-    return { top: 0, left: 0, right: 0 };
+    return { top: 0, left: 0, right: 0, bottom: 0 };
 }
 
 function applyPosition(x, y, animate = false) {
     if (!fabEl?.style) return;
-    if (animate) {
-        fabEl.style.transition = `transform ${SNAP_DURATION}ms cubic-bezier(0.25, 0.46, 0.45, 0.94)`;
-    } else {
-        fabEl.style.transition = 'none';
-    }
+    fabEl.style.transition = animate
+        ? `transform ${SNAP_DURATION}ms cubic-bezier(0.25, 0.46, 0.45, 0.94)`
+        : 'none';
     fabEl.style.transform = `translate(${x}px, ${y}px)`;
     currentPosition.x = x;
     currentPosition.y = y;
 }
-
-let preKeyboardY = null;
 
 function reclampPosition() {
     if (!fabEl?.style || dragState) return;
@@ -126,60 +154,109 @@ function reclampPosition() {
     const vh = window.innerHeight || 844;
     const inputTop = getInputBarTop();
     const insets = getSafeInsets();
-    const snapX = computeSnapX(currentPosition.edge, vw, insets.left, insets.right);
-    const maxY = inputTop - FAB_SIZE - EDGE_MARGIN;
+    const clamped = clampPosition(currentPosition.x, currentPosition.y, vw, vh, inputTop, insets);
+    applyPosition(clamped.x, clamped.y, true);
+    savePosition(clamped.x, clamped.y);
+}
 
-    if (currentPosition.y > maxY) {
-        if (preKeyboardY === null) preKeyboardY = currentPosition.y;
-        const clamped = clampPosition(snapX, currentPosition.y, vw, vh, inputTop, insets);
-        applyPosition(clamped.x, clamped.y, true);
-    } else if (preKeyboardY !== null) {
-        const restoreY = preKeyboardY;
-        preKeyboardY = null;
-        const clamped = clampPosition(snapX, restoreY, vw, vh, inputTop, insets);
-        applyPosition(clamped.x, clamped.y, true);
+function scheduleReclamp() {
+    if (typeof requestAnimationFrame !== 'function') {
+        reclampPosition();
+        return;
+    }
+    if (reclampRafId) cancelAnimationFrame(reclampRafId);
+    reclampRafId = requestAnimationFrame(() => {
+        reclampRafId = null;
+        reclampPosition();
+    });
+}
+
+function settlePosition(x, y, animate = true) {
+    const vw = window.innerWidth || 390;
+    const vh = window.innerHeight || 844;
+    const inputTop = getInputBarTop();
+    const insets = getSafeInsets();
+    const clamped = clampPosition(x, y, vw, vh, inputTop, insets);
+    applyPosition(clamped.x, clamped.y, animate);
+    savePosition(clamped.x, clamped.y);
+}
+
+function isElementVisible(el) {
+    if (!el) return false;
+    if (el.open) return true;
+    try {
+        const style = getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden') return false;
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+    } catch {
+        return false;
     }
 }
 
-function snapToEdge(x, y) {
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    const inputTop = getInputBarTop();
-    const insets = getSafeInsets();
-
-    const edge = computeEdgeSnap(x, vw);
-    const snapX = computeSnapX(edge, vw, insets.left, insets.right);
-    const clamped = clampPosition(snapX, y, vw, vh, inputTop, insets);
-
-    currentPosition.edge = edge;
-    applyPosition(clamped.x, clamped.y, true);
-
-    const relativeY = (clamped.y - EDGE_MARGIN - (insets.top || 0)) /
-        (inputTop - FAB_SIZE - EDGE_MARGIN * 2 - (insets.top || 0));
-    savePosition(edge, Math.max(0, Math.min(1, relativeY)));
+function countVisible(selector) {
+    try {
+        return Array.from(document.querySelectorAll(selector)).filter(isElementVisible).length;
+    } catch {
+        return 0;
+    }
 }
 
-function onTouchStart(e) {
+function readStSurfaceState() {
+    if (typeof document === 'undefined') return {};
+    return {
+        openDrawers: countVisible('.openDrawer'),
+        openPopups: countVisible('dialog.popup[open], .popup[open]'),
+        shadowPopupVisible: isElementVisible(document.getElementById('shadow_popup'))
+            || isElementVisible(document.getElementById('bulk_tag_shadow_popup')),
+        extensionMenuVisible: isElementVisible(document.getElementById('extensionsMenu')),
+        optionMenusVisible: countVisible('.options-content, .popper-modal'),
+        customModalsVisible: countVisible('[role="dialog"]:not(#dle-mobile-sheet), [aria-modal="true"]:not(#dle-mobile-sheet)'),
+    };
+}
+
+function applyVisibility() {
+    if (!fabWrapper?.style) return;
+    const show = desiredVisible && !shouldHideForStSurface(readStSurfaceState());
+    fabWrapper.style.opacity = show ? '1' : '0';
+    fabWrapper.style.pointerEvents = show ? 'auto' : 'none';
+}
+
+function scheduleVisibilityCheck() {
+    if (typeof requestAnimationFrame !== 'function') {
+        applyVisibility();
+        return;
+    }
+    if (overlayRafId) cancelAnimationFrame(overlayRafId);
+    overlayRafId = requestAnimationFrame(() => {
+        overlayRafId = null;
+        applyVisibility();
+    });
+}
+
+function onPointerDown(e) {
     if (!fabEl) return;
-    const touch = e.touches[0];
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
     dragState = {
-        startX: touch.clientX,
-        startY: touch.clientY,
-        offsetX: touch.clientX - currentPosition.x,
-        offsetY: touch.clientY - currentPosition.y,
+        pointerId: e.pointerId,
+        startX: e.clientX,
+        startY: e.clientY,
+        offsetX: e.clientX - currentPosition.x,
+        offsetY: e.clientY - currentPosition.y,
         isDragging: false,
         rafId: null,
         lastX: currentPosition.x,
         lastY: currentPosition.y,
     };
+    fabEl.setPointerCapture?.(e.pointerId);
 }
 
-function onTouchMove(e) {
+function onPointerMove(e) {
     if (!dragState) return;
-    const touch = e.touches[0];
+    if (dragState.pointerId != null && e.pointerId != null && e.pointerId !== dragState.pointerId) return;
 
     if (!dragState.isDragging) {
-        if (isDrag(dragState.startX, dragState.startY, touch.clientX, touch.clientY)) {
+        if (isDrag(dragState.startX, dragState.startY, e.clientX, e.clientY)) {
             dragState.isDragging = true;
             fabEl?.classList?.add('dle-mobile-fab--dragging');
         } else {
@@ -187,14 +264,14 @@ function onTouchMove(e) {
         }
     }
 
-    e.preventDefault();
-    const newX = touch.clientX - dragState.offsetX;
-    const newY = touch.clientY - dragState.offsetY;
+    e.preventDefault?.();
+    const newX = e.clientX - dragState.offsetX;
+    const newY = e.clientY - dragState.offsetY;
 
     if (dragState.rafId) cancelAnimationFrame(dragState.rafId);
     dragState.rafId = requestAnimationFrame(() => {
-        const vw = window.innerWidth;
-        const vh = window.innerHeight;
+        const vw = window.innerWidth || 390;
+        const vh = window.innerHeight || 844;
         const inputTop = getInputBarTop();
         const insets = getSafeInsets();
         const clamped = clampPosition(newX, newY, vw, vh, inputTop, insets);
@@ -204,30 +281,45 @@ function onTouchMove(e) {
     });
 }
 
-function onTouchEnd() {
+function onPointerEnd(e) {
     if (!dragState) return;
     const wasDragging = dragState.isDragging;
     const lastX = dragState.lastX;
     const lastY = dragState.lastY;
+    const pointerId = dragState.pointerId ?? e?.pointerId;
 
     if (dragState.rafId) cancelAnimationFrame(dragState.rafId);
     fabEl?.classList?.remove('dle-mobile-fab--dragging');
+    fabEl?.releasePointerCapture?.(pointerId);
     dragState = null;
 
     if (wasDragging) {
-        snapToEdge(lastX, lastY);
+        settlePosition(lastX, lastY);
     } else {
         onTapCallback?.();
     }
 }
 
-export function renderFabHtml(injectionCount = 0) {
-    const badgeHtml = injectionCount > 0
-        ? `<span class="dle-mobile-fab__badge">${injectionCount > 99 ? '99+' : injectionCount}</span>`
-        : '';
-    return `<button class="dle-mobile-fab" type="button" aria-label="Open DeepLore panel" touch-action="none">
-    <i class="fa-solid fa-book-open" aria-hidden="true"></i>${badgeHtml}
-</button>`;
+function observeInputBar() {
+    inputBarEl = document.getElementById('form_sheld');
+    inputTextEl = document.getElementById('send_textarea');
+    inputTextEl?.addEventListener?.('input', scheduleReclamp);
+
+    if (typeof ResizeObserver !== 'undefined' && inputBarEl) {
+        inputResizeObserver = new ResizeObserver(scheduleReclamp);
+        inputResizeObserver.observe(inputBarEl);
+    }
+}
+
+function observeStSurfaces() {
+    if (typeof MutationObserver === 'undefined' || !document.body) return;
+    overlayObserver = new MutationObserver(scheduleVisibilityCheck);
+    overlayObserver.observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['class', 'style', 'open', 'hidden', 'aria-hidden'],
+    });
 }
 
 export function createFab({ onTap, container } = {}) {
@@ -255,37 +347,47 @@ export function createFab({ onTap, container } = {}) {
     const inputTop = getInputBarTop();
     const insets = getSafeInsets();
     const initial = resolveInitialPosition(vw, vh, inputTop, insets);
-    currentPosition = { x: initial.x, y: initial.y, edge: initial.edge };
+    currentPosition = { x: initial.x, y: initial.y };
     applyPosition(initial.x, initial.y, false);
 
     if (fabEl.addEventListener) {
-        fabEl.addEventListener('touchstart', onTouchStart, { passive: true });
-        fabEl.addEventListener('touchmove', onTouchMove, { passive: false });
-        fabEl.addEventListener('touchend', onTouchEnd, { passive: true });
+        fabEl.addEventListener('pointerdown', onPointerDown);
+        window.addEventListener('pointermove', onPointerMove);
+        window.addEventListener('pointerup', onPointerEnd);
+        window.addEventListener('pointercancel', onPointerEnd);
     }
 
-    viewportResizeHandler = () => {
-        if (reclampRafId) cancelAnimationFrame(reclampRafId);
-        reclampRafId = requestAnimationFrame(reclampPosition);
-    };
+    viewportResizeHandler = scheduleReclamp;
     window.addEventListener('resize', viewportResizeHandler);
     if (window.visualViewport) {
         window.visualViewport.addEventListener('resize', viewportResizeHandler);
     }
+
+    observeInputBar();
+    observeStSurfaces();
+    applyVisibility();
 
     return wrapper;
 }
 
 export function destroyFab() {
     if (fabEl) {
-        fabEl.removeEventListener('touchstart', onTouchStart);
-        fabEl.removeEventListener('touchmove', onTouchMove);
-        fabEl.removeEventListener('touchend', onTouchEnd);
+        fabEl.removeEventListener('pointerdown', onPointerDown);
     }
     if (viewportResizeHandler && typeof window !== 'undefined') {
+        window.removeEventListener('pointermove', onPointerMove);
+        window.removeEventListener('pointerup', onPointerEnd);
+        window.removeEventListener('pointercancel', onPointerEnd);
         window.removeEventListener('resize', viewportResizeHandler);
         window.visualViewport?.removeEventListener('resize', viewportResizeHandler);
     }
+    inputTextEl?.removeEventListener?.('input', scheduleReclamp);
+    inputResizeObserver?.disconnect();
+    inputResizeObserver = null;
+    overlayObserver?.disconnect();
+    overlayObserver = null;
+    if (overlayRafId) cancelAnimationFrame(overlayRafId);
+    overlayRafId = null;
     viewportResizeHandler = null;
     if (reclampRafId) cancelAnimationFrame(reclampRafId);
     reclampRafId = null;
@@ -295,7 +397,9 @@ export function destroyFab() {
     badgeEl = null;
     dragState = null;
     onTapCallback = null;
-    preKeyboardY = null;
+    inputBarEl = null;
+    inputTextEl = null;
+    desiredVisible = true;
 }
 
 export function updateBadge(count) {
@@ -317,7 +421,6 @@ export function updateBadge(count) {
 }
 
 export function setFabVisible(visible) {
-    if (!fabWrapper?.style) return;
-    fabWrapper.style.opacity = visible ? '1' : '0';
-    fabWrapper.style.pointerEvents = visible ? 'auto' : 'none';
+    desiredVisible = !!visible;
+    applyVisibility();
 }
