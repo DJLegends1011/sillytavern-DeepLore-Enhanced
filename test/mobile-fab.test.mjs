@@ -274,6 +274,19 @@ test('shouldHideForStSurface: hides when chat input bar is missing', () => {
     }), 'FAB should disappear on custom screens without the ST chat input bar');
 });
 
+test('shouldHideForStSurface: hides for CharacterLibrary embedded UX', () => {
+    assert(shouldHideForStSurface({
+        inputBarVisible: true,
+        openDrawers: 0,
+        openPopups: 0,
+        shadowPopupVisible: false,
+        extensionMenuVisible: false,
+        optionMenusVisible: 0,
+        customModalsVisible: 0,
+        characterLibraryUxVisible: true,
+    }), 'CharacterLibrary embedded panel should hide the DeepLore FAB even when ST input still exists');
+});
+
 test('shouldHideForStSurface: remains visible when chat input bar is present', () => {
     assert(!shouldHideForStSurface({
         inputBarVisible: true,
