@@ -312,6 +312,7 @@ function makeVisibleElement(rect = {}) {
         innerHTML: '',
         setAttribute(name, value) { this.attributes.set(name, String(value)); },
         getAttribute(name) { return this.attributes.get(name) ?? null; },
+        removeAttribute(name) { this.attributes.delete(name); },
         appendChild(child) {
             child.parentNode = this;
             this.children.push(child);
@@ -393,16 +394,24 @@ function withCharacterLibraryDom({ launcherVisible = false, embeddedVisible = fa
 test('createFab: remains visible for CharacterLibrary launcher picker', () => {
     withCharacterLibraryDom({ launcherVisible: true }, () => {
         const wrapper = createFab();
+        const button = wrapper.children[0];
         assertEqual(wrapper.style.opacity, '1');
         assertEqual(wrapper.style.pointerEvents, 'auto');
+        assertEqual(button.style.pointerEvents, 'auto');
+        assertEqual(button.disabled, false);
+        assertEqual(button.getAttribute('aria-hidden'), 'false');
     });
 });
 
 test('createFab: hides for CharacterLibrary embedded panel', () => {
     withCharacterLibraryDom({ embeddedVisible: true }, () => {
         const wrapper = createFab();
+        const button = wrapper.children[0];
         assertEqual(wrapper.style.opacity, '0');
         assertEqual(wrapper.style.pointerEvents, 'none');
+        assertEqual(button.style.pointerEvents, 'none');
+        assertEqual(button.disabled, true);
+        assertEqual(button.getAttribute('aria-hidden'), 'true');
     });
 });
 

@@ -352,6 +352,16 @@ function applyVisibility() {
     const show = desiredVisible && !shouldHideForStSurface(readStSurfaceState());
     fabWrapper.style.opacity = show ? '1' : '0';
     fabWrapper.style.pointerEvents = show ? 'auto' : 'none';
+    if (fabEl) {
+        fabEl.style.pointerEvents = show ? 'auto' : 'none';
+        fabEl.disabled = !show;
+        fabEl.setAttribute('aria-hidden', show ? 'false' : 'true');
+        if (show) {
+            fabEl.removeAttribute('tabindex');
+        } else {
+            fabEl.setAttribute('tabindex', '-1');
+        }
+    }
 }
 
 function scheduleVisibilityCheck() {
