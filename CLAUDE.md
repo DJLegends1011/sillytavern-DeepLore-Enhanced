@@ -103,4 +103,5 @@ Related specs/plans in `docs/superpowers/`.
 
 - `AGENT.md` is a synced copy of this file (Codex reads it). After editing `CLAUDE.md`, copy it over `AGENT.md` so both agents see the same context.
 - Plan-doc checkbox state in `docs/superpowers/plans/` can lag behind the code — trust source and tests over plan markdown.
+- Stock SillyTavern puts `no_animation` and `reduced-motion` classes on `<body>` even when those settings are unchecked. Never guard DLE animations with those body classes (it silently kills them on real devices) — use `@media (prefers-reduced-motion: reduce)` only.
 - `progress.md` is a local scratch handoff: intentionally untracked, excluded from the robocopy sync, and usually should not be committed.
