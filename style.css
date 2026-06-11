@@ -6090,21 +6090,21 @@ body.no-blur .dle-mobile-overlay-panel {
 }
 /* Tab-switch transition: applied only on renders where the active tab
    changed, so routine state re-renders do not flicker. */
+/* Deliberately NOT guarded by ST's body.reduced-motion/no_animation classes:
+   stock ST applies those to <body> even with the settings unchecked, which
+   silently killed this fade on real devices. OS-level accessibility settings
+   still win via the media query below. */
 .dle-mobile-tab-enter {
-    animation: dle-mobile-tab-enter 160ms ease-out;
+    animation: dle-mobile-tab-enter 200ms ease-out;
 }
 @keyframes dle-mobile-tab-enter {
-    from { opacity: 0; transform: translateY(8px); }
+    from { opacity: 0; transform: translateY(10px); }
     to { opacity: 1; transform: none; }
 }
 @media (prefers-reduced-motion: reduce) {
     .dle-mobile-tab-enter {
         animation: none;
     }
-}
-body.reduced-motion .dle-mobile-tab-enter,
-body.no_animation .dle-mobile-tab-enter {
-    animation: none;
 }
 .dle-mobile-tab-toolbar {
     display: flex;
