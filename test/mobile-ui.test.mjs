@@ -929,21 +929,32 @@ test('setup wizard mobile CSS: constrains popup and sticky navigation at phone w
     assertMatch(css, /\.dle-wizard-steps[\s\S]*scroll-snap-type:\s*x mandatory/m, 'step strip should be horizontally scrollable with snap points');
 });
 
-test('mobile shell CSS: positions FAB and sheet safely over chat', () => {
+test('mobile shell CSS: layers FAB and glass overlay safely over chat', () => {
     const css = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
 
-    assertMatch(css, /#dle-mobile-root[\s\S]*position:\s*fixed/m, 'mobile root should be fixed over the ST viewport');
+    assertMatch(css, /#dle-mobile-root[\s\S]*pointer-events:\s*none/m, 'mobile root should not intercept chat taps when closed');
     assertMatch(css, /body\.dle-mobile-ui-active #deeplore-drawer[\s\S]*display:\s*none !important/m, 'desktop drawer should hide while mobile shell is active');
     assertMatch(css, /\.dle-mobile-fab-anchor[\s\S]*z-index:\s*5001/m, 'FAB anchor should layer above ST UI');
-    assertMatch(css, /\.dle-mobile-fab\b[\s\S]*border-radius:\s*50%/m, 'FAB should be circular');
-    assertMatch(css, /\.dle-mobile-sheet[\s\S]*max-height:\s*min\(78dvh,\s*620px\)/m, 'sheet should be bounded to mobile viewport height');
+    assertMatch(css, /\.dle-mobile-overlay\b[\s\S]*z-index:\s*5002/m, 'overlay should layer above the FAB');
+    assertMatch(css, /\.dle-mobile-overlay\.dle-mobile-open[\s\S]*pointer-events:\s*auto/m, 'open overlay should accept taps');
     assertMatch(css, /\.dle-mobile-mode-btn[\s\S]*min-height:\s*40px/m, 'mode buttons should be touch friendly');
     assertMatch(css, /\.dle-mobile-error[\s\S]*border/m, 'error banner styling should exist');
-    assertMatch(css, /\.dle-mobile-status-tray[\s\S]*border/m, 'status tray should have a bounded visual container');
     assertMatch(css, /\.dle-mobile-status-grid[\s\S]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/m, 'expanded status tray should use compact two-column metrics');
     assertMatch(css, /\.dle-mobile-browse-controls[\s\S]*display:\s*grid/m, 'mobile Browse controls should stack without overflow');
     assertMatch(css, /\.dle-mobile-browse-card[\s\S]*overflow:\s*hidden/m, 'Browse cards should prevent horizontal text overflow');
     assertMatch(css, /\.dle-mobile-browse-actions[\s\S]*min-height:\s*40px/m, 'Browse action buttons should stay touch-friendly');
+});
+
+test('mobile overlay CSS: glassmorphic panel with theme variables and fallback', () => {
+    const css = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+
+    assertMatch(css, /\.dle-mobile-overlay-panel[\s\S]*?color-mix\(in srgb, var\(--SmartThemeBlurTintColor\) 88%, transparent\)/m, 'panel should use 88% theme tint glass');
+    assertMatch(css, /\.dle-mobile-overlay-panel[\s\S]*?backdrop-filter:\s*blur\(16px\)/m, 'panel should blur the backdrop');
+    assertMatch(css, /@supports not \(backdrop-filter: blur\(1px\)\)[\s\S]*?\.dle-mobile-overlay-panel/m, 'panel should have a no-blur fallback');
+    assertMatch(css, /\.dle-mobile-overlay-tab\[aria-selected="true"\][\s\S]*?--SmartThemeUnderlineColor/m, 'active tab should use the accent color');
+    assertMatch(css, /\.dle-mobile-overlay-content[\s\S]*?env\(safe-area-inset-bottom\)/m, 'content should pad for the home indicator');
+    assertMatch(css, /\.dle-mobile-overlay-quick[\s\S]*?overflow-x:\s*auto/m, 'quick actions should scroll horizontally when cramped');
+    assert(!/\.dle-mobile-sheet\b/.test(css), 'old bottom-sheet styles should be removed');
 });
 
 test('setup wizard mobile CSS: compacts wizard chrome at phone widths', () => {
