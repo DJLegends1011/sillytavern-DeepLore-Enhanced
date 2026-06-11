@@ -56,6 +56,7 @@ import {
 import {
     renderOverlay,
     renderOverlayError,
+    shouldDismissSwipe,
 } from './mobile-overlay.js';
 
 export const MOBILE_VIEWPORT_WIDTH = 768;
@@ -920,6 +921,39 @@ function handleMobileInput(event) {
 
 let mobileShellOptions = {};
 
+// ── Swipe-to-dismiss touch tracking ──────────────────────────────────────────
+let swipeTracking = null;
+
+function handleMobileTouchStart(event) {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target || !target.closest('[data-dle-mobile-swipe-handle]')) return;
+    const touch = event.touches?.[0];
+    if (!touch) return;
+    swipeTracking = { startY: touch.clientY, startTime: Date.now(), dy: 0 };
+}
+
+function handleMobileTouchMove(event) {
+    if (!swipeTracking) return;
+    const touch = event.touches?.[0];
+    if (!touch) return;
+    swipeTracking.dy = touch.clientY - swipeTracking.startY;
+    const panel = mobileRoot?.querySelector?.('.dle-mobile-overlay-panel');
+    if (panel && swipeTracking.dy > 0) {
+        panel.style.transform = `translateY(${swipeTracking.dy}px)`;
+    }
+}
+
+function handleMobileTouchEnd() {
+    if (!swipeTracking) return;
+    const { dy, startTime } = swipeTracking;
+    swipeTracking = null;
+    const viewportHeight = (typeof window !== 'undefined' && window.innerHeight) || 800;
+    if (shouldDismissSwipe({ dy, durationMs: Date.now() - startTime, viewportHeight })) {
+        mobileState.open = false;
+    }
+    renderCurrentState(); // re-render drops any inline transform
+}
+
 export function createMobileShell(options = {}) {
     if (typeof document === 'undefined' || typeof window === 'undefined') return null;
 
@@ -931,6 +965,14 @@ export function createMobileShell(options = {}) {
     root.addEventListener('click', handleMobileClick);
     root.addEventListener('input', handleMobileInput);
     root.addEventListener('change', handleMobileInput);
+    if (root.removeEventListener && root.addEventListener) {
+        root.removeEventListener('touchstart', handleMobileTouchStart);
+        root.removeEventListener('touchmove', handleMobileTouchMove);
+        root.removeEventListener('touchend', handleMobileTouchEnd);
+        root.addEventListener('touchstart', handleMobileTouchStart, { passive: true });
+        root.addEventListener('touchmove', handleMobileTouchMove, { passive: true });
+        root.addEventListener('touchend', handleMobileTouchEnd);
+    }
 
     for (const unsubscribe of mobileUnsubscribers) {
         try { unsubscribe(); } catch { /* noop */ }
@@ -981,9 +1023,13 @@ export function destroyMobileShell() {
         mobileRoot.removeEventListener('click', handleMobileClick);
         mobileRoot.removeEventListener('input', handleMobileInput);
         mobileRoot.removeEventListener('change', handleMobileInput);
+        mobileRoot.removeEventListener('touchstart', handleMobileTouchStart);
+        mobileRoot.removeEventListener('touchmove', handleMobileTouchMove);
+        mobileRoot.removeEventListener('touchend', handleMobileTouchEnd);
         mobileRoot.remove();
         mobileRoot = null;
     }
+    swipeTracking = null;
     if (mobileResizeHandler && typeof window !== 'undefined') {
         window.removeEventListener('resize', mobileResizeHandler);
     }
