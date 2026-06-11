@@ -183,7 +183,7 @@ const BOTTOM_OBSTRUCTION_SELECTOR = [
 ].join(',');
 
 function isOwnUiElement(el) {
-    return Boolean(el?.closest?.('#dle-mobile-root, .dle-mobile-fab-anchor, .dle-mobile-fab, .dle-mobile-sheet, .stwii--trigger'));
+    return Boolean(el?.closest?.('#dle-mobile-root, .dle-mobile-fab-anchor, .dle-mobile-fab, .stwii--trigger'));
 }
 
 function readBottomObstructionCandidates(viewportWidth, viewportHeight) {
