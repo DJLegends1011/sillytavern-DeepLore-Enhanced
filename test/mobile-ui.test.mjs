@@ -52,6 +52,15 @@ import {
 
 import { readFileSync } from 'node:fs';
 
+import {
+    suppressNextAgenticLoop,
+    setSuppressNextAgenticLoop,
+    resetAiSearchCache,
+    aiSearchCache,
+    setLastInjectionSources,
+    lastInjectionSources,
+} from '../src/state.js';
+
 class MockClassList {
     constructor() {
         this.values = new Set();
@@ -1307,6 +1316,104 @@ test('style.css: contains mobile Browse search help styles', () => {
 
     assertMatch(css, /\.dle-mobile-browse-help\b/, 'should define browse help popover styles');
     assertMatch(css, /\.dle-mobile-browse-help-grid/, 'should define browse help grid layout');
+});
+
+// ── Task 5: Tab switching behavior ──────────────────────────────────────────
+
+test('mobile shell: tab clicks switch the active tab and keep overlay open', () => {
+    const dom = installMobileDom({ viewportWidth: 390 });
+    try {
+        const root = createMobileShell({ buildIndex: async () => {} });
+
+        // Open the overlay first via the FAB onTap path (toggle action element)
+        const openTarget = new MockElement('button');
+        openTarget.ownerDocument = root.ownerDocument;
+        openTarget.parentElement = root;
+        openTarget.setAttribute('data-dle-mobile-action', 'toggle');
+        clickMobileRoot(root, openTarget);
+
+        // Now click the browse tab
+        const browseTarget = new MockElement('button');
+        browseTarget.ownerDocument = root.ownerDocument;
+        browseTarget.parentElement = root;
+        browseTarget.setAttribute('data-dle-mobile-tab', 'browse');
+        clickMobileRoot(root, browseTarget);
+
+        assertMatch(root.innerHTML, /data-dle-mobile-tab="browse" aria-selected="true"/, 'browse tab should activate on click');
+        assertMatch(root.innerHTML, /dle-mobile-open/, 'overlay should stay open after tab switch');
+
+        // Click the filters tab
+        const filtersTarget = new MockElement('button');
+        filtersTarget.ownerDocument = root.ownerDocument;
+        filtersTarget.parentElement = root;
+        filtersTarget.setAttribute('data-dle-mobile-tab', 'filters');
+        clickMobileRoot(root, filtersTarget);
+
+        assertMatch(root.innerHTML, /dle-mobile-filters-stub/, 'filters tab should render the stub');
+
+        destroyMobileShell();
+    } finally {
+        dom.restore();
+    }
+});
+
+// ── Task 6: Quick actions ────────────────────────────────────────────────────
+
+test('mobile quick actions: skip librarian toggles suppression and pressed state', () => {
+    const dom = installMobileDom({ viewportWidth: 390 });
+    try {
+        setSuppressNextAgenticLoop(false);
+        const root = createMobileShell({ buildIndex: async () => {} });
+
+        const skipTarget = new MockElement('button');
+        skipTarget.ownerDocument = root.ownerDocument;
+        skipTarget.parentElement = root;
+        skipTarget.setAttribute('data-dle-mobile-action', 'quick-skip-librarian');
+        clickMobileRoot(root, skipTarget);
+
+        assert(suppressNextAgenticLoop === true, 'skip click should suppress the next agentic loop');
+        assertMatch(root.innerHTML, /data-dle-mobile-action="quick-skip-librarian" aria-pressed="true"/, 'button should show pressed state');
+
+        clickMobileRoot(root, skipTarget);
+        assert(suppressNextAgenticLoop === false, 'second click should re-enable');
+
+        destroyMobileShell();
+    } finally {
+        setSuppressNextAgenticLoop(false);
+        dom.restore();
+    }
+});
+
+await testAsync('mobile quick actions: reroll clears the AI search cache and injection sources', async () => {
+    const dom = installMobileDom({ viewportWidth: 390 });
+    try {
+        // Seed stale state
+        aiSearchCache.hash = 'stale-hash';
+        setLastInjectionSources([{ title: 'Stale Entry' }]);
+
+        const root = createMobileShell({ buildIndex: async () => {} });
+
+        const rerollTarget = new MockElement('button');
+        rerollTarget.ownerDocument = root.ownerDocument;
+        rerollTarget.parentElement = root;
+        rerollTarget.setAttribute('data-dle-mobile-action', 'quick-reroll');
+        clickMobileRoot(root, rerollTarget);
+
+        // Let the async metadata handler settle (it will reject under Node — that's OK)
+        await new Promise(resolve => setTimeout(resolve, 0));
+
+        // resetAiSearchCache() replaces the aiSearchCache object — read hash from
+        // the live binding's current value via the module's own reference.
+        // The shell calls resetAiSearchCache() synchronously, so aiSearchCache.hash
+        // may still be 'stale-hash' on the OLD object; the NEW object (the live export)
+        // will have hash = ''.
+        assertEqual(aiSearchCache.hash, '', 'reroll should reset the AI search cache hash to empty string');
+        assert(lastInjectionSources === null || (Array.isArray(lastInjectionSources) && lastInjectionSources.length === 0), 'reroll should clear injection sources');
+
+        destroyMobileShell();
+    } finally {
+        dom.restore();
+    }
 });
 
 summary('Mobile UI foundation tests');
