@@ -547,12 +547,13 @@ function renderTabContent(snapshot, state) {
     }
 }
 
-function renderMobileShellContents(snapshot, state = mobileState) {
+function renderMobileShellContents(snapshot, state = mobileState, contentEntering = false) {
     return renderOverlay({
         snapshot,
         uiState: state,
         contentHtml: renderTabContent(snapshot, state),
         skipLibrarianActive: suppressNextAgenticLoop,
+        contentEntering,
     });
 }
 
@@ -692,8 +693,9 @@ function renderCurrentState() {
     }
 
     const snapshot = buildMobileShellSnapshot();
+    const tabChanged = !!(mobileState.open && renderedScrollTab && renderedScrollTab !== mobileState.tab);
     captureScrollPosition();
-    root.innerHTML = renderMobileShellContents(snapshot, mobileState);
+    root.innerHTML = renderMobileShellContents(snapshot, mobileState, tabChanged);
     renderedScrollTab = mobileState.open ? mobileState.tab : '';
     restoreScrollPosition();
 
@@ -947,6 +949,11 @@ function handleMobileTouchMove(event) {
     }
 }
 
+function clearSwipeTransform() {
+    const panel = mobileRoot?.querySelector?.('.dle-mobile-overlay-panel');
+    if (panel?.style) panel.style.transform = '';
+}
+
 function handleMobileTouchEnd() {
     if (!swipeTracking) return;
     const { dy, startTime } = swipeTracking;
@@ -954,8 +961,14 @@ function handleMobileTouchEnd() {
     const viewportHeight = (typeof window !== 'undefined' && window.innerHeight) || 800;
     if (shouldDismissSwipe({ dy, durationMs: Date.now() - startTime, viewportHeight })) {
         mobileState.open = false;
+        renderCurrentState();
+        return;
     }
-    renderCurrentState(); // re-render drops any inline transform
+    // Plain tap or aborted drag: clear the inline transform WITHOUT a full
+    // re-render — replacing the DOM here destroys the element the browser is
+    // about to dispatch the synthesized click on, which made header buttons
+    // (stats toggle, gear, X) intermittently swallow taps on real devices.
+    clearSwipeTransform();
 }
 
 function handleMobileTouchCancel() {
@@ -963,7 +976,7 @@ function handleMobileTouchCancel() {
     // no touchend will follow, so disarm and drop any stuck translateY.
     if (!swipeTracking) return;
     swipeTracking = null;
-    renderCurrentState();
+    clearSwipeTransform();
 }
 
 export function createMobileShell(options = {}) {

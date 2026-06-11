@@ -253,6 +253,23 @@ test('renderStatusMetric: numeric zero value renders as 0, not blank', () => {
     assert(html.includes('<strong>0</strong>'), 'zero value should render as 0');
 });
 
+test('renderQuickActions: every action shows a visible mini label', () => {
+    const html = renderQuickActions();
+    const labelCount = html.split('dle-mobile-overlay-quick-label').length - 1;
+    assertEqual(labelCount, QUICK_ACTION_DEFS.length, 'each quick action should carry a visible label');
+    assert(html.includes('>Reroll<'), 'reroll should show its short label');
+    assert(html.includes('>Skip<'), 'skip librarian should show its short label');
+    assert(html.includes('>Refresh<'), 'refresh should show its short label');
+});
+
+test('renderOverlay: contentEntering adds the tab transition class only when set', () => {
+    const base = { snapshot: { statusLabel: 'Ready', injectedCount: 0, gapCount: 0 }, contentHtml: '' };
+    const entering = renderOverlay({ ...base, uiState: createMobileUiState({ open: true }), contentEntering: true });
+    const steady = renderOverlay({ ...base, uiState: createMobileUiState({ open: true }) });
+    assert(entering.includes('dle-mobile-overlay-content dle-mobile-tab-enter'), 'entering render should animate the content area');
+    assert(!steady.includes('dle-mobile-tab-enter'), 'steady-state render should not animate');
+});
+
 test('renderQuickActions and renderOverlayTabBar: tolerate explicit null arguments', () => {
     const quick = renderQuickActions(null);
     assert(quick.includes('data-dle-mobile-action="quick-reroll"'), 'null options should render default quick actions');

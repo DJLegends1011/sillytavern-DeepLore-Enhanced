@@ -959,6 +959,9 @@ test('mobile overlay CSS: glassmorphic panel with theme variables and fallback',
     assertMatch(css, /#dle-mobile-root[\s\S]*?height:\s*100dvh/m, 'mobile root needs an explicit viewport height under ST html transform');
     assertMatch(css, /\.dle-mobile-overlay\b[\s\S]*?height:\s*100dvh/m, 'overlay needs an explicit viewport height under ST html transform');
     assertMatch(css, /body\.no-blur \.dle-mobile-overlay-panel[\s\S]*?96%/m, 'ST no-blur mode needs a denser tint since blur is suppressed at runtime');
+    assertMatch(css, /\.dle-mobile-overlay-quick-label[\s\S]*?font-size/m, 'quick actions should style their visible labels');
+    assertMatch(css, /\.dle-mobile-tab-enter[\s\S]*?animation:\s*dle-mobile-tab-enter/m, 'tab switches should animate the content area');
+    assertMatch(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.dle-mobile-tab-enter[\s\S]*?animation:\s*none/m, 'tab transition should respect reduced motion');
     assert(!/\.dle-mobile-sheet\b/.test(css), 'old bottom-sheet styles should be removed');
 });
 
