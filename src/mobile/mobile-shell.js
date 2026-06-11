@@ -25,6 +25,9 @@ import {
     cooldownTracker,
     decayTracker,
     suppressNextAgenticLoop,
+    setSuppressNextAgenticLoop,
+    resetAiSearchCache,
+    setLastInjectionSources,
 } from '../state.js';
 import { buildObsidianURI, normalizePinBlock, openExternalProtocol } from '../helpers.js';
 import { getCircuitState } from '../vault/obsidian-api.js';
@@ -702,8 +705,36 @@ function handleMobileClick(event) {
     const actionEl = target.closest('[data-dle-mobile-action]');
     if (actionEl) {
         const action = actionEl.getAttribute('data-dle-mobile-action');
-        // Quick actions are wired in a later task; bail before touching state
-        // so a stray tap does not clear a visible error.
+        if (action === 'quick-skip-librarian') {
+            const next = !suppressNextAgenticLoop;
+            setSuppressNextAgenticLoop(next);
+            globalThis.toastr?.info?.(
+                next ? 'Librarian tools will be skipped for the next generation.' : 'Librarian tools re-enabled.',
+                'DeepLore',
+            );
+            renderCurrentState();
+            return;
+        }
+        if (action === 'quick-reroll') {
+            resetAiSearchCache();
+            setLastInjectionSources(null);
+            renderCurrentState();
+            readMetadataApi()
+                .then(({ chatMetadata, saveMetadataDebounced }) => {
+                    if (chatMetadata?.deeplore_injection_log) {
+                        chatMetadata.deeplore_injection_log = [];
+                        saveMetadataDebounced();
+                    }
+                    globalThis.toastr?.info?.('Search cache cleared — next generation will re-select lore.', 'DeepLore');
+                })
+                .catch(err => {
+                    // ST modules unavailable (tests) or metadata write failed — cache/sources are already cleared.
+                    console.warn('[DLE] Mobile reroll: injection log not cleared:', err?.message || err);
+                });
+            return;
+        }
+        // Unknown quick-* actions bail before clearing errorMessage so a stale
+        // error is not silently dismissed by an unrecognised tap.
         if (action?.startsWith('quick-')) return;
         mobileState.errorMessage = '';
         if (action === 'toggle-browse-help') {
