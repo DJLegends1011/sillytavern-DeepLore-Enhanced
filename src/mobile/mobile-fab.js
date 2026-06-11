@@ -84,6 +84,23 @@ export function resolveInitialPosition(viewportWidth, viewportHeight, inputBarTo
     return resolveVisiblePosition(pos, viewportWidth, viewportHeight, inputBarTop, safeInsets);
 }
 
+export function effectiveViewportHeight(innerHeight, visualViewport) {
+    // Android's on-screen keyboard in resizes-visual mode shrinks only the
+    // visual viewport — window.innerHeight stays full, so clamping against it
+    // leaves the FAB buried under the keyboard.
+    if (!visualViewport || !Number.isFinite(visualViewport.height)) return innerHeight;
+    const visibleBottom = Math.round((visualViewport.offsetTop || 0) + visualViewport.height);
+    return Math.min(innerHeight, visibleBottom);
+}
+
+function getViewportSize() {
+    const innerH = window.innerHeight || 844;
+    return {
+        vw: window.innerWidth || 390,
+        vh: effectiveViewportHeight(innerH, window.visualViewport),
+    };
+}
+
 export function selectBottomObstructionTop(candidates = [], viewportWidth = 390, viewportHeight = 844) {
     const minWidth = Math.max(160, viewportWidth * 0.45);
     const minTop = viewportHeight * 0.55;
@@ -263,8 +280,7 @@ function applyPosition(x, y, animate = false) {
 
 function reclampPosition() {
     if (!fabEl?.style || dragState) return;
-    const vw = window.innerWidth || 390;
-    const vh = window.innerHeight || 844;
+    const { vw, vh } = getViewportSize();
     const inputTop = getInputBarTop();
     const insets = getSafeInsets();
     const clamped = resolveVisiblePosition(desiredPosition, vw, vh, inputTop, insets);
@@ -276,7 +292,7 @@ function scheduleReclamp() {
         reclampPosition();
         return;
     }
-    if (reclampRafId) cancelAnimationFrame(reclampRafId);
+    if (reclampRafId) return; // already scheduled — coalesce
     reclampRafId = requestAnimationFrame(() => {
         reclampRafId = null;
         reclampPosition();
@@ -284,8 +300,7 @@ function scheduleReclamp() {
 }
 
 function settlePosition(x, y, animate = true) {
-    const vw = window.innerWidth || 390;
-    const vh = window.innerHeight || 844;
+    const { vw, vh } = getViewportSize();
     const inputTop = getInputBarTop();
     const insets = getSafeInsets();
     const clamped = clampPosition(x, y, vw, vh, inputTop, insets);
@@ -350,9 +365,14 @@ function readStSurfaceState() {
 function applyVisibility() {
     if (!fabWrapper?.style) return;
     const show = desiredVisible && !shouldHideForStSurface(readStSurfaceState());
-    fabWrapper.style.opacity = show ? '1' : '0';
-    fabWrapper.style.pointerEvents = show ? 'auto' : 'none';
-    if (fabEl) {
+    // Write only on change: unconditional style writes re-trigger the body
+    // MutationObserver and keep the surface-update loop spinning forever.
+    const opacity = show ? '1' : '0';
+    if (fabWrapper.style.opacity !== opacity) {
+        fabWrapper.style.opacity = opacity;
+        fabWrapper.style.pointerEvents = show ? 'auto' : 'none';
+    }
+    if (fabEl && fabEl.disabled !== !show) {
         fabEl.style.pointerEvents = show ? 'auto' : 'none';
         fabEl.disabled = !show;
         fabEl.setAttribute('aria-hidden', show ? 'false' : 'true');
@@ -369,7 +389,9 @@ function scheduleVisibilityCheck() {
         applyVisibility();
         return;
     }
-    if (overlayRafId) cancelAnimationFrame(overlayRafId);
+    // Coalesce instead of cancel-and-reschedule: surface observers can fire
+    // every frame, and perpetually cancelling the pending callback starves it.
+    if (overlayRafId) return;
     overlayRafId = requestAnimationFrame(() => {
         overlayRafId = null;
         applyVisibility();
@@ -418,8 +440,7 @@ function onPointerMove(e) {
 
     if (dragState.rafId) cancelAnimationFrame(dragState.rafId);
     dragState.rafId = requestAnimationFrame(() => {
-        const vw = window.innerWidth || 390;
-        const vh = window.innerHeight || 844;
+        const { vw, vh } = getViewportSize();
         const inputTop = getInputBarTop();
         const insets = getSafeInsets();
         const clamped = clampPosition(newX, newY, vw, vh, inputTop, insets);
@@ -472,7 +493,12 @@ function observeInputBar() {
 
 function observeStSurfaces() {
     if (typeof MutationObserver === 'undefined' || !document.body) return;
-    overlayObserver = new MutationObserver(scheduleSurfaceUpdate);
+    overlayObserver = new MutationObserver((records) => {
+        // Ignore batches caused purely by our own style/attribute writes,
+        // otherwise every visibility/position update re-queues another pass.
+        const external = records.some(r => !fabWrapper?.contains?.(r.target));
+        if (external) scheduleSurfaceUpdate();
+    });
     overlayObserver.observe(document.body, {
         childList: true,
         subtree: true,
@@ -501,8 +527,7 @@ export function createFab({ onTap, container } = {}) {
     parent.appendChild(wrapper);
     fabWrapper = wrapper;
 
-    const vw = window.innerWidth || 390;
-    const vh = window.innerHeight || 844;
+    const { vw, vh } = getViewportSize();
     const inputTop = getInputBarTop();
     const insets = getSafeInsets();
     const saved = loadPosition();

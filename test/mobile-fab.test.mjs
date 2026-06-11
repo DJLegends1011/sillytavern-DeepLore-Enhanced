@@ -23,6 +23,7 @@ import {
     resolveInitialPosition,
     resolveVisiblePosition,
     selectBottomObstructionTop,
+    effectiveViewportHeight,
     renderFabHtml,
     shouldHideForStSurface,
     createFab,
@@ -43,6 +44,26 @@ globalThis.localStorage = {
 };
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
+
+section('FAB — Effective Viewport Height');
+
+test('effectiveViewportHeight: no visualViewport falls back to innerHeight', () => {
+    assertEqual(effectiveViewportHeight(915, null), 915);
+    assertEqual(effectiveViewportHeight(915, undefined), 915);
+    assertEqual(effectiveViewportHeight(915, { height: NaN }), 915);
+});
+
+test('effectiveViewportHeight: keyboard shrinks the visual viewport', () => {
+    assertEqual(effectiveViewportHeight(915, { height: 460, offsetTop: 0 }), 460);
+});
+
+test('effectiveViewportHeight: panned visual viewport accounts for offsetTop', () => {
+    assertEqual(effectiveViewportHeight(915, { height: 460, offsetTop: 100 }), 560);
+});
+
+test('effectiveViewportHeight: never exceeds the layout viewport', () => {
+    assertEqual(effectiveViewportHeight(915, { height: 1000, offsetTop: 50 }), 915);
+});
 
 section('FAB — Edge Snap Calculation');
 

@@ -671,6 +671,9 @@ let renderedScrollTab = '';
 // Whether the previous render showed the overlay open — drives the one-shot
 // open animation so re-renders do not replay it (visible as a UI blink).
 let renderedOpen = false;
+// One-shot request to play the content fade on the next render even though
+// the tab itself did not change (e.g. injection filter pill switches).
+let pendingContentTransition = false;
 
 function captureScrollPosition() {
     if (!renderedScrollTab) return;
@@ -698,9 +701,11 @@ function renderCurrentState() {
 
     const snapshot = buildMobileShellSnapshot();
     const tabChanged = !!(mobileState.open && renderedScrollTab && renderedScrollTab !== mobileState.tab);
+    const entering = tabChanged || (mobileState.open && pendingContentTransition);
+    pendingContentTransition = false;
     const opening = mobileState.open && !renderedOpen;
     captureScrollPosition();
-    root.innerHTML = renderMobileShellContents(snapshot, mobileState, tabChanged, opening);
+    root.innerHTML = renderMobileShellContents(snapshot, mobileState, entering, opening);
     renderedScrollTab = mobileState.open ? mobileState.tab : '';
     renderedOpen = mobileState.open;
     restoreScrollPosition();
@@ -842,6 +847,7 @@ function handleMobileClick(event) {
         mobileState.injectionExpandedKey = '';
         mobileState.tab = 'injection';
         mobileState.open = true;
+        pendingContentTransition = true; // filter pills swap the whole list — fade it
         renderCurrentState();
         return;
     }
