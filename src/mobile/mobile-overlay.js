@@ -119,7 +119,7 @@ export function renderOverlayError(message) {
 export function renderOverlay({ snapshot = {}, uiState = {}, contentHtml = '', skipLibrarianActive = false } = {}) {
     const open = !!uiState.open;
     return `
-        <section id="${OVERLAY_ID}" class="dle-mobile-overlay${open ? ' dle-mobile-open' : ''}" role="dialog" aria-modal="true" aria-hidden="${open ? 'false' : 'true'}" aria-label="DeepLore mobile overlay"${open ? '' : ' inert'}>
+        <section id="${OVERLAY_ID}" class="dle-mobile-overlay${open ? ' dle-mobile-open' : ''}" role="dialog" aria-modal="false" aria-hidden="${open ? 'false' : 'true'}" aria-label="DeepLore mobile overlay"${open ? '' : ' inert'}>
             <div class="dle-mobile-overlay-scrim" data-dle-mobile-action="close"></div>
             <div class="dle-mobile-overlay-panel">
                 ${renderOverlayHeader(snapshot, uiState)}

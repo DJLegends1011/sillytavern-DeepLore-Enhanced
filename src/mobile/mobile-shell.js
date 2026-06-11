@@ -659,9 +659,14 @@ function ensureRoot() {
     return mobileRoot;
 }
 
+// Tab whose content the mounted DOM currently shows while open; '' when the
+// last render was closed/inactive so stale captures cannot wipe saved scroll.
+let renderedScrollTab = '';
+
 function captureScrollPosition() {
+    if (!renderedScrollTab) return;
     const content = mobileRoot?.querySelector?.('.dle-mobile-overlay-content');
-    if (content) mobileState.scrollPositions[mobileState.tab] = content.scrollTop || 0;
+    if (content) mobileState.scrollPositions[renderedScrollTab] = content.scrollTop || 0;
 }
 
 function restoreScrollPosition() {
@@ -680,7 +685,9 @@ function renderCurrentState() {
     if (!active) return;
 
     const snapshot = buildMobileShellSnapshot();
+    captureScrollPosition();
     root.innerHTML = renderMobileShellContents(snapshot, mobileState);
+    renderedScrollTab = mobileState.open ? mobileState.tab : '';
     restoreScrollPosition();
 
     updateBadge(snapshot.injectedCount || 0);
@@ -695,6 +702,9 @@ function handleMobileClick(event) {
     const actionEl = target.closest('[data-dle-mobile-action]');
     if (actionEl) {
         const action = actionEl.getAttribute('data-dle-mobile-action');
+        // Quick actions are wired in a later task; bail before touching state
+        // so a stray tap does not clear a visible error.
+        if (action?.startsWith('quick-')) return;
         mobileState.errorMessage = '';
         if (action === 'toggle-browse-help') {
             mobileState.browseSearchHelpOpen = !mobileState.browseSearchHelpOpen;
@@ -724,7 +734,6 @@ function handleMobileClick(event) {
 
     const tabEl = target.closest('[data-dle-mobile-tab]');
     if (tabEl) {
-        captureScrollPosition();
         mobileState.errorMessage = '';
         mobileState.tab = normalizeMobileTab(tabEl.getAttribute('data-dle-mobile-tab'));
         mobileState.open = true;
@@ -932,6 +941,7 @@ export function createMobileShell(options = {}) {
 
 export function destroyMobileShell() {
     destroyFab();
+    renderedScrollTab = '';
     for (const unsubscribe of mobileUnsubscribers) {
         try { unsubscribe(); } catch { /* noop */ }
     }

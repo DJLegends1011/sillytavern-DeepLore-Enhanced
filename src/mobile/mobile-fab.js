@@ -343,7 +343,7 @@ function readStSurfaceState() {
         extensionMenuVisible: isElementVisible(document.getElementById('extensionsMenu')),
         characterLibraryEmbeddedVisible: isCharacterLibraryEmbeddedVisible(),
         optionMenusVisible: countVisible('.options-content, .popper-modal'),
-        customModalsVisible: countVisible('[role="dialog"]:not(#dle-mobile-sheet), [aria-modal="true"]:not(#dle-mobile-sheet)'),
+        customModalsVisible: countVisible('[role="dialog"]:not(#dle-mobile-overlay), [aria-modal="true"]:not(#dle-mobile-overlay)'),
     };
 }
 
