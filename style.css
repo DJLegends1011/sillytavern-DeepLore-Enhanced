@@ -5944,8 +5944,13 @@ body.dle-mobile-ui-active .dle-mobile-shell {
     border: 1px solid color-mix(in srgb, var(--SmartThemeBodyColor) 8%, transparent);
     box-shadow: 0 8px 32px var(--SmartThemeShadowColor);
     color: var(--SmartThemeBodyColor);
-    animation: dle-mobile-overlay-in 200ms ease-out;
     will-change: transform;
+}
+/* Open animation runs only on the closed-to-open render — every re-render
+   rebuilds the panel, and an always-on animation replays from opacity 0,
+   making the whole UI blink on tab switches and refreshes. */
+.dle-mobile-overlay-opening {
+    animation: dle-mobile-overlay-in 200ms ease-out;
 }
 @supports not (backdrop-filter: blur(1px)) {
     .dle-mobile-overlay-panel {
@@ -5965,7 +5970,7 @@ body.no-blur .dle-mobile-overlay-panel {
     to { opacity: 1; transform: scale(1); }
 }
 @media (prefers-reduced-motion: reduce) {
-    .dle-mobile-overlay-panel {
+    .dle-mobile-overlay-opening {
         animation: none;
     }
 }

@@ -270,6 +270,14 @@ test('renderOverlay: contentEntering adds the tab transition class only when set
     assert(!steady.includes('dle-mobile-tab-enter'), 'steady-state render should not animate');
 });
 
+test('renderOverlay: panelOpening adds the one-shot open animation class only when set', () => {
+    const base = { snapshot: { statusLabel: 'Ready', injectedCount: 0, gapCount: 0 }, contentHtml: '' };
+    const opening = renderOverlay({ ...base, uiState: createMobileUiState({ open: true }), panelOpening: true });
+    const steady = renderOverlay({ ...base, uiState: createMobileUiState({ open: true }) });
+    assert(opening.includes('dle-mobile-overlay-panel dle-mobile-overlay-opening'), 'opening render should animate the panel');
+    assert(!steady.includes('dle-mobile-overlay-opening'), 're-renders must not replay the open animation');
+});
+
 test('renderQuickActions and renderOverlayTabBar: tolerate explicit null arguments', () => {
     const quick = renderQuickActions(null);
     assert(quick.includes('data-dle-mobile-action="quick-reroll"'), 'null options should render default quick actions');

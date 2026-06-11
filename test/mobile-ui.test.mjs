@@ -1376,6 +1376,32 @@ test('mobile shell: tab clicks switch the active tab and keep overlay open', () 
     }
 });
 
+test('mobile shell: open animation plays once, not on tab-switch re-renders', () => {
+    const dom = installMobileDom({ viewportWidth: 390 });
+    try {
+        const root = createMobileShell({ buildIndex: async () => {} });
+
+        const openTarget = new MockElement('button');
+        openTarget.ownerDocument = root.ownerDocument;
+        openTarget.parentElement = root;
+        openTarget.setAttribute('data-dle-mobile-action', 'toggle');
+        clickMobileRoot(root, openTarget);
+        assertMatch(root.innerHTML, /dle-mobile-overlay-opening/, 'closed-to-open render should carry the open animation class');
+
+        const browseTarget = new MockElement('button');
+        browseTarget.ownerDocument = root.ownerDocument;
+        browseTarget.parentElement = root;
+        browseTarget.setAttribute('data-dle-mobile-tab', 'browse');
+        clickMobileRoot(root, browseTarget);
+        assert(!root.innerHTML.includes('dle-mobile-overlay-opening'), 'tab-switch re-render must not replay the open animation');
+        assertMatch(root.innerHTML, /dle-mobile-tab-enter/, 'tab switch should animate only the content area');
+
+        destroyMobileShell();
+    } finally {
+        dom.restore();
+    }
+});
+
 // ── Task 6: Quick actions ────────────────────────────────────────────────────
 
 test('mobile quick actions: skip librarian toggles suppression and pressed state', () => {

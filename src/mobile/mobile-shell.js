@@ -547,13 +547,14 @@ function renderTabContent(snapshot, state) {
     }
 }
 
-function renderMobileShellContents(snapshot, state = mobileState, contentEntering = false) {
+function renderMobileShellContents(snapshot, state = mobileState, contentEntering = false, panelOpening = false) {
     return renderOverlay({
         snapshot,
         uiState: state,
         contentHtml: renderTabContent(snapshot, state),
         skipLibrarianActive: suppressNextAgenticLoop,
         contentEntering,
+        panelOpening,
     });
 }
 
@@ -667,6 +668,9 @@ function ensureRoot() {
 // Tab whose content the mounted DOM currently shows while open; '' when the
 // last render was closed/inactive so stale captures cannot wipe saved scroll.
 let renderedScrollTab = '';
+// Whether the previous render showed the overlay open — drives the one-shot
+// open animation so re-renders do not replay it (visible as a UI blink).
+let renderedOpen = false;
 
 function captureScrollPosition() {
     if (!renderedScrollTab) return;
@@ -694,9 +698,11 @@ function renderCurrentState() {
 
     const snapshot = buildMobileShellSnapshot();
     const tabChanged = !!(mobileState.open && renderedScrollTab && renderedScrollTab !== mobileState.tab);
+    const opening = mobileState.open && !renderedOpen;
     captureScrollPosition();
-    root.innerHTML = renderMobileShellContents(snapshot, mobileState, tabChanged);
+    root.innerHTML = renderMobileShellContents(snapshot, mobileState, tabChanged, opening);
     renderedScrollTab = mobileState.open ? mobileState.tab : '';
+    renderedOpen = mobileState.open;
     restoreScrollPosition();
 
     updateBadge(snapshot.injectedCount || 0);
@@ -1040,6 +1046,7 @@ export function createMobileShell(options = {}) {
 export function destroyMobileShell() {
     destroyFab();
     renderedScrollTab = '';
+    renderedOpen = false;
     for (const unsubscribe of mobileUnsubscribers) {
         try { unsubscribe(); } catch { /* noop */ }
     }

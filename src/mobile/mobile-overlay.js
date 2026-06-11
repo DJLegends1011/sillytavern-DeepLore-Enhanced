@@ -116,12 +116,12 @@ export function renderOverlayError(message) {
     return `<div class="dle-mobile-error" role="alert">${escapeHtml(message)}</div>`;
 }
 
-export function renderOverlay({ snapshot = {}, uiState = {}, contentHtml = '', skipLibrarianActive = false, contentEntering = false } = {}) {
+export function renderOverlay({ snapshot = {}, uiState = {}, contentHtml = '', skipLibrarianActive = false, contentEntering = false, panelOpening = false } = {}) {
     const open = !!uiState.open;
     return `
         <section id="${OVERLAY_ID}" class="dle-mobile-overlay${open ? ' dle-mobile-open' : ''}" role="dialog" aria-modal="false" aria-hidden="${open ? 'false' : 'true'}" aria-label="DeepLore mobile overlay"${open ? '' : ' inert'}>
             <div class="dle-mobile-overlay-scrim" data-dle-mobile-action="close"></div>
-            <div class="dle-mobile-overlay-panel">
+            <div class="dle-mobile-overlay-panel${panelOpening ? ' dle-mobile-overlay-opening' : ''}">
                 ${renderOverlayHeader(snapshot, uiState)}
                 ${renderOverlayTabBar(uiState.tab, { librarian: (snapshot.gapCount || 0) > 0 })}
                 ${renderQuickActions({ skipLibrarianActive })}
