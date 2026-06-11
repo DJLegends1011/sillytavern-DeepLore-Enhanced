@@ -5823,9 +5823,14 @@ button.dle-browse-copy-title-btn:focus-visible {
     display: none !important;
 }
 
+/* ST puts a transform/perspective on <html> (computed height 0), which makes
+   it the containing block for fixed elements — inset alone collapses to 0px
+   tall, so the root and overlay need explicit viewport heights. */
 #dle-mobile-root {
     position: fixed;
     inset: 0;
+    height: 100vh;
+    height: 100dvh;
     z-index: 5002;
     pointer-events: none;
 }
@@ -5912,6 +5917,8 @@ body.dle-mobile-ui-active .dle-mobile-shell {
 .dle-mobile-overlay {
     position: fixed;
     inset: 0;
+    height: 100vh;
+    height: 100dvh;
     z-index: 5002;
     display: none;
 }
@@ -5944,6 +5951,14 @@ body.dle-mobile-ui-active .dle-mobile-shell {
     .dle-mobile-overlay-panel {
         background: color-mix(in srgb, var(--SmartThemeBlurTintColor) 92%, transparent);
     }
+}
+/* ST's "No Blur Effect" setting suppresses backdrop-filter at runtime, which
+   @supports cannot detect — compensate with a near-opaque tint so the page
+   underneath stops ghosting through. */
+body.no-blur .dle-mobile-overlay-panel {
+    background: color-mix(in srgb, var(--SmartThemeBlurTintColor) 96%, transparent);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
 }
 @keyframes dle-mobile-overlay-in {
     from { opacity: 0; transform: scale(0.95); }

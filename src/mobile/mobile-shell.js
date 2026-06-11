@@ -686,7 +686,10 @@ function renderCurrentState() {
     mobileState.mode = readMobileMode(env);
     root.hidden = !active;
     document.body.classList.toggle('dle-mobile-ui-active', active);
-    if (!active) return;
+    if (!active) {
+        setFabVisible(false); // desktop keeps the drawer; no glass orb
+        return;
+    }
 
     const snapshot = buildMobileShellSnapshot();
     captureScrollPosition();

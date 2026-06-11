@@ -954,6 +954,11 @@ test('mobile overlay CSS: glassmorphic panel with theme variables and fallback',
     assertMatch(css, /\.dle-mobile-overlay-tab\[aria-selected="true"\][\s\S]*?--SmartThemeUnderlineColor/m, 'active tab should use the accent color');
     assertMatch(css, /\.dle-mobile-overlay-content[\s\S]*?env\(safe-area-inset-bottom\)/m, 'content should pad for the home indicator');
     assertMatch(css, /\.dle-mobile-overlay-quick[\s\S]*?overflow-x:\s*auto/m, 'quick actions should scroll horizontally when cramped');
+    // ST transforms <html> (computed height 0), making it the containing block
+    // for fixed elements — inset alone collapses, so explicit heights are required.
+    assertMatch(css, /#dle-mobile-root[\s\S]*?height:\s*100dvh/m, 'mobile root needs an explicit viewport height under ST html transform');
+    assertMatch(css, /\.dle-mobile-overlay\b[\s\S]*?height:\s*100dvh/m, 'overlay needs an explicit viewport height under ST html transform');
+    assertMatch(css, /body\.no-blur \.dle-mobile-overlay-panel[\s\S]*?96%/m, 'ST no-blur mode needs a denser tint since blur is suppressed at runtime');
     assert(!/\.dle-mobile-sheet\b/.test(css), 'old bottom-sheet styles should be removed');
 });
 
