@@ -43,7 +43,7 @@ export function renderStatusMetric(metric) {
     return `
         <div class="dle-mobile-status-metric dle-mobile-status-${escapeHtml(metric?.tone || 'ok')}">
             <span>${escapeHtml(metric?.label || '')}</span>
-            <strong>${escapeHtml(metric?.value || '')}</strong>
+            <strong>${escapeHtml(metric?.value ?? '')}</strong>
             ${metric?.detail ? `<small>${escapeHtml(metric.detail)}</small>` : ''}
             <div class="dle-mobile-status-bar" aria-hidden="true"><span style="width:${ratio}%"></span></div>
         </div>
@@ -81,7 +81,8 @@ export function renderOverlayHeader(snapshot = {}, uiState = {}) {
     `;
 }
 
-export function renderOverlayTabBar(activeTab = MOBILE_DEFAULT_TAB, badges = {}) {
+export function renderOverlayTabBar(activeTab = MOBILE_DEFAULT_TAB, badges) {
+    badges = badges ?? {};
     const current = normalizeMobileTab(activeTab);
     const buttons = OVERLAY_TAB_DEFS.map(tab => `
         <button type="button" role="tab" class="dle-mobile-overlay-tab" data-dle-mobile-tab="${tab.id}" aria-selected="${tab.id === current ? 'true' : 'false'}">
@@ -93,7 +94,8 @@ export function renderOverlayTabBar(activeTab = MOBILE_DEFAULT_TAB, badges = {})
     return `<nav class="dle-mobile-overlay-tabs" role="tablist" aria-label="DeepLore sections">${buttons}</nav>`;
 }
 
-export function renderQuickActions({ skipLibrarianActive = false } = {}) {
+export function renderQuickActions(options) {
+    const { skipLibrarianActive = false } = options ?? {};
     const buttons = QUICK_ACTION_DEFS.map(action => {
         const icon = `<i class="fa-solid ${action.icon}" aria-hidden="true"></i>`;
         const label = escapeHtml(action.label);

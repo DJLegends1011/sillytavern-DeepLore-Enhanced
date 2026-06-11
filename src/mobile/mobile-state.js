@@ -30,5 +30,6 @@ export function createMobileUiState(overrides = {}) {
         ...overrides,
     };
     state.tab = normalizeMobileTab(state.tab);
+    state.browse = normalizeMobileBrowseState(state.browse ?? {});
     return state;
 }

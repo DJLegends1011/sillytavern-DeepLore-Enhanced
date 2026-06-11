@@ -248,6 +248,25 @@ test('renderStatusMetric: clamps ratio and renders tone class', () => {
     assert(html.includes('width:100%'), 'ratio should clamp to 100');
 });
 
+test('renderStatusMetric: numeric zero value renders as 0, not blank', () => {
+    const html = renderStatusMetric({ label: 'Entries', value: 0, tone: 'ok', ratio: 0 });
+    assert(html.includes('<strong>0</strong>'), 'zero value should render as 0');
+});
+
+test('renderQuickActions and renderOverlayTabBar: tolerate explicit null arguments', () => {
+    const quick = renderQuickActions(null);
+    assert(quick.includes('data-dle-mobile-action="quick-reroll"'), 'null options should render default quick actions');
+    const tabs = renderOverlayTabBar('browse', null);
+    assert(tabs.includes('data-dle-mobile-tab="browse" aria-selected="true"'), 'null badges should render tab bar');
+});
+
+test('createMobileUiState: normalizes a partial browse override', () => {
+    const state = createMobileUiState({ browse: { status: 'pinned' } });
+    assertEqual(state.browse.status, 'pinned', 'browse override values should survive normalization');
+    assertEqual(typeof state.browse.query, 'string', 'browse override should be normalized to full shape');
+    assertEqual(state.browse.sort, 'priority_asc', 'missing browse fields should fall back to defaults');
+});
+
 section('Overlay — Swipe Dismiss');
 
 test('shouldDismissSwipe: upward or zero movement never dismisses', () => {
