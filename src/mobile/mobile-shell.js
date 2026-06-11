@@ -925,6 +925,7 @@ let mobileShellOptions = {};
 let swipeTracking = null;
 
 function handleMobileTouchStart(event) {
+    if (swipeTracking) return; // already tracking; ignore additional fingers
     const target = event.target instanceof Element ? event.target : null;
     if (!target || !target.closest('[data-dle-mobile-swipe-handle]')) return;
     const touch = event.touches?.[0];
@@ -954,6 +955,14 @@ function handleMobileTouchEnd() {
     renderCurrentState(); // re-render drops any inline transform
 }
 
+function handleMobileTouchCancel() {
+    // OS took over the gesture (scroll hand-off, notification, call):
+    // no touchend will follow, so disarm and drop any stuck translateY.
+    if (!swipeTracking) return;
+    swipeTracking = null;
+    renderCurrentState();
+}
+
 export function createMobileShell(options = {}) {
     if (typeof document === 'undefined' || typeof window === 'undefined') return null;
 
@@ -965,14 +974,14 @@ export function createMobileShell(options = {}) {
     root.addEventListener('click', handleMobileClick);
     root.addEventListener('input', handleMobileInput);
     root.addEventListener('change', handleMobileInput);
-    if (root.removeEventListener && root.addEventListener) {
-        root.removeEventListener('touchstart', handleMobileTouchStart);
-        root.removeEventListener('touchmove', handleMobileTouchMove);
-        root.removeEventListener('touchend', handleMobileTouchEnd);
-        root.addEventListener('touchstart', handleMobileTouchStart, { passive: true });
-        root.addEventListener('touchmove', handleMobileTouchMove, { passive: true });
-        root.addEventListener('touchend', handleMobileTouchEnd);
-    }
+    root.removeEventListener('touchstart', handleMobileTouchStart);
+    root.removeEventListener('touchmove', handleMobileTouchMove);
+    root.removeEventListener('touchend', handleMobileTouchEnd);
+    root.removeEventListener('touchcancel', handleMobileTouchCancel);
+    root.addEventListener('touchstart', handleMobileTouchStart, { passive: true });
+    root.addEventListener('touchmove', handleMobileTouchMove, { passive: true });
+    root.addEventListener('touchend', handleMobileTouchEnd);
+    root.addEventListener('touchcancel', handleMobileTouchCancel, { passive: true });
 
     for (const unsubscribe of mobileUnsubscribers) {
         try { unsubscribe(); } catch { /* noop */ }
@@ -1026,6 +1035,7 @@ export function destroyMobileShell() {
         mobileRoot.removeEventListener('touchstart', handleMobileTouchStart);
         mobileRoot.removeEventListener('touchmove', handleMobileTouchMove);
         mobileRoot.removeEventListener('touchend', handleMobileTouchEnd);
+        mobileRoot.removeEventListener('touchcancel', handleMobileTouchCancel);
         mobileRoot.remove();
         mobileRoot = null;
     }

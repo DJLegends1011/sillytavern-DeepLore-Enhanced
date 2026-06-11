@@ -1408,7 +1408,7 @@ await testAsync('mobile quick actions: reroll clears the AI search cache and inj
         // may still be 'stale-hash' on the OLD object; the NEW object (the live export)
         // will have hash = ''.
         assertEqual(aiSearchCache.hash, '', 'reroll should reset the AI search cache hash to empty string');
-        assert(lastInjectionSources === null || (Array.isArray(lastInjectionSources) && lastInjectionSources.length === 0), 'reroll should clear injection sources');
+        assertEqual(lastInjectionSources, null, 'reroll should clear injection sources to null');
 
         destroyMobileShell();
     } finally {
