@@ -49,7 +49,7 @@ These resolve gaps or conflicts between the spec and the actual codebase. Do not
 - Create: `test/mobile-overlay.test.mjs`
 - Modify: `package.json` (scripts)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `test/mobile-overlay.test.mjs`:
 
@@ -134,12 +134,12 @@ summary('Mobile Overlay Tests');
 
 > Note: check `test/helpers.mjs` for the exact `summary` signature — `test/mobile-fab.test.mjs` calls it the same way; mirror that file's import list exactly if `assertMatch` is not exported (in that case use `assert(re.test(html), msg)` instead and drop the import).
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `node test/mobile-overlay.test.mjs`
 Expected: FAIL — `Cannot find module '../src/mobile/mobile-state.js'`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Create `src/mobile/mobile-state.js`:
 
@@ -180,12 +180,12 @@ export function createMobileUiState(overrides = {}) {
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `node test/mobile-overlay.test.mjs`
 Expected: PASS, 0 failed
 
-- [ ] **Step 5: Wire the new test file into npm scripts**
+- [x] **Step 5: Wire the new test file into npm scripts**
 
 In `package.json`, change:
 
@@ -198,7 +198,7 @@ and append `&& node test/mobile-overlay.test.mjs` to `test:all` immediately afte
 Run: `npm run test:mobile`
 Expected: all three suites pass
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/mobile/mobile-state.js test/mobile-overlay.test.mjs package.json
@@ -213,7 +213,7 @@ git commit -m "feat(mobile): add mobile-state module with overlay tab model"
 - Create: `src/mobile/mobile-overlay.js`
 - Modify: `test/mobile-overlay.test.mjs` (append tests)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `test/mobile-overlay.test.mjs` (above the final `summary(...)` call — keep `summary` last in the file for every task that appends tests):
 
@@ -391,12 +391,12 @@ test('renderStatusMetric: clamps ratio and renders tone class', () => {
 });
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `node test/mobile-overlay.test.mjs`
 Expected: FAIL — `Cannot find module '../src/mobile/mobile-overlay.js'`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Create `src/mobile/mobile-overlay.js`:
 
@@ -543,12 +543,12 @@ export function shouldDismissSwipe({ dy = 0, durationMs = 0, viewportHeight = 0 
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `node test/mobile-overlay.test.mjs`
 Expected: PASS, 0 failed
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/mobile/mobile-overlay.js test/mobile-overlay.test.mjs
@@ -562,7 +562,7 @@ git commit -m "feat(mobile): add glass overlay chrome renderers"
 **Files:**
 - Modify: `test/mobile-overlay.test.mjs` (append tests; implementation already landed in Task 2)
 
-- [ ] **Step 1: Write the tests**
+- [x] **Step 1: Write the tests**
 
 Append to `test/mobile-overlay.test.mjs` (import `shouldDismissSwipe`, `SWIPE_DISMISS_VELOCITY`, `SWIPE_DISMISS_FRACTION` from `../src/mobile/mobile-overlay.js` by extending the existing import):
 
@@ -595,12 +595,12 @@ test('shouldDismissSwipe: velocity threshold is 300px/s and fraction is 0.4', ()
 });
 ```
 
-- [ ] **Step 2: Run tests to verify they pass**
+- [x] **Step 2: Run tests to verify they pass**
 
 Run: `node test/mobile-overlay.test.mjs`
 Expected: PASS (implementation exists from Task 2; if any fail, fix `shouldDismissSwipe`, not the tests)
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add test/mobile-overlay.test.mjs
@@ -617,7 +617,7 @@ This is the core migration. `mobile-shell.js` stops rendering the sheet and home
 - Modify: `src/mobile/mobile-shell.js`
 - Modify: `test/mobile-ui.test.mjs`
 
-- [ ] **Step 1: Update imports and state initialization in `mobile-shell.js`**
+- [x] **Step 1: Update imports and state initialization in `mobile-shell.js`**
 
 Add to the import block:
 
@@ -647,7 +647,7 @@ In `destroyMobileShell`, replace the trailing state-reset object literal with:
 
 In `setMobileMode`, no change. Everywhere else in the file, replace `mobileState.view` with `mobileState.tab` (occurrences: injection filter handler sets `mobileState.view = 'injection'`; injection `browse` action sets `mobileState.view = 'browse'`).
 
-- [ ] **Step 2: Delete the sheet/home renderers and render the overlay**
+- [x] **Step 2: Delete the sheet/home renderers and render the overlay**
 
 Delete these functions from `mobile-shell.js` outright: `renderPill`, `renderStatusMetric`, `renderStatusTray`, `renderHome`. (`renderStatusMetric` now lives in `mobile-overlay.js`.)
 
@@ -720,7 +720,7 @@ export function renderMobileShell(snapshot, state = createMobileUiState()) {
 }
 ```
 
-- [ ] **Step 3: Strip the drill headers from tab renderers**
+- [x] **Step 3: Strip the drill headers from tab renderers**
 
 In `renderInjection`, replace the `dle-mobile-drill-header` div with:
 
@@ -742,7 +742,7 @@ In `renderBrowse`, replace its `dle-mobile-drill-header` div with:
 
 In `renderLibrarian` and `renderTools`, delete the `dle-mobile-drill-header` div entirely (keep the rest of each template unchanged — Tools keeps its four command buttons via `renderCommandButton('Health', 'fa-heart-pulse', commandForView('health'))` etc., the wide Refresh button, and the mode group).
 
-- [ ] **Step 4: Update `renderCurrentState` and the click handler for tabs**
+- [x] **Step 4: Update `renderCurrentState` and the click handler for tabs**
 
 In `renderCurrentState`, after `root.innerHTML = ...`, add scroll restore:
 
@@ -795,7 +795,7 @@ Add the settings action inside the existing `actionEl` branch (alongside `toggle
         }
 ```
 
-- [ ] **Step 5: Update render-contract tests in `test/mobile-ui.test.mjs`**
+- [x] **Step 5: Update render-contract tests in `test/mobile-ui.test.mjs`**
 
 Update these existing tests (search by name). Any assertion in the file that references `.dle-mobile-sheet`, `#dle-mobile-sheet`, `data-dle-mobile-view`, the home view, dock markup, or `view: 'home'` state must change in this step. The specific rewrites:
 
@@ -834,12 +834,12 @@ Import `createMobileUiState` from `../src/mobile/mobile-state.js` at the top of 
 
 **`mobile shell: no "Why?" label remains in mobile output`** → unchanged.
 
-- [ ] **Step 6: Run the mobile suites**
+- [x] **Step 6: Run the mobile suites**
 
 Run: `npm run test:mobile`
 Expected: PASS, 0 failed. Iterate on the shell/tests until green — do not delete unrelated tests to get there.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/mobile/mobile-shell.js test/mobile-ui.test.mjs
@@ -853,7 +853,7 @@ git commit -m "feat(mobile): replace bottom sheet with full-screen glass overlay
 **Files:**
 - Modify: `test/mobile-ui.test.mjs` (append)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `test/mobile-ui.test.mjs`, following the exact pattern of the existing `mobile mode handling: mode clicks update storage and shell state` test (which uses `installMobileDom`, `createMobileShell`, and synthesized clicks through the root listener):
 
@@ -879,21 +879,21 @@ test('mobile shell: tab clicks switch the active tab and keep overlay open', () 
 
 > `clickMobileElement` and `openMobileOverlay` stand for however the existing click tests in this file dispatch clicks and reach an open shell (e.g. invoking the root click listener with a mock event whose `target.closest` resolves the attribute, and triggering the FAB `onTap` callback). Copy the pattern used by `mobile mode handling: mode clicks update storage and shell state` verbatim — do not invent a new harness. The assertion that matters is the tab switch.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `node test/mobile-ui.test.mjs`
 Expected: FAIL on the new test only (tab handler may already work from Task 4 — if it passes immediately, that is acceptable; verify the assertions are actually exercising clicks by temporarily breaking the handler, then restore)
 
-- [ ] **Step 3: Make it pass (if not already)**
+- [x] **Step 3: Make it pass (if not already)**
 
 The handler landed in Task 4 Step 4. Fix any gaps the test exposes (e.g. `target.closest` mock quirks).
 
-- [ ] **Step 4: Run the mobile suites**
+- [x] **Step 4: Run the mobile suites**
 
 Run: `npm run test:mobile`
 Expected: PASS, 0 failed
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add test/mobile-ui.test.mjs src/mobile/mobile-shell.js
@@ -908,7 +908,7 @@ git commit -m "test(mobile): cover overlay tab switching"
 - Modify: `src/mobile/mobile-shell.js`
 - Modify: `test/mobile-ui.test.mjs` (append)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `test/mobile-ui.test.mjs` (same click-test pattern as Task 5; `state.js` is already imported by the test file's module graph, so import the live bindings):
 
@@ -957,12 +957,12 @@ test('mobile quick actions: reroll clears the AI search cache and injection sour
 
 > The reroll handler also clears `chat_metadata.deeplore_injection_log` via the dynamic `readMetadataApi()` import. That import reaches into SillyTavern's real `script.js`, which does not exist under node — the handler must swallow that rejection (the `.catch` in the handler below) so the cache/sources clearing still happens first and the test passes. Order matters in the implementation: synchronous state clearing BEFORE the metadata import.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `node test/mobile-ui.test.mjs`
 Expected: FAIL — quick action clicks do nothing yet
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 In `mobile-shell.js`, confirm the `../state.js` import includes `resetAiSearchCache`, `setLastInjectionSources`, `suppressNextAgenticLoop`, `setSuppressNextAgenticLoop` (added in Task 4). In `handleMobileClick`'s `actionEl` branch, add:
 
@@ -997,12 +997,12 @@ In `mobile-shell.js`, confirm the `../state.js` import includes `resetAiSearchCa
         }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `npm run test:mobile`
 Expected: PASS, 0 failed
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/mobile/mobile-shell.js test/mobile-ui.test.mjs
@@ -1018,7 +1018,7 @@ git commit -m "feat(mobile): wire reroll and skip-librarian quick actions"
 
 No new unit tests: the decision math was tested in Task 3, and the test DOM mock cannot synthesize touch sequences. Browser smoke in Task 9 verifies the gesture.
 
-- [ ] **Step 1: Add delegated touch handlers**
+- [x] **Step 1: Add delegated touch handlers**
 
 In `mobile-shell.js`, add module-level tracking and handlers:
 
@@ -1056,7 +1056,7 @@ function handleMobileTouchEnd() {
 }
 ```
 
-- [ ] **Step 2: Register and unregister the listeners**
+- [x] **Step 2: Register and unregister the listeners**
 
 In `createMobileShell`, alongside the existing click/input listener wiring (remove-then-add, same order), add:
 
@@ -1073,12 +1073,12 @@ In `destroyMobileShell`, add the three matching `removeEventListener` calls next
 
 > The test DOM's `MockElement.addEventListener` may be a stub or absent for extra event names — if `npm run test:mobile` throws on these registrations, guard each with `root.addEventListener &&` the same way the resize/mediaQuery wiring already null-guards.
 
-- [ ] **Step 3: Run the mobile suites**
+- [x] **Step 3: Run the mobile suites**
 
 Run: `npm run test:mobile`
 Expected: PASS, 0 failed
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/mobile/mobile-shell.js
@@ -1093,7 +1093,7 @@ git commit -m "feat(mobile): swipe-to-dismiss on overlay header"
 - Modify: `style.css`
 - Modify: `test/mobile-ui.test.mjs`
 
-- [ ] **Step 1: Write the failing CSS contract tests**
+- [x] **Step 1: Write the failing CSS contract tests**
 
 In `test/mobile-ui.test.mjs`, replace the body of `mobile shell CSS: positions FAB and sheet safely over chat` (rename to `mobile shell CSS: layers FAB and glass overlay safely over chat`) with:
 
@@ -1123,12 +1123,12 @@ test('mobile overlay CSS: glassmorphic panel with theme variables and fallback',
 });
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `node test/mobile-ui.test.mjs`
 Expected: FAIL on the two CSS tests
 
-- [ ] **Step 3: Write the CSS**
+- [x] **Step 3: Write the CSS**
 
 In `style.css`, find the mobile shell block (search `.dle-mobile-sheet`). Delete every rule whose selector mentions `.dle-mobile-sheet`, `.dle-mobile-header` (the old sheet header — keep `.dle-mobile-overlay-header`), `.dle-mobile-summary`, `.dle-mobile-pill`, or the old dock (`.dle-mobile-dock` if any remain). Keep the rules for `.dle-mobile-status-tray` children that the overlay reuses: `.dle-mobile-status-grid`, `.dle-mobile-status-metric`, `.dle-mobile-status-bar`, `.dle-mobile-status-ok/-warn/-bad` (delete `.dle-mobile-status-tray` and `.dle-mobile-status-toggle` themselves). Keep `.dle-mobile-error`, all `.dle-mobile-browse-*`, `.dle-mobile-injection-*`, `.dle-mobile-action`, `.dle-mobile-wide-action*`, `.dle-mobile-mode-*`, and all FAB rules.
 
@@ -1310,12 +1310,12 @@ Then add the overlay block in its place:
 
 > Some old sheet rules may share blocks with kept selectors — split rather than delete wholesale, and re-run the contract tests after each pruning pass. If the old `.dle-mobile-status-grid` rules referenced `.dle-mobile-status-tray` as an ancestor selector (e.g. `.dle-mobile-status-tray .dle-mobile-status-grid`), rewrite them as bare `.dle-mobile-status-grid` so the header dropdown picks them up.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `npm run test:mobile`
 Expected: PASS, 0 failed (the wizard CSS tests must still pass — they read the same file)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add style.css test/mobile-ui.test.mjs
@@ -1328,17 +1328,17 @@ git commit -m "feat(mobile): glassmorphic overlay CSS with @supports fallback"
 
 **Files:** none (verification only, plus any fixes it forces)
 
-- [ ] **Step 1: Lint**
+- [x] **Step 1: Lint**
 
 Run: `npm run lint`
 Expected: 0 errors (fix any; unused-import errors are likely in `mobile-shell.js` after the deletions)
 
-- [ ] **Step 2: Full suite**
+- [x] **Step 2: Full suite**
 
 Run: `npm run test:all`
 Expected: every suite passes and the import verifier reports `Broken: 0`
 
-- [ ] **Step 3: Sync into the clean SillyTavern clone**
+- [x] **Step 3: Sync into the clean SillyTavern clone**
 
 ```powershell
 $source = 'C:\Users\DJLegnds\Downloads\SillyTavern\extension\sillytavern-DeepLore-Enhanced'
@@ -1346,7 +1346,7 @@ $target = 'C:\Users\DJLegnds\Downloads\Dev projects\Extensions\base frontend\Sil
 robocopy $source $target /MIR /XD .git .superpowers node_modules /XF progress.md
 ```
 
-- [ ] **Step 4: Browser smoke at `http://127.0.0.1:8002/`**
+- [x] **Step 4: Browser smoke at `http://127.0.0.1:8002/`**
 
 Playwright lives in the clean clone (Chromium Pixel 5 + WebKit iPhone 14). Verify and screenshot:
 
@@ -1358,11 +1358,11 @@ Playwright lives in the clean clone (Chromium Pixel 5 + WebKit iPhone 14). Verif
 - Desktop drawer still hidden while mobile is active; FAB hidden while overlay is open
 - Desktop viewport (1280px): drawer unchanged, no overlay, no mobile CSS bleed
 
-- [ ] **Step 5: Real-device check (spec requirement)**
+- [x] **Step 5: Real-device check (spec requirement)**
 
 Pull the branch on the phone's SillyTavern instance, refresh, and confirm touch responsiveness, safe-area padding, blur performance during scroll, and theme blending. Note results in `progress.md`.
 
-- [ ] **Step 6: Final commit if fixes were needed**
+- [x] **Step 6: Final commit if fixes were needed**
 
 ```bash
 git add -A
