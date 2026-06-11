@@ -24,6 +24,7 @@ import {
     notifyPinBlockChanged,
     cooldownTracker,
     decayTracker,
+    suppressNextAgenticLoop,
 } from '../state.js';
 import { buildObsidianURI, normalizePinBlock, openExternalProtocol } from '../helpers.js';
 import { getCircuitState } from '../vault/obsidian-api.js';
@@ -45,6 +46,14 @@ import {
     updateBadge,
     setFabVisible,
 } from './mobile-fab.js';
+import {
+    createMobileUiState,
+    normalizeMobileTab,
+} from './mobile-state.js';
+import {
+    renderOverlay,
+    renderOverlayError,
+} from './mobile-overlay.js';
 
 export const MOBILE_VIEWPORT_WIDTH = 768;
 export const TOUCH_TABLET_WIDTH = 1024;
@@ -56,19 +65,7 @@ const FORCE_KEY = MOBILE_FORCE_STORAGE_KEY;
 const DISABLE_KEY = MOBILE_DISABLE_STORAGE_KEY;
 
 let mobileRoot = null;
-let mobileState = {
-    open: false,
-    view: 'home',
-    active: false,
-    mode: 'auto',
-    errorMessage: '',
-    statsExpanded: false,
-    browse: normalizeMobileBrowseState(),
-    browseSearchHelpOpen: false,
-    browseExpandedKey: '',
-    injectionFilter: 'injected',
-    injectionExpandedKey: '',
-};
+let mobileState = createMobileUiState();
 let mobileUnsubscribers = [];
 let mobileResizeHandler = null;
 let mobileMediaQuery = null;
@@ -264,69 +261,12 @@ export function buildMobileShellSnapshot(source = {}) {
     };
 }
 
-function renderPill(label, value, tone = '') {
-    const toneClass = tone ? ` dle-mobile-pill-${tone}` : '';
-    return `<div class="dle-mobile-pill${toneClass}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
-}
-
-function renderActionButton(label, view, icon, command = '') {
-    const commandAttr = command ? ` data-dle-mobile-command="${escapeHtml(command)}"` : '';
+function renderCommandButton(label, icon, command) {
     return `
-        <button class="dle-mobile-action" type="button" data-dle-mobile-view="${escapeHtml(view)}"${commandAttr}>
+        <button class="dle-mobile-action" type="button" data-dle-mobile-command="${escapeHtml(command)}">
             <i class="fa-solid ${escapeHtml(icon)}" aria-hidden="true"></i>
             <span>${escapeHtml(label)}</span>
         </button>
-    `;
-}
-
-function renderStatusMetric(metric) {
-    const ratio = Math.max(0, Math.min(100, Number(metric?.ratio || 0)));
-    return `
-        <div class="dle-mobile-status-metric dle-mobile-status-${escapeHtml(metric?.tone || 'ok')}">
-            <span>${escapeHtml(metric?.label || '')}</span>
-            <strong>${escapeHtml(metric?.value || '')}</strong>
-            ${metric?.detail ? `<small>${escapeHtml(metric.detail)}</small>` : ''}
-            <div class="dle-mobile-status-bar" aria-hidden="true"><span style="width:${ratio}%"></span></div>
-        </div>
-    `;
-}
-
-function renderStatusTray(snapshot, state) {
-    const stats = snapshot.stats;
-    if (!stats) return '';
-    const expandedClass = state.statsExpanded ? ' dle-mobile-status-expanded' : '';
-    return `
-        <section class="dle-mobile-status-tray${expandedClass}" aria-label="DeepLore status">
-            <button type="button" class="dle-mobile-status-toggle" data-dle-mobile-action="toggle-stats" aria-expanded="${state.statsExpanded ? 'true' : 'false'}">
-                <strong>${escapeHtml(snapshot.injectedCount)} injected</strong>
-                <i class="fa-solid fa-chevron-${state.statsExpanded ? 'down' : 'up'}" aria-hidden="true"></i>
-            </button>
-            ${state.statsExpanded ? `<div class="dle-mobile-status-grid">
-                ${renderStatusMetric(stats.budget)}
-                ${renderStatusMetric(stats.entries)}
-                ${renderStatusMetric(stats.context)}
-                ${renderStatusMetric(stats.ai)}
-                ${renderStatusMetric(stats.health)}
-            </div>` : ''}
-        </section>
-    `;
-}
-
-function renderHome(snapshot, state = mobileState) {
-    return `
-        ${renderStatusTray(snapshot, state)}
-        <div class="dle-mobile-summary">
-            ${renderPill('Status', snapshot.statusLabel, snapshot.statusLabel === 'Ready' ? 'ok' : 'warn')}
-            ${renderPill('Vault', snapshot.entriesLabel)}
-            ${renderPill('Injected', snapshot.injectedCount)}
-            ${renderPill('Gaps', snapshot.gapCount, snapshot.gapCount ? 'warn' : 'ok')}
-        </div>
-        <div class="dle-mobile-actions">
-            ${renderActionButton('Injection', 'injection', 'fa-circle-question')}
-            ${renderActionButton('Browse', 'browse', 'fa-magnifying-glass')}
-            ${renderActionButton('Librarian', 'librarian', 'fa-list-check')}
-            ${renderActionButton('Tools', 'tools', 'fa-screwdriver-wrench')}
-        </div>
     `;
 }
 
@@ -390,9 +330,7 @@ function renderInjection(snapshot, state = mobileState) {
     const copyDisabled = !rows.length || filter !== 'injected';
 
     return `
-        <div class="dle-mobile-drill-header">
-            <button type="button" data-dle-mobile-view="home"><i class="fa-solid fa-chevron-left" aria-hidden="true"></i></button>
-            <strong>Injection</strong>
+        <div class="dle-mobile-tab-toolbar">
             <span class="dle-mobile-injection-count">${snapshot.injectedCount}</span>
             <button class="dle-mobile-wide-action-sm" type="button" data-dle-mobile-injection-action="copy-titles" aria-label="Copy injected titles"${copyDisabled ? ' disabled' : ''}><i class="fa-solid fa-clipboard" aria-hidden="true"></i></button>
             <button class="dle-mobile-wide-action-sm" type="button" data-dle-mobile-command="${commandForView('injection')}" aria-label="Open full Injection view"><i class="fa-solid fa-up-right-from-square" aria-hidden="true"></i></button>
@@ -429,9 +367,7 @@ function renderBrowse(snapshot, state = mobileState) {
         .join('');
 
     return `
-        <div class="dle-mobile-drill-header">
-            <button type="button" data-dle-mobile-view="home"><i class="fa-solid fa-chevron-left" aria-hidden="true"></i></button>
-            <strong>Browse</strong>
+        <div class="dle-mobile-tab-toolbar">
             <button class="dle-mobile-wide-action-sm" type="button" data-dle-mobile-command="${commandForView('browse')}" aria-label="Open full Browse view"><i class="fa-solid fa-up-right-from-square" aria-hidden="true"></i></button>
         </div>
         <div class="dle-mobile-browse-controls">
@@ -545,10 +481,6 @@ function renderLibrarian(snapshot) {
     `).join('');
 
     return `
-        <div class="dle-mobile-drill-header">
-            <button type="button" data-dle-mobile-view="home"><i class="fa-solid fa-chevron-left" aria-hidden="true"></i></button>
-            <strong>Librarian</strong>
-        </div>
         <ul class="dle-mobile-list">${rows || '<li><strong>No open gaps</strong><span>Librarian has nothing waiting.</span></li>'}</ul>
     `;
 }
@@ -564,15 +496,11 @@ function renderModeButton(label, mode, activeMode) {
 
 function renderTools(mode = 'auto') {
     return `
-        <div class="dle-mobile-drill-header">
-            <button type="button" data-dle-mobile-view="home"><i class="fa-solid fa-chevron-left" aria-hidden="true"></i></button>
-            <strong>Tools</strong>
-        </div>
         <div class="dle-mobile-actions">
-            ${renderActionButton('Health', 'health', 'fa-heart-pulse', commandForView('health'))}
-            ${renderActionButton('Filters', 'filters', 'fa-filter', commandForView('filters'))}
-            ${renderActionButton('Graph', 'graph', 'fa-diagram-project', commandForView('graph'))}
-            ${renderActionButton('Setup', 'setup', 'fa-gear', commandForView('setup'))}
+            ${renderCommandButton('Health', 'fa-heart-pulse', commandForView('health'))}
+            ${renderCommandButton('Filters', 'fa-filter', commandForView('filters'))}
+            ${renderCommandButton('Graph', 'fa-diagram-project', commandForView('graph'))}
+            ${renderCommandButton('Setup', 'fa-gear', commandForView('setup'))}
         </div>
         <button class="dle-mobile-wide-action" type="button" data-dle-mobile-refresh>Refresh index</button>
         <div class="dle-mobile-mode-group" role="group" aria-label="Mobile UI mode">
@@ -586,42 +514,45 @@ function renderTools(mode = 'auto') {
     `;
 }
 
-function renderBody(snapshot, view, mode = 'auto', state = mobileState) {
-    switch (view) {
-        case 'injection': return renderInjection(snapshot, state);
+function renderFiltersStub() {
+    return `
+        <div class="dle-mobile-filters-stub">
+            <strong>Filters are coming to mobile</strong>
+            <span>Folder and gating filters will land here. Until then, use the full desktop view.</span>
+            <button class="dle-mobile-wide-action" type="button" data-dle-mobile-command="${commandForView('filters')}">Open full Filters view</button>
+        </div>
+    `;
+}
+
+function renderBody(snapshot, tab, mode = 'auto', state = mobileState) {
+    switch (normalizeMobileTab(tab)) {
         case 'browse': return renderBrowse(snapshot, state);
+        case 'filters': return renderFiltersStub();
         case 'librarian': return renderLibrarian(snapshot);
         case 'tools': return renderTools(mode);
-        default: return renderHome(snapshot, state);
+        default: return renderInjection(snapshot, state);
+    }
+}
+
+function renderTabContent(snapshot, state) {
+    try {
+        return renderBody(snapshot, state.tab, state.mode, state);
+    } catch (err) {
+        console.error('[DLE] Mobile tab render failed:', state.tab, err);
+        return renderOverlayError(`Could not render ${state.tab}: ${err?.message || err}`);
     }
 }
 
 function renderMobileShellContents(snapshot, state = mobileState) {
-    const openClass = state.open ? ' dle-mobile-open' : '';
-    const mode = state.mode || 'auto';
-    const errorMessage = state.errorMessage || '';
-    const sheetAriaHidden = state.open ? 'false' : 'true';
-    const sheetInert = state.open ? '' : ' inert';
-    return `
-        <section id="dle-mobile-sheet" class="dle-mobile-sheet${openClass}" role="dialog" aria-modal="false" aria-hidden="${sheetAriaHidden}" aria-label="DeepLore mobile controls"${sheetInert}>
-            <header class="dle-mobile-header">
-                <div>
-                    <span>DeepLore</span>
-                    <strong>${escapeHtml(snapshot.statusLabel)}</strong>
-                </div>
-                <button type="button" data-dle-mobile-action="close" aria-label="Close DeepLore mobile panel">
-                    <i class="fa-solid fa-xmark" aria-hidden="true"></i>
-                </button>
-            </header>
-            <div class="dle-mobile-body">
-                ${errorMessage ? `<div class="dle-mobile-error" role="alert">${escapeHtml(errorMessage)}</div>` : ''}
-                ${renderBody(snapshot, state.view, mode, state)}
-            </div>
-        </section>
-    `;
+    return renderOverlay({
+        snapshot,
+        uiState: state,
+        contentHtml: renderTabContent(snapshot, state),
+        skipLibrarianActive: suppressNextAgenticLoop,
+    });
 }
 
-export function renderMobileShell(snapshot, state = { open: false, view: 'home', mode: 'auto', errorMessage: '' }) {
+export function renderMobileShell(snapshot, state = createMobileUiState()) {
     return `<div id="${ROOT_ID}" class="dle-mobile-shell">${renderMobileShellContents(snapshot, state)}</div>`;
 }
 
@@ -728,6 +659,16 @@ function ensureRoot() {
     return mobileRoot;
 }
 
+function captureScrollPosition() {
+    const content = mobileRoot?.querySelector?.('.dle-mobile-overlay-content');
+    if (content) mobileState.scrollPositions[mobileState.tab] = content.scrollTop || 0;
+}
+
+function restoreScrollPosition() {
+    const content = mobileRoot?.querySelector?.('.dle-mobile-overlay-content');
+    if (content) content.scrollTop = mobileState.scrollPositions[mobileState.tab] || 0;
+}
+
 function renderCurrentState() {
     const root = ensureRoot();
     const env = readMobileEnvironment();
@@ -740,6 +681,7 @@ function renderCurrentState() {
 
     const snapshot = buildMobileShellSnapshot();
     root.innerHTML = renderMobileShellContents(snapshot, mobileState);
+    restoreScrollPosition();
 
     updateBadge(snapshot.injectedCount || 0);
     setFabVisible(!mobileState.open);
@@ -766,6 +708,26 @@ function handleMobileClick(event) {
             mobileState.statsExpanded = !mobileState.statsExpanded;
             mobileState.open = true;
         }
+        if (action === 'settings') {
+            import('../ui/settings-ui.js')
+                .then(m => m.openSettingsPopup?.())
+                .catch(err => {
+                    console.error('[DLE] Mobile settings open failed:', err);
+                    setMobileError('Could not open DeepLore settings.');
+                    renderCurrentState();
+                });
+            return;
+        }
+        renderCurrentState();
+        return;
+    }
+
+    const tabEl = target.closest('[data-dle-mobile-tab]');
+    if (tabEl) {
+        captureScrollPosition();
+        mobileState.errorMessage = '';
+        mobileState.tab = normalizeMobileTab(tabEl.getAttribute('data-dle-mobile-tab'));
+        mobileState.open = true;
         renderCurrentState();
         return;
     }
@@ -826,7 +788,7 @@ function handleMobileClick(event) {
     if (injectionFilterEl) {
         mobileState.injectionFilter = injectionFilterEl.getAttribute('data-dle-mobile-injection-filter') || 'injected';
         mobileState.injectionExpandedKey = '';
-        mobileState.view = 'injection';
+        mobileState.tab = 'injection';
         mobileState.open = true;
         renderCurrentState();
         return;
@@ -857,7 +819,7 @@ function handleMobileClick(event) {
             const vaultSource = injectionActionEl.getAttribute('data-vault') || '';
             openMobileBrowseObsidian(filename, vaultSource || null);
         } else if (action === 'browse') {
-            mobileState.view = 'browse';
+            mobileState.tab = 'browse';
             mobileState.errorMessage = '';
         }
         renderCurrentState();
@@ -888,22 +850,6 @@ function handleMobileClick(event) {
                 setMobileError(`Refresh failed: ${err?.message || err}`);
                 renderCurrentState();
             });
-        return;
-    }
-
-    const viewEl = target.closest('[data-dle-mobile-view]');
-    if (viewEl) {
-        const view = viewEl.getAttribute('data-dle-mobile-view') || 'home';
-        const localViews = new Set(['home', 'injection', 'browse', 'librarian', 'tools']);
-        mobileState.open = true;
-        const command = viewEl.getAttribute('data-dle-mobile-command');
-        if (command && !localViews.has(view)) {
-            executeCommand(command);
-        } else {
-            mobileState.errorMessage = '';
-            mobileState.view = localViews.has(view) ? view : mobileState.view;
-        }
-        renderCurrentState();
         return;
     }
 
@@ -1008,17 +954,5 @@ export function destroyMobileShell() {
     if (typeof document !== 'undefined') {
         document.body.classList.remove('dle-mobile-ui-active');
     }
-    mobileState = {
-        open: false,
-        view: 'home',
-        active: false,
-        mode: 'auto',
-        errorMessage: '',
-        statsExpanded: false,
-        browse: normalizeMobileBrowseState(),
-        browseSearchHelpOpen: false,
-        browseExpandedKey: '',
-        injectionFilter: 'injected',
-        injectionExpandedKey: '',
-    };
+    mobileState = createMobileUiState();
 }

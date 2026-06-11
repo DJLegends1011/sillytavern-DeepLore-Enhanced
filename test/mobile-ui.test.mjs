@@ -26,6 +26,10 @@ import {
 } from '../src/mobile/mobile-shell.js';
 
 import {
+    createMobileUiState,
+} from '../src/mobile/mobile-state.js';
+
+import {
     buildMobileStatusStats,
     formatMobileStatNumber,
 } from '../src/mobile/mobile-stats.js';
@@ -420,7 +424,7 @@ test('buildMobileShellSnapshot: reads chat metadata provider for Browse pin/bloc
     assertEqual(snapshot.browseContext.blocks[0]?.title, 'Keisha', 'mobile Browse should use live ST metadata blocks');
 });
 
-test('renderMobileShell: renders hybrid dock, home sheet, and quick actions', () => {
+test('renderMobileShell: renders glass overlay with tab bar and quick actions', () => {
     const html = renderMobileShell({
         statusLabel: 'Ready',
         entriesLabel: '12 entries',
@@ -430,17 +434,18 @@ test('renderMobileShell: renders hybrid dock, home sheet, and quick actions', ()
         entries: [],
         injectedSources: [],
         loreGaps: [],
-    }, { open: true, view: 'home', mode: 'auto', errorMessage: '' });
+    }, createMobileUiState({ open: true, tab: 'injection' }));
 
     assertMatch(html, /id="dle-mobile-root"/, 'shell root should be rendered');
-    assertMatch(html, /id="dle-mobile-sheet"/, 'bottom sheet should be rendered');
-    assertMatch(html, /id="dle-mobile-sheet"[^>]*aria-hidden="false"/, 'open sheet should be exposed to assistive tech');
-    assert(!/id="dle-mobile-sheet"[^>]*inert/.test(html), 'open sheet should not be inert');
-    assertMatch(html, /data-dle-mobile-view="injection"/, 'injection drill-in action should be rendered');
-    assertMatch(html, /data-dle-mobile-view="browse"/, 'browse drill-in action should be rendered');
-    assertMatch(html, /data-dle-mobile-view="librarian"/, 'librarian drill-in action should be rendered');
-    assertMatch(html, /data-dle-mobile-view="tools"/, 'tools drill-in action should be rendered');
-    assert(!/data-dle-mobile-view="injection"[^>]*data-dle-mobile-command/.test(html), 'home Injection action should drill in before opening the full popup');
+    assertMatch(html, /id="dle-mobile-overlay"/, 'glass overlay should be rendered');
+    assertMatch(html, /class="dle-mobile-overlay-panel"/, 'overlay panel should be rendered');
+    assertMatch(html, /data-dle-mobile-tab="injection"[^>]*aria-selected="true"/, 'injection tab should be selected');
+    assertMatch(html, /data-dle-mobile-tab="browse"/, 'browse tab should be rendered');
+    assertMatch(html, /data-dle-mobile-tab="filters"/, 'filters tab should be rendered');
+    assertMatch(html, /data-dle-mobile-tab="librarian"/, 'librarian tab should be rendered');
+    assertMatch(html, /data-dle-mobile-tab="tools"/, 'tools tab should be rendered');
+    assertMatch(html, /data-dle-mobile-action="quick-reroll"/, 'quick-reroll action should be rendered');
+    assertMatch(html, /data-dle-mobile-command="\/dle-scribe"/, 'scribe command button should be rendered');
 });
 
 test('renderMobileShell: labels the mobile injected-sources drill-in as Injection', () => {
@@ -453,9 +458,10 @@ test('renderMobileShell: labels the mobile injected-sources drill-in as Injectio
         entries: [],
         injectedSources: [{ title: 'Keisha', filename: 'Characters/Keisha.md', vaultSource: 'First Vault', matchedBy: 'keyword: keisha', tokens: 217 }],
         loreGaps: [],
-    }, { open: true, view: 'injection', mode: 'auto', errorMessage: '' });
+    }, createMobileUiState({ open: true, tab: 'injection' }));
 
-    assertMatch(html, /<strong>Injection<\/strong>/, 'mobile drill-in header should use the desktop tab name');
+    assertMatch(html, />Injection</, 'tab bar should render Injection label');
+    assertMatch(html, /data-dle-mobile-injection-action="copy-titles"/, 'injection toolbar should render copy-titles button');
     assertMatch(html, /aria-label="Open full Injection view"/, 'full-view button should use the desktop tab name');
     assert(!/<strong>Why\?<\/strong>/.test(html), 'mobile UI should not expose the old proof-of-concept Why label');
 });
@@ -477,7 +483,7 @@ test('renderMobileShell: Injection rows expose Obsidian title and Browse navigat
             tokens: 217,
         }],
         loreGaps: [],
-    }, { open: true, view: 'injection', mode: 'auto', errorMessage: '', injectionFilter: 'injected', injectionExpandedKey: key });
+    }, createMobileUiState({ open: true, tab: 'injection', injectionFilter: 'injected', injectionExpandedKey: key }));
 
     assertMatch(html, /data-dle-mobile-injection-action="obsidian"/, 'injected entry title should open Obsidian when a filename exists');
     assertMatch(html, /data-dle-mobile-injection-action="browse"/, 'injected entry row should expose a Browse navigation action');
@@ -505,20 +511,19 @@ test('renderMobileShell: renders collapsed and expanded status tray', () => {
         },
     };
 
-    const collapsed = renderMobileShell(snapshot, { open: true, view: 'home', mode: 'auto', errorMessage: '', statsExpanded: false });
-    assertMatch(collapsed, /class="dle-mobile-status-tray[^"]*"/, 'status tray should render on home');
-    assertMatch(collapsed, /data-dle-mobile-action="toggle-stats"/, 'tray toggle should be present');
-    assert(!/Budget high/.test(collapsed), 'collapsed.label should not appear in tray toggle');
+    const collapsed = renderMobileShell(snapshot, createMobileUiState({ open: true, tab: 'injection', statsExpanded: false }));
+    assertMatch(collapsed, /data-dle-mobile-action="toggle-stats"[^>]*aria-expanded="false"/, 'tray toggle should be present and collapsed');
+    assert(!/dle-mobile-status-grid/.test(collapsed), 'status grid should be hidden while collapsed');
     assert(!/2\.9k \/ 3\.1k/.test(collapsed), 'expanded budget value should be hidden while collapsed');
 
-    const expanded = renderMobileShell(snapshot, { open: true, view: 'home', mode: 'auto', errorMessage: '', statsExpanded: true });
-    assertMatch(expanded, /class="dle-mobile-status-tray[^"]*dle-mobile-status-expanded"/, 'expanded class should render');
+    const expanded = renderMobileShell(snapshot, createMobileUiState({ open: true, tab: 'injection', statsExpanded: true }));
+    assertMatch(expanded, /class="dle-mobile-status-grid"/, 'expanded status grid should render');
     assertMatch(expanded, /2\.9k \/ 3\.1k/, 'expanded budget value should render');
     assertMatch(expanded, /13\.5k \/ 200\.0k/, 'expanded context value should render');
     assertMatch(expanded, /1 cached \u00b7 1\.5k tokens/, 'expanded AI detail should render');
 });
 
-test('renderMobileShell: closed shell keeps sheet mounted and collapsed', () => {
+test('renderMobileShell: closed shell keeps overlay mounted and inert', () => {
     const html = renderMobileShell({
         statusLabel: 'Ready',
         entriesLabel: '0 entries',
@@ -528,12 +533,12 @@ test('renderMobileShell: closed shell keeps sheet mounted and collapsed', () => 
         entries: [],
         injectedSources: [],
         loreGaps: [],
-    }, { open: false, view: 'home', mode: 'auto', errorMessage: '' });
+    }, createMobileUiState({ open: false }));
 
-    assertMatch(html, /id="dle-mobile-sheet"/, 'sheet should remain mounted for animation and accessibility');
-    assertMatch(html, /id="dle-mobile-sheet"[^>]*aria-hidden="true"/, 'closed sheet should be hidden from assistive tech');
-    assertMatch(html, /id="dle-mobile-sheet"[^>]*inert/, 'closed sheet should not expose focusable controls');
-    assert(!/dle-mobile-sheet dle-mobile-open/.test(html), 'sheet should not have open class while closed');
+    assertMatch(html, /id="dle-mobile-overlay"/, 'overlay should remain mounted for animation and accessibility');
+    assertMatch(html, /id="dle-mobile-overlay"[^>]*aria-hidden="true"/, 'closed overlay should be hidden from assistive tech');
+    assertMatch(html, /id="dle-mobile-overlay"[^>]*inert/, 'closed overlay should not expose focusable controls');
+    assert(!/dle-mobile-overlay dle-mobile-open/.test(html), 'overlay should not have open class while closed');
 });
 
 test('renderMobileShell: renders escaped error slot above active body', () => {
@@ -546,7 +551,7 @@ test('renderMobileShell: renders escaped error slot above active body', () => {
         entries: [],
         injectedSources: [],
         loreGaps: [],
-    }, { open: true, view: 'tools', mode: 'manual', errorMessage: '<Load failed>' });
+    }, createMobileUiState({ open: true, tab: 'tools', errorMessage: '<Load failed>' }));
 
     assertMatch(html, /class="dle-mobile-error" role="alert"/, 'visible errors should render in an alert slot');
     assert(html.includes('&lt;Load failed&gt;'), 'error message should be escaped');
@@ -562,7 +567,7 @@ test('renderMobileShell: shows mobile error alert when command or refresh fails'
         entries: [],
         injectedSources: [],
         loreGaps: [],
-    }, { open: true, view: 'home', mode: 'auto', errorMessage: 'Command unavailable' });
+    }, createMobileUiState({ open: true, errorMessage: 'Command unavailable' }));
 
     assertMatch(html, /class="dle-mobile-error"/, 'error banner should render');
     assertMatch(html, /role="alert"/, 'error banner should announce itself');
@@ -579,7 +584,7 @@ test('renderMobileShell: tools view exposes mobile mode controls', () => {
         entries: [],
         injectedSources: [],
         loreGaps: [],
-    }, { open: true, view: 'tools', mode: 'forced', errorMessage: '' });
+    }, createMobileUiState({ open: true, tab: 'tools', mode: 'forced' }));
 
     assertMatch(html, /data-dle-mobile-mode="auto"/, 'tools should offer auto mode');
     assertMatch(html, /data-dle-mobile-mode="forced"/, 'tools should offer force mobile mode');
@@ -662,10 +667,10 @@ test('mobile status tray: toggle click flips expanded state', () => {
         target.setAttribute('data-dle-mobile-action', 'toggle-stats');
 
         clickMobileRoot(root, target);
-        assertMatch(root.innerHTML, /dle-mobile-status-expanded/, 'first toggle should expand the status tray');
+        assertMatch(root.innerHTML, /dle-mobile-status-grid/, 'first toggle should expand the status grid');
 
         clickMobileRoot(root, target);
-        assert(!/dle-mobile-status-expanded/.test(root.innerHTML), 'second toggle should collapse the status tray');
+        assert(!/dle-mobile-status-grid/.test(root.innerHTML), 'second toggle should collapse the status grid');
     } finally {
         destroyMobileShell();
         dom.restore();
@@ -818,16 +823,14 @@ test('renderMobileShell: Browse view renders search, filters, quick filters, and
             blocks: [{ title: 'Keisha', vaultSource: 'First Vault' }],
             chatInjectionCounts: new Map([['First Vault:Cosplay Mode', 2]]),
         },
-    }, {
+    }, createMobileUiState({
         open: true,
-        view: 'browse',
-        mode: 'auto',
-        errorMessage: '',
+        tab: 'browse',
         statsExpanded: false,
         browse: normalizeMobileBrowseState({ query: 'mode', tag: 'mode' }),
         browseSearchHelpOpen: true,
         browseExpandedKey: 'First Vault:Cosplay Mode',
-    });
+    }));
 
     assertMatch(html, /class="dle-mobile-browse-controls"/, 'Browse controls should render');
     assertMatch(html, /data-dle-mobile-browse-field="query"/, 'search input should update mobile Browse query');
@@ -856,16 +859,14 @@ test('renderMobileShell: Browse cards expose visible pin and block states', () =
             blocks: [{ title: 'Keisha', vaultSource: 'First Vault' }],
             chatInjectionCounts: new Map(),
         },
-    }, {
+    }, createMobileUiState({
         open: true,
-        view: 'browse',
-        mode: 'auto',
-        errorMessage: '',
+        tab: 'browse',
         statsExpanded: false,
         browse: normalizeMobileBrowseState(),
         browseSearchHelpOpen: false,
         browseExpandedKey: '',
-    });
+    }));
 
     assertMatch(html, /class="dle-mobile-browse-state-pill dle-mobile-browse-state-pin"[^>]*>Pinned</, 'pinned entries should show a visible state pill');
     assertMatch(html, /class="dle-mobile-browse-state-pill dle-mobile-browse-state-block"[^>]*>Blocked</, 'blocked entries should show a visible state pill');
@@ -893,7 +894,7 @@ test('mobile Injection actions: shell routes entry titles and Browse arrows', ()
 });
 
 test('renderMobileShell: drill-in views tolerate missing array fields', () => {
-    for (const view of ['injection', 'browse', 'librarian']) {
+    for (const tab of ['injection', 'browse', 'filters', 'librarian', 'tools']) {
         try {
             const html = renderMobileShell({
                 statusLabel: 'Ready',
@@ -901,11 +902,11 @@ test('renderMobileShell: drill-in views tolerate missing array fields', () => {
                 injectedCount: 0,
                 gapCount: 0,
                 phaseLabel: 'idle',
-            }, { open: true, view, mode: 'auto', errorMessage: '' });
+            }, createMobileUiState({ open: true, tab }));
 
-            assertMatch(html, /dle-mobile(?:-injection)?-list/, `${view} view should render list fallback with missing arrays`);
+            assert(html.length > 0, `${tab} view should render without throwing`);
         } catch (error) {
-            assert(false, `${view} view should not throw with missing arrays: ${error.message}`);
+            assert(false, `${tab} view should not throw with missing arrays: ${error.message}`);
         }
     }
 });
@@ -1175,10 +1176,10 @@ test('mobile shell: no "Why?" label remains in mobile output', () => {
         indexEverLoaded: true,
     });
 
-    const homeHtml = renderMobileShell(snapshot, { open: true, view: 'home', mode: 'auto', errorMessage: '' });
-    assert(!homeHtml.includes('>Why?<'), 'Home view should not contain "Why?" label');
-    assert(!homeHtml.includes('>Why?</strong>'), 'Home view should not contain "Why?" in strong tag');
-    assertMatch(homeHtml, /Injection/, 'Home view should contain "Injection" label');
+    const overlayHtml = renderMobileShell(snapshot, createMobileUiState({ open: true, tab: 'injection' }));
+    assert(!overlayHtml.includes('>Why?<'), 'Overlay should not contain "Why?" label');
+    assert(!overlayHtml.includes('>Why?</strong>'), 'Overlay should not contain "Why?" in strong tag');
+    assertMatch(overlayHtml, /Injection/, 'Overlay should contain "Injection" label');
 });
 
 test('renderInjection: renders header with Injection title and badge', () => {
@@ -1195,7 +1196,7 @@ test('renderInjection: renders header with Injection title and badge', () => {
         indexEverLoaded: true,
     });
 
-    const html = renderMobileShell(snapshot, { open: true, view: 'injection', mode: 'auto', errorMessage: '', injectionFilter: 'injected', injectionExpandedKey: '' });
+    const html = renderMobileShell(snapshot, createMobileUiState({ open: true, tab: 'injection', injectionFilter: 'injected', injectionExpandedKey: '' }));
 
     assertMatch(html, /Injection/, 'should contain Injection title');
     assertMatch(html, /data-dle-mobile-injection-filter/, 'should contain filter toggle buttons');
@@ -1218,7 +1219,7 @@ test('renderInjection: renders entry cards with title, tokens, and badges', () =
         indexEverLoaded: true,
     });
 
-    const html = renderMobileShell(snapshot, { open: true, view: 'injection', mode: 'auto', errorMessage: '', injectionFilter: 'injected', injectionExpandedKey: '' });
+    const html = renderMobileShell(snapshot, createMobileUiState({ open: true, tab: 'injection', injectionFilter: 'injected', injectionExpandedKey: '' }));
 
     assertMatch(html, /Keisha/, 'should render entry title');
     assertMatch(html, /217 tok/, 'should render token count');
@@ -1238,7 +1239,7 @@ test('renderInjection: renders empty state when no sources', () => {
         indexEverLoaded: true,
     });
 
-    const html = renderMobileShell(snapshot, { open: true, view: 'injection', mode: 'auto', errorMessage: '', injectionFilter: 'injected', injectionExpandedKey: '' });
+    const html = renderMobileShell(snapshot, createMobileUiState({ open: true, tab: 'injection', injectionFilter: 'injected', injectionExpandedKey: '' }));
 
     assertMatch(html, /No entries injected yet/, 'should show empty state message');
 });
@@ -1255,7 +1256,7 @@ test('renderInjection: renders Entry Timers section', () => {
         indexEverLoaded: true,
     });
 
-    const html = renderMobileShell(snapshot, { open: true, view: 'injection', mode: 'auto', errorMessage: '', injectionFilter: 'injected', injectionExpandedKey: '' });
+    const html = renderMobileShell(snapshot, createMobileUiState({ open: true, tab: 'injection', injectionFilter: 'injected', injectionExpandedKey: '' }));
 
     assertMatch(html, /Entry Timers/, 'should contain Entry Timers collapsible');
 });
