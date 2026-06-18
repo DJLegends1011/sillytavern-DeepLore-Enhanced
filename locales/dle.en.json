@@ -728,7 +728,7 @@
   "dle_diag_keyword_short": "Keyword \"${0}\" is ${1} char(s) — may cause false matches",
   "dle_diag_multivault_dupe": "Title \"${0}\" appears in ${1} vaults — disambiguated by vault source.",
   "dle_diag_no_summary": "No AI selection summary defined",
-  "dle_diag_no_vaults": "No enabled vaults configured. Go to DeepLore Enhanced settings â†’ Vault Connections and click \"Add Vault\".",
+  "dle_diag_no_vaults": "No enabled vaults configured. Go to DeepLore Enhanced settings → Vault Connections and click \"Add Vault\".",
   "dle_diag_probability_zero": "Entry will never trigger (probability is 0)",
   "dle_diag_recursion_one_step": "Recursive scan enabled but max steps is 1 — only one extra pass",
   "dle_diag_requires_excludes_conflict": "Requires and excludes \"${0}\" simultaneously",

@@ -316,8 +316,12 @@ export async function showBrowsePopup() {
     const analytics = settings.analyticsData || {};
     const allTags = [...new Set(vaultIndex.flatMap(e => e.tags))].sort();
     // BUG-136: re-read pins/blocks per access so drawer changes reflect immediately.
-    const getPins = () => new Set((chat_metadata.deeplore_pins || []).map(t => (typeof t === 'string' ? t : t.title).toLowerCase()));
-    const getBlocks = () => new Set((chat_metadata.deeplore_blocks || []).map(t => (typeof t === 'string' ? t : t.title).toLowerCase()));
+    // trackerKey invariant (#50): key pin/block lookup on vaultSource:title, not bare title,
+    // so cross-vault same-title entries don't collide. Mirrors the write path's `matches` predicate
+    // below (vaultSource exact, title case-insensitive). Legacy bare-string pins → vaultSource ''.
+    const pbKey = (vs, t) => `${vs || ''}::${(t || '').toLowerCase()}`;
+    const getPins = () => new Set((chat_metadata.deeplore_pins || []).map(t => (typeof t === 'string' ? pbKey(null, t) : pbKey(t.vaultSource, t.title))));
+    const getBlocks = () => new Set((chat_metadata.deeplore_blocks || []).map(t => (typeof t === 'string' ? pbKey(null, t) : pbKey(t.vaultSource, t.title))));
     let pins = getPins();
     let blocks = getBlocks();
 
@@ -445,8 +449,8 @@ export async function showBrowsePopup() {
 
             const temp = tempMap.get(trackerKey(entry));
             const tempAttr = temp && temp.hue !== 'neutral' ? ` data-temp="${temp.hue}"` : '';
-            const isPinned = pins.has(entry.title.toLowerCase());
-            const isBlocked = blocks.has(entry.title.toLowerCase());
+            const isPinned = pins.has(pbKey(entry.vaultSource, entry.title));
+            const isBlocked = blocks.has(pbKey(entry.vaultSource, entry.title));
             const rowActions = `<span class="dle-browse-row-actions" data-no-toggle="1">`
                 + `<button type="button" class="dle-browse-row-pin menu_button_icon dle-text-xs" data-title="${escapeHtml(entry.title)}" data-vault="${escapeHtml(entry.vaultSource || '')}" title="${isPinned ? 'Unpin' : 'Pin'} ${escapeHtml(entry.title)}" aria-label="${isPinned ? 'Unpin' : 'Pin'} ${escapeHtml(entry.title)}"><i class="fa-solid fa-thumbtack${isPinned ? '' : ''}" aria-hidden="true" style="${isPinned ? 'color:var(--dle-success,#3a3);' : 'opacity:0.5;'}"></i></button>`
                 + `<button type="button" class="dle-browse-row-block menu_button_icon dle-text-xs" data-title="${escapeHtml(entry.title)}" data-vault="${escapeHtml(entry.vaultSource || '')}" title="${isBlocked ? 'Unblock' : 'Block'} ${escapeHtml(entry.title)}" aria-label="${isBlocked ? 'Unblock' : 'Block'} ${escapeHtml(entry.title)}"><i class="fa-solid fa-ban" aria-hidden="true" style="${isBlocked ? 'color:var(--dle-error,#a33);' : 'opacity:0.5;'}"></i></button>`

@@ -118,9 +118,12 @@ export function renderInjectionTab() {
     const removedTitles = new Set(diff.removed.map(s => s.title));
 
     // BUG-AUDIT-H14: title→entry lookup once instead of vaultIndex.find() per entry — O(N+M) vs O(N*M).
+    // trackerKey invariant (#50): key on vaultSource:title (not bare title) so cross-vault same-title
+    // entries resolve to their own folderPath instead of the first vault's. Matches the `:` keys at L140/L158.
     const titleToEntry = new Map();
     for (const e of vaultIndex) {
-        if (!titleToEntry.has(e.title)) titleToEntry.set(e.title, e);
+        const k = `${e.vaultSource || ''}:${e.title}`;
+        if (!titleToEntry.has(k)) titleToEntry.set(k, e);
     }
 
     function buildWhyHtml(srcs) {
@@ -146,7 +149,7 @@ export function renderInjectionTab() {
                 h += escapeHtml(src.title);
             }
             // Show folder path if entry has one
-            const whyEntry = titleToEntry.get(src.title);
+            const whyEntry = titleToEntry.get(`${src.vaultSource || ''}:${src.title}`);
             if (whyEntry?.folderPath) {
                 h += ` <span class="dle-entry-folder" title="${escapeHtml(whyEntry.folderPath)}">${escapeHtml(whyEntry.folderPath)}</span>`;
             }

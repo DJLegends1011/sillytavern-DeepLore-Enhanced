@@ -16,6 +16,14 @@
     --dle-bg-hover: color-mix(in srgb, var(--SmartThemeBodyColor, #fff) 8%, transparent);
     --dle-text-muted: var(--SmartThemeEmColor, #aaa);
 
+    /* Wave A: previously-phantom surface/text tokens (consumed but never declared).
+       Theme-derived so light ST themes don't get a black island / wrong contrast.
+       On dark themes these resolve close to the prior inline fallbacks. */
+    --dle-bg-1: color-mix(in srgb, var(--SmartThemeBodyColor, #000) 12%, transparent);
+    --dle-bg-3: color-mix(in srgb, var(--SmartThemeBodyColor, #fff) 14%, transparent);
+    --dle-text: var(--SmartThemeBodyColor, #ddd);
+    --dle-on-accent: var(--SmartThemeBodyColor, #fff);
+
     /* BUG-215: brand accents — derived from theme so light themes don't kill
        contrast. Fallbacks match the prior hardcoded values. */
     --dle-guide-fg: color-mix(in srgb, var(--SmartThemeUnderlineColor, #b89cff) 75%, var(--SmartThemeBodyColor, #fff));
@@ -57,6 +65,15 @@
     --dle-opacity-faint: 0.45;
     --dle-opacity-ghost: 0.25;
     --dle-opacity-disabled: 0.4;
+
+    /* Wave A: transition-timing axis (durations previously sprawled
+       100/120/150/200/250/300ms with no shared scale). Defined here for
+       later motion waves; not mass-migrated in this wave. */
+    --dle-dur-fast: 120ms;
+    --dle-dur-base: 200ms;
+    --dle-dur-slow: var(--animation-duration-slow, 320ms);
+    --dle-ease: cubic-bezier(0.32, 0.72, 0, 1);
+    --dle-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 /* --- Utility classes --- */
@@ -1839,7 +1856,10 @@ button.dle-browse-block.dle-block-active {
     font-size: 10px;
     line-height: 1;
     font-weight: 700;
-    color: var(--dle-bg-1, #000);
+    /* Wave A: glyph (✓) color on the colored dot. NOT the --dle-bg-1 surface
+       token — that is a translucent tint and would make the check vanish.
+       Solid dark keeps contrast on the --dle-success fill across themes. */
+    color: rgba(0, 0, 0, 0.85);
 }
 .dle-gating-dot-active {
     background: var(--dle-success);
@@ -3086,17 +3106,17 @@ button.dle-browse-block.dle-block-active {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(0, 0, 0, 0.4);
+    background: color-mix(in srgb, var(--SmartThemeBlurTintColor, #000) 55%, transparent);
     z-index: 10;
     pointer-events: all;
     border-radius: inherit;
 }
 .dle-graph-layout-overlay-text {
-    color: #fff;
+    color: var(--SmartThemeBodyColor, #fff);
     font-size: var(--dle-text-xl);
     padding: 16px 24px;
     border-radius: 8px;
-    background: rgba(0, 0, 0, 0.7);
+    background: color-mix(in srgb, var(--SmartThemeBlurTintColor, #000) 80%, transparent);
     display: flex;
     align-items: center;
     gap: 10px;
@@ -3187,7 +3207,7 @@ button.dle-browse-block.dle-block-active {
     cursor: grab;
     border-bottom: 1px solid var(--dle-border, #444);
     border-radius: 8px 8px 0 0;
-    background: rgba(255,255,255,0.04);
+    background: color-mix(in srgb, var(--SmartThemeBodyColor, #fff) 5%, transparent);
 }
 
 .dle-graph-settings-titlebar:active {
@@ -5492,9 +5512,9 @@ button.dle-chip-x:focus-visible { outline: 2px solid var(--dle-accent); outline-
 .dle-browse-temp-legend {
     height: 3px;
     background: linear-gradient(to right,
-        color-mix(in srgb, #4dabf7 70%, transparent) 0%,
+        color-mix(in srgb, var(--dle-info) 70%, transparent) 0%,
         transparent 50%,
-        color-mix(in srgb, #ff8787 70%, transparent) 100%
+        color-mix(in srgb, var(--dle-error) 70%, transparent) 100%
     );
     border-radius: 2px;
     margin: var(--dle-space-1) 0 var(--dle-space-2);
@@ -5786,12 +5806,12 @@ button.dle-browse-copy-title-btn:focus-visible {
    accordion when the post-migration popup opens Settings. 4 pulses × 1.2s ≈ 5s,
    matched by the 6s setTimeout in _maybeShowProxyDeprecationNotice. */
 @keyframes dle-pulse-attention-kf {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(255, 165, 0, 0); }
-    50% { box-shadow: 0 0 0 8px rgba(255, 165, 0, 0.6); }
+    0%, 100% { box-shadow: 0 0 0 0 transparent; }
+    50% { box-shadow: 0 0 0 8px color-mix(in srgb, var(--dle-warning) 60%, transparent); }
 }
 .dle-pulse-attention {
     animation: dle-pulse-attention-kf 1.2s ease-in-out 4;
-    outline: 2px solid orange;
+    outline: 2px solid var(--dle-warning);
     outline-offset: 2px;
 }
 
