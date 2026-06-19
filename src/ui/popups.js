@@ -22,6 +22,7 @@ import { callAutoSuggest } from '../ai/auto-suggest.js';
 import { extractAiResponseClient, buildObsidianURI, STAGE_COLORS, normalizePinBlock, normalizeNotepadLine, bigramDiceSimilarity, comparePriority } from '../helpers.js';
 import { diagnoseEntry } from './diagnostics.js';
 import { computeEntryTemperatures } from '../drawer/drawer-state.js';
+import { tr, trf } from '../i18n/i18n.js';
 
 /**
  * Serialize a value for YAML frontmatter.
@@ -126,7 +127,7 @@ export async function showNotebookPopup() {
 
     if (result) {
         if (epochAtOpen !== chatEpoch) {
-            toastr.warning('Chat changed while editing — changes discarded to prevent cross-chat corruption.', 'DeepLore Enhanced');
+            toastr.warning(tr('dle_toast_chat_changed_discard'), 'DeepLore Enhanced');
             return;
         }
         chat_metadata.deeplore_notebook = capturedValue;
@@ -280,13 +281,13 @@ export async function showAiNotepadPopup() {
                         }
                     }
                     if (dropped === 0) {
-                        toastr.info('No near-duplicates found.', 'DeepLore Enhanced');
+                        toastr.info(tr('dle_toast_no_duplicates'), 'DeepLore Enhanced');
                         return;
                     }
                     textarea.value = kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();
                     await updateCounts();
                     renderPinList();
-                    toastr.success(`Merged ${dropped} duplicate ${dropped === 1 ? 'entry' : 'entries'}.`, 'DeepLore Enhanced');
+                    toastr.success(trf('dle_toast_duplicates_merged', dropped, dropped === 1 ? 'entry' : 'entries'), 'DeepLore Enhanced');
                 });
             }
 
@@ -297,7 +298,7 @@ export async function showAiNotepadPopup() {
 
     if (result) {
         if (epochAtOpen !== chatEpoch) {
-            toastr.warning('Chat changed while editing — changes discarded to prevent cross-chat corruption.', 'DeepLore Enhanced');
+            toastr.warning(tr('dle_toast_chat_changed_discard'), 'DeepLore Enhanced');
             return;
         }
         chat_metadata.deeplore_ai_notepad = capturedValue;
@@ -537,7 +538,7 @@ export async function showBrowsePopup() {
         if (!title) return;
         if (copyBtn) {
             navigator.clipboard?.writeText(title).then(() => {
-                toastr.success(`Copied "${title}"`, 'DeepLore Enhanced', { timeOut: 1200 });
+                toastr.success(trf('dle_toast_title_copied', title), 'DeepLore Enhanced', { timeOut: 1200 });
             }).catch(() => { /* clipboard unavailable */ });
             return;
         }
@@ -552,22 +553,22 @@ export async function showBrowsePopup() {
             const idx = chat_metadata.deeplore_pins.findIndex(matches);
             if (idx !== -1) {
                 chat_metadata.deeplore_pins.splice(idx, 1);
-                toastr.info(`Unpinned: ${title}`, 'DeepLore Enhanced', { timeOut: 1500 });
+                toastr.info(trf('dle_toast_entry_unpinned', title), 'DeepLore Enhanced', { timeOut: 1500 });
             } else {
                 chat_metadata.deeplore_pins.push({ title, vaultSource });
                 if (chat_metadata.deeplore_blocks) chat_metadata.deeplore_blocks = chat_metadata.deeplore_blocks.filter(p => !matches(p));
-                toastr.info(`Pinned: ${title}`, 'DeepLore Enhanced', { timeOut: 1500 });
+                toastr.info(trf('dle_toast_entry_pinned', title), 'DeepLore Enhanced', { timeOut: 1500 });
             }
         } else {
             if (!chat_metadata.deeplore_blocks) chat_metadata.deeplore_blocks = [];
             const idx = chat_metadata.deeplore_blocks.findIndex(matches);
             if (idx !== -1) {
                 chat_metadata.deeplore_blocks.splice(idx, 1);
-                toastr.info(`Unblocked: ${title}`, 'DeepLore Enhanced', { timeOut: 1500 });
+                toastr.info(trf('dle_toast_entry_unblocked', title), 'DeepLore Enhanced', { timeOut: 1500 });
             } else {
                 chat_metadata.deeplore_blocks.push({ title, vaultSource });
                 if (chat_metadata.deeplore_pins) chat_metadata.deeplore_pins = chat_metadata.deeplore_pins.filter(p => !matches(p));
-                toastr.info(`Blocked: ${title}`, 'DeepLore Enhanced', { timeOut: 1500 });
+                toastr.info(trf('dle_toast_entry_blocked', title), 'DeepLore Enhanced', { timeOut: 1500 });
             }
         }
         saveMetadataDebounced();
@@ -727,7 +728,7 @@ export async function optimizeEntryKeys(entry) {
 
 export async function showOptimizePopup(entry, result) {
     if (!result) {
-        toastr.warning('Could not get keyword suggestions.', 'DeepLore Enhanced');
+        toastr.warning(tr('dle_toast_optimize_keys_failed'), 'DeepLore Enhanced');
         return;
     }
 
@@ -785,13 +786,13 @@ export async function showOptimizePopup(entry, result) {
 
             const data = await writeNote(optVault.host, optVault.port, optVault.apiKey, entry.filename, newContent, !!optVault.https);
             if (data.ok) {
-                toastr.success(`Keywords updated for "${entry.title}"`, 'DeepLore Enhanced');
+                toastr.success(trf('dle_toast_keywords_updated', entry.title), 'DeepLore Enhanced');
                 setVaultIndex([]);
                 setIndexTimestamp(0);
                 await buildIndex();
             } else {
                 console.warn('[DLE] Optimize keys write failed:', data && data.error);
-                toastr.error('Couldn\'t save the new keywords to your vault.', 'DeepLore Enhanced');
+                toastr.error(tr('dle_toast_keywords_save_failed'), 'DeepLore Enhanced');
             }
         } catch (err) {
             toastr.error(classifyError(err), 'DeepLore Enhanced');
@@ -891,9 +892,9 @@ export async function runBatchOptimize(trackerKeys) {
     if (aborted) {
         skipped = entries.length - accepted - errored;
         if (skipped > 0) summaryParts.push(`${skipped} skipped`);
-        toastr.warning(`Batch aborted: ${summaryParts.join(', ')}.`, 'DeepLore Enhanced');
+        toastr.warning(trf('dle_toast_batch_aborted', summaryParts.join(', ')), 'DeepLore Enhanced');
     } else {
-        toastr.success(`Batch complete: ${summaryParts.join(', ')}.`, 'DeepLore Enhanced');
+        toastr.success(trf('dle_toast_batch_complete', summaryParts.join(', ')), 'DeepLore Enhanced');
     }
     return { accepted, skipped, errored };
 }

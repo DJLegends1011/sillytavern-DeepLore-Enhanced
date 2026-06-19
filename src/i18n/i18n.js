@@ -28,6 +28,7 @@ import {
     resolveAiPromptLocale,
     mergeLocaleDicts,
     lookupKey,
+    interpolate,
     trPlural as trPluralPure,
 } from './i18n-pure.js';
 
@@ -125,6 +126,26 @@ export function tr(key, fallback) {
     const direct = lookupKey(_dleDict, key, _enFallbackDict);
     if (direct !== key) return direct;
     return fallback !== undefined ? fallback : translate(key);
+}
+
+/**
+ * Interpolating lookup: `tr(key)` then `${0}`/`${1}`/… substitution. The
+ * non-plural sibling of {@link trPlural} — use for any parameterized runtime
+ * string that ISN'T a count (toasts, status lines, error messages):
+ *
+ *   trf('dle_cmd_pin_success_toast', title)   // "Pinned ${0}" → "Pinned Eris"
+ *   trf('dle_err_generic', code, detail)      // "${0}: ${1}"
+ *
+ * Indexed placeholders only (`${0}`-based), matching ST's translator convention
+ * and the shared {@link interpolate} pure helper. For "N thing(s)" strings use
+ * trPlural (it owns the `_one`/`_other` split); for static strings use tr().
+ *
+ * @param {string} key   Locale key whose value carries `${0}`… placeholders.
+ * @param {...*} args     Values for `${0}`, `${1}`, … in order.
+ * @returns {string}
+ */
+export function trf(key, ...args) {
+    return interpolate(tr(key), ...args);
 }
 
 /**

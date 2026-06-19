@@ -839,6 +839,23 @@ dle-notes { display: none !important; }
     margin: var(--dle-space-1) 0;
 }
 
+/* Wave C: the divider inside the status zone groups the two budget bars into one cluster.
+   Tighter margin than the main between-zones divider so it reads as an in-zone subdivision. */
+.dle-budget-divider {
+    margin: var(--dle-space-1) 0 0;
+    opacity: var(--dle-opacity-muted);
+}
+/* Tiny muted cluster heading above the budget bars. Calm, lowercase-weight, theme-derived. */
+.dle-budget-cluster-label {
+    font-size: var(--dle-text-xs);
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--dle-text-muted);
+    opacity: var(--dle-opacity-muted);
+    margin: 0 0 calc(-1 * var(--dle-space-1));
+}
+
 /* --- Zone 1: Fixed Status --- */
 .dle-zone-status {
     display: flex;
@@ -1163,6 +1180,23 @@ dle-notes { display: none !important; }
 }
 /* B1: entries-bar hazard rules removed — see token-bar note above. */
 
+/* Wave C: calm NEAR-CAP pre-truncation cue (>=85% fill). Distinct but NOT red — a subtle warning
+   TINT on the fill plus a faint warning hairline on the container, so the user sees lore is about
+   to be trimmed before any cut happens. Honors "footer earns red / calm header": warning, never
+   error. Applied by drawer-render-status.js via .dle-budget-near; cleared below cap. */
+.dle-token-bar-container.dle-budget-near {
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dle-warning) 40%, transparent);
+}
+.dle-token-bar-container.dle-budget-near .dle-token-bar {
+    background: color-mix(in srgb, var(--dle-warning) 38%, var(--dle-border));
+}
+.dle-entries-bar-container.dle-budget-near {
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dle-warning) 40%, transparent);
+}
+.dle-entries-bar-container.dle-budget-near .dle-entries-bar {
+    background: color-mix(in srgb, var(--dle-warning) 38%, var(--dle-border));
+}
+
 .dle-entries-bar-label {
     position: absolute;
     top: 0;
@@ -1466,6 +1500,71 @@ button.dle-chip-x:hover {
     color: var(--dle-success);
 }
 
+/* Wave C: KEY › AI breadcrumb for two-stage picks. Reuses the .dle-why-match chips (their
+   data-match-type colors carry over); the separator is a quiet muted chevron. */
+.dle-why-breadcrumb {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+}
+.dle-why-bc-sep {
+    color: var(--dle-text-muted);
+    font-size: var(--dle-text-xs);
+    opacity: var(--dle-opacity-muted);
+}
+
+/* Wave C: source-vault chip on injected rows (only when 2+ vaults enabled). Extends the
+   .dle-why-match chip idiom — muted/info-tinted, theme-derived, with a small db glyph. */
+.dle-why-vault {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: var(--dle-text-xs);
+    padding: 0 4px;
+    border-radius: var(--dle-radius-sm);
+    background: color-mix(in srgb, var(--dle-info) 14%, transparent);
+    color: color-mix(in srgb, var(--dle-info) 70%, var(--SmartThemeBodyColor, #ccc));
+    max-width: 9em;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+.dle-why-vault > i {
+    font-size: 0.85em;
+    opacity: var(--dle-opacity-muted);
+}
+
+/* Wave C: verdict funnel header — N matched › N picked › N injected. A quiet DLE strip (like a
+   chip row, not a banner): info-tinted hairline border + faint fill, theme-derived. */
+.dle-why-funnel {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--dle-space-1) var(--dle-space-2);
+    margin: 0 0 var(--dle-space-2);
+    padding: var(--dle-space-1) var(--dle-space-2);
+    border-radius: var(--dle-radius-sm);
+    background: color-mix(in srgb, var(--dle-info) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--dle-info) 22%, transparent);
+    font-size: var(--dle-text-xs);
+    color: var(--dle-text-muted);
+}
+.dle-why-funnel[hidden] { display: none; }
+.dle-funnel-seg {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+}
+.dle-funnel-n {
+    font-weight: 600;
+    color: color-mix(in srgb, var(--dle-info) 75%, var(--SmartThemeBodyColor, #ddd));
+}
+.dle-funnel-label { color: var(--dle-text-muted); }
+.dle-funnel-arrow {
+    color: var(--dle-text-muted);
+    opacity: var(--dle-opacity-muted);
+}
+
 .dle-why-new-badge {
     font-weight: 600;
     font-size: var(--dle-text-xs);
@@ -1501,6 +1600,49 @@ button.dle-chip-x:hover {
     font-size: var(--dle-text-xs);
     color: var(--dle-warning);
     background: color-mix(in srgb, var(--dle-warning) 20%, transparent);
+}
+
+/* Wave C: Fix-It pin on a filtered-out row. HOVER/FOCUS-REVEAL (hidden until the row is hovered
+   or anything inside it is keyboard-focused — :focus-within keeps it keyboard-reachable). Mirrors
+   the .dle-lib-msg-action reveal idiom but adds the focus path the chat actions lack. Calm
+   accent-tinted pill; theme-derived. Goes active (info tint) once clicked. */
+.dle-why-fixit {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: var(--dle-text-xs);
+    padding: 1px 6px;
+    border-radius: var(--dle-radius-sm);
+    border: 1px solid color-mix(in srgb, var(--dle-accent) 35%, transparent);
+    background: color-mix(in srgb, var(--dle-accent) 14%, transparent);
+    color: color-mix(in srgb, var(--dle-accent) 75%, var(--SmartThemeBodyColor, #ddd));
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity var(--dle-dur-fast, 120ms) ease, background var(--dle-dur-fast, 120ms) ease;
+    white-space: nowrap;
+}
+.dle-why-not-entry:hover .dle-why-fixit,
+.dle-why-not-entry:focus-within .dle-why-fixit {
+    opacity: 1;
+}
+.dle-why-fixit:hover {
+    background: color-mix(in srgb, var(--dle-accent) 24%, transparent);
+}
+.dle-why-fixit:focus-visible {
+    opacity: 1;
+    outline: 2px solid var(--dle-accent);
+    outline-offset: 1px;
+}
+.dle-why-fixit.dle-why-fixit-active {
+    opacity: 1;
+    border-color: color-mix(in srgb, var(--dle-info) 45%, transparent);
+    background: color-mix(in srgb, var(--dle-info) 20%, transparent);
+    color: color-mix(in srgb, var(--dle-info) 80%, var(--SmartThemeBodyColor, #ddd));
+}
+.dle-why-fixit > i { font-size: 0.85em; }
+/* Touch / no-hover devices can't hover-reveal — keep the Fix-It affordance visible-but-quiet. */
+@media (hover: none) {
+    .dle-why-fixit { opacity: var(--dle-opacity-muted); }
 }
 
 /* --- Browse panel --- */
@@ -2087,6 +2229,9 @@ button.dle-browse-block.dle-block-active {
     .dle-zone-status .dle-token-bar-container,
     .dle-zone-status .dle-entries-bar-container,
     .dle-zone-status .dle-active-filters,
+    /* Wave C: collapse the budget cluster's divider + label with its bars in compact height. */
+    .dle-zone-status .dle-budget-divider,
+    .dle-zone-status .dle-budget-cluster-label,
     /* D4: the action toolbar now lives in its own zone (lifted out of .dle-zone-status). */
     .dle-zone-actions {
         display: none;

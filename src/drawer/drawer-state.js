@@ -7,8 +7,11 @@ import { chatInjectionCounts, consecutiveInjections, vaultIndex, trackerKey } fr
 export const DRAWER_ID = 'deeplore-drawer';
 export const MODULE_NAME = 'deeplore-enhanced';
 
+// Last-resort fallback ONLY — switchTab mirrors the active tab's localized .dle-tab-text into the
+// .dle-tab-label, so these English strings are reached only if that text node is missing. Kept in
+// sync with the canonical visible names (injection → "Injection", not the old "Why?").
 export const TAB_LABELS = {
-    injection: 'Why?',
+    injection: 'Injection',
     browse: 'Browse',
     gating: 'Filters',
     librarian: 'Librarian',

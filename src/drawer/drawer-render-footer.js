@@ -17,6 +17,7 @@ function _currentVerdictForChat() {
 import { getCircuitState } from '../vault/obsidian-api.js';
 import { ds, formatTokensCompact, activityLog, announceToScreenReader } from './drawer-state.js';
 import { callGenericPopup, POPUP_TYPE } from '../../../../../popup.js';
+import { tr } from '../i18n/i18n.js';
 
 const AI_CIRCUIT_COOLDOWN_MS = 30_000; // mirror state.js — drawer doesn't import the constant directly
 
@@ -44,9 +45,9 @@ async function handleResetClick(e) {
     if (!confirmed) return;
     const result = resetAiCircuitBreaker();
     if (result.wasOpen) {
-        toastr.success(result.hadPendingCooldown ? 'AI breaker reset — pending cooldown discarded.' : 'AI breaker reset.', 'DeepLore Enhanced');
+        toastr.success(result.hadPendingCooldown ? tr('dle_toast_breaker_reset_with_cooldown') : tr('dle_toast_breaker_reset_normal'), 'DeepLore Enhanced');
     } else {
-        toastr.info('AI breaker was already closed.', 'DeepLore Enhanced');
+        toastr.info(tr('dle_toast_breaker_already_closed'), 'DeepLore Enhanced');
     }
     // Re-render so the conditional button hides without waiting for the next event.
     try { renderFooter(); } catch { /* drawer may be teardown-mid */ }

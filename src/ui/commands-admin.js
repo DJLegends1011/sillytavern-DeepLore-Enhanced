@@ -19,6 +19,7 @@ import { ensureFreshOrToast } from './commands-shared.js';
 import { runHealthCheck } from './diagnostics.js';
 import { showNotebookPopup, showAiNotepadPopup, buildCopyButton, attachCopyHandler } from './popups.js';
 import { consoleBuffer } from '../diagnostics/interceptors.js';
+import { tr, trf } from '../i18n/i18n.js';
 
 /** Entry shapes: { cmd, desc } for commands, { sep, label } for section headers. */
 export const DLE_COMMANDS = [
@@ -84,7 +85,7 @@ export function registerAdminCommands() {
             if (subcommand === 'clear') {
                 chat_metadata.deeplore_ai_notepad = '';
                 saveMetadataDebounced();
-                toastr.success('AI Notepad cleared for this chat.', 'DeepLore Enhanced');
+                toastr.success(tr('dle_cmd_ai_notepad_cleared_toast'), 'DeepLore Enhanced');
                 return '';
             }
             await showAiNotepadPopup();
@@ -145,11 +146,11 @@ export function registerAdminCommands() {
         callback: async () => {
             const settings = getSettings();
             if (!settings.scribeFolder) {
-                toastr.warning('No scribe folder configured.', 'DeepLore Enhanced');
+                toastr.warning(tr('dle_cmd_scribehistory_nowfolder_toast'), 'DeepLore Enhanced');
                 return '';
             }
 
-            toastr.info('Fetching session notes...', 'DeepLore Enhanced', { timeOut: 2000 });
+            toastr.info(tr('dle_cmd_scribehistory_fetching_toast'), 'DeepLore Enhanced', { timeOut: 2000 });
 
             try {
                 // Scribe writes go to the per-tool configured vault (#32). Reading
@@ -160,7 +161,7 @@ export function registerAdminCommands() {
                 if (!data.ok) throw new Error(data.error || 'Failed to fetch notes');
 
                 if (!data.notes || data.notes.length === 0) {
-                    toastr.info('No session notes found.', 'DeepLore Enhanced');
+                    toastr.info(tr('dle_cmd_scribehistory_nonotes_toast'), 'DeepLore Enhanced');
                     return '';
                 }
 
@@ -328,7 +329,7 @@ export function registerAdminCommands() {
             try {
                 const { triggerDiagnosticDownload } = await import('../diagnostics/ui.js');
                 await triggerDiagnosticDownload();
-                toastr.success('Diagnostic report downloaded. Open the file and verify before sharing — see the Privacy section at the top.', 'DeepLore Enhanced', { timeOut: 8000 });
+                toastr.success(tr('dle_cmd_diagnostics_downloaded_toast'), 'DeepLore Enhanced', { timeOut: 8000 });
             } catch (err) {
                 toastr.error(`Diagnostic export failed: ${classifyError(err)}`, 'DeepLore Enhanced');
                 console.error('[DLE] /dle-diagnostics failed:', err);
@@ -435,7 +436,7 @@ export function registerAdminCommands() {
                         if (!text) return;
                         try {
                             await navigator.clipboard.writeText(text);
-                            toastr.success(`Copied "${text}"`, 'DeepLore Enhanced', { timeOut: 1200 });
+                            toastr.success(trf('dle_toast_title_copied', text), 'DeepLore Enhanced', { timeOut: 1200 });
                         } catch { /* clipboard unavailable */ }
                     });
                 },
@@ -485,7 +486,7 @@ export function registerAdminCommands() {
                 onOpen: () => {
                     document.querySelector('.dle-cache-clear-btn')?.addEventListener('click', async () => {
                         await clearIndexCache();
-                        toastr.success('Vault cache cleared.', 'DeepLore Enhanced');
+                        toastr.success(tr('dle_cmd_cacheinfo_cleared_toast'), 'DeepLore Enhanced');
                         document.querySelector('.dle-cache-clear-btn')?.closest('.popup')?.querySelector('.popup-button-ok')?.click();
                     });
                 },
@@ -517,7 +518,7 @@ export function registerAdminCommands() {
             else settings.debugMode = !settings.debugMode;
             saveSettingsDebounced();
             notifyDebugModeChanged();
-            toastr.success(`Debug mode ${settings.debugMode ? 'ON' : 'OFF'}`, 'DeepLore Enhanced');
+            toastr.success(trf('dle_cmd_debug_toggled_toast', settings.debugMode ? 'ON' : 'OFF'), 'DeepLore Enhanced');
             return '';
         },
         unnamedArgumentList: [SlashCommandArgument.fromProps({
@@ -547,7 +548,7 @@ export function registerAdminCommands() {
             const recent = dleEntries.slice(-n);
 
             if (recent.length === 0) {
-                toastr.info('No DLE log entries found.', 'DeepLore Enhanced');
+                toastr.info(tr('dle_cmd_logs_nologs_toast'), 'DeepLore Enhanced');
                 return '';
             }
 

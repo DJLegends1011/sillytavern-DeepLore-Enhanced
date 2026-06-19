@@ -14,6 +14,7 @@ import { showBrowsePopup } from './popups.js';
 import { parseWorldInfoJson, importEntries } from '../vault/import.js';
 import { world_names, loadWorldInfo } from '../../../../../world-info.js';
 import { dedupWarning } from '../toast-dedup.js';
+import { tr, trf } from '../i18n/i18n.js';
 
 export function registerVaultCommands() {
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
@@ -53,7 +54,7 @@ export function registerVaultCommands() {
                 return msg;
             } catch (err) {
                 console.warn('[DLE] /dle-refresh failed:', err);
-                toastr.error(`Could not refresh vault: ${classifyError(err)}`, 'DeepLore Enhanced');
+                toastr.error(trf('dle_cmd_refresh_error_toast', classifyError(err)), 'DeepLore Enhanced');
                 return '';
             }
         },
@@ -117,7 +118,7 @@ export function registerVaultCommands() {
                             try {
                                 const data = await loadWorldInfo(name);
                                 if (!data) {
-                                    toastr.error(`Failed to load lorebook "${name}".`, 'DeepLore Enhanced');
+                                    toastr.error(trf('dle_toast_lorebook_load_failed', name), 'DeepLore Enhanced');
                                     return;
                                 }
                                 const json = JSON.stringify(data, null, 2);
@@ -144,7 +145,7 @@ export function registerVaultCommands() {
                                 capturedJson = text;
                             };
                             reader.onerror = () => {
-                                toastr.error('Failed to read file.', 'DeepLore Enhanced');
+                                toastr.error(tr('dle_cmd_import_readfailed_toast'), 'DeepLore Enhanced');
                             };
                             reader.readAsText(file);
                         });
@@ -156,7 +157,7 @@ export function registerVaultCommands() {
 
             const jsonText = capturedJson.trim();
             if (!jsonText) {
-                toastr.warning('No JSON provided.', 'DeepLore Enhanced');
+                toastr.warning(tr('dle_cmd_import_nojson_toast'), 'DeepLore Enhanced');
                 return '';
             }
 
@@ -172,14 +173,14 @@ export function registerVaultCommands() {
                 JSON.parse(jsonText);
             } catch (parseErr) {
                 console.warn('[DLE] /dle-import JSON parse failed:', parseErr);
-                toastr.error('Invalid JSON format. Paste a lorebook export and try again.', 'DeepLore Enhanced');
+                toastr.error(tr('dle_cmd_import_invalidjson_toast'), 'DeepLore Enhanced');
                 return '';
             }
 
             try {
                 const { entries, source } = parseWorldInfoJson(jsonText);
                 if (entries.length === 0) {
-                    toastr.info('No entries found in the JSON.', 'DeepLore Enhanced');
+                    toastr.info(tr('dle_cmd_import_noentries_toast'), 'DeepLore Enhanced');
                     return '';
                 }
 
@@ -187,7 +188,7 @@ export function registerVaultCommands() {
                     (!e.content || !e.content.trim()) && (!e.key || !e.key.length || e.key.every(k => !k.trim())),
                 ).length;
                 if (emptyCount > 0) {
-                    toastr.warning(`${emptyCount} entries have no content and no keys — they will be imported but may be empty.`, 'DeepLore Enhanced');
+                    toastr.warning(trf('dle_cmd_import_emptyentries_toast', emptyCount), 'DeepLore Enhanced');
                 }
 
                 const confirmed = await callGenericPopup(

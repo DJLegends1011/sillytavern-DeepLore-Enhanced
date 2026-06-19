@@ -1,5 +1,6 @@
 import { getVaultByName } from '../../settings.js';
 import { buildObsidianURI, openObsidianUri } from '../helpers.js';
+import { tr, trf } from '../i18n/i18n.js';
 import { computeGapAnalysis } from './graph-analysis.js';
 import { escapeHtml } from './graph-util.js';
 
@@ -137,8 +138,8 @@ export function initEvents(gs, dbg) {
             }
             case 'copy-title':
                 navigator.clipboard.writeText(node.title).then(
-                    () => toastr.success(`Copied "${node.title}"`, '', { timeOut: 2000 }),
-                    () => toastr.warning('Clipboard access denied — check your browser permissions.', 'DeepLore Enhanced', { timeOut: 3000 }),
+                    () => toastr.success(trf('dle_graph_toast_copied', node.title), '', { timeOut: 2000 }),
+                    () => toastr.warning(tr('dle_graph_toast_clipboard_denied'), 'DeepLore Enhanced', { timeOut: 3000 }),
                 );
                 break;
             case 'details': {
@@ -191,9 +192,9 @@ export function initEvents(gs, dbg) {
             link.download = `dle-graph-${new Date().toISOString().slice(0, 10)}.png`;
             link.href = dataUrl;
             link.click();
-            toastr.success('Graph exported as PNG', 'DeepLore Enhanced');
+            toastr.success(tr('dle_graph_toast_export_png_success'), 'DeepLore Enhanced');
         } catch (e) {
-            console.warn('[DLE] PNG export failed:', e); toastr.error('Couldn\'t save the graph image.', 'DeepLore Enhanced');
+            console.warn('[DLE] PNG export failed:', e); toastr.error(tr('dle_graph_toast_export_png_fail'), 'DeepLore Enhanced');
         }
     }
 
@@ -228,10 +229,10 @@ export function initEvents(gs, dbg) {
             link.href = objectUrl;
             link.click();
             dbg(`JSON exported: ${data.nodes.length} nodes, ${data.edges.length} edges`);
-            toastr.success('Graph exported as JSON', 'DeepLore Enhanced');
+            toastr.success(tr('dle_graph_toast_export_json_success'), 'DeepLore Enhanced');
         } catch (e) {
             dbg('JSON export failed:', e.message);
-            console.warn('[DLE] JSON export failed:', e); toastr.error('Couldn\'t save the graph data.', 'DeepLore Enhanced');
+            console.warn('[DLE] JSON export failed:', e); toastr.error(tr('dle_graph_toast_export_json_fail'), 'DeepLore Enhanced');
         } finally {
             if (objectUrl) URL.revokeObjectURL(objectUrl);
         }

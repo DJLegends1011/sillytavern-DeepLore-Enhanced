@@ -154,6 +154,11 @@ export function renderStatusZone() {
     // hit means the limiter worked, shown calmly, not an alarm. The ONE earned-red bar is the
     // footer context bar (overflow). Clear any legacy hazard classes; never re-add them.
     $barContainer.removeClass('dle-budget-high dle-budget-critical');
+    // Wave C: calm pre-truncation cue. At >=85% fill the bar enters a NEAR-CAP tier — a subtle
+    // warning tint (NOT red; "footer earns red / calm header"), telling the user lore is about to
+    // be trimmed BEFORE a cut actually happens. Only meaningful when a real cap is configured.
+    const _tokenNearCap = !!budget && pct >= 85;
+    $barContainer.toggleClass('dle-budget-near', _tokenNearCap);
     $drawer.find('.dle-token-bar').css('width', `${pct}%`);
     // B2: soft, non-alarm note ONLY when the budget actually cost lore — i.e. an entry was
     // truncated to fit. Neutral copy; no alarm verbs, no red/hatch/glow. Signal from
@@ -226,6 +231,9 @@ export function renderStatusZone() {
     $entriesBarContainer.attr('aria-valuenow', injectedNum).attr('aria-valuemax', maxEntries);
     // B1/B4: header entries bar never goes red. Clear legacy hazard classes; never re-add.
     $entriesBarContainer.removeClass('dle-budget-high dle-budget-critical');
+    // Wave C: same calm NEAR-CAP cue as the token bar — >=85% of the entry cap.
+    const _entriesNearCap = !!maxEntries && entriesPct >= 85;
+    $entriesBarContainer.toggleClass('dle-budget-near', _entriesNearCap);
     $drawer.find('.dle-entries-bar').css('width', `${entriesPct}%`);
     const _outletSuffix = outletNum > 0 ? ` (+${outletNum} outlet)` : '';
     const entriesLabel = maxEntries

@@ -11,6 +11,7 @@ import { callGenericPopup, POPUP_TYPE } from '../../../../../popup.js';
 import { classifyError } from '../../core/utils.js';
 import { ensureIndexFresh } from '../vault/vault.js';
 import { fuzzyTitleMatchAll } from '../helpers.js';
+import { trf } from '../i18n/i18n.js';
 
 /**
  * Refresh the vault index, surfacing the canonical "Could not refresh vault"
@@ -29,7 +30,7 @@ export async function ensureFreshOrToast(cmdName) {
         await ensureIndexFresh();
         return true;
     } catch (err) {
-        toastr.error(`Could not refresh vault: ${classifyError(err)}`, 'DeepLore Enhanced');
+        toastr.error(trf('dle_cmd_refresh_error_toast', classifyError(err)), 'DeepLore Enhanced');
         console.error(`[DLE] ensureIndexFresh failed in ${cmdName}:`, err);
         return false;
     }
@@ -57,7 +58,7 @@ export async function resolveEntryByName(name, candidates, { commandLabel }) {
     const titles = candidates.map(c => c.title);
     const matches = fuzzyTitleMatchAll(name, titles, 0.6);
     if (matches.length === 0) {
-        toastr.warning(`No entry matching "${name}".`, 'DeepLore Enhanced');
+        toastr.warning(trf('dle_helper_resolveentrybyname_nomatch_toast', name), 'DeepLore Enhanced');
         return null;
     }
     if (matches.length === 1) {

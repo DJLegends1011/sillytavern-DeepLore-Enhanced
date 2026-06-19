@@ -94,7 +94,7 @@ import {
     getCurrent as getCurrentVerdictForRender,
     clearChatIdb,
 } from './src/verdict/verdict-store.js';
-import { tr } from './src/i18n/i18n.js';
+import { tr, trf } from './src/i18n/i18n.js';
 
 // ============================================================================
 // BUG-063: Lifecycle / teardown infrastructure.
@@ -1434,7 +1434,7 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
                 if (ratio > 0.20 && ratio > lastWarningRatio + 0.05) {
                     const pct = Math.round(ratio * 100);
                     toastr.warning(
-                        `Your lore uses ${pct}% of your context window (~${totalTokens} tokens, ${injectedCount} entries). You can set a token budget in Settings to manage this.`,
+                        trf('dle_warn_context_usage', pct, totalTokens, injectedCount),
                         'DeepLore Enhanced',
                         { preventDuplicates: true, timeOut: 8000 },
                     );

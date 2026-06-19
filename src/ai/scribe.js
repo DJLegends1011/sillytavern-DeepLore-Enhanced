@@ -24,6 +24,7 @@ import {
 import { dedupError, dedupWarning } from '../toast-dedup.js';
 import { pushEvent } from '../diagnostics/interceptors.js';
 import { resolvePromptOrOverride } from '../prompts/prompt-store.js';
+import { trf } from '../i18n/i18n.js';
 
 // Scribe default prompt moved to src/i18n/prompts/en.js as SCRIBE_PROMPT
 // and resolved at call time via getPrompt('SCRIBE_PROMPT'). See the
@@ -207,7 +208,7 @@ export async function runScribe(customPrompt) {
                 saveMetadataDebounced();
             }
             pushEvent('scribe', { action: 'completed', chatLength: chatLenAtWrite });
-            toastr.success(`Session note saved: ${filename}`, 'DeepLore Enhanced', { timeOut: 5000 });
+            toastr.success(trf('dle_scribe_toast_saved', filename), 'DeepLore Enhanced', { timeOut: 5000 });
             if (epoch !== chatEpoch) {
                 if (getSettings().debugMode) console.log('[DLE] Scribe: chat changed before reindex, skipping buildIndex');
                 return;
@@ -218,7 +219,7 @@ export async function runScribe(customPrompt) {
                 // until the next manual refresh.
                 try {
                     toastr.warning(
-                        `Session note saved, but reindex failed: ${reidxErr?.message || 'unknown error'}. Refresh manually from the drawer.`,
+                        trf('dle_scribe_toast_reindex_failed', reidxErr?.message || 'unknown error'),
                         'DeepLore Enhanced',
                         { timeOut: 10000 },
                     );

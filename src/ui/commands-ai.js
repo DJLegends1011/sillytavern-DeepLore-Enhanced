@@ -19,6 +19,7 @@ import { runAutoSuggest, showSuggestionPopup } from '../ai/auto-suggest.js';
 import { optimizeEntryKeys, showOptimizePopup } from './popups.js';
 import { parseRange, summarizeRange, rollbackSummary, listSummaries } from '../ai/summarize.js';
 import { ensureFreshOrToast, resolveEntryByName } from './commands-shared.js';
+import { tr, trf } from '../i18n/i18n.js';
 
 export function registerAiCommands() {
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
@@ -31,13 +32,13 @@ export function registerAiCommands() {
             }
             const name = (entryName || '').trim();
             if (!name) {
-                toastr.info('Usage: /dle-optimize-keys <entry name>', 'DeepLore Enhanced');
+                toastr.info(tr('dle_cmd_optimizekeys_usage_toast'), 'DeepLore Enhanced');
                 return '';
             }
             // Shared fuzzy resolver so a typo / partial name doesn't drop on the floor.
             const entry = await resolveEntryByName(name, vaultIndex, { commandLabel: 'Optimize keys' });
             if (!entry) return '';
-            const loadingToast = toastr.info(`Optimizing keywords for "${entry.title}"...`, 'DeepLore Enhanced', { timeOut: 0, extendedTimeOut: 0 });
+            const loadingToast = toastr.info(trf('dle_cmd_optimizekeys_loading_toast', entry.title), 'DeepLore Enhanced', { timeOut: 0, extendedTimeOut: 0 });
             try {
                 const result = await optimizeEntryKeys(entry);
                 toastr.clear(loadingToast);
@@ -61,10 +62,10 @@ export function registerAiCommands() {
 
     const newloreCallback = async () => {
         if (!chat || chat.length === 0) {
-            toastr.info('No active chat.', 'DeepLore Enhanced');
+            toastr.info(tr('dle_cmd_newlore_nochat_toast'), 'DeepLore Enhanced');
             return '';
         }
-        const loadingToast = toastr.info('Analyzing chat for new entries...', 'DeepLore Enhanced', { timeOut: 0, extendedTimeOut: 0 });
+        const loadingToast = toastr.info(tr('dle_cmd_newlore_analyzing_toast'), 'DeepLore Enhanced', { timeOut: 0, extendedTimeOut: 0 });
         try {
             const suggestions = await runAutoSuggest();
             toastr.clear(loadingToast);
@@ -94,16 +95,16 @@ export function registerAiCommands() {
         name: 'dle-scribe',
         callback: async (_args, userPrompt) => {
             if (scribeInProgress) {
-                toastr.warning('A session summary is already being written. Wait for it to finish.', 'DeepLore Enhanced');
+                toastr.warning(tr('dle_cmd_scribe_inprogress_toast'), 'DeepLore Enhanced');
                 return '';
             }
             // BUG-AUDIT-H23: missing scribeFolder would write to "undefined/".
             const settings = getSettings();
             if (!settings.scribeFolder) {
-                toastr.warning('Session Scribe folder is not set. Configure it in Settings → Features → Session Scribe.', 'DeepLore Enhanced');
+                toastr.warning(tr('dle_cmd_scribe_nofolder_toast'), 'DeepLore Enhanced');
                 return '';
             }
-            toastr.info('Writing session note...', 'DeepLore Enhanced');
+            toastr.info(tr('dle_cmd_scribe_writing_toast'), 'DeepLore Enhanced');
             await runScribe(userPrompt?.trim() || '');
             return 'Session note written.';
         },
@@ -174,7 +175,7 @@ export function registerAiCommands() {
             return '';
             } catch (err) {
                 console.warn('[DLE] /dle-review failed:', err);
-                toastr.error('Couldn\'t send your lore for review. Check your AI connection and try again.', 'DeepLore Enhanced');
+                toastr.error(tr('dle_cmd_review_error_msg'), 'DeepLore Enhanced');
                 return '';
             }
         },
@@ -198,7 +199,7 @@ export function registerAiCommands() {
 
             const missingSummary = vaultIndex.filter(e => !e.summary || !e.summary.trim());
             if (missingSummary.length === 0) {
-                toastr.success('All entries already have summaries.', 'DeepLore Enhanced');
+                toastr.success(tr('dle_cmd_summarize_allhave_toast'), 'DeepLore Enhanced');
                 return '';
             }
 
@@ -230,7 +231,7 @@ export function registerAiCommands() {
         name: 'dle-librarian',
         callback: async (_args, subcommand) => {
             if (!getSettings().librarianEnabled) {
-                toastr.warning('Librarian is disabled. Enable it in DeepLore Enhanced settings.', 'DeepLore Enhanced');
+                toastr.warning(tr('dle_cmd_librarian_disabled_toast'), 'DeepLore Enhanced');
                 return '';
             }
             const { openLibrarianPopup } = await import('../librarian/librarian-review.js');
@@ -282,12 +283,12 @@ export function registerAiCommands() {
         name: 'dle-summarize-range',
         callback: async (_args, rangeArg) => {
             if (!chat || chat.length === 0) {
-                toastr.info('No active chat.', 'DeepLore Enhanced');
+                toastr.info(tr('dle_cmd_summarizerange_nochat_toast'), 'DeepLore Enhanced');
                 return '';
             }
             const range = parseRange(rangeArg || '', chat.length);
             if (!range) {
-                toastr.warning('Usage: /dle-summarize-range <start-end> | <N-> | <-N> | <N>. Examples: 5-15, 10- (from 10 to end), -8 (last 8), 7 (just message 7).', 'DeepLore Enhanced');
+                toastr.warning(tr('dle_cmd_summarizerange_usage_toast'), 'DeepLore Enhanced');
                 return '';
             }
             const loading = toastr.info(`Summarizing messages ${range.start}–${range.end}...`, 'DeepLore Enhanced', { timeOut: 0, extendedTimeOut: 0 });
@@ -302,7 +303,7 @@ export function registerAiCommands() {
                 return result.summaryId;
             } catch (err) {
                 toastr.clear(loading);
-                toastr.error(`Summarize failed: ${err.message}`, 'DeepLore Enhanced');
+                toastr.error(trf('dle_cmd_summarizerange_error_msg', err.message), 'DeepLore Enhanced');
                 return '';
             }
         },

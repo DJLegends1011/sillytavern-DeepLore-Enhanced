@@ -18,6 +18,7 @@ import { extractAiResponseClient, stripObsidianSyntax } from '../helpers.js';
 import { getWriterVisibleEntries, chatEpoch, tryAcquireHalfOpenProbe, recordAiSuccess, recordAiFailure, releaseHalfOpenProbe } from '../state.js';
 import { ensureIndexFresh, buildIndex } from '../vault/vault.js';
 import { pushEvent } from '../diagnostics/interceptors.js';
+import { tr, trf } from '../i18n/i18n.js';
 import { resolvePromptOrOverride } from '../prompts/prompt-store.js';
 
 // Auto-Suggest default prompt moved to src/i18n/prompts/en.js as
@@ -201,7 +202,7 @@ async function writeSuggestionToVault(s, settings) {
  */
 export async function showSuggestionPopup(suggestions) {
     if (!suggestions || suggestions.length === 0) {
-        toastr.info('No new entries suggested.', 'DeepLore Enhanced');
+        toastr.info(tr('dle_suggest_toast_none'), 'DeepLore Enhanced');
         return;
     }
 
@@ -218,7 +219,7 @@ export async function showSuggestionPopup(suggestions) {
         for (const s of suggestions) {
             // Stale-chat bail: same epoch contract as per-card Accept.
             if (popupEpoch !== chatEpoch) {
-                toastr.warning('Chat changed — remaining suggestions skipped.', 'DeepLore Enhanced');
+                toastr.warning(tr('dle_suggest_toast_chat_changed'), 'DeepLore Enhanced');
                 break;
             }
             const r = await writeSuggestionToVault(s, settings);
@@ -228,20 +229,20 @@ export async function showSuggestionPopup(suggestions) {
         const failures = results.filter(r => !r.ok);
         if (successes.length > 0) {
             const failNote = failures.length > 0 ? `, ${failures.length} failed: ${failures.map(f => f.title).join(', ')}` : '';
-            toastr.success(`Wrote ${successes.length}/${results.length}${failNote}`, 'DeepLore Enhanced');
+            toastr.success(trf('dle_suggest_toast_batch_success', successes.length, results.length, failNote), 'DeepLore Enhanced');
             // Reindex once at end (per-card flow does one per accept).
             try { await buildIndex(); } catch (reidxErr) {
                 console.warn('[DLE] Auto-suggest batch reindex failed:', reidxErr?.message);
                 try {
                     toastr.warning(
-                        `Entries saved, but reindex failed: ${reidxErr?.message || 'unknown error'}. Refresh manually from the drawer.`,
+                        trf('dle_suggest_toast_batch_reindex_failed', reidxErr?.message || 'unknown error'),
                         'DeepLore Enhanced',
                         { timeOut: 10000 },
                     );
                 } catch { /* toastr unavailable */ }
             }
         } else if (failures.length > 0) {
-            toastr.error(`All ${failures.length} writes failed. Check vault connection.`, 'DeepLore Enhanced');
+            toastr.error(trf('dle_suggest_toast_batch_all_failed', failures.length), 'DeepLore Enhanced');
         }
         return;
     }
@@ -303,7 +304,7 @@ export async function showSuggestionPopup(suggestions) {
                     if (this.disabled) return;
                     // BUG-272: chat switched since suggestions were generated — refuse to write.
                     if (popupEpoch !== chatEpoch) {
-                        toastr.warning('Chat changed — these suggestions are no longer valid.', 'DeepLore Enhanced');
+                        toastr.warning(tr('dle_suggest_toast_stale_chat'), 'DeepLore Enhanced');
                         this.disabled = true;
                         return;
                     }
@@ -347,14 +348,14 @@ ${safeContent}`;
                             card.classList.add('dle-suggest-card--accepted');
                             this.disabled = true;
                             this.textContent = 'Accepted';
-                            toastr.success(`Created: ${s.title}`, 'DeepLore Enhanced');
+                            toastr.success(trf('dle_suggest_toast_created', s.title), 'DeepLore Enhanced');
                             try { await buildIndex(); } catch (reidxErr) {
                                 console.warn('[DLE] Auto-suggest reindex after write failed:', reidxErr?.message);
                                 // BUG-AUDIT: without surfacing this, the new entry is
                                 // unretrievable until the next manual refresh.
                                 try {
                                     toastr.warning(
-                                        `Entry saved, but reindex failed: ${reidxErr?.message || 'unknown error'}. Refresh manually from the drawer.`,
+                                        trf('dle_suggest_toast_reindex_failed_single', reidxErr?.message || 'unknown error'),
                                         'DeepLore Enhanced',
                                         { timeOut: 10000 },
                                     );
@@ -362,7 +363,7 @@ ${safeContent}`;
                             }
                         } else {
                             console.warn('[DLE] Auto-suggest write failed:', data && data.error);
-                            toastr.error('Couldn\'t save that entry to your vault.', 'DeepLore Enhanced');
+                            toastr.error(tr('dle_suggest_toast_write_fail_single'), 'DeepLore Enhanced');
                         }
                     } catch (err) {
                         toastr.error(classifyError(err), 'DeepLore Enhanced');

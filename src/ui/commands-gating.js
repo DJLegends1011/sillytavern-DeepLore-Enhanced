@@ -11,6 +11,7 @@ import { vaultIndex, fieldDefinitions, folderList, notifyGatingChanged, notifyPi
 import { DEFAULT_FIELD_DEFINITIONS } from '../fields.js';
 import { normalizePinBlock, matchesPinBlock } from '../helpers.js';
 import { ensureFreshOrToast, resolveEntryByName } from './commands-shared.js';
+import { tr, trf, trPlural } from '../i18n/i18n.js';
 
 export function registerGatingCommands() {
     // ── Per-Chat Pin/Block ──
@@ -19,13 +20,13 @@ export function registerGatingCommands() {
         name: 'dle-pin',
         callback: async (_args, entryName) => {
             const name = (entryName || '').trim();
-            if (!name) { toastr.info('Pin which entry? Try: /dle-pin Eris', 'DeepLore Enhanced'); return ''; }
+            if (!name) { toastr.info(tr('dle_cmd_pin_which_toast'), 'DeepLore Enhanced'); return ''; }
             if (!await ensureFreshOrToast('/dle-pin')) return '';
             const entry = await resolveEntryByName(name, vaultIndex, { commandLabel: 'Pin' });
             if (!entry) return '';
             if (!chat_metadata.deeplore_pins) chat_metadata.deeplore_pins = [];
             if (chat_metadata.deeplore_pins.some(p => matchesPinBlock(p, entry))) {
-                toastr.info(`"${entry.title}" is already pinned.`, 'DeepLore Enhanced'); return '';
+                toastr.info(trf('dle_cmd_pin_alreadypinned_toast', entry.title), 'DeepLore Enhanced'); return '';
             }
             if (chat_metadata.deeplore_blocks) {
                 chat_metadata.deeplore_blocks = chat_metadata.deeplore_blocks.filter(b => !matchesPinBlock(b, entry));
@@ -33,7 +34,7 @@ export function registerGatingCommands() {
             chat_metadata.deeplore_pins.push({ title: entry.title, vaultSource: entry.vaultSource || null });
             saveMetadataDebounced();
             notifyPinBlockChanged();
-            toastr.success(`Pinned "${entry.title}" for this chat.`, 'DeepLore Enhanced');
+            toastr.success(trf('dle_toast_entry_pinned', entry.title), 'DeepLore Enhanced');
             return '';
         },
         unnamedArgumentList: [SlashCommandArgument.fromProps({
@@ -64,7 +65,7 @@ export function registerGatingCommands() {
             const removed = normalizePinBlock(removedItem).title;
             saveMetadataDebounced();
             notifyPinBlockChanged();
-            toastr.success(`Unpinned "${removed}".`, 'DeepLore Enhanced');
+            toastr.success(trf('dle_toast_entry_unpinned', removed), 'DeepLore Enhanced');
             return '';
         },
         unnamedArgumentList: [SlashCommandArgument.fromProps({
@@ -81,13 +82,13 @@ export function registerGatingCommands() {
         name: 'dle-block',
         callback: async (_args, entryName) => {
             const name = (entryName || '').trim();
-            if (!name) { toastr.info('Block which entry? Try: /dle-block Eris', 'DeepLore Enhanced'); return ''; }
+            if (!name) { toastr.info(tr('dle_cmd_block_which_toast'), 'DeepLore Enhanced'); return ''; }
             if (!await ensureFreshOrToast('/dle-block')) return '';
             const entry = await resolveEntryByName(name, vaultIndex, { commandLabel: 'Block' });
             if (!entry) return '';
             if (!chat_metadata.deeplore_blocks) chat_metadata.deeplore_blocks = [];
             if (chat_metadata.deeplore_blocks.some(b => matchesPinBlock(b, entry))) {
-                toastr.info(`"${entry.title}" is already blocked.`, 'DeepLore Enhanced'); return '';
+                toastr.info(trf('dle_cmd_block_alreadyblocked_toast', entry.title), 'DeepLore Enhanced'); return '';
             }
             if (chat_metadata.deeplore_pins) {
                 chat_metadata.deeplore_pins = chat_metadata.deeplore_pins.filter(p => !matchesPinBlock(p, entry));
@@ -95,7 +96,7 @@ export function registerGatingCommands() {
             chat_metadata.deeplore_blocks.push({ title: entry.title, vaultSource: entry.vaultSource || null });
             saveMetadataDebounced();
             notifyPinBlockChanged();
-            toastr.success(`Blocked "${entry.title}" for this chat.`, 'DeepLore Enhanced');
+            toastr.success(trf('dle_toast_entry_blocked', entry.title), 'DeepLore Enhanced');
             return '';
         },
         unnamedArgumentList: [SlashCommandArgument.fromProps({
@@ -125,7 +126,7 @@ export function registerGatingCommands() {
             const removed = normalizePinBlock(removedItem).title;
             saveMetadataDebounced();
             notifyPinBlockChanged();
-            toastr.success(`Unblocked "${removed}".`, 'DeepLore Enhanced');
+            toastr.success(trf('dle_toast_entry_unblocked', removed), 'DeepLore Enhanced');
             return '';
         },
         unnamedArgumentList: [SlashCommandArgument.fromProps({
@@ -144,7 +145,7 @@ export function registerGatingCommands() {
             const pins = chat_metadata.deeplore_pins || [];
             const blocks = chat_metadata.deeplore_blocks || [];
             if (pins.length === 0 && blocks.length === 0) {
-                toastr.info('No per-chat pins or blocks.', 'DeepLore Enhanced');
+                toastr.info(tr('dle_cmd_pins_none_toast'), 'DeepLore Enhanced');
                 return '';
             }
             let html = '<div class="dle-popup">';
@@ -263,7 +264,7 @@ export function registerGatingCommands() {
                         if (selected) {
                             toastr.success(`${label} set to "${selected}" for this chat.`, 'DeepLore Enhanced');
                         } else {
-                            toastr.success(`${label} cleared.`, 'DeepLore Enhanced');
+                            toastr.success(trf('dle_cmd_clearfield_success_toast', label), 'DeepLore Enhanced');
                         }
                         document.querySelector('.popup-button-ok')?.click();
                     });
@@ -430,9 +431,9 @@ export function registerGatingCommands() {
                         saveMetadataDebounced();
                         notifyGatingChanged();
                         if (selected.size > 0) {
-                            toastr.success(`Characters present: ${[...selected].join(', ')}`, 'DeepLore Enhanced');
+                            toastr.success(trf('dle_cmd_setcharacters_success_toast', [...selected].join(', ')), 'DeepLore Enhanced');
                         } else {
-                            toastr.success('Present characters cleared.', 'DeepLore Enhanced');
+                            toastr.success(tr('dle_cmd_setcharacters_cleared_toast'), 'DeepLore Enhanced');
                         }
                     },
                 });
@@ -442,7 +443,7 @@ export function registerGatingCommands() {
             ctx.character_present = v.split(',').map(c => c.trim()).filter(Boolean);
             saveMetadataDebounced();
             notifyGatingChanged();
-            toastr.success(`Characters present: ${ctx.character_present.join(', ')}`, 'DeepLore Enhanced');
+            toastr.success(trf('dle_cmd_setcharacters_success_toast', ctx.character_present.join(', ')), 'DeepLore Enhanced');
             return '';
         },
         unnamedArgumentList: [SlashCommandArgument.fromProps({
@@ -483,7 +484,7 @@ export function registerGatingCommands() {
             const value = parts.slice(1).join(' ').trim();
 
             if (!fieldName) {
-                toastr.info('Set which field? Try: /dle-set-field era Modern (or run with just the field name to browse values).', 'DeepLore Enhanced');
+                toastr.info(tr('dle_cmd_setfield_which_toast'), 'DeepLore Enhanced');
                 return '';
             }
 
@@ -532,7 +533,7 @@ export function registerGatingCommands() {
         callback: async (_args, fieldName) => {
             const name = (fieldName || '').trim();
             if (!name) {
-                toastr.info('Clear which field? Try: /dle-clear-field era', 'DeepLore Enhanced');
+                toastr.info(tr('dle_cmd_clearfield_which_toast'), 'DeepLore Enhanced');
                 return '';
             }
 
@@ -551,7 +552,7 @@ export function registerGatingCommands() {
             }
             saveMetadataDebounced();
             notifyGatingChanged();
-            toastr.success(`${fd.label} cleared.`, 'DeepLore Enhanced');
+            toastr.success(trf('dle_cmd_clearfield_success_toast', fd.label), 'DeepLore Enhanced');
             return '';
         },
         unnamedArgumentList: [SlashCommandArgument.fromProps({
@@ -581,12 +582,12 @@ export function registerGatingCommands() {
                 }
             }
             if (cleared === 0) {
-                toastr.info('No active gating filters to clear.', 'DeepLore Enhanced');
+                toastr.info(tr('dle_cmd_clearallcontext_none_toast'), 'DeepLore Enhanced');
                 return '';
             }
             saveMetadataDebounced();
             notifyGatingChanged();
-            toastr.success(`Cleared ${cleared} gating filter${cleared !== 1 ? 's' : ''}.`, 'DeepLore Enhanced');
+            toastr.success(trPlural('dle_toast_gating_cleared', cleared), 'DeepLore Enhanced');
             return `Cleared ${cleared} fields`;
         },
         helpString: 'Clear all active gating context fields (era, location, scene, characters, custom fields) at once.',
@@ -603,7 +604,7 @@ export function registerGatingCommands() {
 
             if (!value) {
                 if (folderList.length === 0) {
-                    toastr.info('No folders found in the vault. All entries are at the root level.', 'DeepLore Enhanced');
+                    toastr.info(tr('dle_cmd_setfolder_nofolders_toast'), 'DeepLore Enhanced');
                     return '';
                 }
                 const current = chat_metadata?.deeplore_folder_filter || [];
@@ -630,7 +631,7 @@ export function registerGatingCommands() {
                                     chat_metadata.deeplore_folder_filter = null;
                                     saveMetadataDebounced();
                                     notifyGatingChanged();
-                                    toastr.success('Folder filter cleared — all folders active.', 'DeepLore Enhanced');
+                                    toastr.success(tr('dle_cmd_setfolder_cleared_toast'), 'DeepLore Enhanced');
                                     document.querySelector('.popup-button-ok')?.click();
                                     return;
                                 }
@@ -656,7 +657,7 @@ export function registerGatingCommands() {
             // Space-separated, with optional quotes for paths containing spaces.
             const folders = value.match(/"[^"]+"|[^\s]+/g)?.map(f => f.replace(/"/g, '').trim()).filter(Boolean) || [];
             if (folders.length === 0) {
-                toastr.info('Set which folder? Try: /dle-set-folder Characters (run with no args to browse folders).', 'DeepLore Enhanced');
+                toastr.info(tr('dle_cmd_setfolder_which_toast'), 'DeepLore Enhanced');
                 return '';
             }
 
@@ -667,7 +668,7 @@ export function registerGatingCommands() {
                 toastr.warning(`Unknown folder${unknown.length > 1 ? 's' : ''}: ${unknown.join(', ')}`, 'DeepLore Enhanced');
             }
             if (valid.length === 0) {
-                toastr.warning('No matching folders found. Use /dle-set-folder with no args to see available folders.', 'DeepLore Enhanced');
+                toastr.warning(tr('dle_cmd_setfolder_nomatch_toast'), 'DeepLore Enhanced');
                 return '';
             }
 
@@ -694,13 +695,13 @@ export function registerGatingCommands() {
         name: 'dle-clear-folder',
         callback: async () => {
             if (!chat_metadata?.deeplore_folder_filter?.length) {
-                toastr.info('No folder filter is active.', 'DeepLore Enhanced');
+                toastr.info(tr('dle_cmd_clearfolder_nofilter_toast'), 'DeepLore Enhanced');
                 return '';
             }
             chat_metadata.deeplore_folder_filter = null;
             saveMetadataDebounced();
             notifyGatingChanged();
-            toastr.success('Folder filter cleared — all folders active.', 'DeepLore Enhanced');
+            toastr.success(tr('dle_cmd_clearfolder_cleared_toast'), 'DeepLore Enhanced');
             return '';
         },
         helpString: 'Clear the folder filter, allowing entries from all folders to be injected.',

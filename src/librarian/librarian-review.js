@@ -12,6 +12,7 @@ import { getContext } from '../../../../../extensions.js';
 import { accountStorage } from '../../../../../util/AccountStorage.js';
 import { chatEpoch } from '../state.js';
 import { buildIndex } from '../vault/vault.js';
+import { tr, trf } from '../i18n/i18n.js';
 import { createSession, sendMessage, editMessage, regenerateResponse, updateGapStatus, saveSessionState, loadSessionState, clearSessionState, restoreSession, pickFlavorIntro } from './librarian-session.js';
 import { getSessionActivityLog, buildLibrarianActivityFeed } from './librarian-tools.js';
 import { abortWith } from '../diagnostics/interceptors.js';
@@ -1164,7 +1165,7 @@ async function writeToVault(session, opts = {}) {
     const settings = getSettings();
     const draft = session.draftState;
     if (!draft || !draft.title) {
-        toastr.warning('No draft to write. Fill in the entry fields first.', 'DeepLore Enhanced');
+        toastr.warning(tr('dle_lib_toast_no_draft'), 'DeepLore Enhanced');
         setStatus('Needs a title.', 'err');
         return false;
     }
@@ -1235,7 +1236,7 @@ async function writeToVault(session, opts = {}) {
     try {
         const data = await writeNote(vault.host, vault.port, vault.apiKey, filename, fileContent, !!vault.https);
         if (data.ok) {
-            toastr.success(`Created: ${draft.title} (${filename})`, 'DeepLore Enhanced');
+            toastr.success(trf('dle_lib_toast_written', draft.title, filename), 'DeepLore Enhanced');
             setStatus(`Written to ${filename}`, 'ok');
 
             if (session.gapRecord?.id) {
@@ -1262,7 +1263,7 @@ async function writeToVault(session, opts = {}) {
                 console.warn('[DLE] Post-write index rebuild failed:', err?.message);
                 try {
                     toastr.warning(
-                        `Entry saved, but reindex failed: ${err?.message || 'unknown error'}. Refresh manually from the drawer.`,
+                        trf('dle_lib_toast_reindex_failed', err?.message || 'unknown error'),
                         'DeepLore Enhanced',
                         { timeOut: 10000 },
                     );
@@ -1271,7 +1272,7 @@ async function writeToVault(session, opts = {}) {
             return true;
         } else {
             console.warn('[DLE] Librarian write failed:', data && data.error);
-            toastr.error('Couldn\'t save that entry to your vault.', 'DeepLore Enhanced');
+            toastr.error(tr('dle_lib_toast_write_failed'), 'DeepLore Enhanced');
             setStatus('Write failed.', 'err');
             return false;
         }

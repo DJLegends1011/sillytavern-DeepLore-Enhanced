@@ -27,13 +27,14 @@ import { runPipeline } from '../pipeline/pipeline.js';
 import { ensureFreshOrToast } from './commands-shared.js';
 import { showSourcesPopup } from './cartographer.js';
 import { runSimulation, showSimulationPopup, buildCopyButton, attachCopyHandler } from './popups.js';
+import { tr } from '../i18n/i18n.js';
 
 export function registerPipelineCommands() {
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'dle-simulate',
         callback: async () => {
             if (!chat || chat.length === 0) {
-                toastr.info('No active chat.', 'DeepLore Enhanced');
+                toastr.info(tr('dle_cmd_simulate_nochat_toast'), 'DeepLore Enhanced');
                 return '';
             }
             if (!await ensureFreshOrToast('/dle-simulate')) return '';
@@ -41,7 +42,7 @@ export function registerPipelineCommands() {
                 toastr.info(NO_ENTRIES_MSG, 'DeepLore Enhanced');
                 return '';
             }
-            toastr.info('Running activation simulation...', 'DeepLore Enhanced', { timeOut: 2000 });
+            toastr.info(tr('dle_cmd_simulate_running_toast'), 'DeepLore Enhanced', { timeOut: 2000 });
             const timeline = runSimulation(chat);
             showSimulationPopup(timeline);
             return '';
@@ -55,7 +56,7 @@ export function registerPipelineCommands() {
         aliases: ['dle-context'],
         callback: async () => {
             if (!chat || chat.length === 0) {
-                toastr.info('No active chat.', 'DeepLore Enhanced');
+                toastr.info(tr('dle_toast_no_active_chat'), 'DeepLore Enhanced');
                 return '';
             }
             if (generationLock) {
@@ -141,7 +142,7 @@ export function registerPipelineCommands() {
         callback: async () => {
             const _inspectTrace = _currentVerdictForChat()?.trace ?? null;
             if (!_inspectTrace) {
-                toastr.info('No inspection data available yet. Send a chat message first so DeepLore can process entries.', 'DeepLore Enhanced');
+                toastr.info(tr('dle_cmd_inspect_nodata_toast'), 'DeepLore Enhanced');
                 return '';
             }
             const t = _inspectTrace;

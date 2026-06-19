@@ -9,6 +9,7 @@ import { vaultIndex, chatInjectionCounts, trackerKey, mentionWeights, fieldDefin
 import { DEFAULT_FIELD_DEFINITIONS } from '../fields.js';
 import { ensureIndexFresh } from '../vault/vault.js';
 import { saveSettingsDebounced } from '../../../../../../script.js';
+import { trf } from '../i18n/i18n.js';
 
 import { initPhysics } from './graph-physics.js';
 import { initRender } from './graph-render.js';
@@ -45,7 +46,7 @@ export async function showGraphPopup() {
 
     if (graphEntries.length > 500) {
         toastr.warning(
-            `Large graph (${graphEntries.length} entries). The graph may be slow to render. Consider filtering by tag first.`,
+            trf('dle_graph_toast_large', graphEntries.length),
             'DeepLore Enhanced',
             { timeOut: 8000, preventDuplicates: true },
         );
@@ -79,7 +80,7 @@ export async function showGraphPopup() {
     if (titleCollisions.length > 0) {
         dbg('Title collisions detected:', titleCollisions.map(c => `"${c.title}" (idx ${c.existing} vs ${c.duplicate})`));
         toastr.warning(
-            `${titleCollisions.length} title collision(s) detected (case-insensitive). Duplicate entries may not display correctly in the graph.`,
+            trf('dle_graph_toast_collisions', titleCollisions.length),
             'DeepLore Enhanced',
             { timeOut: 8000, preventDuplicates: true },
         );

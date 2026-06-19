@@ -1,7 +1,7 @@
 import { chat_metadata, getCurrentChatId } from '../../../../../../script.js';
 import { escapeHtml } from '../../../../../utils.js';
 import { getSettings } from '../../settings.js';
-import { tr } from '../i18n/i18n.js';
+import { tr, trf } from '../i18n/i18n.js';
 import {
     vaultIndex,
     generationLock, indexing,
@@ -19,7 +19,7 @@ function _currentVerdictForChat() {
 }
 import { diffVerdicts } from '../verdict/verdict-pure.js';
 import { DEFAULT_FIELD_DEFINITIONS } from '../fields.js';
-import { buildObsidianURI, categorizeRejections, resolveEntryVault, normalizePinBlock, comparePriority } from '../helpers.js';
+import { buildObsidianURI, categorizeRejections, resolveEntryVault, normalizePinBlock, comparePriority, parseMatchReason } from '../helpers.js';
 import {
     ds, BROWSE_ROW_HEIGHT, BROWSE_OVERSCAN,
     getMatchLabel, computeEntryTemperatures,
@@ -35,6 +35,41 @@ let _cachedFieldValues = null;
 let _cachedFieldValuesIndexLen = -1;
 // Hash of last renderInjectionTab inputs — skip render when unchanged.
 let _lastInjectionRenderHash = null;
+
+// Wave C: render-site pipeline-stage ranking for the "Filtered Out" groups. The shared
+// categorizeRejections() contract is consumed by the cartographer + browse popups too, so we
+// MUST NOT reorder it there — we sort a COPY here only. Lower rank = earlier in the pipeline.
+// Order mirrors docs/generation-pipeline.md: match → AI-select → contextual gating → cooldown →
+// requires/excludes(gated_out) → strip-dedup → budget → probability → warmup. (refine_key_blocked
+// is a match-stage refinement, so it sits right after AI-select.) Unknown stages sort last.
+const _WHY_STAGE_RANK = {
+    ai_rejected: 0,
+    refine_key_blocked: 1,
+    contextual_gating: 2,
+    cooldown: 3,
+    gated_out: 4,
+    strip_dedup: 5,
+    budget_cut: 6,
+    probability_skipped: 7,
+    warmup_failed: 8,
+};
+function _whyStageRank(stage) {
+    return Object.prototype.hasOwnProperty.call(_WHY_STAGE_RANK, stage) ? _WHY_STAGE_RANK[stage] : 99;
+}
+
+// Wave C: stage-aware Fix-It pin button copy. Each rejection stage gets a label that names the
+// override the pin performs (i18n keys — values live in locales/dle.*.json). Falls back to the
+// plain "Pin" key for stages without a tailored verb (strip_dedup / probability / warmup / other).
+function _fixItPinLabel(stage) {
+    switch (stage) {
+        case 'cooldown': return tr('dle_fixit_pin_bypass');           // skip the cooldown
+        case 'gated_out': return tr('dle_fixit_pin_override');         // requires/excludes
+        case 'contextual_gating': return tr('dle_fixit_pin_override_gate');
+        case 'budget_cut': return tr('dle_fixit_pin_force');
+        case 'ai_rejected': return tr('dle_fixit_pin_ai_keep');
+        default: return tr('dle_fixit_pin');                           // strip_dedup / probability / warmup / refine
+    }
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // Why? Tab
@@ -61,7 +96,9 @@ export function renderInjectionTab() {
         ds.whyTabFilter || '',
         generationLock ? '1' : '0',
         sources ? sources.map(s => `${s.title}|${s.tokens}|${s.matchedBy}|${s.vaultSource || ''}`).join(';') : 'null',
-        trace ? `${trace.injected?.length ?? 0}:${trace.matched?.length ?? 0}:${trace.aiSelected?.length ?? 0}:${trace.budgetCut?.length ?? 0}` : 'null',
+        // Wave C: keyword-match count feeds the verdict funnel header, so it belongs in the hash.
+        // (The field is keywordMatched — the prior `trace.matched` read was always undefined → 0.)
+        trace ? `${trace.injected?.length ?? 0}:${trace.keywordMatched?.length ?? 0}:${trace.aiSelected?.length ?? 0}:${trace.budgetCut?.length ?? 0}` : 'null',
     ];
     const _hash = _hashParts.join('#');
     if (_hash === _lastInjectionRenderHash) return;
@@ -69,11 +106,13 @@ export function renderInjectionTab() {
     const $list = $drawer.find('.dle-why-list');
     const $empty = $drawer.find('#dle-panel-injection .dle-empty-state');
     const $diff = $drawer.find('.dle-section-diff');
+    const $funnel = $drawer.find('.dle-why-funnel');
     const $whyNotSection = $drawer.find('.dle-why-not-section');
     const $whyNotList = $drawer.find('.dle-why-not-list');
 
     if (!sources || sources.length === 0) {
         $list.empty();
+        $funnel.empty().prop('hidden', true);
         $whyNotSection.removeClass('dle-visible');
         $diff.empty();
         if (generationLock) {
@@ -116,6 +155,33 @@ export function renderInjectionTab() {
     const settings = getSettings();
     const addedTitles = new Set(diff.added.map(s => s.title));
     const removedTitles = new Set(diff.removed.map(s => s.title));
+    // Source-vault chip only earns its space when more than one vault is enabled — single-vault
+    // users get an uncluttered row. (Mirrors the v.enabled !== false convention used elsewhere.)
+    const _multiVault = (settings.vaults || []).filter(v => v.enabled !== false).length > 1;
+
+    // ── Verdict funnel header: N matched → N picked → N injected ──
+    // A quiet pipeline readout derived from the trace already in scope: keywordMatched
+    // (Stage 1 keyword pre-filter), aiSelected (Stage 2 AI pick), injected (final). Only
+    // rendered when a trace exists; in keywords-only mode there is no AI pick, so the
+    // "picked" segment is dropped and the funnel collapses to matched → injected.
+    if (trace) {
+        const matchedN = trace.keywordMatched?.length ?? 0;
+        const pickedN = trace.aiSelected?.length ?? 0;
+        const injectedN = trace.injected?.length ?? sources.length;
+        const hasPick = trace.mode !== 'keywords-only';
+        const arrow = '<span class="dle-funnel-arrow" aria-hidden="true">›</span>';
+        const seg = (n, labelKey) =>
+            `<span class="dle-funnel-seg"><span class="dle-funnel-n">${n}</span> <span class="dle-funnel-label">${escapeHtml(tr(labelKey))}</span></span>`;
+        let funnelHtml = seg(matchedN, 'dle_why_funnel_matched');
+        if (hasPick) funnelHtml += arrow + seg(pickedN, 'dle_why_funnel_picked');
+        funnelHtml += arrow + seg(injectedN, 'dle_why_funnel_injected');
+        const funnelAria = hasPick
+            ? trf('dle_why_funnel_aria', matchedN, pickedN, injectedN)
+            : trf('dle_why_funnel_aria_2', matchedN, injectedN);
+        $funnel.html(funnelHtml).attr('aria-label', funnelAria).prop('hidden', false);
+    } else {
+        $funnel.empty().prop('hidden', true);
+    }
 
     // BUG-AUDIT-H14: title→entry lookup once instead of vaultIndex.find() per entry — O(N+M) vs O(N*M).
     // trackerKey invariant (#50): key on vaultSource:title (not bare title) so cross-vault same-title
@@ -160,7 +226,23 @@ export function renderInjectionTab() {
             h += `<span class="dle-why-tokens" style="color: hsl(${Math.round(tokHue)}, 80%, 50%)" aria-label="${tokVal} tokens">${tokVal} tokens</span>`;
             const whyChatCount = chatInjectionCounts.get(`${src.vaultSource || ''}:${src.title}`) || 0;
             if (whyChatCount > 0) h += `<span class="dle-inject-count" title="Injected ${whyChatCount} times this chat" aria-label="Injected ${whyChatCount} times this chat">${whyChatCount}×</span>`;
-            h += `<span class="dle-why-match" data-match-type="${matchLabel.toLowerCase()}" title="Matched via ${escapeHtml(src.matchedBy || '?')}">${matchLabel}</span>`;
+            // Source-vault chip — only when 2+ vaults enabled (keeps single-vault rows clean).
+            if (_multiVault && src.vaultSource) {
+                h += `<span class="dle-why-vault" title="From vault: ${escapeHtml(src.vaultSource)}" aria-label="From vault ${escapeHtml(src.vaultSource)}"><i class="fa-solid fa-database" aria-hidden="true"></i>${escapeHtml(src.vaultSource)}</span>`;
+            }
+            // Match provenance. Two-stage picks (keyword → AI) render as a KEY › AI breadcrumb so
+            // the two stages read distinctly; everything else is a single chip. Both branches reuse
+            // the existing .dle-why-match theme-derived chip styling (data-match-type drives color).
+            const _matchTitle = `Matched via ${escapeHtml(src.matchedBy || '?')}`;
+            if (parseMatchReason(src.matchedBy).type === 'keyword_ai') {
+                h += `<span class="dle-why-breadcrumb" title="${_matchTitle}" aria-label="${_matchTitle}">`;
+                h += `<span class="dle-why-match" data-match-type="key">KEY</span>`;
+                h += `<span class="dle-why-bc-sep" aria-hidden="true">›</span>`;
+                h += `<span class="dle-why-match" data-match-type="ai">AI</span>`;
+                h += `</span>`;
+            } else {
+                h += `<span class="dle-why-match" data-match-type="${matchLabel.toLowerCase()}" title="${_matchTitle}">${matchLabel}</span>`;
+            }
             if (isNew) h += `<span class="dle-why-new-badge" title="New this message — not injected in previous response" aria-label="New this message — not injected in previous response">NEW</span>`;
             h += `<button class="dle-browse-nav-btn" data-browse-title="${escapeHtml(src.title)}" title="Show in Browse" aria-label="Show ${escapeHtml(src.title)} in Browse tab"><i class="fa-solid fa-arrow-right-to-bracket" aria-hidden="true"></i></button>`;
             h += `</span>`;
@@ -199,11 +281,18 @@ export function renderInjectionTab() {
         // BUG-AUDIT v2.5: trackerKey-shape keys so same-titled cross-vault entries don't collide.
         const injectedKeys = new Set(sources.map(s => `${s.vaultSource || ''}:${(s.title || '').toLowerCase()}`));
         const rejectedGroups = categorizeRejections(trace, injectedKeys);
-        const nonEmpty = rejectedGroups.filter(g => g.entries.length > 0);
+        // Wave C: present groups in PIPELINE ORDER (match → AI-select → gating → cooldown →
+        // requires/excludes → strip-dedup → budget → probability → warmup). Sort a COPY at the
+        // render site — categorizeRejections is shared with the cartographer/popups, so its
+        // emission order must stay untouched. Stable tiebreak on label for deterministic output.
+        const nonEmpty = rejectedGroups
+            .filter(g => g.entries.length > 0)
+            .sort((a, b) => (_whyStageRank(a.stage) - _whyStageRank(b.stage)) || a.label.localeCompare(b.label));
 
         if (nonEmpty.length > 0) {
             let whyNotHtml = '';
             for (const group of nonEmpty) {
+                const fixItLabel = _fixItPinLabel(group.stage);
                 whyNotHtml += `<div class="dle-why-not-group-header" role="heading" aria-level="4" aria-label="Filtered entries — ${escapeHtml(group.label)}">`;
                 whyNotHtml += `<span class="dle-why-not-group-icon">${group.icon}</span> `;
                 whyNotHtml += `<span class="dle-why-not-group-label">${escapeHtml(group.label)}</span>`;
@@ -213,6 +302,10 @@ export function renderInjectionTab() {
                     whyNotHtml += `<div class="dle-why-entry dle-why-not-entry dle-why-not-grouped" role="listitem" aria-label="Filtered out: ${escapeHtml(e.reason)}">`;
                     whyNotHtml += `<span class="dle-why-title dle-muted">${escapeHtml(e.title)}</span>`;
                     whyNotHtml += `<span class="dle-why-meta"><span class="dle-why-match dle-why-not-reason" title="${escapeHtml(e.reason)}" aria-label="${escapeHtml(e.reason)}">${escapeHtml(e.reason)}</span>`;
+                    // Fix-It pin — hover/focus-reveal (CSS), keyboard-reachable. Stage-aware verb.
+                    // Pins by trackerKey (data-title + data-vault); handler in drawer-events.js.
+                    const _fixItAria = trf('dle_fixit_pin_aria', e.title);
+                    whyNotHtml += `<button type="button" class="dle-why-fixit" data-title="${escapeHtml(e.title)}" data-vault="${escapeHtml(e.vaultSource || '')}" title="${escapeHtml(fixItLabel)}" aria-label="${escapeHtml(_fixItAria)}"><i class="fa-solid fa-thumbtack" aria-hidden="true"></i><span class="dle-why-fixit-label">${escapeHtml(fixItLabel)}</span></button>`;
                     whyNotHtml += `<button class="dle-browse-nav-btn" data-browse-title="${escapeHtml(e.title)}" title="Show in Browse" aria-label="Show ${escapeHtml(e.title)} in Browse tab"><i class="fa-solid fa-arrow-right-to-bracket" aria-hidden="true"></i></button></span>`;
                     whyNotHtml += `</div>`;
                 }
@@ -247,10 +340,12 @@ export function updateInjectionCountBadges() {
         if (count > 0) {
             const label = `Injected ${count} times this chat`;
             if ($badge.length === 0) {
-                // Order must match buildWhyHtml — insert before the match-type label.
-                const $matchLabel = $meta.find('.dle-why-match');
+                // Order must match buildWhyHtml — the count sits just before the provenance cluster
+                // (vault chip → breadcrumb/match badge). .first() pins a SINGLE anchor so the
+                // two-segment KEY › AI breadcrumb (two .dle-why-match nodes) can't dupe the badge.
+                const $anchor = $meta.find('.dle-why-vault, .dle-why-breadcrumb, .dle-why-match').first();
                 const badgeHtml = `<span class="dle-inject-count" title="${label}" aria-label="${label}">${count}×</span>`;
-                if ($matchLabel.length) $matchLabel.before(badgeHtml);
+                if ($anchor.length) $anchor.before(badgeHtml);
                 else $meta.append(badgeHtml);
             } else {
                 $badge.text(`${count}×`).attr('title', label).attr('aria-label', label);

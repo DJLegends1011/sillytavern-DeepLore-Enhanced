@@ -37,7 +37,7 @@ import { renderInjectionTab, renderBrowseTab, renderBrowseWindow, renderStatusZo
 import { renderLibrarianTab } from './drawer-render-librarian.js';
 import { hideGap, dismissGap, getHiddenGapIds, persistGaps } from '../librarian/librarian-tools.js';
 import { dedupError, dedupWarning } from '../toast-dedup.js';
-import { trPlural } from '../i18n/i18n.js';
+import { tr, trf, trPlural } from '../i18n/i18n.js';
 
 // ════════════════════════════════════════════════════════════════════════════
 // Helpers
@@ -102,7 +102,14 @@ export function switchTab($drawer, tabName) {
         $p.toggleClass('active', isActive);
     });
 
-    $label.text(TAB_LABELS[tabName] || tabName);
+    // Tab-name split fix: the active-tab label MIRRORS the active tab button's already-localized
+    // .dle-tab-text (which ST's i18n MutationObserver translates via data-i18n). The old
+    // TAB_LABELS[tabName] write was hardcoded English ("Why?") AND fought the observer that set the
+    // label to "Injection" via its own data-i18n — a flip-flop. We removed that data-i18n from the
+    // label in drawer.html so nothing fights this write. TAB_LABELS stays only as a last-resort
+    // fallback if the active button or its text node isn't found.
+    const activeTabText = $drawer.find('.dle-tab.active .dle-tab-text').text();
+    $label.text(activeTabText || TAB_LABELS[tabName] || tabName);
 
     if (ds.browseScrollRAF) {
         cancelAnimationFrame(ds.browseScrollRAF);
@@ -144,15 +151,15 @@ export function wireToolsTab($drawer) {
         // BUG-359: gate on generation lock, indexing, or master-disabled.
         const settings = getSettings();
         if (!settings.enabled) {
-            toastr.warning('DeepLore Enhanced is disabled.', 'DeepLore Enhanced', { timeOut: 2500 });
+            toastr.warning(tr('dle_toast_disabled'), 'DeepLore Enhanced', { timeOut: 2500 });
             return;
         }
         if (generationLock) {
-            toastr.warning('Cannot run tools during lore selection.', 'DeepLore Enhanced', { timeOut: 2500 });
+            toastr.warning(tr('dle_toast_gen_in_progress'), 'DeepLore Enhanced', { timeOut: 2500 });
             return;
         }
         if (indexing) {
-            toastr.warning('Cannot run tools while indexing.', 'DeepLore Enhanced', { timeOut: 2500 });
+            toastr.warning(tr('dle_toast_indexing'), 'DeepLore Enhanced', { timeOut: 2500 });
             return;
         }
         executeCommand(cmd);
@@ -195,7 +202,7 @@ export function wireTabExpand($drawer) {
                     if (typeof msgIdx === 'number' && Number.isFinite(msgIdx)) _opts.msgIdx = msgIdx;
                     showSourcesPopup(sources, _opts);
                 } else {
-                    toastr.info('No lore sources from the last generation. Send a message first.', 'DeepLore Enhanced', { timeOut: 3000 });
+                    toastr.info(tr('dle_toast_no_sources'), 'DeepLore Enhanced', { timeOut: 3000 });
                 }
                 return;
             }
@@ -203,7 +210,7 @@ export function wireTabExpand($drawer) {
             if (cmd) executeCommand(cmd);
         } catch (err) {
             console.error('[DLE] Tab expand error:', err);
-            toastr.error('Failed to expand tab view.', 'DeepLore Enhanced');
+            toastr.error(tr('dle_toast_expand_failed'), 'DeepLore Enhanced');
         }
     });
 }
@@ -230,7 +237,7 @@ export function wireStatusActions($drawer) {
                     console.warn('[DLE] Manual refresh failed:', err?.message);
                     try {
                         toastr.error(
-                            `Vault refresh failed: ${err?.message || 'unknown error'}.`,
+                            trf('dle_toast_refresh_failed', err?.message || 'unknown error'),
                             'DeepLore Enhanced',
                             { timeOut: 10000 },
                         );
@@ -242,13 +249,13 @@ export function wireStatusActions($drawer) {
                 break;
             }
             case 'scribe': {
-                if (generationLock) { toastr.warning('Generation in progress.', 'DeepLore Enhanced', { timeOut: 2000 }); return; }
+                if (generationLock) { toastr.warning(tr('dle_toast_generation_running'), 'DeepLore Enhanced', { timeOut: 2000 }); return; }
                 const $scribeBtn = $(this);
                 $scribeBtn.prop('disabled', true).find('i').addClass('fa-spin');
                 setTimeout(() => {
                     if ($scribeBtn.prop('disabled')) {
                         $scribeBtn.prop('disabled', false).find('i').removeClass('fa-spin');
-                        toastr.warning('Scribe still running or did not return — try again if needed.', 'DeepLore Enhanced', { timeOut: 4000 });
+                        toastr.warning(tr('dle_toast_scribe_timeout'), 'DeepLore Enhanced', { timeOut: 4000 });
                         announceToScreenReader('Scribe timed out.');
                     }
                 }, 15000);
@@ -260,7 +267,7 @@ export function wireStatusActions($drawer) {
             case 'graph': executeCommand('/dle-graph'); break;
             case 'clear-picks': {
                 if (generationLock) {
-                    toastr.warning('Cannot clear AI picks during generation — wait for it to finish.', 'DeepLore Enhanced', { timeOut: 2500 });
+                    toastr.warning(tr('dle_toast_gen_in_progress_picks'), 'DeepLore Enhanced', { timeOut: 2500 });
                     return;
                 }
                 const settings = getSettings();
@@ -305,14 +312,14 @@ export function wireStatusActions($drawer) {
                     });
                 }
                 announceToScreenReader('Search cache cleared — next generation will re-select lore.');
-                toastr.info('Search cache cleared — next generation will re-select lore.', 'DeepLore');
+                toastr.info(tr('dle_toast_cache_cleared'), 'DeepLore');
                 break;
             }
             case 'skip-tools': {
                 const newVal = !suppressNextAgenticLoop;
                 setSuppressNextAgenticLoop(newVal);
                 $(this).toggleClass('dle-toggle-active', newVal);
-                toastr.info(newVal ? 'Librarian tools will be skipped for the next generation.' : 'Librarian tools re-enabled.', 'DeepLore');
+                toastr.info(newVal ? tr('dle_toast_tools_skipped') : tr('dle_toast_tools_reenabled'), 'DeepLore');
                 break;
             }
         }
@@ -380,15 +387,52 @@ export function wireInjectionTab($drawer) {
         const $btn = $(this);
         const sources = _currentVerdictForChat()?.injectedSources ?? null;
         if (!sources || sources.length === 0) {
-            toastr.warning('No injected entries to copy.', 'DeepLore Enhanced', { timeOut: 2000 });
+            toastr.warning(tr('dle_toast_no_entries_copy'), 'DeepLore Enhanced', { timeOut: 2000 });
             return;
         }
         const n = sources.length;
         const titles = sources.map(s => s.title).join('\n');
         navigator.clipboard.writeText(titles).then(
             () => { toastr.success(trPlural('dle_toast_titles_copied', n), 'DeepLore Enhanced', { timeOut: 2000 }); $btn.focus(); },
-            () => toastr.warning('Clipboard access denied — check browser permissions.', 'DeepLore Enhanced', { timeOut: 3000 }),
+            () => toastr.warning(tr('dle_toast_clipboard_denied'), 'DeepLore Enhanced', { timeOut: 3000 }),
         );
+    });
+
+    // Wave C: stage-aware Fix-It pin on a "Filtered Out" row. Pin-only (no toggle) — its job is to
+    // force the entry back in next generation. Mirrors the browse-row pin handler: stores a
+    // {title, vaultSource} object (trackerKey-correct), drops any matching block (mutually
+    // exclusive), saves + notifies, toasts via the canonical pinned key. The override takes effect
+    // on the NEXT generation, so we mark the button active for instant feedback here.
+    $drawer.on('click', '.dle-why-fixit', function () {
+        const title = $(this).data('title');
+        const vaultSource = $(this).data('vault') || null;
+        if (!title || !chat_metadata) return;
+
+        if (!chat_metadata.deeplore_pins) chat_metadata.deeplore_pins = [];
+        const tl = String(title).toLowerCase();
+        const already = chat_metadata.deeplore_pins.some(p => {
+            const n = normalizePinBlock(p);
+            return n.title.toLowerCase() === tl && (n.vaultSource || null) === (vaultSource || null);
+        });
+        if (!already) {
+            chat_metadata.deeplore_pins.push({ title, vaultSource });
+        }
+        // Pin → remove from blocks (mutually exclusive), same as the browse-row pin.
+        if (chat_metadata.deeplore_blocks) {
+            chat_metadata.deeplore_blocks = chat_metadata.deeplore_blocks.filter(b => {
+                const n = normalizePinBlock(b);
+                return !(n.title.toLowerCase() === tl && (n.vaultSource || null) === (vaultSource || null));
+            });
+        }
+        $(this).addClass('dle-why-fixit-active').attr('aria-pressed', 'true');
+        announceToScreenReader(`Pinned ${title}`);
+        toastr.info(trf('dle_toast_entry_pinned', title), 'DeepLore Enhanced', { timeOut: 2000 });
+        saveMetadataDebounced();
+        notifyPinBlockChanged();
+    });
+
+    $drawer.on('keydown', '.dle-why-fixit', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $(this).trigger('click'); }
     });
 }
 
@@ -442,7 +486,7 @@ export function wireBrowseTab($drawer) {
     $drawer.find('[data-sort]').on('change', function () {
         ds.browseSort = $(this).val();
         try { accountStorage.setItem('dle-browse-sort', ds.browseSort); } catch { /* noop */ }
-        toastr.info(`Sorted by ${$(this).find('option:selected').text()}`, 'DeepLore Enhanced', { timeOut: 1500 });
+        toastr.info(trf('dle_toast_sorted_by', $(this).find('option:selected').text()), 'DeepLore Enhanced', { timeOut: 1500 });
         scheduleRender(renderBrowseTab);
     });
 
@@ -483,7 +527,7 @@ export function wireBrowseTab($drawer) {
         $drawer.find('[data-filter="folder"]').val('');
         updateFilterActiveIndicators($drawer);
         scheduleRender(renderBrowseTab);
-        toastr.info('Filters cleared.', 'DeepLore Enhanced', { timeOut: 2000 });
+        toastr.info(tr('dle_toast_filters_cleared'), 'DeepLore Enhanced', { timeOut: 2000 });
     });
 
     // gotcha #83: open obsidian:// links WITHOUT navigating the ST top frame. A plain
@@ -513,7 +557,7 @@ export function wireBrowseTab($drawer) {
         if (idx !== -1) {
             chat_metadata.deeplore_pins.splice(idx, 1);
             announceToScreenReader(`Unpinned ${title}`);
-            toastr.info(`Unpinned: ${title}`, 'DeepLore Enhanced', { timeOut: 2000 });
+            toastr.info(trf('dle_toast_entry_unpinned', title), 'DeepLore Enhanced', { timeOut: 2000 });
         } else {
             // Pin → also remove from blocks (mutually exclusive).
             chat_metadata.deeplore_pins.push({ title, vaultSource });
@@ -524,7 +568,7 @@ export function wireBrowseTab($drawer) {
                 });
             }
             announceToScreenReader(`Pinned ${title}`);
-            toastr.info(`Pinned: ${title}`, 'DeepLore Enhanced', { timeOut: 2000 });
+            toastr.info(trf('dle_toast_entry_pinned', title), 'DeepLore Enhanced', { timeOut: 2000 });
         }
         saveMetadataDebounced();
         notifyPinBlockChanged();
@@ -549,7 +593,7 @@ export function wireBrowseTab($drawer) {
         if (idx !== -1) {
             chat_metadata.deeplore_blocks.splice(idx, 1);
             announceToScreenReader(`Unblocked ${title}`);
-            toastr.info(`Unblocked: ${title}`, 'DeepLore Enhanced', { timeOut: 2000 });
+            toastr.info(trf('dle_toast_entry_unblocked', title), 'DeepLore Enhanced', { timeOut: 2000 });
         } else {
             // Block → also remove from pins (mutually exclusive).
             chat_metadata.deeplore_blocks.push({ title, vaultSource });
@@ -560,7 +604,7 @@ export function wireBrowseTab($drawer) {
                 });
             }
             announceToScreenReader(`Blocked ${title}`);
-            toastr.info(`Blocked: ${title}`, 'DeepLore Enhanced', { timeOut: 2000 });
+            toastr.info(trf('dle_toast_entry_blocked', title), 'DeepLore Enhanced', { timeOut: 2000 });
         }
         saveMetadataDebounced();
         notifyPinBlockChanged();
@@ -781,7 +825,7 @@ export function wireBrowseTab($drawer) {
         try {
             const mod = await import('../ui/popups.js');
             if (typeof mod.runBatchOptimize !== 'function') {
-                toastr.error('Batch optimize unavailable.', 'DeepLore Enhanced');
+                toastr.error(tr('dle_toast_batch_optimize_unavailable'), 'DeepLore Enhanced');
                 return;
             }
             await mod.runBatchOptimize(trks);
@@ -791,7 +835,7 @@ export function wireBrowseTab($drawer) {
             scheduleRender(renderBrowseTab);
         } catch (err) {
             console.error('[DLE] runBatchOptimize failed:', err);
-            toastr.error('Batch optimize failed: ' + (err?.message || err), 'DeepLore Enhanced');
+            toastr.error(trf('dle_toast_batch_optimize_failed', err?.message || err), 'DeepLore Enhanced');
         } finally {
             ds._batchOptimizeInflight = false;
             $btn.prop('disabled', false);
@@ -869,7 +913,7 @@ export function wireGatingTab($drawer) {
             }
         }
         if (cleared === 0) {
-            toastr.info('No active gating filters to clear.', 'DeepLore Enhanced', { timeOut: 2000 });
+            toastr.info(tr('dle_toast_no_gating_filters'), 'DeepLore Enhanced', { timeOut: 2000 });
             return;
         }
         saveMetadataDebounced();
@@ -948,7 +992,7 @@ export function wireGatingTab($drawer) {
                             chat_metadata.deeplore_folder_filter = null;
                             saveMetadataDebounced();
                             notifyGatingChanged();
-                            toastr.success('Folder filter cleared — all folders active.', 'DeepLore Enhanced');
+                            toastr.success(tr('dle_toast_folder_filter_cleared'), 'DeepLore Enhanced');
                             document.querySelector('.popup-button-ok')?.click();
                             return;
                         }
@@ -1044,7 +1088,7 @@ export function wireGatingTab($drawer) {
     $drawer.on('click', '[data-action="goto-ai-connections"]', function (e) {
         e.stopPropagation();
         announceToScreenReader('Open Settings, then Connection, then AI Connections subtab.');
-        toastr.info('Open Settings → Connection → AI Connections', 'DeepLore Enhanced', { timeOut: 4000 });
+        toastr.info(tr('dle_toast_goto_ai_connections'), 'DeepLore Enhanced', { timeOut: 4000 });
     });
     $drawer.on('keydown', '[data-action="goto-ai-connections"]', function (e) {
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $(this).trigger('click'); }
@@ -1285,7 +1329,7 @@ export function wireLibrarianTab($drawer) {
             ds.librarianSelected.clear();
             ds.librarianLastClicked = null;
             const doneN = ids.length;
-            toastr.success(`Marked ${doneN} as written`, 'DeepLore Enhanced', { timeOut: 2000 });
+            toastr.success(trf('dle_toast_marked_written', doneN), 'DeepLore Enhanced', { timeOut: 2000 });
             announceToScreenReader(trPlural('dle_announce_marked_written', doneN));
             scheduleRender(renderLibrarianTab);
             requestAnimationFrame(() => {
