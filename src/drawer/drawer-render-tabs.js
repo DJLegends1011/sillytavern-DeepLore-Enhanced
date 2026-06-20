@@ -24,7 +24,7 @@ import {
     ds, BROWSE_ROW_HEIGHT, BROWSE_OVERSCAN,
     getMatchLabel, computeEntryTemperatures, isDrawerVisible,
 } from './drawer-state.js';
-import { buildBrowseRowModel, topFolderOf } from './drawer-browse-pure.js';
+import { buildBrowseRowModel, topFolderOf, resolveNavTarget } from './drawer-browse-pure.js';
 
 let _cachedRejectionMap = new Map();
 let _cachedRejectionTrace = null;
@@ -250,7 +250,7 @@ export function renderInjectionTab() {
                 h += `<span class="dle-why-match" data-match-type="${matchLabel.toLowerCase()}" title="${_matchTitle}">${matchLabel}</span>`;
             }
             if (isNew) h += `<span class="dle-why-new-badge" title="New this message — not injected in previous response" aria-label="New this message — not injected in previous response">NEW</span>`;
-            h += `<button class="dle-browse-nav-btn" data-browse-title="${escapeHtml(src.title)}" title="Show in Browse" aria-label="Show ${escapeHtml(src.title)} in Browse tab"><i class="fa-solid fa-arrow-right-to-bracket" aria-hidden="true"></i></button>`;
+            h += `<button type="button" class="dle-browse-nav-btn" data-browse-title="${escapeHtml(src.title)}" data-browse-vault="${escapeHtml(src.vaultSource || '')}" title="Show in Browse" aria-label="Show ${escapeHtml(src.title)} in Browse tab"><i class="fa-solid fa-arrow-right-to-bracket" aria-hidden="true"></i></button>`;
             h += `</span>`;
             h += `</div>`;
         }
@@ -312,7 +312,7 @@ export function renderInjectionTab() {
                     // Pins by trackerKey (data-title + data-vault); handler in drawer-events.js.
                     const _fixItAria = trf('dle_fixit_pin_aria', e.title);
                     whyNotHtml += `<button type="button" class="dle-why-fixit" data-title="${escapeHtml(e.title)}" data-vault="${escapeHtml(e.vaultSource || '')}" title="${escapeHtml(fixItLabel)}" aria-label="${escapeHtml(_fixItAria)}"><i class="fa-solid fa-thumbtack" aria-hidden="true"></i><span class="dle-why-fixit-label">${escapeHtml(fixItLabel)}</span></button>`;
-                    whyNotHtml += `<button class="dle-browse-nav-btn" data-browse-title="${escapeHtml(e.title)}" title="Show in Browse" aria-label="Show ${escapeHtml(e.title)} in Browse tab"><i class="fa-solid fa-arrow-right-to-bracket" aria-hidden="true"></i></button></span>`;
+                    whyNotHtml += `<button type="button" class="dle-browse-nav-btn" data-browse-title="${escapeHtml(e.title)}" data-browse-vault="${escapeHtml(e.vaultSource || '')}" title="Show in Browse" aria-label="Show ${escapeHtml(e.title)} in Browse tab"><i class="fa-solid fa-arrow-right-to-bracket" aria-hidden="true"></i></button></span>`;
                     whyNotHtml += `</div>`;
                 }
             }
@@ -686,7 +686,9 @@ export function renderBrowseTab() {
     // Carto/Why nav into a collapsed folder must auto-expand that folder, otherwise the
     // re-expand block in renderBrowseWindow finds nothing and the nav silently no-ops.
     if (ds.browseFolderGrouping && ds.browseNavigateTarget) {
-        const target = entries.find(e => e.title === ds.browseNavigateTarget);
+        // P3-9 (gotcha #50): resolve by title + vaultSource so cross-vault same-title nav
+        // expands the RIGHT folder. browseNavigateVault is null for legacy/single-vault → title-only.
+        const target = resolveNavTarget(entries, ds.browseNavigateTarget, ds.browseNavigateVault);
         if (target) {
             const folder = topFolderOf(target);
             if (!(ds.browseExpandedFolders instanceof Set)) ds.browseExpandedFolders = new Set();
@@ -704,9 +706,12 @@ export function renderBrowseTab() {
     // Carto/Why? navigation target survives one filter run for auto-expand; otherwise collapse.
     if (ds.browseNavigateTarget) {
         ds.browseExpandedEntry = ds.browseNavigateTarget;
+        ds.browseExpandedVault = ds.browseNavigateVault; // P3-9: carry vaultSource into re-expand resolution.
         ds.browseNavigateTarget = null;
+        ds.browseNavigateVault = null;
     } else {
         ds.browseExpandedEntry = null;
+        ds.browseExpandedVault = null;
         ds.browseExpandedIdx = null;
         ds.browseExpandedExtraHeight = 0;
         _cachedExpandedPreviewKey = null;
@@ -953,9 +958,9 @@ export function renderBrowseWindow() {
         const browseCount = chatInjectionCounts.get(trk) || 0;
         if (browseCount > 0) html += `<span class="dle-inject-count" title="Injected ${browseCount} times this chat" aria-label="Injected ${browseCount} times this chat">${browseCount}×</span>`;
         html += `<span class="dle-browse-priority${prioClass}" title="${e.constant ? 'Constant — always injected. Set via #lorebook-always tag.' : `Priority ${e.priority || 50} (lower = more important)`}" aria-label="${e.constant ? 'Constant entry, always injected' : `Priority ${e.priority || 50}`}">${prioLabel}</span>`;
-        html += `<button class="dle-browse-pin${isPinned ? ' dle-pin-active' : ''}" data-entry="${escapeHtml(e.title)}" data-vault="${escapeHtml(e.vaultSource || '')}" aria-label="${isPinned ? 'Unpin' : 'Pin'}" title="${isPinned ? 'Pinned — always inject' : 'Click to pin'}"><i class="fa-solid fa-thumbtack" aria-hidden="true"></i></button>`;
-        html += `<button class="dle-browse-block${isBlocked ? ' dle-block-active' : ''}" data-entry="${escapeHtml(e.title)}" data-vault="${escapeHtml(e.vaultSource || '')}" aria-label="${isBlocked ? 'Unblock' : 'Block'}" title="${isBlocked ? 'Blocked — never inject' : 'Click to block'}"><i class="fa-solid fa-ban" aria-hidden="true"></i></button>`;
-        html += `<button class="dle-browse-copy-title-btn" data-action="copy-title" data-title="${escapeHtml(e.title)}" aria-label="Copy title" title="Copy title"><i class="fa-solid fa-copy" aria-hidden="true"></i></button>`;
+        html += `<button type="button" class="dle-browse-pin${isPinned ? ' dle-pin-active' : ''}" data-entry="${escapeHtml(e.title)}" data-vault="${escapeHtml(e.vaultSource || '')}" aria-label="${isPinned ? 'Unpin' : 'Pin'}" title="${isPinned ? 'Pinned — always inject' : 'Click to pin'}"><i class="fa-solid fa-thumbtack" aria-hidden="true"></i></button>`;
+        html += `<button type="button" class="dle-browse-block${isBlocked ? ' dle-block-active' : ''}" data-entry="${escapeHtml(e.title)}" data-vault="${escapeHtml(e.vaultSource || '')}" aria-label="${isBlocked ? 'Unblock' : 'Block'}" title="${isBlocked ? 'Blocked — never inject' : 'Click to block'}"><i class="fa-solid fa-ban" aria-hidden="true"></i></button>`;
+        html += `<button type="button" class="dle-browse-copy-title-btn" data-action="copy-title" data-title="${escapeHtml(e.title)}" aria-label="Copy title" title="Copy title"><i class="fa-solid fa-copy" aria-hidden="true"></i></button>`;
         html += `</div>`;
         html += `</div>`;
     }
@@ -967,9 +972,18 @@ export function renderBrowseWindow() {
 
     // Re-expand previously-expanded entry across re-renders, reusing cached preview HTML.
     if (ds.browseExpandedEntry) {
-        const $entry = $list.find(`.dle-browse-entry[data-title="${CSS.escape(ds.browseExpandedEntry)}"]`);
+        // P3-9 (gotcha #50): when a vaultSource companion is known (carto/why nav), scope the
+        // row selector + entry lookup to that vault so a cross-vault same-title entry resolves
+        // the RIGHT row. Rows carry data-vault. null companion → title-only (back-compat).
+        const navVault = ds.browseExpandedVault;
+        const titleSel = `.dle-browse-entry[data-title="${CSS.escape(ds.browseExpandedEntry)}"]`;
+        const $entry = navVault != null
+            ? ($list.find(`${titleSel}[data-vault="${CSS.escape(navVault)}"]`).first().length
+                ? $list.find(`${titleSel}[data-vault="${CSS.escape(navVault)}"]`).first()
+                : $list.find(titleSel).first())
+            : $list.find(titleSel).first();
         if ($entry.length) {
-            const entry = ds.browseFilteredEntries.find(e => e.title === ds.browseExpandedEntry);
+            const entry = resolveNavTarget(ds.browseFilteredEntries, ds.browseExpandedEntry, navVault);
             if (entry) {
                 // BUG-360: trackerKey (vaultSource:title) — bare title collides across vaults.
                 const expandedKey = trackerKey(entry);
@@ -1051,7 +1065,7 @@ export function renderGatingTab() {
         if (hasFolders) {
             let chipsHtml = '';
             for (const f of activeFolders) {
-                chipsHtml += `<span class="dle-chip" title="${escapeHtml(f)}">${escapeHtml(f)} <button class="dle-chip-x dle-folder-chip-x" data-folder="${escapeHtml(f)}" aria-label="Remove ${escapeHtml(f)}"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button></span>`;
+                chipsHtml += `<span class="dle-chip" title="${escapeHtml(f)}">${escapeHtml(f)} <button type="button" class="dle-chip-x dle-folder-chip-x" data-folder="${escapeHtml(f)}" aria-label="Remove ${escapeHtml(f)}"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button></span>`;
             }
             const excluded = vaultIndex.filter(e => {
                 if (!e.folderPath) return false;
@@ -1085,7 +1099,7 @@ export function renderGatingTab() {
                 <span class="dle-gating-dot ${dotClass}" aria-hidden="true"></span>
                 <span class="dle-gating-label" id="dle-gating-${escapeHtml(fd.name)}" title="${escapeHtml(fd.label)}">${escapeHtml(fd.label)}</span>
                 <div class="dle-gating-value" aria-labelledby="dle-gating-${escapeHtml(fd.name)}">
-                    <button class="menu_button menu_button_icon dle-gating-set" title="${setLabel}" aria-label="${setLabel}">
+                    <button type="button" class="menu_button menu_button_icon dle-gating-set" title="${setLabel}" aria-label="${setLabel}">
                         <i class="fa-solid ${setIcon}" aria-hidden="true"></i>
                     </button>
                 </div>
@@ -1159,7 +1173,7 @@ export function renderGatingTab() {
 
         if (!fd.multi) {
             if (value) {
-                $setBtn.before(`<span class="dle-chip">${escapeHtml(value)} <button class="dle-chip-x" data-field="${escapeHtml(fd.name)}" data-value="${escapeHtml(value)}" aria-label="Remove ${escapeHtml(value)}"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button></span><button class="dle-gating-clear-btn" type="button" data-action="clear-gating-field" data-field="${escapeHtml(fd.name)}" aria-label="Clear ${escapeHtml(fd.label)}">×</button>`);
+                $setBtn.before(`<span class="dle-chip">${escapeHtml(value)} <button type="button" class="dle-chip-x" data-field="${escapeHtml(fd.name)}" data-value="${escapeHtml(value)}" aria-label="Remove ${escapeHtml(value)}"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button></span><button class="dle-gating-clear-btn" type="button" data-action="clear-gating-field" data-field="${escapeHtml(fd.name)}" aria-label="Clear ${escapeHtml(fd.label)}">×</button>`);
                 // Impact count: entries with this field set that don't match the active value (precomputed above).
                 const filtered = excludedCounts.get(fd.name) || 0;
                 if (filtered > 0) {
@@ -1172,7 +1186,7 @@ export function renderGatingTab() {
             // Array (multi-value) field.
             if (value && value.length > 0) {
                 for (const c of value) {
-                    $setBtn.before(`<span class="dle-chip">${escapeHtml(c)} <button class="dle-chip-x" data-field="${escapeHtml(fd.name)}" data-value="${escapeHtml(c)}" aria-label="Remove ${escapeHtml(c)}"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button></span>`);
+                    $setBtn.before(`<span class="dle-chip">${escapeHtml(c)} <button type="button" class="dle-chip-x" data-field="${escapeHtml(fd.name)}" data-value="${escapeHtml(c)}" aria-label="Remove ${escapeHtml(c)}"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button></span>`);
                 }
                 // Impact count: entries with this field set but no value-overlap with the active selection (precomputed above).
                 const filtered = excludedCounts.get(fd.name) || 0;

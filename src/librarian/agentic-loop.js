@@ -25,9 +25,26 @@ import { pushEvent } from '../diagnostics/interceptors.js';
  * `getProviderFormat`). Returns `undefined` in that case — the message builders
  * then fall back to their own default-param resolution (a no-op in the stub,
  * where the builders are replaced wholesale and ignore the format argument).
+ *
+ * P1-6: `connConfig` (the resolved Librarian connection) is forwarded so the
+ * format is derived from the profile ACTUALLY used this round-trip, not ST's
+ * globally-active connection. Without it `getProviderFormat()` would re-resolve
+ * the Librarian config (harmless but redundant); passing it freezes the format
+ * to the same profile the call dispatches on. Both access via the namespace
+ * (not named bindings) so the stub — which omits these exports — still links.
  */
-function _resolveProviderFormat() {
+function _resolveProviderFormat(connConfig) {
     const fn = agenticApi.getProviderFormat;
+    return typeof fn === 'function' ? fn(connConfig) : undefined;
+}
+
+/**
+ * Resolve the Librarian connection config once per loop, tolerating the test
+ * stub (which omits this export). Returns `undefined` under the stub — callers
+ * then pass `undefined` to `getProviderFormat`, which the stub ignores anyway.
+ */
+function _resolveLibrarianConnConfig() {
+    const fn = agenticApi.resolveLibrarianConnConfig;
     return typeof fn === 'function' ? fn() : undefined;
 }
 
@@ -142,11 +159,15 @@ export async function runAgenticLoop(options) {
     let exitReason = 'max_iterations';
     let iterations = 0;
 
-    // Resolve the provider format ONCE for the whole loop and thread it into the
-    // message builders, instead of each buildAssistantMessage/buildToolResults
-    // call re-resolving it (→ resolveConnectionConfig('librarian') → getSettings()).
-    // The Librarian connection is fixed for the duration of one generation.
-    const providerFormat = _resolveProviderFormat();
+    // Resolve the Librarian connection ONCE for the whole loop, then derive the
+    // provider format from THAT profile (P1-6). Threaded into the message
+    // builders so each buildAssistantMessage/buildToolResults call doesn't
+    // re-resolve (→ resolveConnectionConfig('librarian') → getSettings()) and so
+    // the format reflects the Librarian profile actually dispatched on, not ST's
+    // globally-active connection. The Librarian connection is fixed for the
+    // duration of one generation.
+    const connConfig = _resolveLibrarianConnConfig();
+    const providerFormat = _resolveProviderFormat(connConfig);
 
     for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
         iterations = iteration + 1;
@@ -528,8 +549,10 @@ async function _runFlagIteration(messages, tools, toolChoice, maxTokens, signal,
     if (toolCalls.length === 0) return 0;
 
     // Resolve provider format ONCE for this flag iteration's message builders
-    // (same rationale as runAgenticLoop — avoid per-call resolveConnectionConfig).
-    const providerFormat = _resolveProviderFormat();
+    // from the Librarian profile (same rationale + P1-6 profile-awareness as
+    // runAgenticLoop — avoid per-call resolveConnectionConfig, freeze to the
+    // dispatched profile rather than ST's global connection).
+    const providerFormat = _resolveProviderFormat(_resolveLibrarianConnConfig());
 
     const assistantMsg = buildAssistantMessage(response, providerFormat);
     messages.push(assistantMsg);

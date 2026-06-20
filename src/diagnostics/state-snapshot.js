@@ -38,6 +38,23 @@ try {
 } catch { /* import.meta.url may not be available */ }
 
 /**
+ * Strip embedded credentials from a URL before it enters the SHARED snapshot.
+ * Removes `//user:pass@` userinfo and token-bearing query params. The scrubber's
+ * regex pass pseudonymizes the hostname but does NOT strip userinfo creds, so a
+ * raw `https://user:pass@host/...` api-url / reverse-proxy would otherwise leak
+ * the credentials into the shareable diagnostic blob. Mirrors the eyes-only
+ * helper in export.js (#13) — kept local since that one isn't exported.
+ * @param {*} u
+ * @returns {*}
+ */
+function stripUrlSecrets(u) {
+    if (typeof u !== 'string' || !u) return u;
+    return u
+        .replace(/\/\/[^/@\s]*@/, '//')
+        .replace(/([?&](?:key|token|access_token|api_key|auth|secret|password|jwt|bearer|authorization|oauth_token)=)[^&\s]+/gi, '$1<token>');
+}
+
+/**
  * Partial-mask: show first `keep` chars, replace the rest with `*`. Preserves
  * length so a reader can spot "this is short" vs "this is a 40-char key" without
  * seeing the value. Collisions get a random-word suffix (e.g. "John***-oak").
@@ -220,7 +237,7 @@ function summarizeProfile(profile) {
         instruct: profile.instruct,
         context: profile.context,
         tokenizer: profile.tokenizer,
-        'api-url': profile['api-url'],  // scrubber pseudonymizes the hostname
+        'api-url': stripUrlSecrets(profile['api-url']),  // strip userinfo creds; scrubber pseudonymizes the hostname
         'instruct-state': profile['instruct-state'],
         'reasoning-template': profile['reasoning-template'],
     };
@@ -303,7 +320,7 @@ function connectionSnapshot() {
             stActiveConnection = {
                 mainApi: ctx?.mainApi || null,
                 chatCompletionSource: oai?.chat_completion_source || null,
-                reverseProxy: oai?.reverse_proxy || null,
+                reverseProxy: stripUrlSecrets(oai?.reverse_proxy) || null,
                 openrouterModel: oai?.openrouter_model || null,
                 selectedModel: oai?.openai_model || null,
                 claudeModel: oai?.claude_model || null,

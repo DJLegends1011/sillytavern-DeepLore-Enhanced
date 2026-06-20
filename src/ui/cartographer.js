@@ -13,7 +13,7 @@ import {
 } from '../verdict/verdict-store.js';
 import { diffVerdicts } from '../verdict/verdict-pure.js';
 import { diagnoseEntry } from './diagnostics.js';
-import { STAGE_COLORS, categorizeRejections, resolveEntryVault, parseMatchReason, tokenBarColor, formatRelativeTime, comparePriority } from '../helpers.js';
+import { STAGE_COLORS, categorizeRejections, resolveEntryVault, parseMatchReason, tokenBarColor, formatRelativeTime, comparePriority, openObsidianUri } from '../helpers.js';
 import { navigateToBrowseEntry } from '../drawer/drawer.js';
 /**
  * No-op kept for backward compatibility with CHAT_CHANGED handler. Verdict store
@@ -148,8 +148,11 @@ export function showSourcesPopup(sources, opts = {}) {
             const pct = Math.max(2, Math.round((src.tokens / maxTokens) * 100));
             const barColor = tokenBarColor(src.tokens, avgTokens);
             const { uri } = resolveEntryVault(src, settings.vaults);
+            // gotcha #83 (P3-8): use the shared .dle-obsidian-link class + rel + the delegated
+            // openObsidianUri handler (wired below) so the obsidian:// click launches via a hidden
+            // iframe instead of navigating the ST top frame. target/rel are the markup safety net.
             const titleHtml = uri
-                ? `<a href="${escapeHtml(uri)}" target="_blank" class="dle-carto-obsidian-link">${escapeHtml(src.title)}</a>`
+                ? `<a href="${escapeHtml(uri)}" target="_blank" rel="noopener noreferrer" class="dle-carto-obsidian-link dle-obsidian-link">${escapeHtml(src.title)}</a>`
                 : escapeHtml(src.title);
             const entryId = simpleHash(src.filename + '_ctx');
             const rawPreview = src.entry ? src.entry.content.substring(0, 300) + (src.entry.content.length > 300 ? '...' : '') : '';
@@ -157,7 +160,7 @@ export function showSourcesPopup(sources, opts = {}) {
             html += `<div class="dle-card">`;
             html += `<div class="dle-ctx-toggle dle-card-header" data-target="dle-ctx-${entryId}" aria-expanded="false" role="button" tabindex="0">`;
             html += `<span><strong>${titleHtml}</strong> <span class="dle-text-xs dle-faint">pri ${src.priority}</span>`;
-            html += ` <button class="dle-carto-browse-btn" data-browse-title="${escapeHtml(src.title)}" title="Show in Browse"><i class="fa-solid fa-arrow-right-to-bracket" aria-hidden="true"></i></button></span>`;
+            html += ` <button type="button" class="dle-carto-browse-btn" data-browse-title="${escapeHtml(src.title)}" data-browse-vault="${escapeHtml(src.vaultSource || '')}" title="Show in Browse"><i class="fa-solid fa-arrow-right-to-bracket" aria-hidden="true"></i></button></span>`;
             html += `<span class="dle-text-xs" style="color: ${barColor};">~${src.tokens} tok</span>`;
             html += `</div>`;
             html += `<div class="dle-carto-token-bar">`;
@@ -247,11 +250,11 @@ export function showSourcesPopup(sources, opts = {}) {
                     const entry = resolveEntry(e.title, e.vaultSource);
                     const whynotId = simpleHash(`whynot_${e.title}`);
                     html += `<div class="dle-carto-entry-row">`;
-                    html += `<span class="dle-text-sm">${escapeHtml(e.title)} <button class="dle-carto-browse-btn" data-browse-title="${escapeHtml(e.title)}" title="Show in Browse"><i class="fa-solid fa-arrow-right-to-bracket" aria-hidden="true"></i></button></span>`;
+                    html += `<span class="dle-text-sm">${escapeHtml(e.title)} <button type="button" class="dle-carto-browse-btn" data-browse-title="${escapeHtml(e.title)}" data-browse-vault="${escapeHtml(e.vaultSource || '')}" title="Show in Browse"><i class="fa-solid fa-arrow-right-to-bracket" aria-hidden="true"></i></button></span>`;
                     if (entry && !entry.constant) {
                         // Audit Q27 (S9-3): carry data-vault through to the whynot handler so
                         // multi-vault same-title entries resolve to the correct entry (gotcha #4).
-                        html += ` <button class="menu_button dle-carto-whynot-btn dle-text-xs" data-title="${escapeHtml(e.title)}" data-vault="${escapeHtml(e.vaultSource || '')}" data-container="dle-whynot-carto-${whynotId}">Why?</button>`;
+                        html += ` <button type="button" class="menu_button dle-carto-whynot-btn dle-text-xs" data-title="${escapeHtml(e.title)}" data-vault="${escapeHtml(e.vaultSource || '')}" data-container="dle-whynot-carto-${whynotId}">Why?</button>`;
                         html += `<div id="dle-whynot-carto-${whynotId}"></div>`;
                     }
                     const rejKey = entry ? trackerKey(entry) : `${e.vaultSource || ''}:${e.title}`;
@@ -337,9 +340,20 @@ export function showSourcesPopup(sources, opts = {}) {
         e.stopPropagation();
         const title = browseBtn.dataset.browseTitle;
         if (title) {
-            navigateToBrowseEntry(title);
+            // P3-9 (gotcha #50): thread vaultSource so cross-vault same-title nav opens the RIGHT row.
+            const vaultSource = browseBtn.dataset.browseVault || '';
+            navigateToBrowseEntry({ title, vaultSource });
             document.querySelector('.popup .popup_ok')?.click();
         }
+    });
+
+    // gotcha #83 (P3-8): delegated handler so the obsidian:// title link launches via a hidden
+    // iframe (openObsidianUri) instead of navigating the ST top frame. Mirrors the drawer pattern.
+    container.addEventListener('click', (e) => {
+        const link = e.target.closest('.dle-obsidian-link');
+        if (!link) return;
+        e.preventDefault();
+        openObsidianUri(link.getAttribute('href'));
     });
 
     callGenericPopup(container, POPUP_TYPE.TEXT, '', {

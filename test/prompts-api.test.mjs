@@ -87,7 +87,7 @@ key: SCRIBE_PROMPT
 locale: en
 ---
 
-This entry uses lorebook-always for unconditional injection.
+This entry uses #lorebook-always for unconditional injection.
 `;
     const result = verifyPromptFileForDeletion(raw, 'SCRIBE_PROMPT');
     assert(result.ok === false, 'L4.R2: lorebook- tag refused');
@@ -101,7 +101,7 @@ key: SCRIBE_PROMPT
 locale: en
 ---
 
-Body uses LOREBOOK-NEVER somewhere.
+Body uses #LOREBOOK-NEVER somewhere.
 `;
     const result = verifyPromptFileForDeletion(raw, 'SCRIBE_PROMPT');
     assert(result.ok === false, 'L4.R2: case-insensitive lorebook- refused');
@@ -114,7 +114,7 @@ key: SCRIBE_PROMPT
 locale: en
 ---
 
-I contain ${variant} as a tag.
+I contain #${variant} as a tag.
 `;
     const result = verifyPromptFileForDeletion(raw, 'SCRIBE_PROMPT');
     assert(result.ok === false, `L4.R2: ${variant} refused`);

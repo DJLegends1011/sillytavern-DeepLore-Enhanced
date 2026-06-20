@@ -6,7 +6,7 @@
  */
 import { ConnectionManagerRequestService } from '../../../../shared.js';
 import { oai_settings } from '../../../../../openai.js';
-import { main_api } from '../../../../../../script.js';
+import { main_api, CONNECT_API_MAP } from '../../../../../../script.js';
 import { getContext } from '../../../../../extensions.js';
 import { resolveConnectionConfig } from '../../settings.js';
 import { validateProxyUrl } from '../ai/proxy-api.js';
@@ -77,9 +77,87 @@ export function getResolvedModel(connConfig) {
     return '';
 }
 
-/** @returns {'proxy'|'profile'|'inherit'} */
-function getLibrarianMode() {
-    return resolveConnectionConfig('librarian').mode;
+/**
+ * Resolve the Librarian connection config. Thin wrapper so the agentic loop can
+ * resolve it ONCE per round-trip and thread it into `getProviderFormat` (P1-6)
+ * without importing `settings.js` itself (which would break the loop's test
+ * import — the loop's stub for this module omits this export and the loop
+ * accesses it defensively off the namespace).
+ * @returns {object} Resolved Librarian connection config.
+ */
+export function resolveLibrarianConnConfig() {
+    return resolveConnectionConfig('librarian');
+}
+
+/**
+ * Map a CM profile's `api` field to the chat-completion source string ST would
+ * use for it (the same value as `oai_settings.chat_completion_source` when that
+ * profile is active). Pure — takes the already-resolved `CONNECT_API_MAP` entry.
+ *
+ * `profile.api` is a CONNECT_API_MAP *key* (e.g. `'claude'`, `'openrouter'`, or
+ * an alias like `'oai'`/`'google'`), NOT the raw source. For chat-completion
+ * profiles the map entry is `{ selected: 'openai', source: <chat_completion_source> }`;
+ * for text-completion profiles `selected !== 'openai'` and there is no source
+ * (tool calling via the OpenAI path is unsupported → return null).
+ *
+ * @param {object|undefined} apiMapEntry - `CONNECT_API_MAP[profile.api]`
+ * @returns {string|null} chat_completion_source, or null when not a chat-completion API
+ */
+export function _chatCompletionSourceFromApiMapEntry(apiMapEntry) {
+    if (!apiMapEntry || apiMapEntry.selected !== 'openai') return null;
+    return apiMapEntry.source || null;
+}
+
+/**
+ * Map a chat-completion source to the agentic provider message format.
+ * Pure mirror of the source→format switch in `getProviderFormat`; shared so
+ * both the live wrapper and the P1-6 fix derive format from the SAME logic.
+ *
+ * @param {string|null|undefined} source - chat_completion_source
+ * @returns {'claude'|'google'|'openai'} provider format
+ */
+export function _providerFormatForSource(source) {
+    if (source === 'claude') return 'claude';
+    if (source === 'makersuite' || source === 'vertexai') return 'google';
+    return 'openai';
+}
+
+/**
+ * Resolve the chat-completion source for the Librarian connection, mirroring
+ * `getResolvedModel`'s profile-lookup mechanism. Reads the Librarian's
+ * *configured* profile (`connConfig.profileId`) — NOT ST's globally-active
+ * profile / `oai_settings.chat_completion_source` (the P1-5/P1-6 root cause:
+ * Librarian decisions were derived from global state, so a Librarian→Claude
+ * profile under a global→OpenAI session got the wrong tool gate + message
+ * format, and vice-versa — same class as #27 sym 2).
+ *
+ * Profile path: `getProfile(profileId).api` → `CONNECT_API_MAP[api].source`.
+ * Falls back to the global `oai_settings.chat_completion_source` only when the
+ * Librarian profile can't be resolved (unset profile, lookup throw), matching
+ * `getResolvedModel`'s own global fallback so both stay consistent.
+ *
+ * @param {object} [connConfig] Pre-resolved Librarian connection config.
+ * @returns {string|null} chat_completion_source, or null when unresolvable
+ */
+export function getResolvedLibrarianSource(connConfig) {
+    connConfig = connConfig || resolveConnectionConfig('librarian');
+    if (connConfig.mode === 'proxy') {
+        // v2.5 dead-head: Custom Proxy removed. No source — dispatch refuses first.
+        return null;
+    }
+    try {
+        const profileId = connConfig.profileId;
+        if (profileId) {
+            const profile = ConnectionManagerRequestService.getProfile?.(profileId);
+            if (profile?.api) {
+                const source = _chatCompletionSourceFromApiMapEntry(CONNECT_API_MAP?.[profile.api]);
+                if (source) return source;
+            }
+        }
+    } catch { /* noop */ }
+    // Fallback mirrors getResolvedModel: when the Librarian profile is
+    // unresolvable, fall back to the global source rather than guessing.
+    return oai_settings?.chat_completion_source || null;
 }
 
 /**
@@ -100,14 +178,21 @@ export function isToolCallingSupported(model) {
         return false;
     }
     if (main_api !== 'openai') return false;
-    const source = oai_settings?.chat_completion_source;
+    // P1-5: gate on the RESOLVED Librarian profile, not ST's global connection
+    // state. Previously this read `oai_settings.chat_completion_source` (global)
+    // and `connectionManager.selectedProfile` (global) — so a configured
+    // Librarian profile under an EMPTY global selectedProfile wrongly returned
+    // false, and a global tool-capable source under a Librarian profile pointing
+    // at a no-tools source wrongly returned true. Derive both the profile gate
+    // and the source gate from THIS profile so the source check + model check
+    // (getResolvedModel, same profileId) answer about the SAME connection.
+    if (resolved.mode === 'profile') {
+        if (!resolved.profileId) return false;
+    }
+    const source = getResolvedLibrarianSource(resolved);
     if (!source) return false;
     if (NO_TOOLS_SOURCES.has(source)) return false;
-    if (resolved.mode === 'profile') {
-        const ctx = getContext();
-        if (!ctx?.extensionSettings?.connectionManager?.selectedProfile) return false;
-    }
-    const resolvedModel = model || getResolvedModel();
+    const resolvedModel = model || getResolvedModel(resolved);
     if (resolvedModel && isReasoningOnlyModel(resolvedModel)) return false;
     return true;
 }
@@ -125,12 +210,15 @@ export function getProviderFormat(connConfig) {
     // (buildAssistantMessage / buildToolResults) only run after callWithTools
     // would have dispatched — in proxy mode the dispatch throws first, so a
     // null format here is never reached at runtime.
-    const mode = connConfig ? connConfig.mode : getLibrarianMode();
-    if (mode === 'proxy') return null;
-    const source = oai_settings?.chat_completion_source;
-    if (source === 'claude') return 'claude';
-    if (source === 'makersuite' || source === 'vertexai') return 'google';
-    return 'openai';
+    const resolved = connConfig || resolveConnectionConfig('librarian');
+    if (resolved.mode === 'proxy') return null;
+    // P1-6: derive the format from the RESOLVED Librarian profile's source, NOT
+    // global `oai_settings.chat_completion_source`. Otherwise a Librarian→Claude
+    // profile under a global→OpenAI session built OpenAI-shaped assistant/
+    // tool-result messages (and vice-versa), corrupting multi-turn tool loops.
+    // Mirrors the request-side `isUnderlyingClaude(undefined, connConfig)` which
+    // is already profile-aware.
+    return _providerFormatForSource(getResolvedLibrarianSource(resolved));
 }
 
 /**

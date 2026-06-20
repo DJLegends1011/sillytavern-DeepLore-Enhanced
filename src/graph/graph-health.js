@@ -53,18 +53,26 @@ export function detectContradictoryGating(entries) {
  * Reuses breakCycles (graph-dag) on a title-resolved index graph.
  */
 export function detectCircular(entries) {
+    // gotcha #50 (P3-10): Map<titleLower, idx[]> — a bare title can name multiple cross-vault
+    // entries, so a requires/cascade ref must produce a back-edge to EVERY matching node, not
+    // just the first. First-wins silently dropped cycles through same-titled cross-vault twins.
     const titleToIdx = new Map();
     entries.forEach((e, i) => {
         const k = (e.title || '').toLowerCase();
-        if (!titleToIdx.has(k)) titleToIdx.set(k, i);
+        const bucket = titleToIdx.get(k);
+        if (bucket) bucket.push(i);
+        else titleToIdx.set(k, [i]);
     });
     const ids = entries.map((_, i) => i);
     const edges = [];
     entries.forEach((e, i) => {
         const addDir = (arr) => {
             for (const r of (arr || [])) {
-                const j = titleToIdx.get(String(r).toLowerCase());
-                if (j !== undefined && j !== i) edges.push({ from: i, to: j });
+                const targets = titleToIdx.get(String(r).toLowerCase());
+                if (!targets) continue;
+                for (const j of targets) {
+                    if (j !== i) edges.push({ from: i, to: j });
+                }
             }
         };
         addDir(e.requires);

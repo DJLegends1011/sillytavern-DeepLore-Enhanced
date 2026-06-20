@@ -19,6 +19,29 @@ import { longTaskBuffer, captureMemorySnapshot } from './performance.js';
 
 const ISSUE_URL = 'https://github.com/pixelnull/sillytavern-DeepLore-Enhanced/issues/new';
 
+/** Length-only descriptor for a redacted prompt/chat body. */
+function redactedLen(v) {
+    return typeof v === 'string' ? `[redacted len=${v.length}]` : v;
+}
+
+/**
+ * Redact the prose bodies of a captured AI-prompt log entry to metadata only.
+ * `systemPrompt` / `userMessage` / `response` string bodies become
+ * `[redacted len=N]`; everything else (timestamps, caller, model, error) is
+ * passed through. Full prose can never reach the export JSON.
+ *
+ * @param {object} entry
+ * @returns {object}
+ */
+export function redactAiPromptEntry(entry) {
+    if (!entry || typeof entry !== 'object') return entry;
+    const out = { ...entry };
+    if ('systemPrompt' in out) out.systemPrompt = redactedLen(out.systemPrompt);
+    if ('userMessage' in out) out.userMessage = redactedLen(out.userMessage);
+    if ('response' in out) out.response = redactedLen(out.response);
+    return out;
+}
+
 /**
  * gzip + base64 via CompressionStream. Falls back to uncompressed base64 on
  * Safari <16.4 / Firefox <113 / compression failure.
@@ -643,7 +666,11 @@ export async function buildDiagnosticReport() {
     const rawErrors  = errorBuffer.drain();
     const rawEvents  = eventBuffer.drain();
     const rawAiCalls = aiCallBuffer.drain();
-    const rawAiPrompts = aiPromptBuffer.flush();
+    // aiPromptBuffer holds full prompt/chat BODIES (systemPrompt/userMessage/response)
+    // captured when debugMode=true. Redact each body to a length-only descriptor
+    // BEFORE it reaches the scrubber/export so raw prose can never appear in the
+    // diagnostic JSON. Metadata (timestamps, caller, model, error) is preserved.
+    const rawAiPrompts = aiPromptBuffer.flush().map(redactAiPromptEntry);
     const rawLong    = longTaskBuffer.drain();
     const rawMemory  = captureMemorySnapshot();
     const rawSnapshot = captureStateSnapshot();

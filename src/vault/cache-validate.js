@@ -15,7 +15,10 @@ export function validateCachedEntry(entry) {
     if (typeof entry.title !== 'string' || !entry.title) return false;
     if (!Array.isArray(entry.keys)) return false;
     if (typeof entry.content !== 'string') return false;
-    if (typeof entry.tokenEstimate !== 'number' || entry.tokenEstimate < 0 || Number.isNaN(entry.tokenEstimate)) return false;
+    // Reject non-finite token estimates: NaN, ±Infinity, non-number, and negatives.
+    // Infinity sneaks past a bare `typeof !== 'number'` check and poisons budget
+    // math (every budget comparison against it short-circuits the pipeline).
+    if (!Number.isFinite(entry.tokenEstimate) || entry.tokenEstimate < 0) return false;
     if (entry.links !== undefined && !Array.isArray(entry.links)) return false;
     if (entry.tags !== undefined && !Array.isArray(entry.tags)) return false;
     if (entry.resolvedLinks !== undefined && !Array.isArray(entry.resolvedLinks)) return false;

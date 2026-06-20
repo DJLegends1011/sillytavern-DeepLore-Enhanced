@@ -111,11 +111,18 @@ export const ds = {
     browseLastRangeEnd: -1,
     browseScrollRAF: null,
     browseExpandedEntry: null,
+    /** Companion vaultSource for browseExpandedEntry when it was set via nav (P3-9, gotcha #50):
+     *  disambiguates which cross-vault same-title row the re-expand block resolves. Cleared on
+     *  collapse and on user-click expansion (the DOM row the user clicked is already unambiguous). */
+    browseExpandedVault: null,
     /** Index in browseRowModel of the expanded entry (drives virtual-scroll offset math). */
     browseExpandedIdx: null,
     browseExpandedExtraHeight: 0,
     /** Set by navigateToBrowseEntry(), consumed and cleared by renderBrowseTab(). */
     browseNavigateTarget: null,
+    /** Companion vaultSource for browseNavigateTarget (gotcha #50, P3-9): cross-vault same-title
+     *  nav must resolve the RIGHT row. null/'' means title-only match (back-compat). */
+    browseNavigateVault: null,
 
     // #13 — folder grouping (session-only state; BUG-042 may migrate to accountStorage later)
     browseFolderGrouping: false,

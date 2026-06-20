@@ -66,15 +66,20 @@ export async function showGraphPopup() {
         _revealScale: 0,
     }));
 
-    // Case-insensitive title collision detection — links resolve via lowercased lookup.
+    // Case-insensitive title lookup. gotcha #50 (P3-10): a bare title can name MULTIPLE
+    // cross-vault entries, so resolve to ALL matching node indices (Map<titleLower, idx[]>),
+    // not just the first. A ref to "Castle" wires an edge to every vault's "Castle" node.
+    // Collision detection still warns the user (the first dupe seeds the diagnostic list).
     const titleToIdx = new Map();
     const titleCollisions = [];
     for (let i = 0; i < graphEntries.length; i++) {
         const key = graphEntries[i].title.toLowerCase();
-        if (titleToIdx.has(key)) {
-            titleCollisions.push({ existing: titleToIdx.get(key), duplicate: i, title: graphEntries[i].title });
+        const bucket = titleToIdx.get(key);
+        if (bucket) {
+            titleCollisions.push({ existing: bucket[0], duplicate: i, title: graphEntries[i].title });
+            bucket.push(i);
         } else {
-            titleToIdx.set(key, i);
+            titleToIdx.set(key, [i]);
         }
     }
     if (titleCollisions.length > 0) {
@@ -107,24 +112,20 @@ export async function showGraphPopup() {
         }
     }
 
+    // P3-10: each ref resolves to ALL same-titled nodes — add an edge to every match.
+    const addEdgesTo = (i, refTitle, type) => {
+        const targets = titleToIdx.get(refTitle.toLowerCase());
+        if (!targets) return;
+        for (const j of targets) {
+            if (j !== i) addEdge(i, j, type);
+        }
+    };
     for (let i = 0; i < graphEntries.length; i++) {
         const entry = graphEntries[i];
-        for (const link of entry.resolvedLinks) {
-            const j = titleToIdx.get(link.toLowerCase());
-            if (j !== undefined && j !== i) addEdge(i, j, 'link');
-        }
-        for (const req of entry.requires) {
-            const j = titleToIdx.get(req.toLowerCase());
-            if (j !== undefined && j !== i) addEdge(i, j, 'requires');
-        }
-        for (const ex of entry.excludes) {
-            const j = titleToIdx.get(ex.toLowerCase());
-            if (j !== undefined && j !== i) addEdge(i, j, 'excludes');
-        }
-        for (const cl of (entry.cascadeLinks || [])) {
-            const j = titleToIdx.get(cl.toLowerCase());
-            if (j !== undefined && j !== i) addEdge(i, j, 'cascade');
-        }
+        for (const link of entry.resolvedLinks) addEdgesTo(i, link, 'link');
+        for (const req of entry.requires) addEdgesTo(i, req, 'requires');
+        for (const ex of entry.excludes) addEdgesTo(i, ex, 'excludes');
+        for (const cl of (entry.cascadeLinks || [])) addEdgesTo(i, cl, 'cascade');
     }
 
     const circularPairs = [];
@@ -249,7 +250,7 @@ export async function showGraphPopup() {
         <div class="dle-graph-toolbar">
             <div class="dle-graph-search-wrap">
                 <input type="text" id="dle-graph-search" class="text_pole dle-graph-toolbar-input" placeholder="Search entries..." />
-                <button id="dle-graph-search-clear" class="dle-graph-search-clear" title="Clear search" style="display:none;"><i class="fa-solid fa-xmark"></i></button>
+                <button type="button" id="dle-graph-search-clear" class="dle-graph-search-clear" title="Clear search" style="display:none;"><i class="fa-solid fa-xmark"></i></button>
             </div>
             <select id="dle-graph-type-filter" class="text_pole dle-graph-toolbar-select">
                 <option value="">All Types</option>
@@ -281,22 +282,22 @@ export async function showGraphPopup() {
                 })()}
             </select>
             <span class="dle-graph-toolbar-sep"></span>
-            <button id="dle-graph-settings-btn" class="menu_button dle-graph-toolbar-btn" title="Graph settings"><i class="fa-solid fa-gear"></i></button>
+            <button type="button" id="dle-graph-settings-btn" class="menu_button dle-graph-toolbar-btn" title="Graph settings"><i class="fa-solid fa-gear"></i></button>
         </div>
         <div class="dle-graph-toolbar dle-gap-1 dle-graph-toolbar--secondary">
-            <button id="dle-graph-back" class="menu_button dle-graph-toolbar-btn-wide dle-hidden dle-graph-back-btn" title="Exit Focus Tree (Esc)">← Back</button>
-            <button id="dle-graph-hop-minus" class="menu_button dle-graph-toolbar-btn-wide dle-hidden dle-graph-hop-btn" title="Decrease hop depth">−</button>
+            <button type="button" id="dle-graph-back" class="menu_button dle-graph-toolbar-btn-wide dle-hidden dle-graph-back-btn" title="Exit Focus Tree (Esc)">← Back</button>
+            <button type="button" id="dle-graph-hop-minus" class="menu_button dle-graph-toolbar-btn-wide dle-hidden dle-graph-hop-btn" title="Decrease hop depth">−</button>
             <span id="dle-graph-depth-display" class="dle-graph-depth-display dle-hidden"></span>
-            <button id="dle-graph-hop-plus" class="menu_button dle-graph-toolbar-btn-wide dle-hidden dle-graph-hop-btn" title="Increase hop depth">+</button>
-            <button id="dle-graph-fit" class="menu_button dle-graph-toolbar-btn" title="Fit to view (0)">Fit</button>
-            <button id="dle-graph-unpin-all" class="menu_button dle-graph-toolbar-btn-wide" title="Unpin all nodes">Unpin All</button>
-            <button id="dle-graph-reset" class="menu_button dle-graph-toolbar-btn" title="Reset simulation — re-randomize positions and restart physics">Reset</button>
+            <button type="button" id="dle-graph-hop-plus" class="menu_button dle-graph-toolbar-btn-wide dle-hidden dle-graph-hop-btn" title="Increase hop depth">+</button>
+            <button type="button" id="dle-graph-fit" class="menu_button dle-graph-toolbar-btn" title="Fit to view (0)">Fit</button>
+            <button type="button" id="dle-graph-unpin-all" class="menu_button dle-graph-toolbar-btn-wide" title="Unpin all nodes">Unpin All</button>
+            <button type="button" id="dle-graph-reset" class="menu_button dle-graph-toolbar-btn" title="Reset simulation — re-randomize positions and restart physics">Reset</button>
             <span class="dle-graph-toolbar-sep"></span>
-            <button id="dle-graph-export-png" class="menu_button dle-graph-toolbar-btn" title="Export as PNG">PNG</button>
-            <button id="dle-graph-export-json" class="menu_button dle-graph-toolbar-btn" title="Export as JSON">JSON</button>
+            <button type="button" id="dle-graph-export-png" class="menu_button dle-graph-toolbar-btn" title="Export as PNG">PNG</button>
+            <button type="button" id="dle-graph-export-json" class="menu_button dle-graph-toolbar-btn" title="Export as JSON">JSON</button>
             <span class="dle-graph-toolbar-sep"></span>
-            <button id="dle-graph-analyze" class="menu_button dle-graph-toolbar-btn" title="Find gaps in your vault — highlights orphans, weak bridges, and missing connections"><i class="fa-solid fa-magnifying-glass-chart"></i> Find Gaps</button>
-            <button id="dle-graph-health" class="menu_button dle-graph-toolbar-btn" title="Vault Health — surface broken refs, orphans, contradictory gating, and budget hogs"><i class="fa-solid fa-stethoscope"></i> Health</button>
+            <button type="button" id="dle-graph-analyze" class="menu_button dle-graph-toolbar-btn" title="Find gaps in your vault — highlights orphans, weak bridges, and missing connections"><i class="fa-solid fa-magnifying-glass-chart"></i> Find Gaps</button>
+            <button type="button" id="dle-graph-health" class="menu_button dle-graph-toolbar-btn" title="Vault Health — surface broken refs, orphans, contradictory gating, and budget hogs"><i class="fa-solid fa-stethoscope"></i> Health</button>
         </div>
         <div class="dle-graph-legend" id="dle-graph-legend">
             <span class="dle-graph-legend-item" data-edge-type="link" role="button" tabindex="0" aria-label="Toggle link edges"><span style="color: #aac8ff;">—</span> Link</span>
@@ -316,10 +317,10 @@ export async function showGraphPopup() {
                 </div>
                 <div class="dle-graph-settings-body">
                     <div class="dle-graph-settings-row dle-gap-1">
-                        <button class="menu_button dle-gs-preset" data-preset="compact" title="Dense cluster — high damping, tight repulsion. Good for 200+ entry vaults.">Compact</button>
-                        <button class="menu_button dle-gs-preset" data-preset="balanced" title="General-purpose layout for most vaults.">Balanced</button>
-                        <button class="menu_button dle-gs-preset" data-preset="spacious" title="Loose spread — easier to read individual nodes.">Spacious</button>
-                        <button class="menu_button dle-gs-preset" data-preset="ginormous" title="Maximum spread — best for very large displays.">Ginormous</button>
+                        <button type="button" class="menu_button dle-gs-preset" data-preset="compact" title="Dense cluster — high damping, tight repulsion. Good for 200+ entry vaults.">Compact</button>
+                        <button type="button" class="menu_button dle-gs-preset" data-preset="balanced" title="General-purpose layout for most vaults.">Balanced</button>
+                        <button type="button" class="menu_button dle-gs-preset" data-preset="spacious" title="Loose spread — easier to read individual nodes.">Spacious</button>
+                        <button type="button" class="menu_button dle-gs-preset" data-preset="ginormous" title="Maximum spread — best for very large displays.">Ginormous</button>
                     </div>
                     <div class="dle-graph-settings-sep"></div>
                     <div class="dle-graph-settings-section-label">Display</div>
@@ -398,8 +399,8 @@ export async function showGraphPopup() {
                     </details>
                     <div class="dle-graph-settings-sep"></div>
                     <div class="dle-graph-settings-row dle-gap-1">
-                        <button id="dle-gs-redraw" class="menu_button dle-gs-compact-btn" title="Clear saved positions and replay the BFS rollout animation">Redraw</button>
-                        <button id="dle-gs-reset" class="menu_button dle-gs-compact-btn">Reset to Defaults</button>
+                        <button type="button" id="dle-gs-redraw" class="menu_button dle-gs-compact-btn" title="Clear saved positions and replay the BFS rollout animation">Redraw</button>
+                        <button type="button" id="dle-gs-reset" class="menu_button dle-gs-compact-btn">Reset to Defaults</button>
                     </div>
                 </div>
             </div>

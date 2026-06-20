@@ -27,6 +27,43 @@
 // is meaningful for a secret.
 const SENSITIVE_KEY_RE = /(api[_-]?key|apikey|access[_-]?token|secret|password|passwd|authorization|auth[_-]?header|bearer|x[_-]?api[_-]?key|obsidianapikey|proxy[_-]?key|cookie|session|refresh[_-]?token|oauth[_-]?token|private[_-]?key|client[_-]?id|app[_-]?key|encryption[_-]?key|master[_-]?key|helicone[_-]?auth|cf[_-]?access|credential|webhook)/i;
 
+// Keys whose VALUE is a user-authored prompt body (AI prompt overrides, custom
+// system prompts, prompt presets). These are not secrets but they ARE user
+// content — they can quote vault material, character names, or private setup,
+// so the diagnostic export must show only metadata (length), never the body.
+// `promptPresets` is matched explicitly so its nested preset bodies get
+// structure-preserving redaction (the diagnostic still shows WHICH presets exist).
+const PROMPT_KEY_RE = /prompt/i;
+
+/** Length-only descriptor for a redacted prompt body. */
+function promptDescriptor(v) {
+    if (typeof v === 'string') return `[prompt len=${v.length}]`;
+    if (v == null) return v;
+    return v; // non-string (e.g. structured preset) handled by the recursive walker
+}
+
+/**
+ * Recursively redact prompt bodies inside a `promptPresets`-shaped value while
+ * preserving the surrounding structure (so the export still lists WHICH presets
+ * exist, just not their text). Any string is treated as a prompt body and
+ * collapsed to `[prompt len=N]`. Cycle-safe via the shared `_seen` WeakMap.
+ */
+function redactPromptStructure(value, _seen) {
+    if (value == null) return value;
+    const t = typeof value;
+    if (t === 'string') return `[prompt len=${value.length}]`;
+    if (t === 'number' || t === 'boolean' || t === 'bigint') return value;
+    if (t !== 'object') return value;
+    if (_seen.has(value)) return '[circular]';
+    _seen.set(value, true);
+    if (Array.isArray(value)) return value.map(v => redactPromptStructure(v, _seen));
+    const out = {};
+    for (const k of Object.keys(value)) {
+        out[k] = redactPromptStructure(value[k], _seen);
+    }
+    return out;
+}
+
 /**
  * Per-export context: real value → stable pseudonym, separate map per category
  * so <ip-1> and <host-1> can coexist. Stats counters power the scrubber report.
@@ -73,6 +110,21 @@ const PATTERNS = [
     {
         re: /([?&](?:key|token|access_token|api_key|auth|secret|password|jwt|bearer|authorization|oauth_token)=)[^&\s"']+/gi,
         fn: (_m, g1, _o, _s, ctx) => { ctx.stats.urlTokens++; return `${g1}<token>`; },
+    },
+    // JSON-ish secret values: "api_key":"...", "token":"...", "password":"...", etc.
+    // Redacts the VALUE regardless of length (short secrets fall below the 32-char
+    // generic floor). Keeps the key label so the diagnostic shows WHICH field leaked.
+    {
+        re: /("(?:api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|oauth[_-]?token|token|password|passwd|secret|authorization|auth|bearer|x[_-]?api[_-]?key|client[_-]?secret|private[_-]?key)"\s*:\s*)"[^"]*"/gi,
+        fn: (_m, g1, _o, _s, ctx) => { ctx.stats.sensitiveFields++; return `${g1}"<redacted>"`; },
+    },
+    // Header-ish secret values: `X-API-Key: ...`, `Authorization: Basic/Bearer ...`,
+    // `Cookie: ...`, `Set-Cookie: ...`. Redacts everything after the colon to EOL.
+    // Runs before the Bearer pattern above is too narrow for short tokens — this
+    // catches the full `Authorization:` header value regardless of scheme/length.
+    {
+        re: /\b(X-API-Key|Authorization|Proxy-Authorization|Cookie|Set-Cookie)(\s*:\s*)[^\r\n]+/gi,
+        fn: (_m, name, sep, _o, _s, ctx) => { ctx.stats.sensitiveFields++; return `${name}${sep}<redacted>`; },
     },
     // OpenAI / Anthropic / Stripe key formats: sk-proj-..., sk_test_..., sk-ant-..., sk_live_...
     {
@@ -215,6 +267,12 @@ export function scrubDeep(value, ctx, _seen = new WeakMap()) {
                         if (SENSITIVE_KEY_RE.test(ks)) {
                             ctx.stats.sensitiveFields++;
                             obj[ks] = '<redacted>';
+                        } else if (ks === 'promptPresets') {
+                            ctx.stats.sensitiveFields++;
+                            obj[ks] = redactPromptStructure(v, _seen);
+                        } else if (PROMPT_KEY_RE.test(ks) && typeof v === 'string') {
+                            ctx.stats.sensitiveFields++;
+                            obj[ks] = promptDescriptor(v);
                         } else {
                             obj[ks] = scrubDeep(v, ctx, _seen);
                         }
@@ -232,6 +290,14 @@ export function scrubDeep(value, ctx, _seen = new WeakMap()) {
                 if (SENSITIVE_KEY_RE.test(k)) {
                     ctx.stats.sensitiveFields++;
                     out[k] = '<redacted>';
+                } else if (k === 'promptPresets') {
+                    // Structure-preserving: keep the preset list shape, redact bodies.
+                    ctx.stats.sensitiveFields++;
+                    out[k] = redactPromptStructure(value[k], _seen);
+                } else if (PROMPT_KEY_RE.test(k) && typeof value[k] === 'string') {
+                    // Prompt-bearing key with a string body → metadata only.
+                    ctx.stats.sensitiveFields++;
+                    out[k] = promptDescriptor(value[k]);
                 } else {
                     out[k] = scrubDeep(value[k], ctx, _seen);
                 }

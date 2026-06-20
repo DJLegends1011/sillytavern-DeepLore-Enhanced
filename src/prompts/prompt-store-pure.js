@@ -107,6 +107,59 @@ export function placeholderSetsEqual(a, b) {
 }
 
 /**
+ * Detect an ACTUAL Obsidian vault-entry `lorebook-` tag in a prompt body,
+ * as opposed to a prose/backtick mention of the word.
+ *
+ * Returns true only for real tag forms:
+ *   1. Inline hashtag at a word boundary — `#lorebook-foo` preceded by
+ *      start-of-string or whitespace (Obsidian inline-tag syntax). A leading
+ *      backtick (e.g. `` `lorebook-guide` ``) is NOT a hashtag, so it passes.
+ *   2. A YAML `tags:` block listing a `lorebook-...` value — either an inline
+ *      array (`tags: [lorebook-guide, x]`) or a list item under a `tags:` key
+ *      (`tags:\n  - lorebook-guide`). This is what a pasted vault entry's
+ *      frontmatter looks like.
+ *
+ * A bare/backticked `lorebook-guide` mention in prose returns false.
+ *
+ * @param {string} body
+ * @returns {boolean}
+ */
+export function containsRealLorebookTag(body) {
+    if (typeof body !== 'string' || body === '') return false;
+
+    // Form 1 — inline hashtag at a word boundary. `(?<!\S)` would be ideal but
+    // for portability we anchor on start-of-string or a whitespace char.
+    if (/(^|\s)#lorebook-/i.test(body)) return true;
+
+    // Form 2 — YAML `tags:` block with a lorebook- value.
+    const lines = body.split(/\r?\n/);
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        // Inline array on the same line: `tags: [lorebook-guide, ...]`
+        const inline = /^\s*tags\s*:\s*\[([^\]]*)\]/i.exec(line);
+        if (inline && /(^|[\s,'"])lorebook-/i.test(inline[1])) return true;
+        // Inline single value: `tags: lorebook-guide`
+        const single = /^\s*tags\s*:\s*(.+)$/i.exec(line);
+        if (single && !single[1].trim().startsWith('[') && /^['"]?lorebook-/i.test(single[1].trim())) return true;
+        // Block list under a `tags:` key.
+        if (/^\s*tags\s*:\s*$/i.test(line)) {
+            for (let j = i + 1; j < lines.length; j++) {
+                const item = lines[j];
+                // A `- value` list item (allow quotes).
+                const li = /^\s*-\s*['"]?([^'"#\s]+)/.exec(item);
+                if (li) {
+                    if (/^lorebook-/i.test(li[1])) return true;
+                    continue; // keep scanning list items
+                }
+                // Non-list-item, non-blank line ends the block.
+                if (item.trim() !== '') break;
+            }
+        }
+    }
+    return false;
+}
+
+/**
  * Apply Q4 strict validation rules to a parsed prompt file.
  *
  * Returns `{ ok: true }` if the file is safe to use as a runtime override,
@@ -135,9 +188,15 @@ export function validatePromptShape(parsed, canonicalBody, expectedKey) {
     if (parsed.frontmatter.key !== expectedKey) {
         return { ok: false, reason: `frontmatter key "${parsed.frontmatter.key}" does not match expected "${expectedKey}"` };
     }
-    // R2 — no lorebook tag (entry detection)
-    if (/lorebook-/i.test(parsed.body)) {
-        return { ok: false, reason: 'body contains "lorebook-" tag (looks like a vault entry, not a prompt)' };
+    // R2 — no lorebook tag (entry detection). Narrowed to a REAL Obsidian tag
+    // form so a prose/backtick mention (e.g. `lorebook-guide` in documentation)
+    // PASSES while an actual vault entry (which carries the tag as data) is still
+    // rejected. Two forms count as a real tag:
+    //   1. Inline hashtag at a word boundary: `#lorebook-...`
+    //   2. A YAML `tags:` block listing a `lorebook-...` value (list item or
+    //      inline array) — what a pasted vault entry's frontmatter looks like.
+    if (containsRealLorebookTag(parsed.body)) {
+        return { ok: false, reason: 'body contains a "lorebook-" tag (looks like a vault entry, not a prompt)' };
     }
     // R3 — placeholder parity (skipped when canonical body unavailable)
     if (canonicalBody != null) {

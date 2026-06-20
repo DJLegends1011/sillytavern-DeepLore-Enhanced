@@ -141,13 +141,13 @@ function buildPopupHTML(session) {
     <div class="dle-librarian-chat" role="region" aria-label="AI assistant">
         <div class="dle-librarian-chat-header">
             <h4 class="dle-librarian-chat-title">Emma <span class="dle-librarian-chat-subtitle">the Librarian</span></h4>
-            <button class="menu_button_icon" id="dle-lib-clear-chat" title="Clear chat history" aria-label="Clear chat history">
+            <button type="button" class="menu_button_icon" id="dle-lib-clear-chat" title="Clear chat history" aria-label="Clear chat history">
                 <i class="fa-solid fa-eraser" aria-hidden="true"></i>
             </button>
-            <button class="dle-lib-activity-toggle menu_button_icon" id="dle-lib-activity-btn" title="Toggle activity log" aria-label="Toggle activity log" aria-expanded="false">
+            <button type="button" class="dle-lib-activity-toggle menu_button_icon" id="dle-lib-activity-btn" title="Toggle activity log" aria-label="Toggle activity log" aria-expanded="false">
                 <i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i>
             </button>
-            <button class="menu_button_icon" id="dle-lib-chat-collapse" title="Toggle chat panel" aria-label="Toggle chat panel" aria-expanded="true">
+            <button type="button" class="menu_button_icon" id="dle-lib-chat-collapse" title="Toggle chat panel" aria-label="Toggle chat panel" aria-expanded="true">
                 <i class="fa-solid fa-chevron-right" aria-hidden="true"></i>
             </button>
         </div>
@@ -159,10 +159,10 @@ function buildPopupHTML(session) {
         ${(isReview || isAudit) && session.workQueue ? `<div class="dle-librarian-queue" id="dle-lib-queue"></div>` : ''}
         <div class="dle-librarian-input-row">
             <textarea id="dle-lib-chat-input" class="text_pole" rows="1" placeholder="Ask Emma anything..." aria-label="Chat message"></textarea>
-            <button id="dle-lib-send" class="menu_button" aria-label="Send message">
+            <button type="button" id="dle-lib-send" class="menu_button" aria-label="Send message">
                 <i class="fa-solid fa-paper-plane" aria-hidden="true"></i>
             </button>
-            <button id="dle-lib-stop" class="menu_button dle-lib-stop-btn" style="display:none" aria-label="Stop generation">
+            <button type="button" id="dle-lib-stop" class="menu_button dle-lib-stop-btn" style="display:none" aria-label="Stop generation">
                 <i class="fa-solid fa-stop" aria-hidden="true"></i>
             </button>
         </div>
@@ -401,10 +401,10 @@ export async function openLibrarianPopup(entryPoint = 'new', options = {}) {
                     html = html.replace(/\n/g, '<br>');
                     div.innerHTML = `<img class="dle-lib-avatar" src="${emmaAvatarUrl}" alt="">`
                         + `<div class="dle-lib-msg-content">${html}</div>`
-                        + `<button class="dle-lib-msg-action dle-lib-msg-regen" title="Regenerate" aria-label="Regenerate response"><i class="fa-solid fa-rotate-right"></i></button>`;
+                        + `<button type="button" class="dle-lib-msg-action dle-lib-msg-regen" title="Regenerate" aria-label="Regenerate response"><i class="fa-solid fa-rotate-right"></i></button>`;
                 } else {
                     div.innerHTML = `<div class="dle-lib-msg-content">${escapeHtml(content)}</div>`
-                        + `<button class="dle-lib-msg-action dle-lib-msg-edit" title="Edit" aria-label="Edit message"><i class="fa-solid fa-pen"></i></button>`;
+                        + `<button type="button" class="dle-lib-msg-action dle-lib-msg-edit" title="Edit" aria-label="Edit message"><i class="fa-solid fa-pen"></i></button>`;
                 }
                 messagesDiv.appendChild(div);
                 messagesDiv.scrollTop = messagesDiv.scrollHeight;
@@ -473,8 +473,8 @@ export async function openLibrarianPopup(entryPoint = 'new', options = {}) {
 
                 const btnRow = document.createElement('div');
                 btnRow.className = 'dle-lib-msg-edit-btns';
-                btnRow.innerHTML = '<button class="menu_button_icon dle-lib-msg-edit-submit" title="Send edited message"><i class="fa-solid fa-check"></i></button>'
-                    + '<button class="menu_button_icon dle-lib-msg-edit-cancel" title="Cancel edit"><i class="fa-solid fa-xmark"></i></button>';
+                btnRow.innerHTML = '<button type="button" class="menu_button_icon dle-lib-msg-edit-submit" title="Send edited message"><i class="fa-solid fa-check"></i></button>'
+                    + '<button type="button" class="menu_button_icon dle-lib-msg-edit-cancel" title="Cancel edit"><i class="fa-solid fa-xmark"></i></button>';
                 msgDiv.appendChild(btnRow);
 
                 function cancelEdit() {
@@ -803,7 +803,7 @@ export async function openLibrarianPopup(entryPoint = 'new', options = {}) {
 
                     card.innerHTML = `<div class="dle-lib-option-label">${escapeHtml(opt.label || `Option ${i + 1}`)}</div>`
                         + `<div class="dle-lib-option-fields">${fieldsHtml}</div>`
-                        + `<button class="menu_button dle-lib-option-apply" data-option-idx="${i}">Apply This</button>`;
+                        + `<button type="button" class="menu_button dle-lib-option-apply" data-option-idx="${i}">Apply This</button>`;
                     wrap.appendChild(card);
                 }
 

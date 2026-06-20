@@ -35,7 +35,7 @@ import { dedupError, dedupWarning } from '../toast-dedup.js';
 import { pushEvent } from '../diagnostics/interceptors.js';
 import { buildBM25Index, setDebugMode as setBm25DebugMode } from './bm25.js';
 
-import { computeEntityDerivedState, deduplicateMultiVault, detectCrossVaultDuplicates, PARTIAL_FETCH_FAILURE_THRESHOLD } from './vault-pure.js';
+import { computeEntityDerivedState, deduplicateMultiVault, detectCrossVaultDuplicates, PARTIAL_FETCH_FAILURE_THRESHOLD, conflictModeMessage } from './vault-pure.js';
 export { computeEntityDerivedState, deduplicateMultiVault, detectCrossVaultDuplicates };
 
 // P3 (2026-05-22): incremental derived-state updates for reuse-sync.
@@ -500,6 +500,16 @@ export async function buildIndex() {
                     dedupWarning(`Vault "${vault.name}" rejected the API key.`, 'vault_auth', { hint: 'Check the API key in Connection → Obsidian.' });
                 }
                 if (enabledVaults.length === 1) throw vaultErr;
+                // P1-1: multi-vault fresh-rebuild — carry forward this vault's prior
+                // entries instead of dropping them. The partial/empty branches above
+                // already do this and the reuse path (buildIndexWithReuse catch) mirrors
+                // it; the fresh catch was the lone hole that silently nuked a failed
+                // vault's lore from the live index. Cache save is already skipped via
+                // skipCacheSave (vaultFetchFailed). Merge mode can't split provenance
+                // per-vault, so the merge branch below commits the whole prior snapshot.
+                for (const entry of priorIndexSnapshot) {
+                    if (entry.vaultSource === vault.name) entries.push(entry);
+                }
             }
         }
         setLastVaultFailureCount(vaultFailCount);
@@ -517,6 +527,27 @@ export async function buildIndex() {
             setIndexTimestamp(Date.now() - ttl + 30_000); // retry in ~30s
             setIndexing(false);
             setBuildPromise(null);
+            return;
+        }
+
+        // P2-7: merge mode + a vault failed → the per-vault P1-1 carry-forward can't
+        // recover the failed vault's contribution, because merge collapses every
+        // member into ONE blob keeping only the FIRST member's vaultSource
+        // (vault-pure.js deduplicateMultiVault). Filtering priorIndexSnapshot by
+        // `vaultSource === failedVault.name` finds nothing for a failed non-first
+        // member. Merged provenance is unsplittable, so commit the WHOLE prior
+        // snapshot unchanged rather than a rebuilt-partial that silently drops the
+        // failed vault's merged content. Cache save stays skipped (vaultFetchFailed).
+        if (vaultFetchFailed && (settings.multiVaultConflictResolution === 'merge') && priorIndexSnapshot.length > 0) {
+            if (isZombie()) return;
+            entries = [...priorIndexSnapshot];
+            setFieldDefinitions(loadedFieldDefs);
+            setVaultIndex(entries);
+            setIndexTimestamp(Date.now() - (settings.cacheTTL * 1000) + 30_000); // retry in ~30s
+            console.warn('[DLE] Merge mode + vault fetch failure — preserving the whole prior index (merged provenance can\'t be split per-vault).');
+            if (isZombie()) return;
+            setIndexBuildReport(buildReport);
+            await finalizeIndex({ entries, settings, skipCacheSave: true });
             return;
         }
 
@@ -540,12 +571,7 @@ export async function buildIndex() {
                 const listing = dupes.slice(0, 5).map(d => `"${d.title}" (${d.vaults.join(', ')})`).join('; ');
                 const more = dupes.length > 5 ? ` …and ${dupes.length - 5} more` : '';
                 const mode = settings.multiVaultConflictResolution || 'all';
-                const modeMsg = ({
-                    all: 'Keeping all copies (resolution mode: all). Rename one copy if you want a single canonical entry.',
-                    first: 'Keeping the first vault\'s copy. Rename one copy to avoid the conflict.',
-                    last: 'Keeping the last vault\'s copy. Rename one copy to avoid the conflict.',
-                    merge: 'Merging fields and content from all copies. Rename one copy if you don\'t want them merged.',
-                }[mode]) || 'Resolving via configured conflict mode.';
+                const modeMsg = conflictModeMessage(mode);
                 dedupWarning(
                     `Duplicate entry titles across vaults: ${listing}${more}. ${modeMsg}`,
                     'cross_vault_dupes',
@@ -1066,8 +1092,9 @@ export async function buildIndexWithReuse() {
                 if (dupes.length > 0) {
                     const listing = dupes.slice(0, 5).map(d => `"${d.title}" (${d.vaults.join(', ')})`).join('; ');
                     const more = dupes.length > 5 ? ` …and ${dupes.length - 5} more` : '';
+                    const modeMsg = conflictModeMessage(getSettings().multiVaultConflictResolution || 'all');
                     dedupWarning(
-                        `Duplicate entry titles across vaults: ${listing}${more}. Keeping the first vault's copy. Rename one copy to avoid issues.`,
+                        `Duplicate entry titles across vaults: ${listing}${more}. ${modeMsg}`,
                         'cross_vault_dupes',
                         { timeOut: 15000 },
                     );

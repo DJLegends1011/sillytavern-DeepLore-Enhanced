@@ -72,6 +72,7 @@ export function resetDrawerState() {
     ds.browseExpandedIdx = null;
     ds.browseExpandedExtraHeight = 0;
     ds.browseNavigateTarget = null;
+    ds.browseNavigateVault = null;
     ds.browseCustomFieldFilters = {}; // BUG-AUDIT-11
     ds.browseFolderFilter = '';
     // #26: selection is chat-specific (trackerKeys can collide across vault sets).
@@ -194,10 +195,10 @@ export async function createDrawerPanel() {
                     <!-- NOTE: Do NOT use right_menu_button class on <button> elements — ST applies
                          background-color: rgb(240,240,240) which creates a white square. The lock avoids
                          this because it's a checkbox+label, not a button. Style manually instead. -->
-                    <button class="dle-drawer-settings" title="Open DeepLore settings" aria-label="Open DeepLore settings">
+                    <button type="button" class="dle-drawer-settings" title="Open DeepLore settings" aria-label="Open DeepLore settings">
                         <i class="fa-solid fa-gear" aria-hidden="true"></i>
                     </button>
-                    <button id="dle-drawer-close" class="dle-drawer-close" title="Close drawer" aria-label="Close drawer">
+                    <button type="button" id="dle-drawer-close" class="dle-drawer-close" title="Close drawer" aria-label="Close drawer">
                         <i class="fa-solid fa-chevron-up" aria-hidden="true"></i>
                     </button>
                 </div>
@@ -408,7 +409,10 @@ export async function createDrawerPanel() {
     $drawer.on('click', '.dle-browse-nav-btn', function (e) {
         e.stopPropagation();
         const title = $(this).data('browse-title');
-        if (title) navigateToBrowseEntry(title);
+        // P3-9 (gotcha #50): thread vaultSource (when the button carries it) so cross-vault
+        // same-title nav opens the RIGHT row. Related-chip nav-btns have no vault → bare title.
+        const vaultRaw = $(this).attr('data-browse-vault');
+        if (title) navigateToBrowseEntry(vaultRaw != null ? { title, vaultSource: vaultRaw } : title);
     });
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -668,10 +672,16 @@ export async function createDrawerPanel() {
 
 /**
  * Navigate Browse tab to a specific entry: open drawer, switch to Browse, filter, auto-expand.
- * @param {string} title
+ * @param {string|{title: string, vaultSource?: string}} target - bare title (back-compat) or
+ *   `{title, vaultSource}`. gotcha #50 (P3-9): threading vaultSource lets renderBrowseTab resolve
+ *   the RIGHT row when two cross-vault entries share a title (bare title opens the wrong one).
  */
-export function navigateToBrowseEntry(title) {
+export function navigateToBrowseEntry(target) {
     if (!ds.$drawer) return;
+
+    const title = typeof target === 'string' ? target : (target?.title || '');
+    const vaultSource = typeof target === 'string' ? null : (target?.vaultSource ?? null);
+    if (!title) return;
 
     // openDrawer class is on #deeplore-panel, not the wrapper.
     const toggle = ds.$drawer.find('.drawer-toggle')[0];
@@ -685,6 +695,7 @@ export function navigateToBrowseEntry(title) {
     ds.browseStatusFilter = 'all';
     ds.browseTagFilter = '';
     ds.browseNavigateTarget = title; // consumed by renderBrowseTab for auto-expand.
+    ds.browseNavigateVault = vaultSource; // companion disambiguator (gotcha #50).
 
     ds.$drawer.find('.dle-browse-input').val(title);
     ds.$drawer.find('[data-filter="status"]').val('all');

@@ -134,6 +134,24 @@ export function classifyDedupProbe(fetchResult, err) {
 }
 
 /**
+ * P3-5 — Cross-vault-duplicate warning text for the configured conflict-resolution
+ * mode. Single source of truth so the fresh-build warning (buildIndex) and the
+ * reuse-sync warning (buildIndexWithReuse) describe the SAME behavior. The reuse
+ * path previously hardcoded "Keeping the first vault's copy." regardless of mode,
+ * lying to users running 'all' / 'last' / 'merge'.
+ * @param {string} mode - 'all' | 'first' | 'last' | 'merge' (or anything else)
+ * @returns {string}
+ */
+export function conflictModeMessage(mode) {
+    return ({
+        all: 'Keeping all copies (resolution mode: all). Rename one copy if you want a single canonical entry.',
+        first: 'Keeping the first vault\'s copy. Rename one copy to avoid the conflict.',
+        last: 'Keeping the last vault\'s copy. Rename one copy to avoid the conflict.',
+        merge: 'Merging fields and content from all copies. Rename one copy if you don\'t want them merged.',
+    }[mode]) || 'Resolving via configured conflict mode.';
+}
+
+/**
  * Multi-vault conflict resolution dedup pass (BUG-007).
  * When entries with the same title exist in different vaults, this resolves them:
  *   'all'   — Keep every copy (no dedup). Entries from each vault appear independently.
@@ -172,7 +190,10 @@ export function deduplicateMultiVault(entries, mode) {
                 if (firstEntry.customFields) existing.customFields = { ...firstEntry.customFields };
                 titleMap.set(key, existing);
                 // H18: union all relevant array fields, not just keys.
-                for (const field of ['keys', 'tags', 'links', 'resolvedLinks', 'requires', 'excludes']) {
+                // P2-8: cascadeLinks + refineKeys were dropped on merge — a merged
+                // entry lost the non-first members' explicit cascade pulls and
+                // secondary refine-gate keys, silently changing match/gating behavior.
+                for (const field of ['keys', 'tags', 'links', 'resolvedLinks', 'requires', 'excludes', 'cascadeLinks', 'refineKeys']) {
                     if (Array.isArray(entry[field]) && entry[field].length > 0) {
                         existing[field] = [...new Set([...(existing[field] || []), ...entry[field]])];
                     }

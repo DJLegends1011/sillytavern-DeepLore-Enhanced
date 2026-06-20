@@ -712,8 +712,11 @@ export function convertWiEntry(wiEntry, lorebookTag, options = {}) {
         || keyArray.join(', ').substring(0, 50)
         || `Entry_${wiEntry.uid || Date.now()}`).replace(/[\r\n]+/g, ' ');
 
-    let safeTitle = title.replace(/[<>:"/\\|?*]/g, '_').replace(/\s+/g, ' ').trim();
-    if (!safeTitle) safeTitle = 'Untitled';
+    // Use the canonical sanitizer (strips OS-reserved chars, leading/trailing dots,
+    // and Windows reserved names CON/PRN/AUX/NUL/COM#/LPT#). The old local regex
+    // only handled illegal chars — a WI entry titled "CON" or ".hidden" produced a
+    // filename Obsidian/Windows rejects, silently failing the import write.
+    const safeTitle = sanitizeFilename(title.replace(/\s+/g, ' ').trim());
 
     const keys = [];
     if (Array.isArray(wiEntry.key)) {

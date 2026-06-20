@@ -129,6 +129,9 @@ export async function importEntries(entries, folder, onProgress, options = {}) {
     // separately and fold them into every onProgress numerator.
     let skipped = 0;
     for (const wiEntry of entries) {
+        // Per-entry finally guarantees progress always advances — even on the
+        // dedup-fail and existence-check `continue` branches below, which used to
+        // skip the trailing onProgress and stall the bar short of 100%.
         try {
             const converted = convertWiEntry(wiEntry, lorebookTag, { compress, report, emHandling });
             const { filename, content, title: entryTitle, _emPosition } = converted;
@@ -139,7 +142,6 @@ export async function importEntries(entries, folder, onProgress, options = {}) {
                 report.emSkipped++;
                 skipped++;
                 pushEmEntry({ title: entryTitle || filename.replace(/\.md$/, ''), filename, position: _emPosition, action: 'skipped' });
-                if (onProgress) onProgress(imported + failed + skipped, entries.length);
                 continue;
             }
             if (_emPosition != null && emHandling === 'append') {
@@ -188,8 +190,9 @@ export async function importEntries(entries, folder, onProgress, options = {}) {
         } catch (err) {
             failed++;
             errors.push(`Entry: ${err.message}`);
+        } finally {
+            if (onProgress) onProgress(imported + failed + skipped, entries.length);
         }
-        if (onProgress) onProgress(imported + failed + skipped, entries.length);
     }
 
     return { imported, failed, renamed, errors, report };

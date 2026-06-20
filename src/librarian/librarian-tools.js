@@ -307,23 +307,33 @@ function formatLinkedManifest(entries, summaryLen = 400) {
 
 /**
  * @param {object} entry
- * @param {Set<string>} excludeTitles - already-injected/shown
+ * @param {Set<string>} excludeTitles - already-injected/shown (trackerKey-shaped `${vaultSource}:${titleLower}`)
  * @param {number} [max=10]
- * @param {Map} [titleMap] BUG-AUDIT-P1: pre-built map for O(1) lookup
+ * @param {Map<string, object[]>} [titleMap] BUG-AUDIT-P1: pre-built map for O(1) lookup.
+ *   Keyed by lowercased title → ALL entries with that title (gotcha #50: cross-vault
+ *   same-title entries must NOT collapse — a bare-title `resolvedLink` resolves to every
+ *   matching vault's entry, deduped/excluded by trackerKey).
  */
 function resolveLinkedEntries(entry, excludeTitles, max = 10, titleMap = null) {
     if (!entry.resolvedLinks?.length) return [];
     const linked = [];
+    const seen = new Set(); // dedup by trackerKey across multiple link titles
     for (const linkTitle of entry.resolvedLinks) {
         if (linked.length >= max) break;
-        const found = titleMap
-            ? titleMap.get(linkTitle.toLowerCase())
-            : vaultIndex.find(e => e.title.toLowerCase() === linkTitle.toLowerCase());
-        if (!found) continue;
-        // trackerKey-shaped exclude check (gotcha #50): excludeTitles holds composite
-        // `${vaultSource}:${title}` keys, so honor the already-injected/shown set here too.
-        if (excludeTitles.has(`${found.vaultSource || ''}:${found.title.toLowerCase()}`)) continue;
-        linked.push(found);
+        const lk = linkTitle.toLowerCase();
+        const matches = titleMap
+            ? (titleMap.get(lk) || [])
+            : vaultIndex.filter(e => e.title.toLowerCase() === lk);
+        for (const found of matches) {
+            if (linked.length >= max) break;
+            const key = `${found.vaultSource || ''}:${found.title.toLowerCase()}`;
+            if (seen.has(key)) continue;
+            // trackerKey-shaped exclude check (gotcha #50): excludeTitles holds composite
+            // `${vaultSource}:${title}` keys, so honor the already-injected/shown set here too.
+            if (excludeTitles.has(key)) continue;
+            seen.add(key);
+            linked.push(found);
+        }
     }
     return linked;
 }
@@ -377,10 +387,14 @@ export async function searchLoreAction(args) {
     }
 
     // BUG-AUDIT-P1: O(1) lookups for resolveLinkedEntries.
+    // gotcha #50 (P3-7): Map<titleLower, Entry[]> — push ALL same-titled entries so a
+    // cross-vault related link surfaces every matching vault's entry, not just the first.
     const titleMap = new Map();
     for (const e of vaultIndex) {
         const lk = e.title.toLowerCase();
-        if (!titleMap.has(lk)) titleMap.set(lk, e);
+        const bucket = titleMap.get(lk);
+        if (bucket) bucket.push(e);
+        else titleMap.set(lk, [e]);
     }
 
     // Index never built — record gaps and bail.

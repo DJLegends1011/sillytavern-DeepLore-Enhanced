@@ -4,10 +4,13 @@
  */
 import { getContext, saveMetadataDebounced } from '../../../../../extensions.js';
 import { buildAiChatContext } from '../../core/utils.js';
-import { callAI, buildCandidateManifest } from '../ai/ai.js';
+import { callAI, buildCandidateManifest, isExcludedFromBreaker } from '../ai/ai.js';
 import { queryBM25 } from '../vault/bm25.js';
 import { getSettings, resolveConnectionConfig } from '../../settings.js';
-import { vaultIndex, fuzzySearchIndex, loreGaps, setLoreGaps, chatEpoch, librarianSessionStats } from '../state.js';
+import {
+    vaultIndex, fuzzySearchIndex, loreGaps, setLoreGaps, chatEpoch, librarianSessionStats,
+    tryAcquireHalfOpenProbe, recordAiSuccess, recordAiFailure, releaseHalfOpenProbe,
+} from '../state.js';
 import { validateSessionResponse, parseSessionResponse } from '../helpers.js';
 import { executeToolCall, buildToolsPromptSection } from './librarian-chat-tools.js';
 import { pushEvent } from '../diagnostics/interceptors.js';
@@ -797,11 +800,24 @@ export async function sendMessage(session, userMessage, options = {}) {
                 return epochReturn();
             }
 
+            // P3-1: Emma's session shares the AI circuit breaker with every other
+            // DLE feature. `callAI` itself does NOT own the breaker — its caller
+            // does (mirrors scribe/auto-suggest/aiSearch). Mutation gate first:
+            // tryAcquireHalfOpenProbe, NOT isAiCircuitOpen (which returns false in
+            // half-open-no-probe and would leak the probe slot). If the breaker is
+            // open, skip the call with a clear, accumulated error consistent with
+            // how scribe surfaces it — Emma stops asking the dead endpoint.
+            if (!tryAcquireHalfOpenProbe()) {
+                lastErrors = [...lastErrors, 'AI circuit breaker is open — skipping librarian call'];
+                pushEvent('librarian', { surface: 'session', action: 'exit', reason: 'circuit_open', outerIteration: outerIterations, toolCallCount });
+                return { parsed: null, valid: false, exhausted: true, lastErrors };
+            }
             let result;
             const callStartMs = (typeof performance !== 'undefined' ? performance.now() : Date.now());
             pushEvent('librarian', { surface: 'session', action: 'call_start', outerIteration: outerIterations, toolCallCount, attempt });
             try {
                 result = await callAI(systemPrompt, messageToSend, { ...connectionConfig, caller: 'librarian' });
+                recordAiSuccess();
                 pushEvent('librarian', {
                     surface: 'session', action: 'call_end', ok: true, outerIteration: outerIterations, toolCallCount, attempt,
                     abortedAt: 'neither', controllerReason: null, externalReason: null,
@@ -809,6 +825,13 @@ export async function sendMessage(session, userMessage, options = {}) {
                     ...captureBrowserState(),
                 });
             } catch (err) {
+                // P3-1: route the trip decision through the shared classifier, EXACTLY
+                // like scribe/auto-suggest. Excluded errors (throttle / abort / timeout /
+                // HTTP 401/403 / 429) must NOT trip the breaker — but they DO leave a
+                // dangling half-open probe, so release it. Only unclassified errors
+                // (5xx, network, format drift) record a failure. This runs before the
+                // abort/epoch early-returns below so the probe slot is never leaked.
+                if (!isExcludedFromBreaker(err)) recordAiFailure(); else releaseHalfOpenProbe();
                 const externalReason = signal?.reason?.message || null;
                 const controllerReason = err?.abortReason || null;
                 let abortedAt = 'neither';
@@ -829,10 +852,10 @@ export async function sendMessage(session, userMessage, options = {}) {
                 if (epoch !== chatEpoch) {
                     return epochReturn();
                 }
-                // BUG-019: do NOT retry transport errors. callViaProfile/callViaProxy
-                // already called recordAiFailure(), so looping amplifies circuit trips
-                // (3 retries = 3 failures = breaker opens after 2). Validation retries
-                // are only for parse/validation failures below, where the AI did respond.
+                // BUG-019: do NOT retry transport errors. The breaker is now recorded
+                // ABOVE (P3-1) — looping would amplify circuit trips (3 retries = 3
+                // failures = breaker opens after 2). Validation retries are only for
+                // parse/validation failures below, where the AI did respond.
                 // Accumulate so earlier parse errors from prior attempts aren't lost.
                 lastErrors = [...lastErrors, `AI call failed: ${err.message || err}`];
                 pushEvent('librarian', { surface: 'session', action: 'exit', reason: 'transport_error', outerIteration: outerIterations, toolCallCount });

@@ -133,16 +133,17 @@ assert(parsePromptFile('---\nkey: \n---\nbody').ok === false, 'parse: empty key 
 }
 
 {
-    // R2 — body has lorebook- tag
-    const parsed = { frontmatter: { key: 'X' }, body: 'I have lorebook-always in me' };
-    const result = validatePromptShape(parsed, 'I have lorebook-always in me', 'X');
-    assert(result.ok === false && /lorebook-/.test(result.reason), 'validate: R2 lorebook- tag rejected');
+    // R2 — body has a REAL lorebook- tag (inline #hashtag form). Narrowed R2
+    // (P2-9): a bare/backticked prose mention now PASSES; only an actual tag fails.
+    const parsed = { frontmatter: { key: 'X' }, body: '#lorebook-always' };
+    const result = validatePromptShape(parsed, '#lorebook-always', 'X');
+    assert(result.ok === false && /lorebook-/.test(result.reason), 'validate: R2 real lorebook- hashtag rejected');
 }
 
 {
-    // R2 case-insensitive
-    const parsed = { frontmatter: { key: 'X' }, body: 'Lorebook-Always present' };
-    const result = validatePromptShape(parsed, 'Lorebook-Always present', 'X');
+    // R2 case-insensitive (real #hashtag form)
+    const parsed = { frontmatter: { key: 'X' }, body: '#Lorebook-Always present' };
+    const result = validatePromptShape(parsed, '#Lorebook-Always present', 'X');
     assert(result.ok === false, 'validate: R2 case-insensitive');
 }
 
@@ -548,7 +549,7 @@ key: SCRIBE_PROMPT
 locale: en
 ---
 
-Body uses lorebook-always tag accidentally.`;
+Body uses #lorebook-always tag accidentally.`;
     const overrides = new Map([[key, fileContent]]);
     const result = buildPromptOverlay(PromptsEn, overrides, KNOWN_PROMPT_KEYS, PromptsEn);
     const meta = result.meta.get(key);

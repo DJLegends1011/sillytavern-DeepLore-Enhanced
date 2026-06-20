@@ -680,6 +680,49 @@ function applyResponsePrefill(settings) {
     }
 }
 
+/**
+ * P2-1: Per-swipe injection-count key derivation.
+ *
+ * The per-swipe map (`perSwipeInjectedKeys`) and the early swipe-rollback
+ * snapshot MUST key the assistant message on the SAME global slot the
+ * MESSAGE_SWIPED rebuild iterates to — i.e. the assistant's eventual global
+ * index, which is `verdictMsgIdx` (= global `chat.length` at gen start, the
+ * F4/#51 invariant). The old code keyed on `chatMessages.length - 1`, which on
+ * a fresh user→assistant turn points at the USER slot (N-1), not the assistant
+ * (N). MESSAGE_SWIPED keys the assistant by its global index N, so a fresh gen's
+ * `0|0` write was never found by the `1|0` rebuild → counts drifted.
+ *
+ * Pure: no ST globals, no mutation. `chatArr` is the global chat array; `idx` is
+ * `verdictMsgIdx`. swipe_id is sourced from the message already occupying the
+ * target slot (regen — the assistant exists at `idx`) or the trailing assistant
+ * message (regen where ST keeps the reply as the last entry); a fresh gen has no
+ * message there yet → swipe_id 0. Both the early snapshot and Stage 9 call this
+ * with the same `idx`, so regen reproduces the prior turn's key and finds its
+ * snapshot (self-consistent rollback preserved).
+ *
+ * @param {object[]} chatArr   Global chat array (may be undefined in headless tests).
+ * @param {number}   idx       verdictMsgIdx — the assistant's eventual global slot.
+ * @returns {{ idx: number, swipeId: number, key: string }}
+ */
+function swipeTargetFor(chatArr, idx) {
+    const arr = Array.isArray(chatArr) ? chatArr : [];
+    let swipeId = 0;
+    const atSlot = arr[idx];
+    if (atSlot && !atSlot.is_user) {
+        // Regen path: the assistant already occupies the target slot.
+        swipeId = atSlot.swipe_id ?? 0;
+    } else {
+        // Fresh-gen path: no message at the slot yet. If the trailing entry is an
+        // assistant message (some regen shapes keep it as the last entry), honor
+        // its swipe_id so a regen reproduces the same key it stored last turn.
+        const last = arr.length > 0 ? arr[arr.length - 1] : null;
+        if (last && !last.is_user && (arr.length - 1) === idx) {
+            swipeId = last.swipe_id ?? 0;
+        }
+    }
+    return { idx, swipeId, key: `${idx}|${swipeId}` };
+}
+
 async function onGenerate(chatMessages, contextSize, abort, type) {
     const settings = getSettings();
 
@@ -899,9 +942,11 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
         // BUG-396c: _snapMatch hoisted so strip-dedup later can clear the injection log on swipe.
         let _snapMatch = false;
         {
-            const earlyIdx = chatMessages.length - 1;
-            const earlySwipeId = earlyIdx >= 0 ? (chatMessages[earlyIdx]?.swipe_id ?? 0) : 0;
-            const earlySwipeKey = `${earlyIdx}|${earlySwipeId}`;
+            // P2-1: key on the assistant's eventual global slot (verdictMsgIdx), NOT
+            // `chatMessages.length - 1` (the filtered-copy user slot). This aligns the
+            // snapshot key with both Stage 9's per-swipe write below and the
+            // MESSAGE_SWIPED rebuild, which keys assistants by global index.
+            const { idx: earlyIdx, swipeId: earlySwipeId, key: earlySwipeKey } = swipeTargetFor(chat, verdictMsgIdx);
             _snapMatch = !!(lastGenerationTrackerSnapshot && lastGenerationTrackerSnapshot.swipeKey === earlySwipeKey);
             if (settings.debugMode) {
                 console.debug('[DLE][DIAG] swipe-check', {
@@ -968,6 +1013,53 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
             if (settings.debugMode) console.debug('[DLE] Pipeline aborted by user before commit');
             return;
         }
+
+        // P2-4: runPipeline awaits the AI search — a long window during which the lock
+        // can be force-released (30s stale detector) by a SAME-CHAT successor generation.
+        // A same-chat force-release does NOT fire CHAT_CHANGED, so `pipelineAbort.signal`
+        // above does NOT catch it (only the lockEpoch bump does — chatEpoch is unchanged).
+        // The post-pipeline writes that follow BEFORE the commit-phase guard — the
+        // strip-dedup injection-log clear (`chat_metadata.deeplore_injection_log = []`)
+        // and the various trace/state writes — would otherwise let stale gen A wipe gen
+        // B's freshly-rebuilt log (violates gotcha #1). Guard BOTH epochs here, before any
+        // metadata/state mutation. The lockEpoch half is the one that catches the
+        // same-chat case; chatEpoch covers the cross-chat case for completeness.
+        if (epoch !== chatEpoch || lockEpoch !== generationLockEpoch) {
+            console.warn('[DLE] Pipeline superseded (lock force-released or chat changed) immediately after runPipeline — discarding before any metadata write');
+            try { generationBuffer.push({ t: Date.now(), discarded: true, reason: 'superseded_post_pipeline' }); } catch { /* noop */ }
+            return;
+        }
+
+        // P2-3: single exit for the early-empty branches (no-match / cooldown-empty /
+        // gating-empty). Each used to clearPrompts + return WITHOUT writing a verdict,
+        // violating the verdict contract (gotcha #46): consumers then saw the PRIOR
+        // turn's sources bleed through instead of "nothing this turn". This mirrors the
+        // groups.length===0 commit path — clear prompts, write an empty verdict, notify
+        // readiness — but is epoch/lock-guarded so a stale pipeline can't wipe the
+        // successor's prompts (gotcha #1 / #2). Returns true when it handled the exit so
+        // the caller can `return`; returns false when the guard blocked it (caller still
+        // returns without committing, per the prior stale-pipeline behavior).
+        const _commitEmptyAndReturn = (reason) => {
+            if (settings.debugMode) console.debug(`[DLE] ${reason}`);
+            if (epoch !== chatEpoch || lockEpoch !== generationLockEpoch) {
+                console.warn(`[DLE] Stale pipeline reached ${reason} branch — skipping clearPrompts`);
+                return false;
+            }
+            clearPrompts(extension_prompts, PROMPT_TAG_PREFIX, PROMPT_TAG);
+            try {
+                writeVerdict(buildVerdict({
+                    trace,
+                    injectedSources: [],
+                    chatId: verdictChatId,
+                    msgIdx: verdictMsgIdx,
+                    epoch,
+                    lockEpoch,
+                })).catch(err => console.warn('[DLE] Verdict write failed:', err?.message));
+            } catch (err) { console.warn('[DLE] Verdict build failed:', err?.message); }
+            notifyInjectionSourcesReady();
+            return true;
+        };
+
         // Stages H-3 / gotcha #60: thread bootstrapActive from the trace so the
         // post-pipeline policy mirrors runPipeline's. Without this, bootstrap
         // entries bypass ALL post-pipeline gating regardless of chat length.
@@ -1011,16 +1103,10 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
         }
 
         if (finalEntries.length === 0) {
-            if (settings.debugMode) {
-                console.debug('[DLE] No entries matched');
-            }
-            // BUG-231: stale-pipeline guard on clearPrompts. A slow pipeline for chat A finishing
-            // after CHAT_CHANGED would otherwise wipe chat B's freshly-committed prompts.
-            if (epoch !== chatEpoch || lockEpoch !== generationLockEpoch) {
-                console.warn('[DLE] Stale pipeline reached no-match branch — skipping clearPrompts');
-                return;
-            }
-            clearPrompts(extension_prompts, PROMPT_TAG_PREFIX, PROMPT_TAG);
+            // P2-3: clearPrompts + empty verdict + notify (or stale-skip). BUG-231: the
+            // epoch/lock guard inside _commitEmptyAndReturn keeps a slow pipeline for
+            // chat A from wiping chat B's freshly-committed prompts after CHAT_CHANGED.
+            _commitEmptyAndReturn('No entries matched');
             return;
         }
 
@@ -1037,13 +1123,8 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
         }
 
         if (finalEntries.length === 0) {
-            if (settings.debugMode) console.debug('[DLE] All entries removed by re-injection cooldown');
-            // BUG-271: same stale-pipeline guard as BUG-231.
-            if (epoch !== chatEpoch || lockEpoch !== generationLockEpoch) {
-                console.warn('[DLE] Stale pipeline reached cooldown-empty branch — skipping clearPrompts');
-                return;
-            }
-            clearPrompts(extension_prompts, PROMPT_TAG_PREFIX, PROMPT_TAG);
+            // P2-3: route through the shared empty-commit helper (BUG-271 guard inside).
+            _commitEmptyAndReturn('All entries removed by re-injection cooldown');
             return;
         }
 
@@ -1053,13 +1134,8 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
         trace.requiresExcludesMs = Math.round(performance.now() - _reqExclStart);
 
         if (gated.length === 0) {
-            if (settings.debugMode) console.debug('[DLE] All entries removed by gating rules');
-            // BUG-271: same stale-pipeline guard as BUG-231.
-            if (epoch !== chatEpoch || lockEpoch !== generationLockEpoch) {
-                console.warn('[DLE] Stale pipeline reached gating-empty branch — skipping clearPrompts');
-                return;
-            }
-            clearPrompts(extension_prompts, PROMPT_TAG_PREFIX, PROMPT_TAG);
+            // P2-3: route through the shared empty-commit helper (BUG-271 guard inside).
+            _commitEmptyAndReturn('All entries removed by gating rules');
             return;
         }
 
@@ -1413,9 +1489,11 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
         //   - reload between generations (perSwipeInjectedKeys is persisted to chat_metadata)
         const _countsStart = performance.now();
         if (epoch === chatEpoch && lockEpoch === generationLockEpoch) {
-            const lastIdx = chatMessages.length - 1;
-            const swipeId = lastIdx >= 0 ? (chatMessages[lastIdx]?.swipe_id ?? 0) : 0;
-            const swipeKey = `${lastIdx}|${swipeId}`;
+            // P2-1: key on the assistant's eventual global slot (verdictMsgIdx) via the
+            // shared helper, identical to the early swipe-check above and to the
+            // MESSAGE_SWIPED rebuild. A fresh user→assistant turn with pre-push
+            // chat.length===1 now stores `1|0` (the assistant slot), not `0|0`.
+            const { key: swipeKey } = swipeTargetFor(chat, verdictMsgIdx);
 
             const priorKeys = perSwipeInjectedKeys.get(swipeKey);
             if (priorKeys && priorKeys.size > 0) {
@@ -1434,7 +1512,11 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
             perSwipeInjectedKeys.set(swipeKey, thisRoundKeys);
 
             // Prune to last 10 message slots — bounds memory + persisted metadata size.
-            const keepFromIdx = Math.max(0, chatMessages.length - 10);
+            // P2-1: the slot index half of each key is now in GLOBAL chat index space
+            // (verdictMsgIdx), so bound against global chat.length — not the filtered
+            // chatMessages.length — or the just-written key could fall outside the window.
+            const _globalLen = Array.isArray(chat) ? chat.length : chatMessages.length;
+            const keepFromIdx = Math.max(0, _globalLen - 10);
             for (const k of [...perSwipeInjectedKeys.keys()]) {
                 const mi = parseInt(k.split('|')[0], 10);
                 if (!Number.isFinite(mi) || mi < keepFromIdx) perSwipeInjectedKeys.delete(k);
@@ -2440,30 +2522,48 @@ async function _doInit() {
             // Earlier code took `(messageId)` as a scalar — cleanup + reindex silently no-op'd.
             const messageId = (payload && typeof payload === 'object') ? Number(payload.messageId) : Number(payload);
             if (!Number.isInteger(messageId)) return;
+            // P2-2: the deleted swipe's index. ST COMPACTS the swipes array on delete
+            // (splices out the deleted slot), so every surviving swipe with index >
+            // deletedSwipeId shifts DOWN by one. The earlier comment ("ST does NOT shift
+            // swipe_id") was wrong — keeping stale `messageId|N` keys left orphaned/
+            // misaligned per-swipe counts.
+            const deletedSwipeId = (payload && typeof payload === 'object' && payload.swipeId != null)
+                ? Number(payload.swipeId) : NaN;
             try { _cleanupMessageExtras(messageId); } catch (err) { console.warn('[DLE] MESSAGE_SWIPE_DELETED cleanup failed:', err.message); }
-            // Reindex perSwipeInjectedKeys — `${messageId}|${swipeId}` keys pointing at
-            // no-longer-existing swipe slots leak memory + persisted metadata bytes.
-            // ST does NOT shift swipe_id on delete, so we only drop keys past the new swipes.length.
+            // Reindex perSwipeInjectedKeys to mirror ST's swipes-array compaction:
+            //   1. drop the deleted slot's key exactly (`messageId|deletedSwipeId`),
+            //   2. shift every surviving key for this message with swipeId > deletedSwipeId
+            //      DOWN by one (collision-free: we process ascending so no two land on the
+            //      same target). Handles last-swipe delete (nothing above to shift) too.
             try {
-                const msg = chat?.[messageId];
-                if (msg && Array.isArray(msg.swipes)) {
-                    const prefix = `${messageId}|`;
-                    let dirty = false;
-                    for (const k of [...perSwipeInjectedKeys.keys()]) {
-                        if (!k.startsWith(prefix)) continue;
-                        const swipeId = parseInt(k.slice(prefix.length), 10);
-                        if (!Number.isFinite(swipeId)) continue;
-                        if (swipeId >= msg.swipes.length) {
-                            perSwipeInjectedKeys.delete(k);
-                            dirty = true;
-                        }
+                const prefix = `${messageId}|`;
+                // Collect this message's surviving (msgId, swipeId, value) tuples.
+                const survivors = [];
+                let touched = false;
+                for (const k of [...perSwipeInjectedKeys.keys()]) {
+                    if (!k.startsWith(prefix)) continue;
+                    const sid = parseInt(k.slice(prefix.length), 10);
+                    if (!Number.isFinite(sid)) continue;
+                    touched = true;
+                    if (Number.isFinite(deletedSwipeId) && sid === deletedSwipeId) {
+                        // The deleted slot — drop it, don't carry forward.
+                        perSwipeInjectedKeys.delete(k);
+                        continue;
                     }
-                    if (dirty) {
-                        chat_metadata.deeplore_swipe_injected_keys = Object.fromEntries(
-                            [...perSwipeInjectedKeys.entries()].map(([k, v]) => [k, [...v]]),
-                        );
-                        saveMetadataDebounced();
+                    survivors.push({ sid, value: perSwipeInjectedKeys.get(k) });
+                    perSwipeInjectedKeys.delete(k);
+                }
+                if (touched) {
+                    // Re-add survivors with shifted indices (ascending to avoid clobbering).
+                    survivors.sort((a, b) => a.sid - b.sid);
+                    for (const { sid, value } of survivors) {
+                        const newSid = (Number.isFinite(deletedSwipeId) && sid > deletedSwipeId) ? sid - 1 : sid;
+                        perSwipeInjectedKeys.set(`${prefix}${newSid}`, value);
                     }
+                    chat_metadata.deeplore_swipe_injected_keys = Object.fromEntries(
+                        [...perSwipeInjectedKeys.entries()].map(([k, v]) => [k, [...v]]),
+                    );
+                    saveMetadataDebounced();
                 }
             } catch (err) { console.warn('[DLE] MESSAGE_SWIPE_DELETED reindex failed:', err?.message); }
         });

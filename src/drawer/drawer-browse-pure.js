@@ -90,6 +90,30 @@ export function listTopFolders(entries) {
 }
 
 /**
+ * Resolve a Browse-tab navigation target to its entry (P3-9, gotcha #50).
+ *
+ * Two cross-vault entries can share a title; a bare-title `find(e => e.title === t)`
+ * opens whichever appears first, which may be the WRONG vault's row. When a
+ * vaultSource is supplied, match on BOTH title and vaultSource. When it's null/''
+ * (legacy callers, single-vault), fall back to title-only for back-compat.
+ *
+ * @param {Array<object>} entries - the filtered Browse list
+ * @param {string} title
+ * @param {string|null} [vaultSource=null]
+ * @returns {object|null} the matched entry, or null
+ */
+export function resolveNavTarget(entries, title, vaultSource = null) {
+    if (!Array.isArray(entries) || !title) return null;
+    if (vaultSource) {
+        const exact = entries.find(e => e.title === title && (e.vaultSource || '') === vaultSource);
+        if (exact) return exact;
+        // vaultSource given but no exact match (e.g. vault renamed/filtered out) —
+        // fall through to title-only so the nav still lands somewhere sensible.
+    }
+    return entries.find(e => e.title === title) || null;
+}
+
+/**
  * Return the trackerKey-equivalent strings for entries that belong to a given
  * top-folder bucket. Used for "select all in folder" wiring.
  *

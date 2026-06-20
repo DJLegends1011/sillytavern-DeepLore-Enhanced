@@ -1,6 +1,7 @@
 /** DeepLore Enhanced — Vault Scan Popup. Runs scanner, user picks discovered vault. */
 import { callGenericPopup, POPUP_TYPE } from '../../../../../popup.js';
 import { scanVaults } from '../vault/scanner.js';
+import { abortWith } from '../diagnostics/interceptors.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -153,7 +154,7 @@ export async function openVaultScanPopup(opts = {}) {
     });
 
     await popupPromise;
-    try { scanAbort.abort(); } catch { /* noop */ }
+    try { abortWith(scanAbort, 'vault_scan:popup_closed'); } catch { /* noop */ }
     await scanPromise;
     return selected;
 }

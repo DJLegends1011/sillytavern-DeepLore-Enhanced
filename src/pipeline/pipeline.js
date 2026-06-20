@@ -219,22 +219,29 @@ export async function runPipeline(chat, externalSnapshot, contextualGatingContex
         trace.refineKeyBlocked = keywordResult.refineKeyBlocked;
 
         // Wiki-link expansion: add entries referenced by matched entries as AI candidates.
-        // BUG-AUDIT v2.5: titleLookup keyed by title (no vault prefix) since
-        // resolvedLinks is a bare-title array from frontmatter. Same-title cross-vault
-        // collision is rare here (wiki links are author-controlled) and the matchedKeys
-        // write below uses trackerKey on the resolved entry so the downstream Map stays clean.
-        const matchedTitles = new Set(keywordResult.matched.map(e => e.title));
-        const titleLookup = new Map(vaultSnapshot.map(e => [e.title, e]));
+        // P2-5 (gotcha #50): resolvedLinks is a bare-title array from frontmatter, so a
+        // bare-title last-wins Map silently collapsed same-title cross-vault entries —
+        // only ONE vault's "Castle" could be wiki-linked even when both should be. Mirror
+        // the cascade-link pattern in match.js: key the lookup by title → array of all
+        // same-titled entries (union across vaults), expand EVERY match for a linked
+        // title, and dedupe by trackerKey (vaultSource:title), not bare title.
+        const matchedKeySet = new Set(keywordResult.matched.map(e => trackerKey(e)));
+        const titleLookup = new Map();
+        for (const e of vaultSnapshot) {
+            if (!titleLookup.has(e.title)) titleLookup.set(e.title, []);
+            titleLookup.get(e.title).push(e);
+        }
         const linkedCandidates = [];
         for (const entry of keywordResult.matched) {
             for (const linkTitle of (entry.resolvedLinks || [])) {
-                if (!matchedTitles.has(linkTitle)) {
-                    const linked = titleLookup.get(linkTitle);
-                    if (linked && !linked.constant) {
-                        matchedTitles.add(linkTitle);
-                        linkedCandidates.push(linked);
-                        matchedKeys.set(trackerKey(linked), `(wiki-linked from: ${entry.title})`);
-                    }
+                const candidates = titleLookup.get(linkTitle) || [];
+                for (const linked of candidates) {
+                    const tk = trackerKey(linked);
+                    if (matchedKeySet.has(tk)) continue;
+                    if (linked.constant) continue;
+                    matchedKeySet.add(tk);
+                    linkedCandidates.push(linked);
+                    matchedKeys.set(tk, `(wiki-linked from: ${entry.title})`);
                 }
             }
         }

@@ -466,6 +466,29 @@ Example: ["Characters - Inner Circle", "Locations - Districts", "Lore - Magic Sy
             releaseHalfOpenProbe();
         }
     };
+    // P2-6: constrain the category-selection response shape the same way aiSearch
+    // constrains lore selection (lorebookSelectionSchema). Without a schema, a model
+    // that emits prose / fenced JSON / a trailing comma fails extractAiResponseClient,
+    // returns null, and the pre-filter silently widens to the FULL manifest — defeating
+    // the cost-saving narrowing entirely. Object root (OpenAI strict-mode requirement);
+    // the BUG-027 unwrap path already reads `parsed.categories`, so the null-fallback
+    // safety still holds when a provider ignores the schema.
+    const categorySelectionSchema = {
+        name: 'category_selection',
+        description: 'Lore categories relevant to the current conversation',
+        value: {
+            type: 'object',
+            properties: {
+                categories: {
+                    type: 'array',
+                    items: { type: 'string' },
+                },
+            },
+            required: ['categories'],
+            additionalProperties: false,
+        },
+        strict: true,
+    };
     try {
         const result = await callAI(categoryPrompt, categoryUserMessage, {
             caller: 'hierarchicalPreFilter',
@@ -480,6 +503,7 @@ Example: ["Characters - Inner Circle", "Locations - Districts", "Lore - Magic Sy
             timeout: settings.aiSearchTimeout,
             skipThrottle: true, // BUG-006
             signal, // BUG-233: propagate user-abort signal
+            jsonSchema: categorySelectionSchema,
         });
         const responseText = result.text;
         const usage = result.usage;

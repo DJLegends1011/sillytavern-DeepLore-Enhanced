@@ -31,6 +31,7 @@ import {
 } from '../ai/ai.js';
 import { matchEntries } from '../pipeline/pipeline.js';
 import { setupSyncPolling } from '../vault/sync.js';
+import { abortWith } from '../diagnostics/interceptors.js';
 import { showNotebookPopup, showBrowsePopup, showAiNotepadPopup } from './popups.js';
 import {
     resolvePromptOrOverride,
@@ -2084,7 +2085,7 @@ function bindPopupEvents($container) {
         const $btn = $(this);
         // Second click while in-flight = cancel.
         if (_testAiAbortCtrl) {
-            try { _testAiAbortCtrl.abort(); } catch { /* noop */ }
+            try { abortWith(_testAiAbortCtrl, 'settings:test_ai_cancel'); } catch { /* noop */ }
             _testAiAbortCtrl = null;
             return;
         }
