@@ -264,7 +264,7 @@ function wireConnectionTest() {
         const apiKey = $wizard.find('#dle-wiz-api-key').val().trim();
         const useHttps = $wizard.find('#dle-wiz-https').is(':checked');
 
-        $btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin"></i> Testing...');
+        $btn.prop('disabled', true).html('<goo-spinner size="22" color="currentColor" aria-hidden="true"></goo-spinner> Testing...');
         $result.hide();
 
         try {
@@ -443,7 +443,7 @@ function wireAiSetup() {
     $wizard.find('#dle-wiz-test-ai').on('click', async () => {
         const $btn = $wizard.find('#dle-wiz-test-ai');
         const $result = $wizard.find('#dle-wiz-ai-result');
-        $btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin"></i> Testing...');
+        $btn.prop('disabled', true).html('<goo-spinner size="22" color="currentColor" aria-hidden="true"></goo-spinner> Testing...');
         $result.hide();
 
         try {
@@ -636,7 +636,7 @@ function wireVaultStructurePage() {
     if (!$btn.data('wired')) {
         $btn.data('wired', true);
         $btn.on('click', async () => {
-            $btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin"></i> Creating...');
+            $btn.prop('disabled', true).html('<goo-spinner size="22" color="currentColor" aria-hidden="true"></goo-spinner> Creating...');
             await runVaultStructureCreation();
             $btn.html('<i class="fa-solid fa-circle-check"></i> Done').addClass('dle-wizard-btn-verified').prop('disabled', false);
         });
@@ -786,8 +786,8 @@ function wireImport() {
 
         const folder = $wizard.find('#dle-wiz-import-folder').val()?.trim() || '';
 
-        $btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin"></i> Importing...');
-        $result.html(`<i class="fa-solid fa-spinner fa-spin"></i> Importing 0/${entries.length}...`)
+        $btn.prop('disabled', true).html('<goo-spinner size="22" color="currentColor" aria-hidden="true"></goo-spinner> Importing...');
+        $result.html(`<goo-spinner size="22" color="currentColor" aria-hidden="true"></goo-spinner> Importing 0/${entries.length}...`)
             .removeClass('dle-wizard-result-success dle-wizard-result-error').show();
 
         // #14: pass the wizard's live connection — on first run nothing is saved yet,
@@ -801,7 +801,7 @@ function wireImport() {
 
         try {
             const result = await importEntries(entries, folder, (done, total) => {
-                $result.html(`<i class="fa-solid fa-spinner fa-spin"></i> Importing ${done}/${total}...`);
+                $result.html(`<goo-spinner size="22" color="currentColor" aria-hidden="true"></goo-spinner> Importing ${done}/${total}...`);
             }, { vault: wizVault });
 
             importResult = result;

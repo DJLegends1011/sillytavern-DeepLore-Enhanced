@@ -898,7 +898,7 @@ export async function showGraphPopup() {
             layoutOverlay = document.createElement('div');
             layoutOverlay.className = 'dle-graph-layout-overlay';
             layoutOverlay.innerHTML = `<div class="dle-graph-layout-overlay-text">
-                <i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i>
+                <goo-spinner size="52" color="currentColor" aria-hidden="true"></goo-spinner>
                 <span class="dle-graph-layout-overlay-msg">Laying out entries\u2026 0s</span>
             </div>`;
             canvas.parentNode.appendChild(layoutOverlay);
@@ -1008,7 +1008,7 @@ export async function showGraphPopup() {
         layoutOverlay = document.createElement('div');
         layoutOverlay.className = 'dle-graph-layout-overlay';
         layoutOverlay.innerHTML = `<div class="dle-graph-layout-overlay-text">
-            <i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i>
+            <goo-spinner size="52" color="currentColor" aria-hidden="true"></goo-spinner>
             <span class="dle-graph-layout-overlay-msg">Laying out entries\u2026 0s</span>
         </div>`;
         canvas.parentNode.style.position = 'relative'; // anchor for absolutely-positioned overlay.

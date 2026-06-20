@@ -5,6 +5,9 @@
 // MUST be the first import — installs console/fetch/XHR/error interceptors at module-eval
 // time so we capture cold-start bugs in DLE and other extensions.
 import './src/diagnostics/boot.js';
+// Wave I: register the <goo-spinner> custom element (side-effect import — self-defines via
+// customElements.define). Must run before any drawer/settings/wizard HTML that uses the tag.
+import './src/vendor/goo-spinner.js';
 import {
     setExtensionPrompt,
     extension_prompts,
@@ -476,7 +479,9 @@ function _updatePipelineStatus(text) {
     // element left behind by a hot reload.
     let span = el.querySelector('.dle-pipeline-status-text');
     if (!span) {
-        el.innerHTML = '<i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i>'
+        // Wave I: goo-spinner replaces the FA spinner. Built once (querySelector self-heal),
+        // so its jelly physics run continuously without restart across phase swaps.
+        el.innerHTML = '<goo-spinner size="38" color="currentColor" aria-hidden="true"></goo-spinner>'
             + '<span class="dle-pipeline-status-text"></span>';
         span = el.querySelector('.dle-pipeline-status-text');
     }

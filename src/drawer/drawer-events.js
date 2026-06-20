@@ -231,7 +231,9 @@ export function wireStatusActions($drawer) {
                 if (ds.refreshing) return;
                 ds.refreshing = true;
                 const $refreshBtn = $(this);
-                $refreshBtn.prop('disabled', true).find('i').removeClass('fa-sync').addClass('fa-spin fa-spinner');
+                // Wave I: hide the sync glyph, show a goo-spinner during the refresh.
+                $refreshBtn.prop('disabled', true).find('i').hide();
+                $refreshBtn.append('<goo-spinner class="dle-btn-goo" size="22" color="currentColor" aria-hidden="true"></goo-spinner>');
                 buildIndex().catch(err => {
                     // Manual refresh is user-initiated; surface failure rather than silently letting the status bar stay stale.
                     console.warn('[DLE] Manual refresh failed:', err?.message);
@@ -244,7 +246,8 @@ export function wireStatusActions($drawer) {
                     } catch { /* toastr unavailable */ }
                 }).finally(() => {
                     ds.refreshing = false;
-                    $refreshBtn.prop('disabled', false).find('i').removeClass('fa-spin fa-spinner').addClass('fa-sync');
+                    $refreshBtn.prop('disabled', false).find('.dle-btn-goo').remove();
+                    $refreshBtn.find('i').show();
                 });
                 break;
             }

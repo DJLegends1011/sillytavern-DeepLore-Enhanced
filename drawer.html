@@ -186,7 +186,7 @@
             <button type="button" class="menu_button menu_button_icon dle-browse-search-help" title="Search syntax: plain text matches title/keys/content. Prefixed: tag:wizard, folder:Locations, key:apple, summary:&quot;old gods&quot;, field:era=medieval. Combine multiple prefixes with spaces." aria-label="Browse search syntax help" data-i18n="[title]dle_browse_search_syntax_tooltip;[aria-label]dle_browse_search_syntax_aria">
                 <i class="fa-solid fa-circle-question" aria-hidden="true"></i>
             </button>
-            <i class="fa-solid fa-spinner fa-spin dle-browse-refresh-spinner" aria-hidden="true" title="Refreshing vault index..." data-i18n="[title]dle_browse_refreshing_spinner_tooltip"></i>
+            <goo-spinner class="dle-browse-refresh-spinner" size="28" color="currentColor" aria-hidden="true" title="Refreshing vault index..." data-i18n="[title]dle_browse_refreshing_spinner_tooltip"></goo-spinner>
             <button type="button" class="dle-tab-expand" data-expand="browse" title="Open full Browse popup" aria-label="Open full Browse popup" data-i18n="[title]dle_browse_full_view_tooltip;[aria-label]dle_browse_full_view_tooltip">
                 Full View <i class="fa-solid fa-up-right-from-square" aria-hidden="true"></i>
             </button>
@@ -252,7 +252,7 @@
         <div class="dle-browse-list" role="list" aria-label="Vault entries" data-i18n="[aria-label]dle_browse_list_aria"></div>
         <!-- Empty state: loading vault entries -->
         <div class="dle-empty-state" id="dle-browse-loading">
-            <i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i>
+            <goo-spinner size="72" color="currentColor" aria-hidden="true"></goo-spinner>
             <p data-i18n="dle_browse_loading">Loading vault entries...</p>
         </div>
         <!-- Empty state: no entries loaded -->

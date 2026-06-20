@@ -24,11 +24,11 @@ import { ds, MODE_LABELS, MODE_DESCRIPTIONS, announceToScreenReader, formatToken
 let _lastAnnouncedStatus = null;
 let _lastSkipToolsState = null;
 
-// C1 (v2.5 Wave 2): the glyph is now PURE ACTIVITY — a spinner while the pipeline is
-// working, this static DLE brand icon at idle. The old STATUS_SVG_CHOOSING / STATUS_SVG_WRITING
-// mascot variants were removed: 3 shapes could never honestly map to 6+ phases (the phase text
-// label carries the granularity now). Cleaned Illustrator export: fills → currentColor.
-const STATUS_SVG_IDLE = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 375 375" fill="currentColor"><path fill-rule="evenodd" d="M228.93,357.53c-18.46,0-36.93.01-55.39,0-6.97-.01-8.36-1.48-9.99-8.39-2.72-11.52-5.63-23-8.76-34.42-2.56-9.33-9.19-14.32-18.63-14.47-9.81-.16-19.64.7-29.46,1.07-5.48.21-10.97.69-16.43.39-10.65-.57-17.71-6.08-19.97-16.53-1.95-8.99-2.53-18.27-3.88-27.4-.69-4.68-1.54-9.37-2.69-13.95-1.9-7.57-6.22-13.53-12.7-17.91-2.38-1.61-4.81-3.16-7.01-4.99-5.17-4.31-5.96-10.54-2.05-15.99 1.6-2.22 3.34-4.4 5.3-6.3 16.1-15.59 21.18-34.5 18.11-56.44-2.72-19.49-1-38.65 7.38-56.82 11.32-24.54 29.97-41.76 53.8-53.62 28.48-14.17 58.65-17.71 89.94-13.77 21.29 2.68 41.42 8.79 59.64 20.37 29.01 18.43 45.39 45.46 53.11 78.47 9.34 39.95.48 76.21-21.62 109.87-4.59 6.99-9.5 13.76-14.39 20.54-9.35 12.96-12.51 27.64-11.48 43.25 1.26 19.02 5.93 37.44 10.96 55.75 2.14 7.78-.46 11.27-8.4 11.28-18.46.02-36.93 0-55.39 0z M188,233.59c-16.46-1.72-30.63-7.05-43.31-16.24-29.56-21.43-42.78-57.87-33.99-93.49 8.51-34.48 37.98-60.73 73.77-65.7 26.63-3.7 47.26 9.82 52.96 34.69 3.84 16.77-2.95 32.93-18.08 43.06-8 5.36-17.03 8.15-26.18 10.68-11.24 3.11-21.53 8.02-29.43 16.92-15.47 17.44-12.46 44.92 6.63 60.72 2.48 2.05 5.24 3.84 8.08 5.37 2.71 1.46 5.7 2.42 9.55 3.99z M197.15,203.71c-6.05-.16-10.86-5.23-10.64-11.21.22-5.99 5.38-10.87 11.27-10.68 5.96.2 10.89 5.44 10.64 11.3-.26 6.13-5.18 6.75-11.27 10.59z"/><path d="M197.59,90.51c5.96.08 10.95 5.17 10.86 11.09-.08 5.92-5.21 10.95-11.09 10.88-5.95-.07-10.91-5.16-10.84-11.1.07-6 5.12-10.95 11.07-10.87z"/></svg>`;
+// Wave I: the status glyph is a single persistent <goo-spinner> (created once in
+// renderStatusZone). Activity is signalled by its SPEED attribute (faster while the
+// pipeline works) instead of swapping glyphs — honouring gotcha #74's "glyph hints
+// activity" while the goo serves as the DLE brand mark everywhere. The old static brand
+// SVG (STATUS_SVG_IDLE) + the FA spinner it alternated with were both retired here.
 
 export function renderStatusZone() {
     const $drawer = ds.$drawer;
@@ -50,9 +50,15 @@ export function renderStatusZone() {
     // only; system health lives entirely in the footer health icons now.
     const $dot = $drawer.find('.dle-status-dot');
     const isActive = !!indexing || pipelinePhase !== 'idle' || ds.stGenerating;
-    $dot.html(isActive
-        ? '<i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i>'
-        : STATUS_SVG_IDLE);
+    // Wave I: one persistent goo-spinner — created once so the jelly physics never restart
+    // across the many renderStatusZone calls. Speed (not glyph swap) carries activity.
+    let dotSpinner = $dot.find('goo-spinner')[0];
+    if (!dotSpinner) {
+        $dot.html('<goo-spinner size="40" color="currentColor" aria-hidden="true"></goo-spinner>');
+        dotSpinner = $dot.find('goo-spinner')[0];
+    }
+    // Idle = a slow, barely-moving gel; active = brisk.
+    if (dotSpinner) dotSpinner.setAttribute('speed', isActive ? '1.4' : '0.25');
     $dot.toggleClass('dle-status-active', isActive);
 
     // C3: canonical phase labels (state.PIPELINE_PHASE_LABELS) — single source of truth shared

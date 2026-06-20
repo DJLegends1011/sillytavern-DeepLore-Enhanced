@@ -641,7 +641,7 @@ export async function openLibrarianPopup(entryPoint = 'new', options = {}) {
                 const label = toolDisplayName(name, args);
                 div.innerHTML = `<div class="dle-lib-tool-header" role="button" tabindex="0" aria-expanded="false">`
                     + `<i class="fa-solid fa-wrench"></i> ${escapeHtml(label)}`
-                    + ` <i class="fa-solid fa-spinner fa-spin dle-lib-tool-spinner"></i>`
+                    + ` <goo-spinner class="dle-lib-tool-spinner" size="22" color="currentColor" aria-hidden="true"></goo-spinner>`
                     + `</div>`
                     + `<div class="dle-lib-tool-result" hidden></div>`;
                 // BUG-184: keyboard + mouse toggle.

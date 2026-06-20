@@ -2157,10 +2157,11 @@ function bindPopupEvents($container) {
     // ── System ──
     $c('#dle-sp-refresh').on('click', async function () {
         const $btn = $(this), $icon = $btn.find('i');
-        $btn.prop('disabled', true); $icon.removeClass('fa-rotate').addClass('fa-spinner fa-spin');
+        // Wave I: hide the rotate glyph, show a goo-spinner while re-indexing.
+        $btn.prop('disabled', true); $icon.hide(); $btn.append('<goo-spinner class="dle-btn-goo" size="22" color="currentColor" aria-hidden="true"></goo-spinner>');
         try { setVaultIndex([]); setIndexTimestamp(0); await buildIndex(); toastr.success(`Indexed ${vaultIndex.length} entries.`, 'DeepLore Enhanced'); updatePopupIndexStats(); }
         catch (err) { console.warn('[DLE] Refresh index failed:', err); toastr.error('Couldn\'t refresh your lore. Check your Obsidian connection.', 'DeepLore Enhanced'); }
-        finally { $btn.prop('disabled', false); $icon.removeClass('fa-spinner fa-spin').addClass('fa-rotate'); }
+        finally { $btn.prop('disabled', false); $btn.find('.dle-btn-goo').remove(); $icon.show(); }
     });
     $c('#dle-sp-browse-entries').on('click', () => showBrowsePopup());
     $c('#dle-sp-test-match').on('click', () => toastr.info('Use /dle-simulate in chat for a full match test.', 'DeepLore Enhanced'));

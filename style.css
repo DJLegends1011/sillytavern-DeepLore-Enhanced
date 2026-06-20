@@ -2381,8 +2381,10 @@ button.dle-browse-block.dle-block-active {
     100% { transform: scale(1);    box-shadow: 0 0 4px currentColor; }
 }
 
+/* Wave I: the goo-spinner inside the dot IS the motion now — no container pulse
+   (double-animation read as chaotic). Class kept for any non-motion hooks. */
 .dle-status-dot.dle-status-active {
-    animation: dle-pulse 1.5s ease-in-out infinite;
+    animation: none;
 }
 
 .dle-status-dot.dle-status-changed {
@@ -5623,28 +5625,29 @@ button.dle-chip-x:focus-visible { outline: 2px solid var(--dle-accent); outline-
 #form_sheld { position: relative; }
 #send_form  { position: relative; z-index: 2; }
 
+/* Wave I: entire toast sized up 50% vs the prior values (padding 5/16 → 8/24,
+   font 0.82em → 1.23em, gap 8 → 12, radius 8 → 12). */
 #dle-pipeline-status {
     position: absolute;
     bottom: 100%;
     left: 0;
     right: 0;
-    padding: 5px 16px;
-    font-size: 0.82em;
+    padding: 8px 24px;
+    font-size: 1.23em;
     font-style: italic;
     color: var(--SmartThemeQuoteColor, #aaa);
     background: color-mix(in srgb, var(--SmartThemeBlurTintColor, #222) 92%, white);
     border: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor) 60%, transparent);
     border-bottom: none;
-    border-radius: 8px 8px 0 0;
+    border-radius: 12px 12px 0 0;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 12px;
     z-index: 1;
     pointer-events: none;
     animation: dle-toast-in 0.3s ease-out forwards;
 }
 #dle-pipeline-status.dle-toast-out { animation: dle-toast-out 0.2s ease-in forwards; }
-#dle-pipeline-status i.fa-spinner { font-size: 0.85em; opacity: 0.7; }
 
 /* Wave D: phase text cross-fades on change (the spinner node is left untouched so its
    spin never restarts). Uses the Wave A motion tokens. The swap class is re-triggered
@@ -5754,6 +5757,21 @@ button.dle-chip-x:focus-visible { outline: 2px solid var(--dle-accent); outline-
     .dle-temp-hot,
     .dle-temp-cold,
     .dle-why-tokens { forced-color-adjust: none; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Wave I — goo-spinner integration
+   ═══════════════════════════════════════════════════════════════════════════ */
+/* The component fills with currentColor (instances pass color="currentColor"), so this
+   one rule makes EVERY goo-spinner take the DLE accent and adapt to dark/light via the
+   theme-derived var. Size is set per-instance via the `size` attribute (NOT width/height
+   here — the internal jelly physics reads the attribute, so a CSS size override would
+   desync the box from the blob orbit). vertical-align keeps inline spinners on the
+   text baseline (toast, buttons, refresh glyph). */
+goo-spinner {
+    color: var(--dle-accent, var(--SmartThemeQuoteColor, #5b8def));
+    vertical-align: middle;
+    line-height: 0;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

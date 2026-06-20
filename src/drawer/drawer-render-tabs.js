@@ -122,7 +122,7 @@ export function renderInjectionTab() {
         $whyNotSection.removeClass('dle-visible');
         $diff.empty();
         if (generationLock) {
-            $empty.html(`<i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i><p>${tr('dle_empty_state_choosing')}</p>`).addClass('dle-visible');
+            $empty.html(`<goo-spinner size="72" color="currentColor" aria-hidden="true"></goo-spinner><p>${tr('dle_empty_state_choosing')}</p>`).addClass('dle-visible');
         } else {
             // Localized — mirrors the static empty-state in drawer.html. tr() returns the
             // _html keys' markup verbatim, so <code>/<a> render. See gotchas.md #72.
