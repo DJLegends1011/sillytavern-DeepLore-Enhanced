@@ -15,6 +15,7 @@ import {
     tryAcquireHalfOpenProbe, recordAiSuccess, recordAiFailure, releaseHalfOpenProbe,
 } from '../state.js';
 import { dedupWarning, dedupError } from '../toast-dedup.js';
+import { tr } from '../i18n/i18n.js';
 import { aiCallBuffer, aiPromptBuffer, abortWith } from '../diagnostics/interceptors.js';
 import { extractAiResponseClient, clusterEntries, buildCategoryManifest, normalizeResults, isForceInjected, fuzzyTitleMatch, LOREBOOK_INFRA_TAGS, cmrsResultToText } from '../helpers.js';
 import { buildCandidateManifest as _buildCandidateManifest } from './manifest.js';
@@ -450,7 +451,7 @@ Example: ["Characters - Inner Circle", "Locations - Districts", "Lore - Magic Sy
 
     // BUG-AUDIT-1: Mutation gate — tryAcquireHalfOpenProbe, not isAiCircuitOpen.
     if (!tryAcquireHalfOpenProbe()) {
-        dedupWarning('AI search is resting after errors — using keywords for now.', 'circuit-prefilter', { hint: 'Circuit breaker open during hierarchical pre-filter.' });
+        dedupWarning(tr('dle_ai_toast_circuit_open'), 'circuit-prefilter', { hint: 'Circuit breaker open during hierarchical pre-filter.' });
         return null;
     }
 
@@ -809,7 +810,7 @@ export async function aiSearch(chat, candidateManifest, candidateHeader, snapsho
     // circuit doesn't get pinned by cached returns (probe-leak fix).
     if (!tryAcquireHalfOpenProbe()) {
         if (settings.debugMode) console.debug('[DLE] AI circuit breaker open — skipping AI search');
-        dedupWarning('AI search is resting after errors — using keywords for now.', 'ai_circuit', { timeOut: 8000, hint: 'Circuit breaker tripped after 2 consecutive failures; retrying in ~30s.' });
+        dedupWarning(tr('dle_ai_toast_circuit_open_search'), 'ai_circuit', { timeOut: 8000, hint: 'Circuit breaker tripped after 2 consecutive failures; retrying in ~30s.' });
         return { results: [], error: true, cached: false, errorMessage: 'AI search temporarily paused' };
     }
 
@@ -941,7 +942,7 @@ export async function aiSearch(chat, candidateManifest, candidateHeader, snapsho
             } else {
                 if (settings.debugMode) console.warn('[DLE] AI search: unrecognized object-shaped response, treating as failure');
                 recordAiFailure();
-                dedupWarning('AI search returned an unrecognized response shape — falling back to keywords.', 'aiSearch_shape_failure', { hint: 'extractAiResponseClient returned a non-array object with no known wrapper key.' });
+                dedupWarning(tr('dle_ai_toast_shape_failure'), 'aiSearch_shape_failure', { hint: 'extractAiResponseClient returned a non-array object with no known wrapper key.' });
                 return { results: [], error: true, errorMessage: 'AI response shape unrecognized' };
             }
         }
@@ -951,7 +952,7 @@ export async function aiSearch(chat, candidateManifest, candidateHeader, snapsho
                 console.warn(`[DLE] AI search: could not parse response as JSON array. Response preview: ${preview}`);
             }
             recordAiFailure(); // BUG-010: parse failures must trip the breaker.
-            dedupWarning('AI search returned an unparseable response — falling back to keywords.', 'aiSearch_parse_failure', { hint: 'extractAiResponseClient returned null; see debug log for response preview.' });
+            dedupWarning(tr('dle_ai_toast_parse_failure'), 'aiSearch_parse_failure', { hint: 'extractAiResponseClient returned null; see debug log for response preview.' });
             return { results: [], error: true, errorMessage: 'Failed to parse AI response as JSON' };
         }
         const aiResults = normalizeResults(parsed)
@@ -961,7 +962,7 @@ export async function aiSearch(chat, candidateManifest, candidateHeader, snapsho
         if (Array.isArray(parsed) && parsed.length > 0 && aiResults.length === 0) {
             if (settings.debugMode) console.warn('[DLE] AI search: normalizeResults produced zero items from non-empty response');
             recordAiFailure();
-            dedupWarning('AI search response had no usable entries — falling back to keywords.', 'aiSearch_normalize_empty', { hint: 'normalizeResults returned empty from a non-empty parsed array (format drift).' });
+            dedupWarning(tr('dle_ai_toast_normalize_empty'), 'aiSearch_normalize_empty', { hint: 'normalizeResults returned empty from a non-empty parsed array (format drift).' });
             return { results: [], error: true, errorMessage: 'AI response had no usable entries' };
         }
 
@@ -1103,7 +1104,7 @@ export async function aiSearch(chat, candidateManifest, candidateHeader, snapsho
             dedupError(`AI search authentication failed (${status || 'check API key'}). Verify your profile credentials.`, 'aiSearch_auth_error', { hint: err.message || String(err), timeOut: 15000 });
         } else if (isRateLimit) {
             console.warn('[DLE] AI search rate-limited:', err.message);
-            dedupWarning('AI search rate-limited by provider — falling back to keywords.', 'aiSearch_rate_limit', { hint: err.message || String(err) });
+            dedupWarning(tr('dle_ai_toast_rate_limit'), 'aiSearch_rate_limit', { hint: err.message || String(err) });
         } else {
             console.error('[DLE] AI search error:', err);
         }

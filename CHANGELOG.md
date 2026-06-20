@@ -16,7 +16,7 @@ All notable changes to DeepLore Enhanced are documented here. This file follows
 
 #### Internationalization (7 locales)
 
-- **7 locales out of the box** — English (canonical) plus German, Spanish, French, Japanese, Simplified Chinese, Russian. UI strings (~2305 keys) and AI prompts (30 modules) both translated. Coverage: 95.8–97.3% UI per locale, 100% AI prompts. Hooks ST's built-in `addLocaleData()` + `data-i18n` MutationObserver — no custom layer.
+- **7 locales out of the box** — English (canonical) plus German, Spanish, French, Japanese, Simplified Chinese, Russian. UI strings (~2306 keys) and AI prompts (30 modules) both translated. Coverage: 95.8–97.3% UI per locale, 100% AI prompts. Hooks ST's built-in `addLocaleData()` + `data-i18n` MutationObserver — no custom layer.
 - **AI prompt locale is a separate axis** — defaults to follow UI locale, can be pinned to English if you don't trust machine translations to preserve LLM behavior. Setting: `aiPromptLocale`.
 - **Placeholder validator with unique-index semantics** — `${0}` and `${1}` indexed only; re-references like `${0} ... ${0}` count as one index so translators can match grammatical agreement (ES adjective/noun, etc.) without tripping validation.
 
