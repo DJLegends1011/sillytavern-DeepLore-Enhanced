@@ -10,6 +10,7 @@ import { buildIndex } from '../vault/vault.js';
 import { serializeFieldDefinitions, DEFAULT_FIELD_DEFINITIONS } from '../fields.js';
 import { parseWorldInfoJson, importEntries } from '../vault/import.js';
 import { applyHtmlI18n } from '../i18n/i18n.js';
+import { EXTENSION_REF } from '../ext-path.js';
 
 const TOTAL_PAGES = 9;
 
@@ -27,7 +28,7 @@ let $wizard = null;
 
 /** @param {number} [startPage=1] 1-indexed page to start on */
 export async function showSetupWizard(startPage = 1) {
-    const html = await renderExtensionTemplateAsync('third-party/sillytavern-DeepLore-Enhanced', 'setup-wizard');
+    const html = await renderExtensionTemplateAsync(EXTENSION_REF, 'setup-wizard');
 
     currentPage = 1;
     connectionVerified = false;
@@ -349,7 +350,7 @@ function wireConnectionTest() {
 
 /** Path is shown relative to ST root since the install dir varies per user. */
 function getDemoVaultPath() {
-    return 'public/scripts/extensions/third-party/sillytavern-DeepLore-Enhanced/test-vault';
+    return `public/scripts/extensions/${EXTENSION_REF}/test-vault`;
 }
 
 function wireDemoVault() {

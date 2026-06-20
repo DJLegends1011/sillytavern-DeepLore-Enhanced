@@ -4,6 +4,7 @@ import { accountStorage } from '../../../../../util/AccountStorage.js';
 import { escapeHtml } from '../../../../../utils.js';
 import { getSettings } from '../../settings.js';
 import { applyHtmlI18n } from '../i18n/i18n.js';
+import { EXTENSION_REF } from '../ext-path.js';
 import {
     vaultIndex, generationLock,
     loreGaps,
@@ -167,7 +168,7 @@ export async function createDrawerPanel() {
     await loadSTInternals();
 
     const drawerContent = await renderExtensionTemplateAsync(
-        'third-party/sillytavern-DeepLore-Enhanced',
+        EXTENSION_REF,
         'drawer',
     );
 
@@ -217,7 +218,9 @@ export async function createDrawerPanel() {
     $('#top-settings-holder').append($drawer);
 
     // Custom SVG icon — async/non-blocking; FA icon serves as fallback if fetch fails.
-    fetch('/scripts/extensions/third-party/sillytavern-DeepLore-Enhanced/icon.svg')
+    // URL resolved relative to this module so it survives a repo/folder rename and
+    // works for global + per-user installs (see src/ext-path.js).
+    fetch(new URL('../../icon.svg', import.meta.url))
         .then(r => r.ok ? r.text() : null)
         .then(svg => {
             if (!svg) return;

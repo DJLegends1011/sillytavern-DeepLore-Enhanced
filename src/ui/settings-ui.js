@@ -9,6 +9,7 @@ import { applyHtmlI18n } from '../i18n/i18n.js';
 import { callGenericPopup, POPUP_TYPE, POPUP_RESULT } from '../../../../../popup.js';
 import { renderExtensionTemplateAsync } from '../../../../../extensions.js';
 import { accountStorage } from '../../../../../util/AccountStorage.js';
+import { EXTENSION_REF } from '../ext-path.js';
 import { buildAiChatContext } from '../../core/utils.js';
 import { getSettings, getPrimaryVault, PROMPT_TAG_PREFIX, settingsConstraints, invalidateSettingsCache, defaultSettings, resolveConnectionConfig } from '../../settings.js';
 import { promptManager } from '../../../../../openai.js';
@@ -947,7 +948,7 @@ export async function openSettingsPopup(navigateTo = null) {
     // BUG-341: PromptManager is now likely available — drain queued prompt_list cleanup.
     drainPendingPromptListCleanup();
     const html = await renderExtensionTemplateAsync(
-        'third-party/sillytavern-DeepLore-Enhanced',
+        EXTENSION_REF,
         'settings-popup',
     );
     const $container = $(html);

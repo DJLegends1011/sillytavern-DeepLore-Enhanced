@@ -8,6 +8,8 @@ import './src/diagnostics/boot.js';
 // Wave I: register the <goo-spinner> custom element (side-effect import — self-defines via
 // customElements.define). Must run before any drawer/settings/wizard HTML that uses the tag.
 import './src/vendor/goo-spinner.js';
+// Runtime-derived install-folder ref — survives a repo/folder rename (see src/ext-path.js).
+import { EXTENSION_REF } from './src/ext-path.js';
 import {
     setExtensionPrompt,
     extension_prompts,
@@ -2030,7 +2032,7 @@ async function _doInit() {
         }
 
         const settingsHtml = await renderExtensionTemplateAsync(
-            'third-party/sillytavern-DeepLore-Enhanced',
+            EXTENSION_REF,
             'settings',
         );
         $('#extensions_settings2').append(settingsHtml);

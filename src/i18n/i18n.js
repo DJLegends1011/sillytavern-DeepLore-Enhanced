@@ -33,8 +33,6 @@ import {
     trPlural as trPluralPure,
 } from './i18n-pure.js';
 
-const EXTENSION_BASE = '/scripts/extensions/third-party/sillytavern-DeepLore-Enhanced';
-
 let _dleDict = null;          // active locale dict (post-load)
 let _enFallbackDict = null;   // EN base loaded once, used for missing-key fallback
 let _dleLocale = null;         // resolved locale code actually loaded
@@ -47,7 +45,9 @@ export { SUPPORTED_LOCALES };
  * Fetch and parse a single locale JSON. Returns {} on 404/parse-error.
  */
 async function loadLocaleFile(locale) {
-    const url = `${EXTENSION_BASE}/locales/dle.${locale}.json`;
+    // Resolved relative to this module so it survives a repo/folder rename and works
+    // for global + per-user installs (see src/ext-path.js).
+    const url = new URL(`../../locales/dle.${locale}.json`, import.meta.url);
     try {
         const res = await fetch(url);
         if (!res.ok) {

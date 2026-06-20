@@ -7972,5 +7972,57 @@ test('I18N-HTML-1: no plain data-i18n on keys whose EN value contains HTML marku
         `Markup-bearing locale keys must use data-i18n-html, not data-i18n (#72).\nViolations:\n  ${violations.join('\n  ')}`);
 });
 
+section('RENAME-SAFE — repo/folder rename must not break install-path resolution (src/ext-path.js)');
+
+test('RENAME-1: production code does not hardcode the install-folder path (only ext-path.js fallback)', () => {
+    // ST clones an extension into a folder named after the repo slug
+    // (src/endpoints/extensions.js → sanitize(basename(url,'.git'))). A repo rename
+    // therefore changes the folder for FRESH installs while existing installs keep
+    // theirs. Hardcoding "third-party/<slug>" breaks one side of that split. All
+    // install-path consumers must derive it (EXTENSION_REF / import.meta.url).
+    const winPath = (rel) => fileURLToPath(new URL(rel, import.meta.url));
+    const FILES = ['index.js', 'src/drawer/drawer.js', 'src/ui/settings-ui.js', 'src/ui/setup-wizard.js', 'src/i18n/i18n.js'];
+    const needle = 'third-party/sillytavern-DeepLore-Enhanced';
+    const violations = FILES.filter((f) => readFileSync(winPath('../' + f), 'utf8').includes(needle));
+    assertEqual(violations.length, 0,
+        `Install-folder path must be derived (EXTENSION_REF / new URL(import.meta.url)), not hardcoded — a repo rename changes the folder for fresh installs. Hardcoded in:\n  ${violations.join('\n  ')}`);
+});
+
+test('RENAME-2: parseExtensionRef resolves old folder, renamed folder, and junk → fallback', async () => {
+    const { parseExtensionRef, FALLBACK_REF } = await import('../src/ext-path.js');
+    // Existing install (folder = old repo slug) → unchanged ref.
+    assertEqual(
+        parseExtensionRef('/scripts/extensions/third-party/sillytavern-DeepLore-Enhanced/src/ext-path.js'),
+        'third-party/sillytavern-DeepLore-Enhanced',
+        'RENAME-2: existing-install folder must resolve to the historical ref');
+    // Fresh install AFTER repo rename (folder = new slug) → new ref, NOT the old one.
+    assertEqual(
+        parseExtensionRef('/scripts/extensions/third-party/sillytavern-DeepLore/src/ext-path.js'),
+        'third-party/sillytavern-DeepLore',
+        'RENAME-2: post-rename fresh-install folder must resolve to the new ref');
+    // Cache-buster query / hash on the module URL must not defeat the match.
+    assertEqual(
+        parseExtensionRef('/scripts/extensions/third-party/sillytavern-DeepLore/src/ext-path.js?v=123'),
+        'third-party/sillytavern-DeepLore',
+        'RENAME-2: query string on the module URL must be tolerated');
+    // Unexpected shape (e.g. per-user serve path we do not parse) → safe fallback.
+    assertEqual(parseExtensionRef('/some/unexpected/path.js'), FALLBACK_REF,
+        'RENAME-2: unexpected URL shape must fall back to the historical ref');
+    assertEqual(parseExtensionRef(''), FALLBACK_REF, 'RENAME-2: empty pathname must fall back');
+    assertEqual(FALLBACK_REF, 'third-party/sillytavern-DeepLore-Enhanced',
+        'RENAME-2: fallback must stay the historical name so existing installs survive');
+});
+
+test('RENAME-3: locale + icon fetches resolve relative to import.meta.url (location-agnostic)', () => {
+    const winPath = (rel) => fileURLToPath(new URL(rel, import.meta.url));
+    const i18n = readFileSync(winPath('../src/i18n/i18n.js'), 'utf8');
+    assert(i18n.includes('new URL(`../../locales/dle.${locale}.json`, import.meta.url)'),
+        'RENAME-3: i18n locale fetch must use new URL(..., import.meta.url)');
+    assert(!i18n.includes('EXTENSION_BASE'), 'RENAME-3: dead EXTENSION_BASE constant must be gone from i18n.js');
+    const drawer = readFileSync(winPath('../src/drawer/drawer.js'), 'utf8');
+    assert(drawer.includes("new URL('../../icon.svg', import.meta.url)"),
+        'RENAME-3: drawer icon fetch must use new URL(..., import.meta.url)');
+});
+
 await summary('Regression Tests');
 
