@@ -412,8 +412,9 @@ export async function testConnection(host, port, apiKey, useHttps = false) {
         }
         return { ok: false, error: `HTTP ${result.status}` };
     } catch (err) {
+        const isFetchFail = err instanceof TypeError || err.message?.includes('Failed to fetch');
         // Self-signed cert errors surface as TypeError / "Failed to fetch".
-        if (useHttps && (err instanceof TypeError || err.message?.includes('Failed to fetch'))) {
+        if (useHttps && isFetchFail) {
             const probe = await diagnoseFetchFailure(host, port, apiKey);
             const certUrl = `https://${host || '127.0.0.1'}:${port}`;
             return {
@@ -428,6 +429,17 @@ export async function testConnection(host, port, apiKey, useHttps = false) {
                     : probe.diagnosis === 'auth'
                         ? `Connected via HTTP but authentication failed. Check your API key.`
                         : `Cannot reach Obsidian on either HTTPS or HTTP. Check that Obsidian is running with the Local REST API plugin enabled.`,
+            };
+        }
+        // Wave E (E2): a plain-HTTP "Failed to fetch" means Obsidian is unreachable — the #1
+        // onboarding wall. Attach an 'unreachable' diagnosis so callers (wizard / settings)
+        // surface the running/plugin/port checklist via buildConnectionGuidanceHtml instead of
+        // a raw "Failed to fetch" dead-end with no path forward.
+        if (isFetchFail) {
+            return {
+                ok: false,
+                diagnosis: 'unreachable',
+                error: `Cannot reach Obsidian at ${host || '127.0.0.1'}:${port}. Check that Obsidian is running with the Local REST API plugin enabled.`,
             };
         }
         return { ok: false, error: err.message };

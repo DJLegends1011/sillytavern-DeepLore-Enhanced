@@ -515,6 +515,7 @@ function wireAiSetup() {
 
 async function loadAiProfiles() {
     const $select = $wizard.find('#dle-wiz-ai-profile');
+    $select.next('.dle-wiz-no-profiles-help').remove(); // Wave E: clear prior remediation (page revisits).
     try {
         const { ConnectionManagerRequestService } = await import('../../../../shared.js')
             .catch(() => ({ ConnectionManagerRequestService: null }));
@@ -525,6 +526,16 @@ async function loadAiProfiles() {
         const profiles = ConnectionManagerRequestService.getSupportedProfiles();
         if (!profiles || profiles.length === 0) {
             $select.html('<option value="">No profiles configured</option>');
+            // Wave E (E3): don't dead-end on an empty dropdown — tell the user how to make a profile
+            // (profile-is-canonical since v2.5) and offer the keywords-only escape hatch.
+            $select.after(
+                '<div class="dle-wiz-no-profiles-help dle-text-xs dle-muted" style="margin-top:6px;">'
+                + '<i class="fa-solid fa-circle-info"></i> DeepLore routes AI through SillyTavern '
+                + '<strong>Connection Profiles</strong>. Create one in <strong>API Connections</strong> '
+                + '(the plug icon in the top bar) → <strong>Connection Profile</strong>, then reopen this step. '
+                + 'Or choose <strong>Keywords Only</strong> on the previous step to skip AI for now.'
+                + '</div>',
+            );
             return;
         }
         const s = getSettings();

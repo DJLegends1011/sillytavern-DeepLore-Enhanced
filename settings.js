@@ -227,7 +227,9 @@ export const defaultSettings = {
     librarianShowToolCalls: true,
     // librarianPerMessageActivity: ON ties gap/flag records to messages (clear on new gen, keep on swipe, delete with msg).
     // OFF = legacy behavior (gaps accumulate, dropdowns ephemeral). See CLAUDE.md "non-obvious settings semantics".
-    librarianPerMessageActivity: false,
+    // Default flipped false→true in v2.5 Wave E — the OFF default showed new users stale accumulating
+    // gaps + vanishing tool history. Existing users who persisted `false` keep it (their stored value wins).
+    librarianPerMessageActivity: true,
     // #16: global priority-order toggle. false = lower priority number wins (Obsidian/WI convention).
     // true = higher wins. Affects pipeline budget allocation, Librarian view, Cartographer display.
     // Browse popup's explicit priority_asc/desc dropdown bypasses this — user-typed sort always wins literal.

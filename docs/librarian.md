@@ -336,7 +336,7 @@ Generates the tools documentation section embedded in Emma's system prompt. Rebu
 
 ## 7. Per-Message Activity Mode
 
-**Setting:** `librarianPerMessageActivity` (default: `false`).
+**Setting:** `librarianPerMessageActivity` (default: `true` — flipped from `false` in v2.5 Wave E; existing users who persisted `false` keep it).
 
 ### Behavior differences
 

@@ -373,11 +373,25 @@ function updateHeaderBadge() {
 function populateProfileDropdownIn($container, selectId, settingsKey) {
     const select = $container.find('#' + selectId)[0];
     if (!select) return;
+    const $select = $(select);
+    $select.next('.dle-no-profiles-help').remove(); // Wave E: clear prior remediation (idempotent re-populate).
     const settings = getSettings();
     const currentId = settings[settingsKey];
     select.innerHTML = '<option value="">— Select a profile —</option>';
     try {
         const profiles = ConnectionManagerRequestService.getSupportedProfiles();
+        if (!profiles || profiles.length === 0) {
+            // Wave E (E3): empty dropdown was a dead-end. DLE routes AI through ST Connection
+            // Profiles (profile-is-canonical since v2.5) — point the user at where to make one.
+            $select.after(
+                '<div class="dle-no-profiles-help dle-text-xs dle-muted" style="margin-top:4px;">'
+                + '<i class="fa-solid fa-circle-info"></i> No connection profiles yet. DeepLore routes AI through '
+                + 'SillyTavern <strong>Connection Profiles</strong> — create one in <strong>API Connections</strong> '
+                + '(the plug icon, top bar) → <strong>Connection Profile</strong>, then reopen these settings.'
+                + '</div>',
+            );
+            return;
+        }
         for (const p of profiles) {
             const opt = document.createElement('option');
             opt.value = p.id;
