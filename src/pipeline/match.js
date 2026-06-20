@@ -146,9 +146,16 @@ export function matchEntries(chat, snapshot = null, { settings, characterName } 
 
         if (settings.characterContextScan && activeCharName) {
             const nameLower = activeCharName.toLowerCase();
-            const charEntries = getTitleMap().get(nameLower) || entries.filter(e =>
-                e.keys.some(k => k.toLowerCase() === nameLower)
-            );
+            // M-13: UNION of title-matched and key-matched entries, not either/or.
+            // The old `titleMap.get() || entries.filter(keyMatch)` made the two
+            // mutually exclusive — if ANY entry's title equalled the character name,
+            // the key-based fallback never ran, silently dropping entries that
+            // reference the character via `keys:` but carry a different title.
+            // The matchedSet.has() guard below dedups by object identity (both lists
+            // draw from the same `entries`), so an entry matching by BOTH is added once.
+            const titleMatches = getTitleMap().get(nameLower) || [];
+            const keyMatches = entries.filter(e => e.keys.some(k => k.toLowerCase() === nameLower));
+            const charEntries = [...titleMatches, ...keyMatches];
             for (const charEntry of charEntries) {
                 if (!matchedSet.has(charEntry)) {
                     matchedSet.add(charEntry);
@@ -178,10 +185,27 @@ export function matchEntries(chat, snapshot = null, { settings, characterName } 
                         const remaining = cooldownTracker.get(trackerKey(linked));
                         if (remaining !== undefined && remaining > 0) continue;
                     }
-                    if (linked.probability === 0) continue;
-                    if (linked.probability !== null && linked.probability < 1.0 && Math.random() > linked.probability) continue;
+                    // L-12: record probability skips so /dle-why can explain why a
+                    // cascade-pulled entry didn't inject (was silently dropped before).
+                    if (linked.probability === 0) {
+                        probabilitySkipped.push({ title: linked.title, vaultSource: linked.vaultSource || '', probability: 0, roll: 0 });
+                        continue;
+                    }
+                    if (linked.probability !== null && linked.probability < 1.0) {
+                        const roll = Math.random();
+                        if (roll > linked.probability) {
+                            probabilitySkipped.push({ title: linked.title, vaultSource: linked.vaultSource || '', probability: linked.probability, roll });
+                            continue;
+                        }
+                    }
                     // BUG-035: cascade is an explicit author relationship, not a keyword
                     // trigger — warmup doesn't apply.
+                    // L-11: cascade ALSO intentionally bypasses the refine_keys/selectiveLogic
+                    // gate (unlike the recursion path, which routes through testEntryMatch).
+                    // This asymmetry is by design: a cascade_link is the author explicitly
+                    // naming an entry to pull (a title relationship), not a keyword hit, so the
+                    // secondary-keyword refine gate doesn't apply — same rationale as the
+                    // warmup bypass above. Recursion is keyword-triggered, so it keeps the gate.
                     matchedSet.add(linked);
                     matchedKeys.set(trackerKey(linked), `(cascade from: ${entry.title})`);
                     if (linked.excludeRecursion) cascadeExcludedFromRecursion.add(linked);
@@ -225,8 +249,19 @@ export function matchEntries(chat, snapshot = null, { settings, characterName } 
                             const remaining = cooldownTracker.get(trackerKey(entry));
                             if (remaining !== undefined && remaining > 0) continue;
                         }
-                        if (entry.probability === 0) continue;
-                        if (entry.probability !== null && entry.probability < 1.0 && Math.random() > entry.probability) continue;
+                        // L-12: record probability skips so /dle-why can explain a
+                        // recursion-matched entry that didn't inject.
+                        if (entry.probability === 0) {
+                            probabilitySkipped.push({ title: entry.title, vaultSource: entry.vaultSource || '', probability: 0, roll: 0 });
+                            continue;
+                        }
+                        if (entry.probability !== null && entry.probability < 1.0) {
+                            const roll = Math.random();
+                            if (roll > entry.probability) {
+                                probabilitySkipped.push({ title: entry.title, vaultSource: entry.vaultSource || '', probability: entry.probability, roll });
+                                continue;
+                            }
+                        }
                         // M-6: hasWarmup unifies the three match paths (primary, recursion, BM25).
                         if (hasWarmup(entry)) {
                             const occurrences = countKeywordOccurrences(entry, recursionText, settings);
@@ -242,7 +277,9 @@ export function matchEntries(chat, snapshot = null, { settings, characterName } 
     }
 
     // BM25 fuzzy search supplements keyword matches with TF-IDF scored results.
-    const fuzzyStats = { active: false, candidates: 0, matched: 0, threshold: settings.fuzzySearchMinScore || 0.5 };
+    // L-1: nullish so an explicit `fuzzySearchMinScore: 0` (match-everything) isn't
+    // coerced to 0.5 by `||` (same falsy-coalesce class as M-1).
+    const fuzzyStats = { active: false, candidates: 0, matched: 0, threshold: settings.fuzzySearchMinScore ?? 0.5 };
     if (settings.fuzzySearchEnabled && fuzzySearchIndex && settings.scanDepth > 0) {
         fuzzyStats.active = true;
         const fuzzyText = getScanText(settings.scanDepth);

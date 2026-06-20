@@ -189,7 +189,7 @@ function toolSearchVault(args) {
         // BUG-400: surface vaultSource so the model can pass vault_source on
         // later tool calls to disambiguate duplicate titles across vaults.
         const vaultLine = e.vaultSource ? `\n   vaultSource: ${e.vaultSource}` : '';
-        return `${i + 1}. **${e.title}** (${e.type || '?'}, p${e.priority || 50}, score ${h.score.toFixed(2)})${vaultLine}\n   Keys: ${(e.keys || []).join(', ')}\n   ${snippet}`;
+        return `${i + 1}. **${e.title}** (${e.type || '?'}, p${e.priority ?? 50}, score ${h.score.toFixed(2)})${vaultLine}\n   Keys: ${(e.keys || []).join(', ')}\n   ${snippet}`;
     });
     return truncate(lines.join('\n\n'), TOOL_RESULT_MAX_CHARS);
 }
@@ -212,7 +212,7 @@ function toolGetEntry(args) {
     const meta = [
         `**Title:** ${entry.title}`,
         `**Type:** ${entry.type || 'unknown'}`,
-        `**Priority:** ${entry.priority || 50}`,
+        `**Priority:** ${entry.priority ?? 50}`,
         `**Tags:** ${(entry.tags || []).join(', ')}`,
         `**Keys:** ${(entry.keys || []).join(', ')}`,
         entry.summary ? `**Summary:** ${entry.summary}` : null,
@@ -242,7 +242,7 @@ function toolGetFullContent(args, session = null) {
             ...session.draftState,
             title: entry.title,
             type: entry.type || 'lore',
-            priority: entry.priority || 50,
+            priority: entry.priority ?? 50,
             tags: entry.tags?.length ? [...entry.tags] : [],
             keys: entry.keys?.length ? [...entry.keys] : [],
             summary: entry.summary || '',
@@ -279,7 +279,7 @@ function toolFindSimilar(args) {
             || lowerQuery.includes(e.title.toLowerCase());
         const flag = (titleMatch || h.score > 2.0) ? ' **[LIKELY DUPLICATE]**' : '';
         const snippet = truncate(e.summary || e.content || '', 160);
-        return `${i + 1}. **${e.title}** (${e.type || '?'}, p${e.priority || 50}, score ${h.score.toFixed(2)})${flag}\n   Keys: ${(e.keys || []).join(', ')}\n   ${snippet}`;
+        return `${i + 1}. **${e.title}** (${e.type || '?'}, p${e.priority ?? 50}, score ${h.score.toFixed(2)})${flag}\n   Keys: ${(e.keys || []).join(', ')}\n   ${snippet}`;
     });
     const header = `Found ${hits.length} potentially similar entries. Review before creating a new one:`;
     return truncate(`${header}\n\n${lines.join('\n\n')}`, TOOL_RESULT_MAX_CHARS);
@@ -317,7 +317,7 @@ function toolGetLinks(args) {
     const lines = links.map(linkTitle => {
         const target = findEntry(linkTitle);
         return target
-            ? `- [[${linkTitle}]] (${target.type || '?'}, p${target.priority || 50})`
+            ? `- [[${linkTitle}]] (${target.type || '?'}, p${target.priority ?? 50})`
             : `- [[${linkTitle}]] (not in vault)`;
     });
     return `**${entry.title}** links to ${links.length} entries:\n${lines.join('\n')}`;
@@ -336,7 +336,7 @@ function toolGetBacklinks(args) {
 
     const lines = backlinks
         .sort((a, b) => comparePriority(a, b, getSettings().priorityReversed))
-        .map(e => `- **${e.title}** (${e.type || '?'}, p${e.priority || 50})`);
+        .map(e => `- **${e.title}** (${e.type || '?'}, p${e.priority ?? 50})`);
     return truncate(`${backlinks.length} entries link to "${title}":\n${lines.join('\n')}`, TOOL_RESULT_MAX_CHARS);
 }
 
@@ -359,7 +359,7 @@ function toolListEntries(args) {
         .sort((a, b) => comparePriority(a, b, getSettings().priorityReversed))
         .slice(0, 50);
 
-    const lines = capped.map(e => `- **${e.title}** (p${e.priority || 50}) — ${(e.keys || []).slice(0, 3).join(', ')}`);
+    const lines = capped.map(e => `- **${e.title}** (p${e.priority ?? 50}) — ${(e.keys || []).slice(0, 3).join(', ')}`);
     const header = `${entries.length} entries${entries.length > 50 ? ' (showing first 50)' : ''}:`;
     return truncate(`${header}\n${lines.join('\n')}`, TOOL_RESULT_MAX_CHARS);
 }

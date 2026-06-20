@@ -1153,6 +1153,10 @@ export function wireHealthIcons($drawer) {
 // Librarian Tab
 // ════════════════════════════════════════════════════════════════════════════
 let removeArmedAt = 0;
+// L-24: track the arming click's reset timer + label-restore thunk so the confirming click can
+// clear the "Click again to confirm" label immediately instead of leaving it up to ~3s.
+let removeResetTimer = null;
+let removeRestoreLabel = null;
 
 export function wireLibrarianTab($drawer) {
     // Sub-tab selection (Flags/Activity) is intentionally not persisted across tab entries.
@@ -1359,12 +1363,20 @@ export function wireLibrarianTab($drawer) {
                 removeArmedAt = now;
                 const origHtml = $btn.html();
                 $btn.html('<i class="fa-solid fa-trash" aria-hidden="true"></i> Click again to confirm');
-                setTimeout(() => {
+                // L-24: stash the restore thunk + timer id so the confirming click can clear the
+                // "Click again to confirm" label immediately (otherwise it lingered up to 3s).
+                removeRestoreLabel = () => { $btn.html(origHtml); };
+                removeResetTimer = setTimeout(() => {
                     if (Date.now() - removeArmedAt >= 3000) $btn.html(origHtml);
+                    removeResetTimer = null;
+                    removeRestoreLabel = null;
                 }, 3000);
                 return;
             }
+            // L-24: confirming click — restore the button label and cancel the pending reset timer now.
             removeArmedAt = 0;
+            if (removeResetTimer) { clearTimeout(removeResetTimer); removeResetTimer = null; }
+            if (removeRestoreLabel) { removeRestoreLabel(); removeRestoreLabel = null; }
             const hidden = getHiddenGapIds();
             let hideN = 0, dismissN = 0;
             for (const id of ids) {

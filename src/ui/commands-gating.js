@@ -622,8 +622,11 @@ export function registerGatingCommands() {
 
                 await callGenericPopup(html, POPUP_TYPE.TEXT, '', {
                     wide: false,
-                    onOpen: () => {
-                        const buttons = document.querySelectorAll('.dle-folder-cmd-select');
+                    // L-22 / BUG-105: scope querySelectorAll to this popup's root so it
+                    // doesn't cross-fire into other stacked popups (mirrors showFieldSelectionPopup).
+                    onOpen: (popup) => {
+                        const root = popup?.dlg || document;
+                        const buttons = root.querySelectorAll('.dle-folder-cmd-select');
                         for (const btn of buttons) {
                             btn.addEventListener('click', () => {
                                 const selected = btn.getAttribute('data-value');
@@ -632,7 +635,7 @@ export function registerGatingCommands() {
                                     saveMetadataDebounced();
                                     notifyGatingChanged();
                                     toastr.success(tr('dle_cmd_setfolder_cleared_toast'), 'DeepLore Enhanced');
-                                    document.querySelector('.popup-button-ok')?.click();
+                                    (root.querySelector('.popup-button-ok') || document.querySelector('.popup-button-ok'))?.click();
                                     return;
                                 }
                                 if (!chat_metadata.deeplore_folder_filter) chat_metadata.deeplore_folder_filter = [];

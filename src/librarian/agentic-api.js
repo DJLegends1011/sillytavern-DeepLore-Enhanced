@@ -354,7 +354,7 @@ async function callWithToolsViaProxy(connConfig, messages, tools, toolChoice, ma
             // below the regex's {10,} minimum so it never matches — and a partial
             // token leaks into Error.message. Real Anthropic 401/403 bodies do quote
             // the offending header. Always scrub-then-slice for error shaping.
-            // See gotchas.md #56.
+            // See gotchas.md #67.
             const safeText = text
                 .replace(/sk-[a-zA-Z0-9_-]{10,}/g, 'sk-***')
                 .replace(/Bearer\s+[A-Za-z0-9_\-./]{10,}/g, 'Bearer ***')
@@ -530,7 +530,7 @@ function safeParseArgs(args, fallbackInput) {
 // buildAssistantMessage reads) without mutating raw data. Keyed by part object
 // reference — parts only need to be GC'd when the whole response is, so weak
 // references are correct here. Cleared in tests via `_resetSyntheticIdsForTests`.
-// See gotchas.md #56.
+// See gotchas.md #67.
 const _syntheticIds = new WeakMap();
 
 /**

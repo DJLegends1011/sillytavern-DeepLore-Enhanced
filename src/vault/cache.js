@@ -108,7 +108,10 @@ export async function saveIndexToCache(entries) {
         const cacheData = {
             schemaVersion: CACHE_SCHEMA_VERSION,
             timestamp: Date.now(),
-            entries: entries.map(e => Object.fromEntries(Object.entries(e).filter(([k]) => !k.startsWith('_') || k === '_contentHash' || k === '_originalRequires' || k === '_originalExcludes' || k === '_originalCascadeLinks'))),
+            // L-2: persist `_parserWarnings` (already compacted to {code, severity, field}
+            // in vault.js before commit) so /dle-lint keeps surfacing warnings after a
+            // reload/hydrate instead of going blank until the next full rebuild.
+            entries: entries.map(e => Object.fromEntries(Object.entries(e).filter(([k]) => !k.startsWith('_') || k === '_contentHash' || k === '_originalRequires' || k === '_originalExcludes' || k === '_originalCascadeLinks' || k === '_parserWarnings'))),
         };
 
         store.put(cacheData, getCacheKey());

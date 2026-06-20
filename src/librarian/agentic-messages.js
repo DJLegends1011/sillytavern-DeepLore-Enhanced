@@ -257,6 +257,16 @@ export function buildChatMessages(chatArray, pipelineContext, injectedTitles, se
         alternated.pop();
     }
 
+    // L-17: never return a system-only array. If every chat message was
+    // empty/whitespace (filtered at the !content.trim() guard above) or the only
+    // surviving tail was an assistant turn (popped just above), `alternated` can be
+    // empty — leaving `[system]`, which every provider rejects with a 400 (no user
+    // turn). Synthesize a minimal continuation user turn so the request is always
+    // well-formed and the writing AI still produces prose.
+    if (alternated.length === 0) {
+        alternated.push({ role: 'user', content: '(continue)' });
+    }
+
     messages.push(...alternated);
     return messages;
 }

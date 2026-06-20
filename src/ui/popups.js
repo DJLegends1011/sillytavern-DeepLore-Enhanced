@@ -385,8 +385,10 @@ export async function showBrowsePopup() {
         const sort = sortEl?.value || 'priority_asc';
 
         let filtered = vaultIndex.filter(e => {
-            if (status === 'pinned' && !pins.has(e.title.toLowerCase())) return false;
-            if (status === 'blocked' && !blocks.has(e.title.toLowerCase())) return false;
+            // M-8: pins/blocks are keyed by pbKey (vaultSource::title.toLowerCase()), not bare
+            // title — query with the same key the row toggle uses, else the filter never matches.
+            if (status === 'pinned' && !pins.has(pbKey(e.vaultSource, e.title))) return false;
+            if (status === 'blocked' && !blocks.has(pbKey(e.vaultSource, e.title))) return false;
             if (status === 'constant' && !e.constant) return false;
             if (status === 'seed' && !e.seed) return false;
             if (status === 'bootstrap' && !e.bootstrap) return false;
@@ -427,8 +429,9 @@ export async function showBrowsePopup() {
         html += '</tr></thead><tbody>';
         for (const entry of filtered) {
             const statusBadges = [];
-            if (pins.has(entry.title.toLowerCase())) statusBadges.push('<span class="dle-badge dle-success">[pinned]</span>');
-            if (blocks.has(entry.title.toLowerCase())) statusBadges.push('<span class="dle-badge dle-error">[blocked]</span>');
+            // M-8: badge checks must use pbKey too (bare title never matches the Set keys).
+            if (pins.has(pbKey(entry.vaultSource, entry.title))) statusBadges.push('<span class="dle-badge dle-success">[pinned]</span>');
+            if (blocks.has(pbKey(entry.vaultSource, entry.title))) statusBadges.push('<span class="dle-badge dle-error">[blocked]</span>');
             if (entry.constant) statusBadges.push('<span class="dle-text-xs dle-success">[const]</span>');
             if (entry.seed) statusBadges.push('<span class="dle-text-xs dle-info">[seed]</span>');
             if (entry.bootstrap) statusBadges.push('<span class="dle-text-xs dle-warning">[boot]</span>');

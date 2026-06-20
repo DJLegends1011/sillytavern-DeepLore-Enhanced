@@ -455,7 +455,10 @@ export function incrementalMentionWeights(prevWeights, prevEntries, newEntries, 
 
 /** Compute TF map + token length for one entry (matches buildBM25Index's per-doc loop). */
 export function computeEntryBM25TF(entry) {
-    const text = `${entry.title} ${entry.keys.join(' ')} ${entry.content}`;
+    // L-7: guard non-array `keys` — mirrors buildBM25Index's guard so a bad entry can't
+    // throw. `[].join(' ') === ''`, byte-identical when keys IS an array (keeps the
+    // incremental≡full BM25 equivalence pinned by vault.test.mjs L4/L5).
+    const text = `${entry.title} ${Array.isArray(entry.keys) ? entry.keys.join(' ') : ''} ${entry.content}`;
     const tokens = tokenize(text);
     const tf = new Map();
     for (const token of tokens) {

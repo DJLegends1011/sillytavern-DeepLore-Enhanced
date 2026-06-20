@@ -141,9 +141,23 @@ export async function runAutoSuggest() {
 
     if (!Array.isArray(parsed)) return [];
 
+    // M-11: dedup suggestion-vs-suggestion by lowercased title BEFORE the
+    // existing-entries filter (keep first occurrence). Two suggestions differing
+    // only by case (e.g. "Castle"/"castle") preserve case in _buildSuggestionFile's
+    // filename → on case-insensitive filesystems (Windows/default macOS) Castle.md
+    // and castle.md collide and the second write silently overwrites the first,
+    // so the user sees "2 created" but only one file exists.
+    const seenLower = new Set();
+    const deduped = parsed.filter(s => {
+        if (!(s && typeof s === 'object' && s.title)) return false;
+        const key = s.title.toLowerCase();
+        if (seenLower.has(key)) return false;
+        seenLower.add(key);
+        return true;
+    });
+
     const existingLower = new Set(visibleEntries.map(e => e.title.toLowerCase()));
-    const filtered = parsed.filter(s =>
-        s && typeof s === 'object' && s.title &&
+    const filtered = deduped.filter(s =>
         !existingLower.has(s.title.toLowerCase())
     );
     pushEvent('auto_suggest', { action: 'completed', count: filtered.length });

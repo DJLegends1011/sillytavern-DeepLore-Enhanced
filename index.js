@@ -228,6 +228,17 @@ function _teardownDleExtension() {
         _pmRegistrationLatchTimer = null;
         _pmRegistrationLatchDeadline = 0;
     }
+    // L-39: the phase-1 boot poll (rapid 10s interval + its 10s deadline timeout) was
+    // a local closure that teardown couldn't stop, so a hot-reload left the old
+    // instance's poll firing into the new module (self-healed in ≤10s). Track + clear.
+    if (_pmRegistrationPhase1Interval) {
+        try { clearInterval(_pmRegistrationPhase1Interval); } catch { /* ignore */ }
+        _pmRegistrationPhase1Interval = null;
+    }
+    if (_pmRegistrationPhase1Timeout) {
+        try { clearTimeout(_pmRegistrationPhase1Timeout); } catch { /* ignore */ }
+        _pmRegistrationPhase1Timeout = null;
+    }
 }
 
 // ── PM-mode entry registration (shared by init + CHAT_CHANGED + CHAT_LOADED + latch) ──
@@ -301,6 +312,9 @@ function ensurePmEntriesRegistered() {
 // in 5 min are very unlikely to ever generate anyway.
 let _pmRegistrationLatchTimer = null;
 let _pmRegistrationLatchDeadline = 0;
+// L-39: phase-1 boot-poll handles, tracked so teardown can stop them on hot-reload.
+let _pmRegistrationPhase1Interval = null;
+let _pmRegistrationPhase1Timeout = null;
 const _PM_LATCH_INTERVAL_MS = 5000;
 const _PM_LATCH_CAP_MS = 5 * 60 * 1000;
 
@@ -819,7 +833,16 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
     // message's id → deeplore_sources attachment silently skips.
     let verdictChatId = null;
     try { verdictChatId = getCurrentChatId() || null; } catch { verdictChatId = null; }
-    const verdictMsgIdx = Array.isArray(chat) ? chat.length : -1;
+    // H-1: mirror ST's getNextMessageId(type) parity. For a NEW user→assistant
+    // turn / regenerate, ST pre-removes the trailing assistant so the slot the
+    // new reply lands on is `chat.length`. For a SWIPE, ST does NOT pre-remove
+    // (the removal is gated `type !== 'swipe'`, script.js Generate) and
+    // getNextMessageId('swipe') === chat.length - 1 — the assistant being
+    // regenerated still occupies the trailing slot. Using `chat.length` here was
+    // off-by-one on swipe → per-swipe keys orphaned, injection counts drifted,
+    // source attach (msgIdx===messageId) skipped, and the swipe snapshot key
+    // never matched the MESSAGE_SWIPED rebuild.
+    const verdictMsgIdx = Array.isArray(chat) ? (type === 'swipe' ? chat.length - 1 : chat.length) : -1;
 
     // Generation correlation ID — threads through trace, flight recorder, and log lines
     const genId = Math.random().toString(36).slice(2, 8);
@@ -1418,7 +1441,11 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
         }
 
         // Record this generation's injections for future dedup. Epoch guard prevents writing to the wrong chat.
-        if (settings.stripDuplicateInjections && epoch === chatEpoch) {
+        // L-36: mirror the epoch+lock guard Stages 8/9 enforce. Defense-in-depth —
+        // there is no await between Stage 7 and Stage 9 today, so lockEpoch can't
+        // change mid-block, but a future await would otherwise let a force-released
+        // pipeline write a stale injection-log row.
+        if (settings.stripDuplicateInjections && epoch === chatEpoch && lockEpoch === generationLockEpoch) {
             if (!chat_metadata.deeplore_injection_log) {
                 chat_metadata.deeplore_injection_log = [];
             }
@@ -1461,6 +1488,7 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
             console.debug('[DLE][DIAG] injection-log-write-SKIPPED', {
                 stripDuplicateInjections: settings.stripDuplicateInjections,
                 epochMatch: epoch === chatEpoch,
+                lockEpochMatch: lockEpoch === generationLockEpoch,
                 epoch, chatEpoch,
             });
         }
@@ -1604,7 +1632,7 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
             // the bare clear-then-return path leaves any same-turn observer
             // seeing no lore. Self-heals next turn, but the window is real.
             // Restore policy: only if catch fires AND no prose was produced.
-            // See gotchas.md #56.
+            // See gotchas.md #67.
             const _promptsSnapshot = {
                 extPrompts: {},
                 pmContents: {},
@@ -1735,7 +1763,7 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
                     // and strip it. Defensive `||=` keeps a TypeError from propagating into
                     // the outer catch (which would then fire 'Generation failed' AFTER the
                     // prose was saved, silently losing the dropdown). Mirrors the F3 fallback
-                    // branch's `msg.extra = msg.extra || {}` (gotcha #56).
+                    // branch's `msg.extra = msg.extra || {}` (gotcha #67).
                     proseMsg.extra = proseMsg.extra || {};
                     proseMsg.extra.deeplore_tool_calls = result.toolActivity;
                     await saveChatConditional();
@@ -1878,9 +1906,13 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
                 }
             } finally {
                 // C1: restore send-button state captured at dispatch.
-                setSendButtonState(false);
-                activateSendButtons();
-                _removePipelineStatus();
+                // L-38: each cleanup step is individually guarded so a throw in one
+                // (e.g. setSendButtonState) can't skip the others OR the
+                // GENERATION_ENDED emit below — which would strand the send button
+                // disabled and starve ecosystem listeners on a successful gen.
+                try { setSendButtonState(false); } catch (e) { console.warn('[DLE] setSendButtonState failed:', e?.message); }
+                try { activateSendButtons(); } catch (e) { console.warn('[DLE] activateSendButtons failed:', e?.message); }
+                try { _removePipelineStatus(); } catch { /* noop */ }
                 // Errors here must not propagate to the outer catch — that would show a misleading
                 // "Couldn't load your lore" toast on a successful generation.
                 // 2nd arg mirrors ST's own emit (chat.length, getGenerationPromptCache()) so
@@ -2108,11 +2140,18 @@ async function _doInit() {
             const fullyRegistered = ensurePmEntriesRegistered();
             if (!fullyRegistered) {
                 // Phase 1: rapid 10s poll (every 1s) — covers the common "ST still booting" case.
-                const interval = setInterval(() => {
-                    if (ensurePmEntriesRegistered()) clearInterval(interval);
+                // L-39: handles tracked at module scope so teardown stops them on hot-reload.
+                if (_pmRegistrationPhase1Interval) { try { clearInterval(_pmRegistrationPhase1Interval); } catch { /* ignore */ } }
+                if (_pmRegistrationPhase1Timeout) { try { clearTimeout(_pmRegistrationPhase1Timeout); } catch { /* ignore */ } }
+                _pmRegistrationPhase1Interval = setInterval(() => {
+                    if (ensurePmEntriesRegistered()) {
+                        clearInterval(_pmRegistrationPhase1Interval);
+                        _pmRegistrationPhase1Interval = null;
+                    }
                 }, 1000);
-                setTimeout(() => {
-                    clearInterval(interval);
+                _pmRegistrationPhase1Timeout = setTimeout(() => {
+                    if (_pmRegistrationPhase1Interval) { clearInterval(_pmRegistrationPhase1Interval); _pmRegistrationPhase1Interval = null; }
+                    _pmRegistrationPhase1Timeout = null;
                     if (!ensurePmEntriesRegistered()) {
                         // Phase 2: not registered after 10s — surface the deferral, then
                         // keep trying in the background until a character is picked.
@@ -2261,9 +2300,12 @@ async function _doInit() {
                 const swipeIdAtStart = lastMessage.swipe_id;
                 if (settings.debugMode) console.debug('[DLE] Notepad: starting AI extraction');
                 (async () => {
-                    setNotepadExtractInProgress(true);
-                    pushEvent('ai_notepad', { action: 'extract_start' });
                     try {
+                        // L-40: set the flag + emit INSIDE the try (the comment above always
+                        // claimed this, but they sat before it) so a sync throw can't leak the
+                        // in-progress flag forever — the finally below always clears it.
+                        setNotepadExtractInProgress(true);
+                        pushEvent('ai_notepad', { action: 'extract_start' });
                         const extractPrompt = settings.aiNotepadExtractPrompt?.trim() || DEFAULT_AI_NOTEPAD_EXTRACT_PROMPT;
                         const existingNotes = chat_metadata?.deeplore_ai_notepad?.trim();
                         let userMsg = `[Latest AI response]\n${lastMessage.mes}`;

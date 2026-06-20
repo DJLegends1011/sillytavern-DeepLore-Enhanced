@@ -179,7 +179,14 @@ export function initFocus(gs, dbg) {
         if (hopPlus) hopPlus.style.display = 'inline-block';
         if (depthDisplay) { depthDisplay.style.display = 'inline-block'; depthDisplay.textContent = depth; }
 
-        fitToView();
+        // L-27: defer fitToView past the ego lerp (~150ms), mirroring the DAG enter path. Calling it
+        // now reads the PRE-focus scatter positions (radial targets are staged on _targetX/_targetY,
+        // not yet applied) → camera frames the old full-graph layout, leaving the focus tree zoomed
+        // out until a manual `0`. Tracked in _fitTimers so popup-close cancels it.
+        const _fitTid = setTimeout(() => {
+            if (gs.layoutMode === 'focus' && gs.focusTreeRoot === rootNode) fitToView(true);
+        }, 260);
+        (gs._fitTimers = gs._fitTimers || []).push(_fitTid);
         gs.cachedRect = canvas.getBoundingClientRect();
         updateHints(true);
     }

@@ -385,8 +385,15 @@ This report has been **anonymized** before being written:
   \`<host-2>\`, \`<title-3>\` so a reader can still follow "the same entry was
   selected 12 times" without learning the real value. Aliases are **fresh per
   report** and cannot be correlated across files.
-- **Excluded entirely (never read):** chat message bodies, vault entry contents,
-  vault entry summaries.
+- **DLE never reads into this report:** your chat message bodies, vault entry
+  contents, or vault entry summaries. DLE does not copy any of those into the export.
+- **Captured from other components (review before sharing):** the \`consoleLog\` /
+  \`globalConsoleLog\` and \`networkLog\` sections include the most recent entries
+  logged by SillyTavern core and *other* extensions, for cross-extension debugging.
+  These pass through the same scrubber (tokens, keys, IPs, hosts, emails, user
+  paths), but DLE **cannot** redact free-form prose another component chose to log —
+  so if a third party \`console.log\`'d chat text or a request body, it can appear
+  there. Skim those two sections before sharing a verbose report.
 
 **Please verify this yourself before sharing.** The format is plain text/markdown
 wrapped around base64 blobs; any flagship LLM can decompress and audit it inline.

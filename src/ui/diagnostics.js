@@ -289,6 +289,11 @@ export function diagnoseEntry(entry, chatMsgs) {
     const result = { stage: 'unknown', detail: '', suggestions: [] };
     // Verdict store carries the trace; replaces the old lastPipelineTrace global.
     const _diagTrace = _currentVerdictForChat()?.trace ?? null;
+    // L-20: trackerKey-shape key (vaultSource:title.toLowerCase()) so cross-vault
+    // same-title entries are diagnosed distinctly. Trace entries carry vaultSource
+    // (pipeline.js / match.js), so comparing on bare exact-case title misattributes.
+    const tkKey = (o) => `${o?.vaultSource || ''}:${(o?.title || '').toLowerCase()}`;
+    const _entryKey = tkKey(entry);
 
     if (entry.keys.length === 0 && !entry.constant) {
         result.stage = 'no_keywords';
@@ -426,8 +431,9 @@ export function diagnoseEntry(entry, chatMsgs) {
     }
 
     if (_diagTrace && _diagTrace.aiSelected) {
-        const wasCandidate = _diagTrace.keywordMatched?.some(m => m.title === entry.title);
-        const wasSelected = _diagTrace.aiSelected.some(m => m.title === entry.title);
+        // L-20: identity match on trackerKey shape, not exact-case bare title.
+        const wasCandidate = _diagTrace.keywordMatched?.some(m => tkKey(m) === _entryKey);
+        const wasSelected = _diagTrace.aiSelected.some(m => tkKey(m) === _entryKey);
         if (wasCandidate && !wasSelected) {
             result.stage = 'ai_rejected';
             result.detail = 'Entry was in the AI search candidate list but was not selected by the AI.';
@@ -462,7 +468,10 @@ export function diagnoseEntry(entry, chatMsgs) {
     try {
         const cm = globalThis.chat_metadata || {};
         const blocks = cm.deeplore_blocks;
-        if (Array.isArray(blocks) && blocks.some(b => (b?.title || b) === entry.title)) {
+        // L-20: blocks are {title, vaultSource} (or legacy bare strings) — compare on
+        // trackerKey shape (vaultSource:title.toLowerCase()) so a same-titled entry from
+        // another vault isn't falsely reported as blocked, and case differences still match.
+        if (Array.isArray(blocks) && blocks.some(b => tkKey(typeof b === 'string' ? { title: b } : b) === _entryKey)) {
             result.stage = 'blocked';
             result.detail = 'Entry is explicitly blocked in this chat (via pin/block controls).';
             result.suggestions.push('Unblock the entry using the drawer or /dle-unblock command.');
@@ -471,7 +480,8 @@ export function diagnoseEntry(entry, chatMsgs) {
     } catch { /* chat_metadata may not be available */ }
 
     if (_diagTrace && Array.isArray(_diagTrace.contextualGatingRemoved)) {
-        if (_diagTrace.contextualGatingRemoved.some(e => e.title === entry.title)) {
+        // L-20: removal entries carry vaultSource — identity match on trackerKey shape.
+        if (_diagTrace.contextualGatingRemoved.some(e => tkKey(e) === _entryKey)) {
             result.stage = 'contextual_gating';
             result.detail = 'Entry was removed by contextual gating (era, location, scene type, or character filter).';
             result.suggestions.push('Check the entry\'s custom fields against the current gating state (/dle-context-state).');
@@ -480,7 +490,8 @@ export function diagnoseEntry(entry, chatMsgs) {
     }
 
     if (_diagTrace && Array.isArray(_diagTrace.stripDedupRemoved)) {
-        if (_diagTrace.stripDedupRemoved.some(e => e.title === entry.title)) {
+        // L-20: removal entries carry vaultSource — identity match on trackerKey shape.
+        if (_diagTrace.stripDedupRemoved.some(e => tkKey(e) === _entryKey)) {
             result.stage = 'strip_dedup';
             result.detail = 'Entry was already injected in a recent generation and was stripped as a duplicate.';
             result.suggestions.push('This is normal behavior. Increase stripLookbackDepth if you want entries to re-inject sooner.');

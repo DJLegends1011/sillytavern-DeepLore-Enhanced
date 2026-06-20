@@ -40,7 +40,10 @@ export function buildBM25Index(entries) {
     let totalLen = 0;
 
     for (const entry of entries) {
-        const text = `${entry.title} ${entry.keys.join(' ')} ${entry.content}`;
+        // L-7: guard non-array `keys` — one bad entry would throw mid-loop and nuke the
+        // entire BM25 build. `[].join(' ') === ''`, so this is byte-identical when keys
+        // IS an array (preserves the incremental≡full equivalence in vault-incremental.js).
+        const text = `${entry.title} ${Array.isArray(entry.keys) ? entry.keys.join(' ') : ''} ${entry.content}`;
         const tokens = tokenize(text);
         const tf = new Map();
         for (const token of tokens) {
@@ -93,6 +96,12 @@ export function queryBM25(index, queryText, topK = 20, minScore = 0.5) {
 
     const k1 = BM25_K1;
     const b = BM25_B;
+    // L-8: avgDl can be 0 for an all-short-token vault (every doc tokenizes to 0 terms
+    // ≥ 2 chars) — dividing by it below yields NaN scores and silent no-matches. Guard
+    // with a finite fallback of 1 so the length-normalization stays defined. In the
+    // currently-reachable all-empty case the `tf === 0` continue fires first, so this is
+    // defensive hardening with no behavior change on any live path.
+    const avgDl = index.avgDl > 0 ? index.avgDl : 1;
     const scores = [];
 
     // H-12: only score docs containing at least one query term.
@@ -116,7 +125,7 @@ export function queryBM25(index, queryText, topK = 20, minScore = 0.5) {
             if (!termIdf) continue;
             const tf = doc.tf.get(term) || 0;
             if (tf === 0) continue;
-            const tfNorm = (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * doc.len / index.avgDl));
+            const tfNorm = (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * doc.len / avgDl));
             score += termIdf * tfNorm;
         }
         if (score >= minScore) {

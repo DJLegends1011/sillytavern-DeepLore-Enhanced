@@ -9,6 +9,10 @@
  */
 
 import { RingBuffer, safeStringify } from './ring-buffer.js';
+// L-30: scrub the full error body BEFORE slicing so a secret straddling the
+// slice boundary can't be severed mid-pattern (and slip past the export-time
+// scrubber as an unrecognizable fragment). scrubber.js has no imports — no cycle.
+import { scrubString } from './scrubber.js';
 
 export const consoleBuffer = new RingBuffer(800);
 export const networkBuffer = new RingBuffer(300);
@@ -113,7 +117,10 @@ function patchFetch() {
             if (!resp.ok) {
                 try {
                     const body = await resp.clone().text();
-                    entry.errorBody = body.slice(0, 500);
+                    // L-30: scrub-then-slice — patterns aren't cut at the 500-char
+                    // boundary. scrubString never throws; export-time scrubDeep still
+                    // runs as defense-in-depth.
+                    entry.errorBody = scrubString(body).slice(0, 500);
                 } catch { /* body read failed — status alone is fine */ }
             }
             networkBuffer.push(entry);

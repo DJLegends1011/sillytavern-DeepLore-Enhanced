@@ -12,13 +12,13 @@
  * back to its pre-summary value and removes the summary message.
  */
 
-import { chat, chat_metadata, saveChatConditional, reloadCurrentChat, saveMetadata } from '../../../../../../script.js';
+import { chat, chat_metadata, saveChatConditional, reloadCurrentChat, saveMetadata, generateQuietPrompt, eventSource, event_types } from '../../../../../../script.js';
 import { saveMetadataDebounced } from '../../../../../extensions.js';
 import { getSettings, resolveConnectionConfig } from '../../settings.js';
 import { tryAcquireHalfOpenProbe, recordAiSuccess, recordAiFailure, releaseHalfOpenProbe } from '../state.js';
 import { callAI, isExcludedFromBreaker } from './ai.js';
 import { classifyError } from '../../core/utils.js';
-import { parseRange, buildSummaryUserMessage, applyHideAndPrepend, rollbackById } from './summarize-pure.js';
+import { parseRange, buildSummaryUserMessage, applyHideAndPrepend, rollbackById, rangeOverlapsSummary } from './summarize-pure.js';
 import { resolvePromptOrOverride } from '../prompts/prompt-store.js';
 
 export { parseRange, buildSummaryUserMessage };
@@ -52,21 +52,85 @@ async function callSummaryAI(userMessage, signal) {
     const settings = getSettings();
     const conn = resolveConnectionConfig('scribe');
     const systemPrompt = resolvePromptOrOverride('SUMMARIZE_PROMPT', settings.summarySystemPrompt);
+    const mode = conn.mode;
+    const maxTokens = settings.summaryMaxTokens || 400;
+    const timeout = settings.summaryTimeout || 30000;
+
+    // v2.5 dead-head: refuse legacy proxy mode explicitly (mirrors callScribe) so it
+    // doesn't fall through to the 'st' path and silently use ST's active connection.
+    if (mode === 'proxy') {
+        throw new Error('Custom Proxy mode was removed in v2.5. Pick a Connection Profile in DLE Settings → Connection → AI Connections.');
+    }
+
     // Wave-B contract: summarize was bypassing the breaker entirely. Match the
     // scribe/auto-suggest pattern — gate via tryAcquireHalfOpenProbe (the mutation
     // gate, not isAiCircuitOpen) and route the trip decision through the shared
     // isExcludedFromBreaker classifier so 401/403/429 don't count as failures.
     if (!tryAcquireHalfOpenProbe()) throw new Error('AI circuit breaker is open — skipping summarize');
     try {
-        const result = await callAI(systemPrompt, userMessage, {
-            ...conn,
-            caller: 'summarize',
-            maxTokens: settings.summaryMaxTokens || 400,
-            timeout: settings.summaryTimeout || 30000,
-            signal,
-        });
+        let text;
+        if (mode === 'profile') {
+            const result = await callAI(systemPrompt, userMessage, {
+                ...conn,
+                caller: 'summarize',
+                maxTokens,
+                timeout,
+                signal,
+            });
+            text = (result.text || '').trim();
+        } else {
+            // H-2: summarize reuses the Scribe connection config, which can resolve to
+            // 'st' (ST's active connection) — directly or via 'inherit'. callAI's mode
+            // whitelist only accepts 'profile', so routing 'st' through it threw
+            // "unknown connection mode"; that error isn't breaker-excluded, so two
+            // /dle-summarize-range calls tripped the circuit breaker and locked ALL AI
+            // features for ~30s. Dispatch 'st' via generateQuietPrompt, exactly like
+            // callScribe. generateQuietPrompt can't be aborted, so race the passed
+            // signal, GENERATION_STOPPED, and a timeout to release the in-flight guard.
+            const quietPrompt = `${systemPrompt}\n\n${userMessage}`;
+            const quietPromise = generateQuietPrompt({ quietPrompt, skipWIAN: true, responseLength: maxTokens });
+            let summaryTimer;
+            let onStop = null;
+            let onAbort = null;
+            try {
+                const result = await Promise.race([
+                    quietPromise.finally(() => clearTimeout(summaryTimer)),
+                    new Promise((_, reject) => { summaryTimer = setTimeout(() => {
+                        const err = new Error(`Summarize quiet prompt timed out (${Math.round(timeout / 1000)}s)`);
+                        err.timedOut = true;
+                        reject(err);
+                    }, timeout); }),
+                    new Promise((_, reject) => {
+                        onStop = () => {
+                            const err = new Error('Summarize aborted by user (GENERATION_STOPPED)');
+                            err.name = 'AbortError';
+                            err.userAborted = true;
+                            reject(err);
+                        };
+                        try { eventSource.on(event_types.GENERATION_STOPPED, onStop); }
+                        catch { onStop = null; }
+                    }),
+                    new Promise((_, reject) => {
+                        if (!signal) return;
+                        onAbort = () => {
+                            const err = new Error('Summarize aborted');
+                            err.name = 'AbortError';
+                            err.userAborted = true;
+                            reject(err);
+                        };
+                        if (signal.aborted) onAbort();
+                        else signal.addEventListener('abort', onAbort, { once: true });
+                    }),
+                ]);
+                text = (result || '').trim();
+            } finally {
+                clearTimeout(summaryTimer);
+                if (onStop) { try { eventSource.removeListener(event_types.GENERATION_STOPPED, onStop); } catch { /* noop */ } }
+                if (onAbort && signal) { try { signal.removeEventListener('abort', onAbort); } catch { /* noop */ } }
+            }
+        }
         recordAiSuccess();
-        return (result.text || '').trim();
+        return text;
     } catch (err) {
         if (!isExcludedFromBreaker(err)) recordAiFailure(); else releaseHalfOpenProbe(); // #11: free dangling half-open probe
         throw err;
@@ -90,6 +154,12 @@ export async function summarizeRange(range, signal) {
     if (!Array.isArray(chat)) return { ok: false, error: 'No chat loaded' };
     if (range.start < 0 || range.end >= chat.length || range.start > range.end) {
         return { ok: false, error: `Range out of bounds (chat length ${chat.length})` };
+    }
+    // M-10: reject a range overlapping an existing un-rolled-back summary. Overlap
+    // corrupts the per-message rollback markers and would hide the shared messages
+    // permanently. Overlapping summaries have no coherent semantics anyway.
+    if (rangeOverlapsSummary(chat, range)) {
+        return { ok: false, error: 'That range overlaps an existing summary — roll it back first (/dle-summarize-rollback) before re-summarizing these messages.' };
     }
 
     const userMessage = buildSummaryUserMessage(chat, range.start, range.end);

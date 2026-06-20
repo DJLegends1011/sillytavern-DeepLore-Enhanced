@@ -289,6 +289,13 @@ export async function runAgenticLoop(options) {
                     // (now chat-B) loreGapSearchCount budget, Activity feed, or per-chat stats.
                     if (epoch !== chatEpoch || lockEpoch !== generationLockEpoch) {
                         if (debug) console.debug('[DLE] agentic SEARCH: epoch mismatch before searchLoreAction, stop loop');
+                        // M-5: push a tool-result before breaking (mirror the :266/:270 siblings).
+                        // searchCount++ already fired and the assistant message carries this
+                        // tool_call; if we break the switch with no result, buildToolResults
+                        // emits no matching tool-result and the next round-trip 400s on an
+                        // orphaned tool_call. The loop bails on the same guard at iteration top
+                        // anyway, but the result keeps any in-flight message array well-formed.
+                        results.push({ id: tc.id, name: tc.name, result: '<aborted>' });
                         break;
                     }
                     const searchResult = await searchLoreAction({ queries: tc.input.queries || [] });

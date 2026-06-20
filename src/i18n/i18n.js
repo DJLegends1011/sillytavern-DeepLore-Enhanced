@@ -22,6 +22,7 @@
 
 import { addLocaleData, getCurrentLocale, t, translate } from '../../../../../i18n.js';
 import { eventSource, event_types } from '../../../../../../script.js';
+import { getSettings } from '../../settings.js';
 import {
     SUPPORTED_LOCALES,
     resolveLocale,
@@ -222,8 +223,18 @@ export function setAiPromptLocale(locale) {
 }
 
 export function getAiPromptLocale() {
+    // 1. explicit override
     if (_aiPromptLocale) return _aiPromptLocale;
-    // Caller may pass a setting value via getEffectiveAiPromptLocale instead
+    // L-33: 2. extension setting `aiPromptLocale` (the documented read-order
+    // step that was previously skipped). Guarded so a pre-init/test context
+    // where settings aren't available falls through to the UI locale.
+    try {
+        const settingValue = getSettings()?.aiPromptLocale;
+        if (settingValue && SUPPORTED_LOCALES.includes(String(settingValue).toLowerCase())) {
+            return String(settingValue).toLowerCase();
+        }
+    } catch { /* settings unavailable — fall through to UI locale */ }
+    // 3. UI locale  4. 'en' (resolveLocale defaults to 'en')
     return resolveLocale(getCurrentLocale());
 }
 

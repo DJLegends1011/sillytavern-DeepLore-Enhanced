@@ -57,10 +57,16 @@ export function detectCrossVaultDuplicates(entries) {
 }
 
 /**
- * V-C1 pure classifier — decides how reuse-sync should treat a single vault's
- * fetch result. Mirrors buildIndex()'s partial-fetch handling so buildIndexWithReuse
- * doesn't silently truncate cached entries when Obsidian returns a partial listing
- * or a high failure rate.
+ * V-C1 pure classifier — encodes how reuse-sync SHOULD treat a single vault's
+ * fetch result for the three partial-fetch failure modes below.
+ *
+ * L-4 NOTE: this is NOT the runtime single source of truth. `buildIndexWithReuse()`
+ * inlines the equivalent branches itself (its per-vault loop checks `!data.files`,
+ * `data.partial`, and `isPartialFetchFailure(...)` directly) and does NOT call this
+ * helper. The function exists as a test-pinned reference contract (gotchas.md #48,
+ * `test/vault.test.mjs` section J) that mirrors that inline logic; reviewers use it
+ * to catch drift. The genuinely shared runtime source is `PARTIAL_FETCH_FAILURE_THRESHOLD`,
+ * consumed by both this helper and vault.js's `isPartialFetchFailure`.
  *
  * Three failure modes the reuse-sync path used to ignore:
  *   1. `data.partial === true` — directory listing truncated by transient REST

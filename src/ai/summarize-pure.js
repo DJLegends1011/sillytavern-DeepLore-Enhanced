@@ -69,6 +69,27 @@ export function buildSummaryUserMessage(chatArr, start, end) {
 }
 
 /**
+ * M-10: detect whether a range overlaps any message that is already part of an
+ * un-rolled-back summary (tagged `dle_summarized_into`). Overlapping summaries
+ * corrupt rollback: the second `applyHideAndPrepend` overwrites the first's
+ * `dle_summarized_into` + `dle_original_is_system` markers on the shared
+ * messages, so the first summary's rollback no longer finds them AND the second's
+ * "original" value is the already-hidden state — the overlap messages stay hidden
+ * forever even after rolling back both. Callers reject an overlapping range.
+ *
+ * @param {Array<object>} chatArr
+ * @param {{start: number, end: number}} range
+ * @returns {boolean}
+ */
+export function rangeOverlapsSummary(chatArr, range) {
+    if (!Array.isArray(chatArr) || !range) return false;
+    for (let i = range.start; i <= range.end; i++) {
+        if (chatArr[i]?.extra?.dle_summarized_into) return true;
+    }
+    return false;
+}
+
+/**
  * Apply the "hide range + insert summary message" mutation to a chat array.
  * Pure for testability — summarizeRange (in summarize.js) wraps this with the
  * ST-side I/O. Mutates `chatArr` in place; returns the inserted summary

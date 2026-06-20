@@ -78,7 +78,7 @@ deserialization). 90% of generations no-op the scan. See `docs/gotchas.md` #52.
 | `setCurrentChatId(chatId)` | Rebind scope on CHAT_CHANGED. |
 | `clearRing()` | Drop in-memory ring only (sync, no IDB touch). **Use on CHAT_CHANGED** so the destination chat's IDB rows survive for hydrate. |
 | `clearChatIdb(chatId)` | Drop IDB rows for one chat (e.g. user deletes chat). Ring untouched. (The async `getByMessage` and the ring+IDB `clearChat` were removed Phase 3 — use `getByMessageSync` and `clearRing` / `clearChatIdb` instead.) |
-| `hydrateChat(chatId)` | Pull recent IDB records for resume-after-reload. F2 race fix: merges (not replaces) mid-hydration writes whose `ts` beats the freshest hydrated row. See gotchas #46. |
+| `hydrateChat(chatId)` | Pull recent IDB records for resume-after-reload. F2 race fix: merges (not replaces) mid-hydration writes whose `ts` beats the freshest hydrated row (gotchas #46). **M-4 (gotcha #90):** stamps a module `hydrationEpoch` at entry and bails after the `await listIdbForChat` if a newer `hydrateChat` superseded it (rapid A→B→C `CHAT_CHANGED`) — else a slow read wrote a left-behind chat's rows into the ring and could evict the live chat under `RING_CAP`. |
 | `onVerdictChanged(cb)` | Observer; fires on every write / clear / hydrate. |
 
 **Verdict shape (per record):** `genId`, `chatId`, `msgIdx`, `epoch`, `lockEpoch`, `ts`,

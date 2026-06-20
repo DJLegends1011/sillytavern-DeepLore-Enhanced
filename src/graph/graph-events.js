@@ -175,7 +175,8 @@ export function initEvents(gs, dbg) {
                     </div><div class="dle-graph-detail-body">${details.join('<br>')}</div>`;
                     panel.style.display = '';
                     const closeBtn = panel.querySelector('.dle-graph-detail-close');
-                    closeBtn?.addEventListener('click', () => { panel.style.display = ''; panel.removeAttribute('role'); panel.style.display = 'none'; }, { once: true });
+                    // L-28: dropped the dead `display=''` write — it was immediately overwritten by `display='none'`.
+                    closeBtn?.addEventListener('click', () => { panel.removeAttribute('role'); panel.style.display = 'none'; }, { once: true });
                     closeBtn?.focus();
                 }
                 break;
@@ -413,6 +414,14 @@ export function initEvents(gs, dbg) {
                     gs.exitFocusTree();
                     hideContextMenu();
                     gs.needsDraw = true;
+                    e.preventDefault();
+                } else if (gs.layoutMode === 'dag') {
+                    // M-16: in DAG mode non-participants are hidden via n.hidden (NOT revealBatchIdx),
+                    // so the reset branch's shouldBeHidden=false would un-hide all of them while
+                    // edgeVisibility stays DAG-restricted → layout floods. The sibling dblclick handler
+                    // guards DAG the same way; mirror it here. Use Reset/Layout select to leave DAG.
+                    dbg('Keyboard: e — ignored in DAG layout (use Reset to exit)');
+                    hideContextMenu();
                     e.preventDefault();
                 } else {
                     dbg('Keyboard: e — resetting isolation and context menu');

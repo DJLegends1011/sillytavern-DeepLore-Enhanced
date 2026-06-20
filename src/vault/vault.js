@@ -327,8 +327,14 @@ export async function buildIndex() {
     // BUG-010: Install buildPromise BEFORE setIndexing(true) so any sync observer
     // that sees indexing===true always finds a populated promise. Deferred-promise
     // pattern: install outer promise synchronously, IIFE settles it.
-    let _buildResolve, _buildReject;
-    const promise = new Promise((res, rej) => { _buildResolve = res; _buildReject = rej; });
+    // L-43: the deferred only ever RESOLVES — the IIFE's try/catch swallows every
+    // build error (catch calls dedupError, never re-throws) and the finally always
+    // calls _buildResolve(). So a reject capture was dead plumbing: even if the
+    // catch/finally itself threw, _buildResolve() in the finally settles first and a
+    // promise can't un-resolve. Dropped the reject; the IIFE's trailing .catch now just
+    // swallows-and-logs any post-resolve throw to avoid an unhandled rejection.
+    let _buildResolve;
+    const promise = new Promise((res) => { _buildResolve = res; });
     setBuildPromise(promise);
     setIndexing(true);
     let capturedEpoch = buildEpoch;
@@ -658,7 +664,10 @@ export async function buildIndex() {
         }
         _buildResolve();
     }
-    })().catch(err => { _buildReject(err); });
+    // L-43: deferred already resolved in the finally above; this only catches a throw
+    // from the catch/finally themselves. Swallow-and-log so it can't surface as an
+    // unhandled rejection (the deferred `promise` is already settled either way).
+    })().catch(err => { console.warn('[DLE] buildIndex post-settle error (ignored):', err?.message || err); });
     return promise;
 }
 
@@ -1060,6 +1069,38 @@ export async function buildIndexWithReuse() {
         setLastVaultFailureCount(vaultFailCount);
         if (_reuseTokenizerFailCount > 0) {
             console.warn(`[DLE] Tokenizer failed for ${_reuseTokenizerFailCount} re-parsed entries — using character-based estimates (budget accuracy degraded)`);
+        }
+
+        // M-12: merge mode + a vault failed → mirror buildIndex's P2-7 fix. The
+        // per-vault carry-forward branches above filter indexSnapshot by
+        // `vaultSource === vault.name`, but merge mode collapses every member into
+        // ONE blob keeping only the FIRST member's vaultSource
+        // (vault-pure.js deduplicateMultiVault). For a failed NON-first member that
+        // filter finds nothing, so the dedup pass below re-merges from surviving
+        // members only and the live merged entry SHRINKS until every vault recovers.
+        // Merged provenance is unsplittable per-vault, so commit the WHOLE prior
+        // snapshot unchanged rather than a rebuilt-partial. indexSnapshot === the
+        // live committed (merged) index, so this preserves all members' content.
+        // Cache save stays skipped (anyVaultFailed). Pass previousEntries:
+        // indexSnapshot so finalizeIndex's incremental path no-ops (prev === current).
+        if (anyVaultFailed && mergeMode && indexSnapshot.length > 0) {
+            if (isZombie()) { _reuseResult = false; return; }
+            // fieldDefsChanged is always false here (it forces an early return above the
+            // loop, V-H4), so no setFieldDefinitions needed — the live defs are current.
+            const carried = [...indexSnapshot];
+            setVaultIndex(carried);
+            setIndexTimestamp(Date.now() - (settings.cacheTTL * 1000) + 30_000); // retry in ~30s
+            setIndexBuildReport(buildReport);
+            console.warn('[DLE] Reuse sync: merge mode + vault fetch failure — preserving the whole prior index (merged provenance can\'t be split per-vault).');
+            if (isZombie()) { _reuseResult = false; return; }
+            await finalizeIndex({
+                entries: carried,
+                settings,
+                skipCacheSave: true,
+                previousEntries: indexSnapshot,
+            });
+            _reuseResult = true;
+            return;
         }
 
         if (!hasChanges) {

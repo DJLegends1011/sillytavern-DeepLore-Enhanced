@@ -68,14 +68,20 @@ export function parsePromptFile(raw) {
 }
 
 /**
- * Extract the set of `${N}` placeholders from a prompt string.
+ * Extract the set of placeholders from a prompt string.
  *
- * Returns a Set of strings like `"${0}"`, `"${1}"`. Catches the AGENTIC_*
- * interpolation markers used by runtime code. Two callsites consume this:
+ * Returns a Set mixing two placeholder syntaxes:
+ *   - `${N}` indexed markers (e.g. `"${0}"`, `"${1}"`) used by the AGENTIC_*
+ *     interpolation runtime.
+ *   - `{{name}}` mustache markers (e.g. `"{{maxEntries}}"`) used by prompts like
+ *     AI_SEARCH_SYSTEM_PROMPT that get token-substituted at dispatch.
+ *
+ * Two callsites consume this:
  *   1. Validator — compare vault file's set against canonical EN dict's set
  *   2. Frontmatter doc generator — auto-document placeholders on export
  *
- * Refuses to match `${name}` (alphabetic) — only numeric indices count.
+ * Refuses to match `${name}` (single-brace alphabetic) — only numeric `${N}`
+ * indices and `{{mustache}}` names count.
  *
  * @param {string} text
  * @returns {Set<string>}
@@ -87,6 +93,14 @@ export function extractPlaceholders(text) {
     let match;
     while ((match = re.exec(text)) !== null) {
         out.add(`\${${match[1]}}`);
+    }
+    // L-32: also capture `{{name}}` mustache placeholders so R3 validation
+    // catches a vault override that drops a required token (e.g. {{maxEntries}}).
+    // Matches the mustache pattern in i18n-pure.js:countPlaceholders.
+    const mustacheRe = /\{\{[a-zA-Z_]\w*\}\}/g;
+    let mMatch;
+    while ((mMatch = mustacheRe.exec(text)) !== null) {
+        out.add(mMatch[0]);
     }
     return out;
 }

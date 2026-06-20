@@ -101,8 +101,11 @@ export const AGENTIC_FENCE_NOTEPAD_HEADER = "Твои заметки сеанс�
 /** Заголовок ограждения для сводки Писаря (Раздел 7). */
 export const AGENTIC_FENCE_SCRIBE_HEADER = "Сводка сеанса на данный момент";
 
-/** Вступление к инструкциям по инструментам. `${0}` = количество инструментов, `${1}` = окончание множественного числа (пусто или "а"/"ов"). */
-export const AGENTIC_TOOLS_INTRO = "Тебе доступно инструментов: ${0}${1}";
+/** Вступление к инструкциям по инструментам. `${0}` = количество инструментов. */
+// L-31: dropped `${1}` — the callsite hardcodes English plural-"s", so ${1}
+// produced "3s". Russian declension can't be done with a trailing "-s"; the
+// neutral "инструментов: N" phrasing reads correctly for any count.
+export const AGENTIC_TOOLS_INTRO = "Тебе доступно инструментов: ${0}";
 
 /** Описание инструмента поиска. `${0}` = максимум поисков. */
 export const AGENTIC_TOOL_SEARCH = [

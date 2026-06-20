@@ -66,7 +66,11 @@ export function parseFrontmatter(content) {
         }
 
         // Key-value pair: "key: value" or "key:"
-        const kvMatch = trimmed.match(/^(\w[\w.-]*)\s*:\s*(.*)/);
+        // L-6: Unicode-aware key match. `\w` is ASCII-only and silently dropped
+        // frontmatter keys beginning with a non-ASCII letter (é, 名, ключ…). The
+        // `u`-flagged property classes are a strict superset of the old char class
+        // for ASCII keys (\p{L}\p{N}_ ⊇ A-Za-z0-9_), so ASCII behavior is unchanged.
+        const kvMatch = trimmed.match(/^([\p{L}\p{N}_][\p{L}\p{N}_.-]*)\s*:\s*(.*)/u);
         if (kvMatch) {
             currentKey = kvMatch[1];
             const rawValue = kvMatch[2].trim();
@@ -356,6 +360,14 @@ export function buildAiChatContext(chat, depth) {
  */
 function clampWithLog(obj, key, min, max, label) {
     const before = obj[key];
+    // L-10: NaN passes the `typeof === 'number'` caller guard, and Math.max/min(NaN)
+    // returns NaN — so without this short-circuit a NaN setting clamps to NaN and
+    // propagates into budgets/depths. Fall back to the safe lower bound (min).
+    if (Number.isNaN(obj[key])) {
+        obj[key] = min;
+        console.info(`[DLE] ${label} was NaN; reset to ${min} (range: ${min}-${max})`);
+        return;
+    }
     // Round only when the constraint range is integer-based — float constraints
     // (e.g. fuzzySearchMinScore: 0.1–2.0) must preserve decimals.
     const isIntegerRange = Number.isInteger(min) && Number.isInteger(max);
@@ -417,7 +429,10 @@ export function classifyError(err) {
         return 'API quota exhausted or billing issue. Check your AI provider account for available credits.';
     }
     if (/CORS|Access-Control|Mixed Content/i.test(raw)) {
-        return 'Blocked by browser security (CORS). If using proxy mode, set enableCorsProxy: true in config.yaml.';
+        // L-9: Custom Proxy mode (and its enableCorsProxy requirement) was removed in
+        // v2.5 — AI calls now route server-side through Connection Profiles. Point users
+        // at that path instead of the dead config flag.
+        return 'Blocked by browser security (CORS). Pick a Connection Profile in DLE Settings → Connection → AI Connections.';
     }
     if (/ECONNREFUSED|Failed to fetch|NetworkError|fetch failed/i.test(raw)) {
         return 'Could not connect. Check that the service is running.';

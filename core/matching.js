@@ -329,7 +329,8 @@ export function countKeywordOccurrences(entry, scanText, settings) {
 export function applyGating(entries) {
     // BUG-029: descending by priority for deterministic mutual-excludes resolution.
     // Legacy — live pipeline uses applyRequiresExcludesGating in stages.js.
-    let result = [...entries].sort((a, b) => ((b.priority || 50) - (a.priority || 50)) || a.title.localeCompare(b.title));
+    // M-1: nullish so `priority: 0` isn't demoted to 50 (falsy-coalesce class).
+    let result = [...entries].sort((a, b) => ((b.priority ?? 50) - (a.priority ?? 50)) || a.title.localeCompare(b.title));
     let changed = true;
     let iterations = 0;
     const MAX_ITERATIONS = 10;

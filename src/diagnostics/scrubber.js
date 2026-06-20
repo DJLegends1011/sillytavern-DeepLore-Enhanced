@@ -25,7 +25,12 @@
 
 // Any object key matching this gets <redacted> wholesale — no cardinality
 // is meaningful for a secret.
-const SENSITIVE_KEY_RE = /(api[_-]?key|apikey|access[_-]?token|secret|password|passwd|authorization|auth[_-]?header|bearer|x[_-]?api[_-]?key|obsidianapikey|proxy[_-]?key|cookie|session|refresh[_-]?token|oauth[_-]?token|private[_-]?key|client[_-]?id|app[_-]?key|encryption[_-]?key|master[_-]?key|helicone[_-]?auth|cf[_-]?access|credential|webhook)/i;
+// L-29: `\btoken\b` / `\bauth\b` catch a key named exactly `token` or `auth` (short
+// secrets that fell below the 32-char generic floor). Word-boundary anchored so they
+// do NOT match non-secret camelCase fields like `maxTokens`, `tokenizer`,
+// `tokenEstimate`, `inputTokens`, or `authorization`/`oauth_token` (those are either
+// already covered or correctly left alone).
+const SENSITIVE_KEY_RE = /(api[_-]?key|apikey|access[_-]?token|secret|password|passwd|authorization|auth[_-]?header|bearer|x[_-]?api[_-]?key|obsidianapikey|proxy[_-]?key|cookie|session|refresh[_-]?token|oauth[_-]?token|private[_-]?key|client[_-]?id|app[_-]?key|encryption[_-]?key|master[_-]?key|helicone[_-]?auth|cf[_-]?access|credential|webhook|\btoken\b|\bauth\b)/i;
 
 // Keys whose VALUE is a user-authored prompt body (AI prompt overrides, custom
 // system prompts, prompt presets). These are not secrets but they ARE user
@@ -101,6 +106,20 @@ function pseudonym(map, real, prefix) {
 
 // Order matters — more specific patterns first.
 const PATTERNS = [
+    // H-3: URL userinfo credentials — `scheme://user:pass@host` → `scheme://<redacted>@host`.
+    // MUST run before the IPv4 / email / hostname patterns below. Without it, a
+    // numeric-IP or localhost proxy (the common self-hosted shape, e.g.
+    // `https://user:p4ssw0rd@127.0.0.1:8080/v1`) leaks the PASSWORD in plaintext:
+    // the IPv4 pattern masks the host, the email pattern can't match a numeric
+    // host (no letter TLD), and the hostname pattern only sees the `user` segment —
+    // so the chars between ':' and '@' survive untouched. DLE persists per-tool
+    // `*ProxyUrl` settings that the diagnostic export dumps verbatim, so this is the
+    // load-bearing stripper for those. (Hostname proxies are accidentally covered by
+    // the email pattern absorbing the userinfo; this closes the numeric-host gap.)
+    {
+        re: /([a-zA-Z][a-zA-Z0-9+.\-]*:\/\/)[^/@\s]*@/g,
+        fn: (_m, scheme, _o, _s, ctx) => { ctx.stats.urlTokens++; return `${scheme}<redacted>@`; },
+    },
     // Bearer / Authorization header values inline in strings
     {
         re: /(Bearer\s+)[A-Za-z0-9._\-+/=]{8,}/gi,

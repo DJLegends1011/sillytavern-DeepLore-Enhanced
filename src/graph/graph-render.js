@@ -19,7 +19,7 @@ export function toPastel(hex, mix = 0.25) {
 
 /** Priority bucket → hex. Low priority value = high importance = warmer color. */
 function priorityColor(priority) {
-    const p = Math.max(0, Math.min(100, priority || 50));
+    const p = Math.max(0, Math.min(100, priority ?? 50)); // M-1: nullish — priority 0 is valid
     if (p <= 25) return '#e53935';
     if (p <= 40) return '#ff9800';
     if (p <= 55) return '#ffeb3b';
@@ -131,6 +131,15 @@ export function initRender(gs) {
     }
 
     function getNodeRadius(n) {
+        // M-18: honor the graphNodeSizeMode setting (was hard-wired to centrality, leaving the UI control dead).
+        const mode = gs.settings?.graphNodeSizeMode || 'centrality';
+        if (mode === 'uniform') return 11; // constant mid-radius (midpoint of the 7-22 range used below)
+        if (mode === 'priority') {
+            // Priority: lower number = higher importance = larger node (matches the centrality "bigger = more important" feel).
+            // Clamp to the priorityColor 0-100 domain; default 50 → mid radius.
+            const p = Math.max(0, Math.min(100, n.priority ?? 50));
+            return Math.max(7, Math.min(22, 7 + (1 - p / 100) * 15));
+        }
         const connections = gs.edgeCountByNode.get(n.id) || 0;
         return Math.max(7, Math.min(22, 7 + Math.sqrt(connections / gs.maxEdgeCount) * 15));
     }

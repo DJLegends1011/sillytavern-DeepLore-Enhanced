@@ -491,12 +491,15 @@ export function renderBrowseTab() {
             [...ds.cachedFolderSet].sort().map(f => `<option value="${escapeHtml(f)}"${ds.browseFolderFilter === f ? ' selected' : ''}>${escapeHtml(f)} (${folderCounts.get(f) || 0})</option>`).join(''));
     }
 
-    // Custom field filter dropdowns — values cached, recomputed only when vault size changes.
+    // Custom field filter dropdowns — values cached, recomputed when vault content changes.
     const browseFieldDefs = (fieldDefinitions.length > 0 ? fieldDefinitions : DEFAULT_FIELD_DEFINITIONS)
         .filter(fd => fd.gating?.enabled);
     const $cfContainer = $drawer.find('.dle-browse-custom-filters');
     if ($cfContainer.length && browseFieldDefs.length > 0) {
-        if (_cachedFieldValuesIndexLen !== vaultIndex.length) {
+        // L-26: key the cache on length AND indexTimestamp — keying on length alone left the dropdown
+        // options stale when field VALUES changed without changing the entry count (edit/rebuild).
+        const _cfSig = `${vaultIndex.length}:${indexTimestamp || 0}`;
+        if (_cachedFieldValuesIndexLen !== _cfSig) {
             _cachedFieldValues = {};
             for (const fd of browseFieldDefs) {
                 const vals = new Set();
@@ -508,7 +511,7 @@ export function renderBrowseTab() {
                 }
                 if (vals.size > 0) _cachedFieldValues[fd.name] = [...vals].sort();
             }
-            _cachedFieldValuesIndexLen = vaultIndex.length;
+            _cachedFieldValuesIndexLen = _cfSig;
         }
         const fieldValues = _cachedFieldValues;
         let cfHtml = '';
@@ -640,8 +643,8 @@ export function renderBrowseTab() {
 
     entries = [...entries];
     switch (sortKey) {
-        case 'priority_asc': entries.sort((a, b) => (a.priority || 50) - (b.priority || 50)); break;
-        case 'priority_desc': entries.sort((a, b) => (b.priority || 50) - (a.priority || 50)); break;
+        case 'priority_asc': entries.sort((a, b) => (a.priority ?? 50) - (b.priority ?? 50)); break;
+        case 'priority_desc': entries.sort((a, b) => (b.priority ?? 50) - (a.priority ?? 50)); break;
         case 'alpha_asc': entries.sort((a, b) => a.title.localeCompare(b.title)); break;
         case 'alpha_desc': entries.sort((a, b) => b.title.localeCompare(a.title)); break;
         case 'tokens_desc': entries.sort((a, b) => (b.tokenEstimate || 0) - (a.tokenEstimate || 0)); break;
@@ -667,8 +670,10 @@ export function renderBrowseTab() {
     );
     if (sinceGenActive && _browseVerdict && getPreviousVerdict()) {
         const diff = diffVerdicts(_browseVerdict, getPreviousVerdict());
-        const addedKeys = new Set(diff.added.map(s => s.title.toLowerCase()));
-        entries = entries.filter(e => addedKeys.has(e.title.toLowerCase()));
+        // L-25: key on trackerKey shape (vaultSource:title) — bare lowercased title collapsed
+        // same-titled cross-vault entries, so "Since last gen" could surface the wrong vault's entry.
+        const addedKeys = new Set(diff.added.map(s => `${s.vaultSource || ''}:${s.title.toLowerCase()}`));
+        entries = entries.filter(e => addedKeys.has(`${e.vaultSource || ''}:${e.title.toLowerCase()}`));
     } else if (neverInjectedActive) {
         entries = entries.filter(e => !chatInjectionCounts.has(trackerKey(e)) || chatInjectionCounts.get(trackerKey(e)) === 0);
     }
@@ -921,7 +926,7 @@ export function renderBrowseWindow() {
         if (isSelected) classes.push('dle-browse-selected');
 
         const keysStr = e.constant ? '(constant)' : (e.keys ? e.keys.slice(0, 4).join(', ') : '');
-        const prioLabel = e.constant ? 'CONST' : `P${e.priority || 50}`;
+        const prioLabel = e.constant ? 'CONST' : `P${e.priority ?? 50}`;
         const prioClass = e.constant ? ' dle-browse-constant' : '';
 
         const statusParts = [];
@@ -957,7 +962,7 @@ export function renderBrowseWindow() {
         }
         const browseCount = chatInjectionCounts.get(trk) || 0;
         if (browseCount > 0) html += `<span class="dle-inject-count" title="Injected ${browseCount} times this chat" aria-label="Injected ${browseCount} times this chat">${browseCount}×</span>`;
-        html += `<span class="dle-browse-priority${prioClass}" title="${e.constant ? 'Constant — always injected. Set via #lorebook-always tag.' : `Priority ${e.priority || 50} (lower = more important)`}" aria-label="${e.constant ? 'Constant entry, always injected' : `Priority ${e.priority || 50}`}">${prioLabel}</span>`;
+        html += `<span class="dle-browse-priority${prioClass}" title="${e.constant ? 'Constant — always injected. Set via #lorebook-always tag.' : `Priority ${e.priority ?? 50} (lower = more important)`}" aria-label="${e.constant ? 'Constant entry, always injected' : `Priority ${e.priority ?? 50}`}">${prioLabel}</span>`;
         html += `<button type="button" class="dle-browse-pin${isPinned ? ' dle-pin-active' : ''}" data-entry="${escapeHtml(e.title)}" data-vault="${escapeHtml(e.vaultSource || '')}" aria-label="${isPinned ? 'Unpin' : 'Pin'}" title="${isPinned ? 'Pinned — always inject' : 'Click to pin'}"><i class="fa-solid fa-thumbtack" aria-hidden="true"></i></button>`;
         html += `<button type="button" class="dle-browse-block${isBlocked ? ' dle-block-active' : ''}" data-entry="${escapeHtml(e.title)}" data-vault="${escapeHtml(e.vaultSource || '')}" aria-label="${isBlocked ? 'Unblock' : 'Block'}" title="${isBlocked ? 'Blocked — never inject' : 'Click to block'}"><i class="fa-solid fa-ban" aria-hidden="true"></i></button>`;
         html += `<button type="button" class="dle-browse-copy-title-btn" data-action="copy-title" data-title="${escapeHtml(e.title)}" aria-label="Copy title" title="Copy title"><i class="fa-solid fa-copy" aria-hidden="true"></i></button>`;

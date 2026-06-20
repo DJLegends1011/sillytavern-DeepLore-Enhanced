@@ -390,6 +390,13 @@ export const settingsConstraints = {
     indexRebuildGenerationInterval: { min: 1, max: 100 },
     // BUG-344: string-enum whitelist — validateSettings resets to defaults on mismatch.
     injectionMode: { enum: ['extension', 'prompt_list'] },
+    // L-41: aiSearch is the inheritance ROOT — it must never be 'inherit' (a tool
+    // resolving 'inherit' cascades to s[aiSearch.mode]; if that were 'inherit' too,
+    // callAI receives 'inherit' and throws "unknown connection mode"). The UI only
+    // offers profile/proxy for the root (settings-ui.js supportedModes), but without
+    // an enum whitelist an import/migration could land 'inherit'/'st'. Reset to the
+    // 'profile' default on mismatch.
+    aiSearchConnectionMode: { enum: ['profile', 'proxy'] },
     librarianConnectionMode: { enum: ['inherit', 'profile', 'proxy'] },
     librarianSystemPromptMode: { enum: ['default', 'append', 'override', 'strict-override'] },
     // BUG-AUDIT (Fix 12): missing whitelist would let invalid imports/migrations land an
@@ -438,9 +445,16 @@ export function getSettings() {
     }
 
     // Fill missing defaults — idempotent, only touches undefined keys.
+    // L-37: ALSO re-fill when the default is an OBJECT/array but the stored value is
+    // null. A persisted `null` (corrupt import / manual edit) survived the
+    // `=== undefined` gate, and a null `analyticsData` then threw in
+    // `Object.hasOwn(null, …)` at commit — surfacing a misleading "Couldn't load
+    // your lore" toast even though lore was injected. Numeric/string/boolean
+    // null-sentinels (e.g. librarianSessionToolCallCap) are left untouched.
     for (const [key, value] of Object.entries(defaultSettings)) {
-        if (s[key] === undefined) {
-            s[key] = (typeof value === 'object' && value !== null)
+        const defaultIsObject = (typeof value === 'object' && value !== null);
+        if (s[key] === undefined || (defaultIsObject && s[key] === null)) {
+            s[key] = defaultIsObject
                 ? JSON.parse(JSON.stringify(value))
                 : value;
         }

@@ -105,10 +105,15 @@ export function persistGaps(updatedGaps) {
     const meta = ctx?.chatMetadata;
     if (!meta) return false;
     // BUG-AUDIT-C03: cap unbounded growth in long chats. Evict oldest by createdAt.
+    // M-7: keep CHRONOLOGICAL order (oldest→newest). Every other path treats loreGaps
+    // as append-at-end chronological ([...loreGaps, newGap]; findSimilarGap returns the
+    // first match = order-dependent). A descending sort + slice(0, MAX) flipped the array
+    // to newest→oldest after the first eviction, scrambling ordering + merge targets.
+    // Ascending sort + slice(-MAX) keeps the newest MAX in chronological order.
     const MAX_GAPS = 200;
     let capped = updatedGaps;
     if (capped.length > MAX_GAPS) {
-        capped = [...capped].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).slice(0, MAX_GAPS);
+        capped = [...capped].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)).slice(-MAX_GAPS);
     }
     setLoreGaps(capped);
     meta.deeplore_lore_gaps = capped;

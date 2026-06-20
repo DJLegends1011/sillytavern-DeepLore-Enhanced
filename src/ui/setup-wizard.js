@@ -813,7 +813,10 @@ function wireImport() {
                 $result.html(`<i class="fa-solid fa-circle-check"></i> Imported ${result.imported} entries from "${escapeHtml(source)}"${renamedNote}`)
                     .addClass('dle-wizard-result-success').removeClass('dle-wizard-result-error').show();
             }
-            $btn.html('<i class="fa-solid fa-circle-check"></i> Import Complete');
+            // L-23: re-enable on success too (catch branch already does) so a user can
+            // import a second lorebook/file in the same wizard session without the button
+            // staying permanently disabled.
+            $btn.html('<i class="fa-solid fa-circle-check"></i> Import Complete').prop('disabled', false);
         } catch (err) {
             $result.html(`<i class="fa-solid fa-circle-xmark"></i> Import error: ${escapeHtml(err.message)}`)
                 .addClass('dle-wizard-result-error').removeClass('dle-wizard-result-success').show();

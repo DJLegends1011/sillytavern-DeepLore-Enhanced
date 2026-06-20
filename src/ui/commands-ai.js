@@ -3,6 +3,8 @@ import {
     sendMessageAsUser,
     Generate,
     chat,
+    eventSource,
+    event_types,
 } from '../../../../../../script.js';
 import { escapeHtml } from '../../../../../utils.js';
 import { callGenericPopup, POPUP_TYPE } from '../../../../../popup.js';
@@ -20,6 +22,7 @@ import { optimizeEntryKeys, showOptimizePopup } from './popups.js';
 import { parseRange, summarizeRange, rollbackSummary, listSummaries } from '../ai/summarize.js';
 import { ensureFreshOrToast, resolveEntryByName } from './commands-shared.js';
 import { tr, trf } from '../i18n/i18n.js';
+import { abortWith } from '../diagnostics/interceptors.js';
 
 export function registerAiCommands() {
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
@@ -292,8 +295,17 @@ export function registerAiCommands() {
                 return '';
             }
             const loading = toastr.info(`Summarizing messages ${range.start}–${range.end}...`, 'DeepLore Enhanced', { timeOut: 0, extendedTimeOut: 0 });
+            // L-16: summarizeRange accepts a signal but nothing ever passed one, so a
+            // slow summary couldn't be cancelled and would mutate the chat even after
+            // the user switched away. Abort on CHAT_CHANGED so it bails before the
+            // hide+prepend (summarizeRange re-checks signal.aborted around the AI call).
+            const summarizeAbort = new AbortController();
+            // Gotcha #38: route through abortWith so signal.reason carries attribution
+            // (a bare .abort() loses the post-mortem reason the diagnostics depend on).
+            const onChatChange = () => abortWith(summarizeAbort, 'summarize:chat_changed');
+            try { eventSource.on(event_types.CHAT_CHANGED, onChatChange); } catch { /* noop */ }
             try {
-                const result = await summarizeRange(range);
+                const result = await summarizeRange(range, summarizeAbort.signal);
                 toastr.clear(loading);
                 if (!result.ok) {
                     toastr.error(result.error, 'DeepLore Enhanced');
@@ -305,6 +317,8 @@ export function registerAiCommands() {
                 toastr.clear(loading);
                 toastr.error(trf('dle_cmd_summarizerange_error_msg', err.message), 'DeepLore Enhanced');
                 return '';
+            } finally {
+                try { eventSource.removeListener(event_types.CHAT_CHANGED, onChatChange); } catch { /* noop */ }
             }
         },
         unnamedArgumentList: [SlashCommandArgument.fromProps({

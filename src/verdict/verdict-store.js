@@ -70,6 +70,16 @@ let ring = [];
 let currentChatId = null;
 
 /**
+ * M-4: monotonic hydration epoch. Bumped at the start of every hydrateChat call so
+ * a slow IDB read that resolves AFTER a newer CHAT_CHANGED (rapid A→B→C switching)
+ * can detect it was superseded and discard its now-stale slice instead of writing
+ * a left-behind chat's verdicts into the ring (which could also evict the live
+ * chat's rows under RING_CAP). The existing F2 fix only covers writeVerdict-vs-
+ * hydrate; this covers hydrate-vs-hydrate.
+ */
+let hydrationEpoch = 0;
+
+/**
  * Debug guard: the IDB key delimiter is `:` and the no-colon-in-chatId invariant
  * (enforced by ST's `sanitize-filename`, see pruneCurrentChat) is load-bearing for
  * the IDBKeyRange-scoped prune/hydrate scans. If a chatId ever DOES contain `:`,
@@ -361,8 +371,13 @@ export async function clearChatIdb(chatId) {
  */
 export async function hydrateChat(chatId) {
     if (!chatId) return 0;
+    const myEpoch = ++hydrationEpoch;
     try {
         const records = await listIdbForChat(chatId);
+        // M-4: a newer hydrateChat (rapid CHAT_CHANGED) started while we awaited IDB.
+        // Our slice is for a chat the user has already left — applying it would
+        // pollute the ring and risk evicting the current chat's live rows. Bail.
+        if (myEpoch !== hydrationEpoch) return 0;
         if (records.length === 0) return 0;
         // Newest-first by msgIdx, take RING_CAP (or fewer).
         const sorted = [...records].sort((a, b) => (b.msgIdx - a.msgIdx) || (b.ts - a.ts));
@@ -480,7 +495,11 @@ async function pruneCurrentChat(chatId = currentChatId) {
             req.onerror = () => reject(req.error);
         });
         victims = selectPruneVictimsFromOrderedKeys(orderedKeys, IDB_PER_CHAT_CAP);
-        if (victims.length === 0) return 0;
+        // M-3: the under-cap path (victims empty) is the COMMON case — it ran every
+        // 10th writeVerdict for the whole life of a chat. Returning here skipped both
+        // this try's catch-close and phase-2's finally-close, leaking an IDBDatabase
+        // handle on nearly every sampled prune. Close before returning.
+        if (victims.length === 0) { db.close(); return 0; }
     } catch (err) {
         db.close();
         throw err;

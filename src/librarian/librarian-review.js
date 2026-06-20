@@ -43,7 +43,7 @@ function formatEntryAsDocument(draft, settings) {
     const typeStr = draft.type || 'lore';
     const tags = draft.tags?.length ? draft.tags : [s.lorebookTag || 'lorebook'];
     const keys = draft.keys || [];
-    const priority = draft.priority || 50;
+    const priority = draft.priority ?? 50;
     const summary = (draft.summary || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
 
     const fileClassLine = typeStr !== 'story' ? `fileClass: ${yamlEscape(typeStr)}\n` : '';
@@ -367,6 +367,16 @@ export async function openLibrarianPopup(entryPoint = 'new', options = {}) {
                     const pos = unifiedTextarea.selectionStart;
                     unifiedTextarea.value = newDoc;
                     unifiedTextarea.selectionStart = unifiedTextarea.selectionEnd = Math.min(pos, newDoc.length);
+                    // M-6: this is a PROGRAMMATIC value set — no 'input' event fires, so
+                    // syncDraftFromFields never runs and frontmatterOverride goes stale. If
+                    // the user previously edited the frontmatter (frontmatterUserEdited), the
+                    // write path (writeToVault) would otherwise commit the STALE pre-AI
+                    // frontmatter, silently discarding the AI's priority/tags/keys/summary
+                    // updates the user just saw in the textarea. Re-derive the override from
+                    // the regenerated doc exactly as syncDraftFromFields does.
+                    if (session.frontmatterUserEdited) {
+                        session.frontmatterOverride = newDoc.match(/^---\n[\s\S]*?\n---/)?.[0] || '';
+                    }
                     flashField();
                 }
                 updateDirtyIndicator();
@@ -502,7 +512,12 @@ export async function openLibrarianPopup(entryPoint = 'new', options = {}) {
                     let sessionIdx = -1;
                     let userCount = 0;
                     for (let i = 0; i < session.messages.length; i++) {
-                        if (session.messages[i].role === 'user') {
+                        // M-15: skip synthetic budget-nudge messages. They are role:'user'
+                        // in session.messages (for buildUserPromptFromHistory rendering) but
+                        // are NEVER rendered as DOM bubbles, so counting them here desyncs the
+                        // DOM index ↔ session index map — sessionIdx resolves wrong or -1 and
+                        // editMessage slices the wrong range / falls back to append.
+                        if (session.messages[i].role === 'user' && !session.messages[i].synthetic) {
                             if (allMsgs.filter((m, mi) => mi <= domIdx && m.classList.contains('dle-lib-msg-user')).length === userCount + 1) {
                                 sessionIdx = i;
                                 break;
@@ -1061,6 +1076,11 @@ export async function openLibrarianPopup(entryPoint = 'new', options = {}) {
             // ─── Restore session from saved state ───
             if (isRestored) {
                 for (const msg of session.messages) {
+                    // L-18: synthetic budget-nudge messages are role:'user' but never
+                    // rendered as bubbles (they only feed buildUserPromptFromHistory).
+                    // Rendering them here would show a fake user message WITH an edit
+                    // affordance, and desync the DOM↔session user-index map (see M-15).
+                    if (msg.synthetic) continue;
                     if (msg.role === 'tool_result') {
                         // Replay tool_result rows as collapsed tool nodes.
                         const div = document.createElement('div');
@@ -1202,7 +1222,7 @@ async function writeToVault(session, opts = {}) {
         const keysYaml = (draft.keys || []).map(k => `  - ${yamlEscape(k)}`).join('\n');
         const tagsYaml = tags.map(t => `  - ${yamlEscape(t)}`).join('\n');
         const fileClassLine = typeStr !== 'story' ? `fileClass: ${yamlEscape(typeStr)}\n` : '';
-        frontmatterBlock = `---\n${fileClassLine}type: ${yamlEscape(typeStr)}\nstatus: active\npriority: ${draft.priority || 50}\ntags:\n${tagsYaml}\nkeys:\n${keysYaml}\nsummary: "${(draft.summary || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n')}"\n---`;
+        frontmatterBlock = `---\n${fileClassLine}type: ${yamlEscape(typeStr)}\nstatus: active\npriority: ${draft.priority ?? 50}\ntags:\n${tagsYaml}\nkeys:\n${keysYaml}\nsummary: "${(draft.summary || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n')}"\n---`;
     }
     const fileContent = `${frontmatterBlock}\n# ${draft.title}\n\n${safeContent}`;
 
@@ -1216,7 +1236,7 @@ async function writeToVault(session, opts = {}) {
         + `<div style="margin-bottom:6px;font-size:11px;opacity:0.85;">`
         + `<strong>Title:</strong> ${escapeHtml(draft.title)} &nbsp; `
         + `<strong>Type:</strong> ${escapeHtml(typeStr)} &nbsp; `
-        + `<strong>Priority:</strong> ${draft.priority || 50} &nbsp; `
+        + `<strong>Priority:</strong> ${draft.priority ?? 50} &nbsp; `
         + `<strong>Keys:</strong> ${(draft.keys || []).length} &nbsp; `
         + `<strong>Tags:</strong> ${escapeHtml(tagsPreview)} &nbsp; `
         + `<strong>${lineCount} lines / ${byteCount} bytes</strong>`
@@ -1244,6 +1264,11 @@ async function writeToVault(session, opts = {}) {
             }
 
             const s = getSettings();
+            // L-19: guard analyticsData existence before the deref. The entry is
+            // already written to vault above, so a TypeError here ("Cannot read
+            // properties of undefined") would surface a MISLEADING write-failure toast.
+            // Mirrors the sibling guard in librarian-tools.js updateAnalytics().
+            if (!s.analyticsData) s.analyticsData = {};
             if (!s.analyticsData._librarian) {
                 s.analyticsData._librarian = {
                     totalGapSearches: 0, totalGapFlags: 0,

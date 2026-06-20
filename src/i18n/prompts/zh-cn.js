@@ -121,8 +121,10 @@ export const AGENTIC_FENCE_NOTEPAD_HEADER = "你从之前消息的会话笔记";
 /** Scribe 汇总的围栏标头(第 7 部分)。 */
 export const AGENTIC_FENCE_SCRIBE_HEADER = "到目前为止的会话汇总";
 
-/** 工具说明介绍。`${0}` = 工具数量,`${1}` = 复数-s(空或"s")。 */
-export const AGENTIC_TOOLS_INTRO = "你有 ${0} 个工具${1}可用:";
+/** 工具说明介绍。`${0}` = 工具数量。 */
+// L-31: dropped `${1}` — the callsite passes English plural-"s", and Chinese
+// has no -s plural; ${1} produced "3 个工具s". Chinese needs no plural marker.
+export const AGENTIC_TOOLS_INTRO = "你有 ${0} 个工具可用:";
 
 /** 搜索工具说明。`${0}` = 最大搜索数。 */
 export const AGENTIC_TOOL_SEARCH = [

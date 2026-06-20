@@ -360,7 +360,10 @@ export function updateFrontmatterFields(content, updates) {
  * @returns {number}
  */
 export function comparePriority(a, b, reversed) {
-    const diff = (a.priority || 50) - (b.priority || 50);
+    // M-1: nullish (not `||`) so a legitimate `priority: 0` (highest importance in
+    // the lower-wins convention) is NOT demoted to the 50 default. Only a truly
+    // absent priority falls back to 50.
+    const diff = (a.priority ?? 50) - (b.priority ?? 50);
     return reversed ? -diff : diff;
 }
 
@@ -749,7 +752,12 @@ export function convertWiEntry(wiEntry, lorebookTag, options = {}) {
     fm.push(`type: lore`);
     fm.push(`status: active`);
     if (wiEntry.position !== undefined) fm.push(`# original_st_position: ${wiEntry.position}`);
-    fm.push(`priority: ${Math.max(0, Math.min(MAX_PRIORITY_VALUE, Math.round(Number(wiEntry.order) || 50)))}`);
+    // M-1: WI `order: 0` (top-of-stack) is a legitimate value — `|| 50` demoted it
+    // to 50. `Number(order)` yields NaN for missing/invalid (which `??` would NOT
+    // catch), so gate on Number.isFinite and fall back to 50 only then.
+    const _orderRaw = Number(wiEntry.order);
+    const _orderNum = Number.isFinite(_orderRaw) ? _orderRaw : 50;
+    fm.push(`priority: ${Math.max(0, Math.min(MAX_PRIORITY_VALUE, Math.round(_orderNum)))}`);
     fm.push(`tags:`);
     fm.push(`  - ${lorebookTag}`);
     if (wiEntry.constant) fm.push(`  - lorebook-always`);

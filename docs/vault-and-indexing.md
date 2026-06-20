@@ -266,6 +266,8 @@ Strips `requires[]`, `excludes[]`, and `cascadeLinks[]` references that don't ma
 
 **Gotcha:** The `_original*` fields are included in the IndexedDB cache save (cache.js:saveIndexToCache(), explicit `_original*` allowlist in the private-field filter). This means cached entries retain the broken-ref information across reloads.
 
+**Cache `_`-field allowlist (L-2, gotcha #90):** the private-field filter that strips `_`-prefixed fields on save keeps an explicit exception list — `_contentHash`, `_originalRequires`, `_originalExcludes`, `_originalCascadeLinks`, and (added L-2) **`_parserWarnings`**. Without the last, `/dle-lint` lost every parser warning after a reload until a full rebuild re-derived them (the cache served warning-free entries).
+
 ### `computeDerivedIndexFields(entries, settings, previousEntries?)` (vault.js:computeDerivedIndexFields())
 
 Shared between `finalizeIndex()` and `hydrateFromCache()` (BUG-370). Optional third arg `previousEntries` enables the incremental path (P3).

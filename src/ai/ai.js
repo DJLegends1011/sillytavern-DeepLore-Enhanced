@@ -124,8 +124,14 @@ export async function callViaProfile(systemPrompt, userMessage, maxTokens, timeo
         if (externalSignal.aborted) {
             clearTimeout(timer);
             const reason = externalSignal.reason?.message || 'ai:external_pre_aborted';
-            const err = new Error('Request aborted');
+            // L-15: a pre-call EXTERNAL abort is a user/caller abort, NOT a timeout.
+            // Without userAborted, the shared classifier's `name === 'AbortError'`
+            // branch labels it as a timeout (wrong status/log) — and the "aborted by
+            // user" message + userAborted flag must mirror the in-flight abort path
+            // (catch block below) so downstream treats both identically.
+            const err = new Error('Request aborted by user');
             err.name = 'AbortError';
+            err.userAborted = true;
             err.abortReason = reason;
             throw err;
         }
@@ -771,6 +777,15 @@ export async function aiSearch(chat, candidateManifest, candidateHeader, snapsho
     // swipe/regen should hit the exact-match branch; this is a safety net.
     // BUG-396b: verify prefix content too — if a mid-chat edit happens to preserve
     // line count, we must not cache-hit.
+    // L-14: this tier's HIT branch is effectively INERT and is kept only as a
+    // defensive net (low-risk to retain, riskier to remove). `prefixHash` is the
+    // FULL-content hash at write time (line ~1069), so:
+    //   - genuinely shrunk content → currentContentHash ≠ prefixHash → MISS (never HIT)
+    //   - identical content (equal line count) → already served by the exact-match
+    //     tier above (chatHash matches after the trailing-assistant strip)
+    // The only path to its HIT is fully-identical content, which exact-match already
+    // catches. Leaving it costs one hash + compare; removing it risks a subtle
+    // regression if some edge bypasses exact-match, so it stays.
     if (aiSearchCache.manifestHash === manifestHash
         && aiSearchCache.chatLineCount > 0
         && getChatLines().length <= aiSearchCache.chatLineCount) {

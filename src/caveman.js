@@ -58,6 +58,18 @@ export function compressCaveman(text) {
     };
     let working = text;
     working = working.replace(/```[\s\S]*?```/g, mask);
+    // L-35: preserve indented code blocks (markdown's 4-space / tab convention).
+    // Mask contiguous runs of indented lines BEFORE the whitespace-collapse (line
+    // ~76) and per-line leading-strip (~88) would otherwise flatten their indent
+    // and demote code to prose. Masking the whole run as one opaque span keeps the
+    // internal indentation byte-for-byte on restore. Conservative threshold: 4+
+    // leading spaces or a tab (the same bar markdown uses) — ordinary 1–3-space
+    // wrap indents and list-continuation lines are left to the existing handling.
+    // Fenced blocks are already masked above, so their placeholder lines (column 0)
+    // can't be re-captured here. Match each maximal run of consecutive indented
+    // lines (one line minimum) with the `m` flag; trailing/internal blank lines are
+    // intentionally left out of the span to keep the regex simple and predictable.
+    working = working.replace(/^(?:[ ]{4,}|\t)[^\n]*(?:\n(?:[ ]{4,}|\t)[^\n]*)*/gm, mask);
     working = working.replace(/`[^`\n]+`/g, mask);
     working = working.replace(/https?:\/\/\S+/g, mask);
 

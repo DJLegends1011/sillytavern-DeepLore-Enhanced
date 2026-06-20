@@ -478,7 +478,12 @@ export function applyStripDedup(entries, policy, injectionLog, lookbackDepth, de
             return true;
         }
         // Audit S3-3: defaultSettings is optional — null-guard the fallback reads.
-        const ds = defaultSettings || {};
+        // L-13: fall back to the canonical injection defaults (settings.js: 1/4/0),
+        // NOT `{}`. With `{}`, an entry whose injectionPosition/Depth/Role is null
+        // resolves to literal `undefined` in the key, which never matches the write
+        // side (index.js threads real settings) → dedup silently fails for any
+        // external/diagnostic caller that omits defaultSettings.
+        const ds = defaultSettings || { injectionPosition: 1, injectionDepth: 4, injectionRole: 0 };
         // M-3 (2026-05-22): cross-entry collisions on an empty `_contentHash` are
         // already prevented because the dedup key includes
         // `vaultSource:title|pos|depth|role` — two distinct entries differ at the

@@ -1043,7 +1043,14 @@ export async function editMessage(session, messageIndex, newText, options = {}) 
     }
     session.messages = session.messages.slice(0, messageIndex);
     const result = await sendMessage(session, newText, options);
-    if (!result.valid && result.lastErrors?.[0] === 'Aborted by user') {
+    // M-14: also restore on the epoch-mismatch path. sendMessage's own snapshot is
+    // taken AFTER this truncation, so its epochReturn restores only to the truncated
+    // tail — the live popup session is left short the pre-edit messages. Restore the
+    // pre-edit snapshot for BOTH the abort and chat-changed returns (same rationale:
+    // the edit never landed, so revert to full history).
+    if (!result.valid
+        && (result.lastErrors?.[0] === 'Aborted by user'
+            || result.lastErrors?.[0] === 'Chat changed during librarian send')) {
         session.messages = snapshot;
     }
     return result;
@@ -1091,7 +1098,12 @@ export async function regenerateResponse(session, options = {}) {
         return { parsed: null, valid: false, exhausted: true, lastErrors: ['No message to regenerate'] };
     }
     const result = await sendMessage(session, lastUserMsg, options);
-    if (!result.valid && result.lastErrors?.[0] === 'Aborted by user') {
+    // M-14: also restore on the epoch-mismatch path (same as editMessage). sendMessage's
+    // snapshot is taken after this regen-stripping, so its epochReturn leaves the live
+    // session short the removed assistant/tool_result tail.
+    if (!result.valid
+        && (result.lastErrors?.[0] === 'Aborted by user'
+            || result.lastErrors?.[0] === 'Chat changed during librarian send')) {
         session.messages = snapshot;
     }
     return result;
