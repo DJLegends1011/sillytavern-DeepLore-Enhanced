@@ -27,7 +27,7 @@ import {
 import { ensureIndexFresh, buildIndex, buildIndexWithReuse } from '../vault/vault.js';
 import {
     callViaProfile, getProfileModelHint,
-    buildCandidateManifest,
+    buildCandidateManifest, callAI,
 } from '../ai/ai.js';
 import { matchEntries } from '../pipeline/pipeline.js';
 import { setupSyncPolling } from '../vault/sync.js';
@@ -695,6 +695,14 @@ function buildAccordionHtml($container) {
         html += `<input id="${id}-timeout" type="number" class="text_pole" />`;
         html += `</div></div>`;
 
+        // Test-message button — sends a one-line probe through this tool's resolved
+        // connection and reports via an ST-style green/red toast (see handler).
+        html += `<div class="flex-container dle-conn-test-row" style="margin-top: var(--dle-space-2); align-items: center; gap: var(--dle-space-2);">`;
+        html += `<button type="button" class="menu_button dle-conn-test-btn" data-tool="${toolKey}" title="Send a one-line test message through this connection to confirm it works.">`;
+        html += `<i class="fa-solid fa-paper-plane" aria-hidden="true"></i> Test message`;
+        html += `</button>`;
+        html += `</div>`;
+
         html += `</div></div>`;
     }
     $section.append(html);
@@ -799,6 +807,39 @@ function bindAccordionEvents($container) {
         const expanded = $header.attr('aria-expanded') === 'true';
         $header.attr('aria-expanded', String(!expanded));
         $header.next('.dle-conn-accordion-body').slideToggle(200);
+    });
+
+    // Test-message button: probe this tool's resolved connection with a one-line prompt.
+    // ST design: green toastr.success on reply, red toastr.error(message, title) on failure.
+    // Uses the LIVE (settings-reflected) connection config — change handlers mutate settings
+    // synchronously before the debounced save, so resolveConnectionConfig sees current UI state.
+    $section.on('click', '.dle-conn-test-btn', async function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const $btn = $(this);
+        if ($btn.prop('disabled')) return;
+        const toolKey = $btn.data('tool');
+        const label = TOOL_CONNECTION_CONFIGS[toolKey]?.label || toolKey;
+        const orig = $btn.html();
+        $btn.prop('disabled', true).html('<goo-spinner size="18" color="currentColor" aria-hidden="true"></goo-spinner> Testing…');
+        try {
+            const conn = resolveConnectionConfig(toolKey);
+            conn.caller = `test:${toolKey}`;
+            conn.skipThrottle = true;        // manual test must not consume the AI throttle window
+            conn.maxTokens = 64;             // connectivity check only — keep the reply tiny
+            conn.disableThinkingOnClaude = true;
+            const result = await callAI(
+                'You are a connection test. Reply with a single short word.',
+                'Reply with exactly: OK',
+                conn,
+            );
+            const reply = (result?.text || '').trim().replace(/\s+/g, ' ').slice(0, 80) || '(empty reply)';
+            toastr.success(`${label} connection OK — replied: "${reply}"`, '', { timeOut: 5000, preventDuplicates: true });
+        } catch (err) {
+            toastr.error(err?.message || String(err), `${label} connection test failed`, { timeOut: 9000, preventDuplicates: true });
+        } finally {
+            $btn.prop('disabled', false).html(orig);
+        }
     });
 
     $section.on('change', 'input[type="radio"]', function () {
