@@ -6,7 +6,7 @@ labels: i18n, translation, help wanted
 assignees: ''
 ---
 
-<!-- See https://github.com/pixelnull/sillytavern-DeepLore-Enhanced/wiki/Contributing-Translations for context. -->
+<!-- See https://github.com/pixelnull/sillytavern-DeepLore/wiki/Contributing-Translations for context. -->
 
 ## Locale
 <!-- One of: es-es, fr-fr, de-de, ja-jp, zh-cn, ru-ru -->

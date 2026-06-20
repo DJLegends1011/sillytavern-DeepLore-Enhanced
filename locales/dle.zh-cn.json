@@ -1684,7 +1684,7 @@
   "dle_select_all_label": "切换全选",
   "dle_select_button_label": "选择",
   "dle_select_toggle_tooltip": "显示行复选框以进行多选",
-  "dle_settings_about_credits_html": "由 <strong>pixelnull</strong> 制作 &middot; 基于 <a href=\"https://github.com/pixelnull/sillytavern-DeepLore-Enhanced/blob/main/LICENSE\" target=\"_blank\" rel=\"noopener noreferrer\">MIT</a> 许可证授权 &middot; 图标由 <a href=\"https://www.flaticon.com\" target=\"_blank\" rel=\"noopener noreferrer\">Flaticon</a> 提供",
+  "dle_settings_about_credits_html": "由 <strong>pixelnull</strong> 制作 &middot; 基于 <a href=\"https://github.com/pixelnull/sillytavern-DeepLore/blob/main/LICENSE\" target=\"_blank\" rel=\"noopener noreferrer\">MIT</a> 许可证授权 &middot; 图标由 <a href=\"https://www.flaticon.com\" target=\"_blank\" rel=\"noopener noreferrer\">Flaticon</a> 提供",
   "dle_settings_connection_settings_note": "连接设置:在「连接」标签页的 <a href=\"#\" class=\"dle-goto-ai-connections\">AI 连接</a>。",
   "dle_settings_gating_tolerance_lenient": "宽松(未设上下文时允许)",
   "dle_settings_gating_tolerance_moderate": "中等(仅在不匹配时屏蔽)",

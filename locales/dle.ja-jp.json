@@ -1684,7 +1684,7 @@
   "dle_select_all_label": "全選択を切替",
   "dle_select_button_label": "選択",
   "dle_select_toggle_tooltip": "複数選択用に行のチェックボックスを表示",
-  "dle_settings_about_credits_html": "制作: <strong>pixelnull</strong> &middot; <a href=\"https://github.com/pixelnull/sillytavern-DeepLore-Enhanced/blob/main/LICENSE\" target=\"_blank\" rel=\"noopener noreferrer\">MIT</a>ライセンスにて提供 &middot; アイコン: <a href=\"https://www.flaticon.com\" target=\"_blank\" rel=\"noopener noreferrer\">Flaticon</a>",
+  "dle_settings_about_credits_html": "制作: <strong>pixelnull</strong> &middot; <a href=\"https://github.com/pixelnull/sillytavern-DeepLore/blob/main/LICENSE\" target=\"_blank\" rel=\"noopener noreferrer\">MIT</a>ライセンスにて提供 &middot; アイコン: <a href=\"https://www.flaticon.com\" target=\"_blank\" rel=\"noopener noreferrer\">Flaticon</a>",
   "dle_settings_connection_settings_note": "接続設定: 接続タブの<a href=\"#\" class=\"dle-goto-ai-connections\">AI接続</a>。",
   "dle_settings_gating_tolerance_lenient": "寛容（コンテキスト未設定時は許可）",
   "dle_settings_gating_tolerance_moderate": "中間（不一致時のみブロック）",

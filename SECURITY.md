@@ -12,6 +12,6 @@ DeepLore is a client-side SillyTavern extension that connects to a local Obsidia
 
 ## Reporting Issues
 
-For security vulnerabilities, please use [GitHub private vulnerability reporting](https://github.com/pixelnull/sillytavern-DeepLore-Enhanced/security/advisories/new) or contact the maintainer privately before opening a public issue. This allows time to assess and patch before disclosure.
+For security vulnerabilities, please use [GitHub private vulnerability reporting](https://github.com/pixelnull/sillytavern-DeepLore/security/advisories/new) or contact the maintainer privately before opening a public issue. This allows time to assess and patch before disclosure.
 
-For non-security bugs, use [GitHub Issues](https://github.com/pixelnull/sillytavern-DeepLore-Enhanced/issues).
+For non-security bugs, use [GitHub Issues](https://github.com/pixelnull/sillytavern-DeepLore/issues).

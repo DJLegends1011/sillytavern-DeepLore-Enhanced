@@ -1684,7 +1684,7 @@
   "dle_select_all_label": "Basculer tout sélectionner",
   "dle_select_button_label": "Sélectionner",
   "dle_select_toggle_tooltip": "Afficher les cases à cocher de rangée pour multi-sélection",
-  "dle_settings_about_credits_html": "Conçu par <strong>pixelnull</strong> &middot; Sous licence <a href=\"https://github.com/pixelnull/sillytavern-DeepLore-Enhanced/blob/main/LICENSE\" target=\"_blank\" rel=\"noopener noreferrer\">MIT</a> &middot; Icônes par <a href=\"https://www.flaticon.com\" target=\"_blank\" rel=\"noopener noreferrer\">Flaticon</a>",
+  "dle_settings_about_credits_html": "Conçu par <strong>pixelnull</strong> &middot; Sous licence <a href=\"https://github.com/pixelnull/sillytavern-DeepLore/blob/main/LICENSE\" target=\"_blank\" rel=\"noopener noreferrer\">MIT</a> &middot; Icônes par <a href=\"https://www.flaticon.com\" target=\"_blank\" rel=\"noopener noreferrer\">Flaticon</a>",
   "dle_settings_connection_settings_note": "Paramètres de connexion : <a href=\"#\" class=\"dle-goto-ai-connections\">Connexions IA</a> dans l’onglet Connexion.",
   "dle_settings_gating_tolerance_lenient": "Permissif (autoriser quand aucun contexte n’est défini)",
   "dle_settings_gating_tolerance_moderate": "Modéré (bloquer uniquement en cas de non-correspondance)",

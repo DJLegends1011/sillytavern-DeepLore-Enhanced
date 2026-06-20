@@ -12,9 +12,9 @@
 ![Version](https://img.shields.io/badge/version-2.5.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![SillyTavern](https://img.shields.io/badge/SillyTavern-1.12.14+-orange)
-[![i18n](https://img.shields.io/badge/i18n-EN%20%7C%20ES%20%7C%20FR%20%7C%20DE%20%7C%20JA%20%7C%20ZH%20%7C%20RU-purple)](https://github.com/pixelnull/sillytavern-DeepLore-Enhanced/wiki/Contributing-Translations)
+[![i18n](https://img.shields.io/badge/i18n-EN%20%7C%20ES%20%7C%20FR%20%7C%20DE%20%7C%20JA%20%7C%20ZH%20%7C%20RU-purple)](https://github.com/pixelnull/sillytavern-DeepLore/wiki/Contributing-Translations)
 
-[**Live demo →**](https://pixelnull.github.io/sillytavern-DeepLore-Enhanced/) · [Wiki](https://github.com/pixelnull/sillytavern-DeepLore-Enhanced/wiki)
+[**Live demo →**](https://pixelnull.github.io/sillytavern-DeepLore/) · [Wiki](https://github.com/pixelnull/sillytavern-DeepLore/wiki)
 
 ---
 
@@ -178,7 +178,7 @@ Diagnostics exports for bug reports are pseudonymized before they leave your mac
 ## Install
 
 1. SillyTavern → Extensions → **Install Extension**
-2. Paste: `https://github.com/pixelnull/sillytavern-DeepLore-Enhanced`
+2. Paste: `https://github.com/pixelnull/sillytavern-DeepLore`
 3. Run `/dle-setup`, which walks through vault connection, tags, search mode, and provider
 
 <p align="center">
@@ -210,7 +210,7 @@ Diagnostics exports for bug reports are pseudonymized before they leave your mac
   </tr>
 </table>
 
-Full feature docs: [**Wiki →**](https://github.com/pixelnull/sillytavern-DeepLore-Enhanced/wiki)
+Full feature docs: [**Wiki →**](https://github.com/pixelnull/sillytavern-DeepLore/wiki)
 
 ## Known rough edges
 

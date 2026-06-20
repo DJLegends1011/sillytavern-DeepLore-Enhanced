@@ -1675,7 +1675,7 @@ function bindPopupEvents($container) {
                     everything personally identifiable that's still in it."</em></p>
                     <p>If you find anything we missed, that's a bug — please open an issue.</p>
                     <p style="margin-top: 14px;">
-                        <a href="https://github.com/pixelnull/sillytavern-DeepLore-Enhanced/issues/new"
+                        <a href="https://github.com/pixelnull/sillytavern-DeepLore/issues/new"
                            target="_blank" rel="noopener noreferrer"
                            class="menu_button menu_button_icon">
                             <i class="fa-solid fa-up-right-from-square"></i>

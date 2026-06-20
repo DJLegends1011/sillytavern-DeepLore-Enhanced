@@ -5,7 +5,7 @@ title: "[Feature] "
 labels: enhancement
 ---
 
-> Before submitting, please check the [Roadmap](https://github.com/pixelnull/sillytavern-DeepLore-Enhanced/wiki/Roadmap) — your idea may already be planned.
+> Before submitting, please check the [Roadmap](https://github.com/pixelnull/sillytavern-DeepLore/wiki/Roadmap) — your idea may already be planned.
 
 ## What problem does this solve?
 

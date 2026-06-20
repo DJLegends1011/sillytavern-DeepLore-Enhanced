@@ -1684,7 +1684,7 @@
   "dle_select_all_label": "Переключить выбор всех",
   "dle_select_button_label": "Выбрать",
   "dle_select_toggle_tooltip": "Показать флажки строк для множественного выбора",
-  "dle_settings_about_credits_html": "Сделано <strong>pixelnull</strong> &middot; Лицензия <a href=\"https://github.com/pixelnull/sillytavern-DeepLore-Enhanced/blob/main/LICENSE\" target=\"_blank\" rel=\"noopener noreferrer\">MIT</a> &middot; Иконки от <a href=\"https://www.flaticon.com\" target=\"_blank\" rel=\"noopener noreferrer\">Flaticon</a>",
+  "dle_settings_about_credits_html": "Сделано <strong>pixelnull</strong> &middot; Лицензия <a href=\"https://github.com/pixelnull/sillytavern-DeepLore/blob/main/LICENSE\" target=\"_blank\" rel=\"noopener noreferrer\">MIT</a> &middot; Иконки от <a href=\"https://www.flaticon.com\" target=\"_blank\" rel=\"noopener noreferrer\">Flaticon</a>",
   "dle_settings_connection_settings_note": "Настройки подключения: <a href=\"#\" class=\"dle-goto-ai-connections\">Подключения ИИ</a> на вкладке «Подключение».",
   "dle_settings_gating_tolerance_lenient": "Мягко (разрешать, когда контекст не задан)",
   "dle_settings_gating_tolerance_moderate": "Умеренно (блокировать только при несовпадении)",

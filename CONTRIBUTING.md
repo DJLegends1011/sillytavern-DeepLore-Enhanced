@@ -28,7 +28,7 @@ New code should include tests. Add unit tests in `test/unit.mjs` for any new pur
 
 ### Translations
 
-Translation refinements have their own contributor guide — see [Contributing Translations](https://github.com/pixelnull/sillytavern-DeepLore-Enhanced/wiki/Contributing-Translations) (or `wiki/Contributing-Translations.md`). UI strings live in `locales/dle.{lang}.json`; AI prompts in `src/i18n/prompts/{lang}.js`. English is canonical; never edit `dle.en.json` / `prompts/en.js` in a translation PR. Run `npm run test:i18n` before pushing.
+Translation refinements have their own contributor guide — see [Contributing Translations](https://github.com/pixelnull/sillytavern-DeepLore/wiki/Contributing-Translations) (or `wiki/Contributing-Translations.md`). UI strings live in `locales/dle.{lang}.json`; AI prompts in `src/i18n/prompts/{lang}.js`. English is canonical; never edit `dle.en.json` / `prompts/en.js` in a translation PR. Run `npm run test:i18n` before pushing.
 
 ## Source Directory Structure
 

@@ -2,10 +2,10 @@
 
 Possible future features for DeepLore. Nothing here is promised or on a timeline. These are ideas collected from community feedback, GitHub issues, code audits, and the developer's own plans. Some may ship soon, some may never ship, and priorities can shift.
 
-Have a feature request? [Open a GitHub issue](https://github.com/pixelnull/sillytavern-DeepLore-Enhanced/issues/new) with the `enhancement` label.
+Have a feature request? [Open a GitHub issue](https://github.com/pixelnull/sillytavern-DeepLore/issues/new) with the `enhancement` label.
 
 > [!NOTE]
-> Features already shipped are documented on the [[Features]] page and in the [Changelog](https://github.com/pixelnull/sillytavern-DeepLore-Enhanced/blob/main/CHANGELOG.md).
+> Features already shipped are documented on the [[Features]] page and in the [Changelog](https://github.com/pixelnull/sillytavern-DeepLore/blob/main/CHANGELOG.md).
 
 Size estimates: **[S]** small, **[M]** medium, **[L]** large.
 
@@ -157,7 +157,7 @@ Size estimates: **[S]** small, **[M]** medium, **[L]** large.
 
 ---
 
-*Sources: Reddit ([v0.14 post](https://www.reddit.com/r/SillyTavernAI/comments/1ruxeqy/deeplore_enhanced_aipowered_lorebook_injection/), [v0.2.0 post](https://www.reddit.com/r/SillyTavernAI/comments/1s07i8f/deeplore_enhanced_v020_your_obsidian_vault_is_now/)), GitHub issues ([#3](https://github.com/pixelnull/sillytavern-DeepLore-Enhanced/issues/3), [#5](https://github.com/pixelnull/sillytavern-DeepLore-Enhanced/issues/5)), 5-expert code audit (2026-03-19), 8-agent comprehensive audit (2026-03-23), 5-perspective review and fixes (2026-03-23), 6-agent graph popup audit (2026-03-24).*
+*Sources: Reddit ([v0.14 post](https://www.reddit.com/r/SillyTavernAI/comments/1ruxeqy/deeplore_enhanced_aipowered_lorebook_injection/), [v0.2.0 post](https://www.reddit.com/r/SillyTavernAI/comments/1s07i8f/deeplore_enhanced_v020_your_obsidian_vault_is_now/)), GitHub issues ([#3](https://github.com/pixelnull/sillytavern-DeepLore/issues/3), [#5](https://github.com/pixelnull/sillytavern-DeepLore/issues/5)), 5-expert code audit (2026-03-19), 8-agent comprehensive audit (2026-03-23), 5-perspective review and fixes (2026-03-23), 6-agent graph popup audit (2026-03-24).*
 
 ---
 

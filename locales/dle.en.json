@@ -1683,7 +1683,7 @@
   "dle_select_all_label": "Toggle select all",
   "dle_select_button_label": "Select",
   "dle_select_toggle_tooltip": "Show row checkboxes for multi-select",
-  "dle_settings_about_credits_html": "Made by <strong>pixelnull</strong> &middot; Licensed under <a href=\"https://github.com/pixelnull/sillytavern-DeepLore-Enhanced/blob/main/LICENSE\" target=\"_blank\" rel=\"noopener noreferrer\">MIT</a> &middot; Icons by <a href=\"https://www.flaticon.com\" target=\"_blank\" rel=\"noopener noreferrer\">Flaticon</a>",
+  "dle_settings_about_credits_html": "Made by <strong>pixelnull</strong> &middot; Licensed under <a href=\"https://github.com/pixelnull/sillytavern-DeepLore/blob/main/LICENSE\" target=\"_blank\" rel=\"noopener noreferrer\">MIT</a> &middot; Icons by <a href=\"https://www.flaticon.com\" target=\"_blank\" rel=\"noopener noreferrer\">Flaticon</a>",
   "dle_settings_connection_settings_note": "Connection settings: <a href=\"#\" class=\"dle-goto-ai-connections\">AI Connections</a> in Connection tab.",
   "dle_settings_gating_tolerance_lenient": "Lenient (allow when no context set)",
   "dle_settings_gating_tolerance_moderate": "Moderate (block only on mismatch)",

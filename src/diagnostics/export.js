@@ -17,7 +17,7 @@ import { consoleBuffer, networkBuffer, errorBuffer, eventBuffer, aiCallBuffer, a
 import { generationBuffer } from './flight-recorder.js';
 import { longTaskBuffer, captureMemorySnapshot } from './performance.js';
 
-const ISSUE_URL = 'https://github.com/pixelnull/sillytavern-DeepLore-Enhanced/issues/new';
+const ISSUE_URL = 'https://github.com/pixelnull/sillytavern-DeepLore/issues/new';
 
 /** Length-only descriptor for a redacted prompt/chat body. */
 function redactedLen(v) {

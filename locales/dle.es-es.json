@@ -1684,7 +1684,7 @@
   "dle_select_all_label": "Alternar seleccionar todo",
   "dle_select_button_label": "Seleccionar",
   "dle_select_toggle_tooltip": "Mostrar casillas de fila para selección múltiple",
-  "dle_settings_about_credits_html": "Hecho por <strong>pixelnull</strong> &middot; Licenciado bajo <a href=\"https://github.com/pixelnull/sillytavern-DeepLore-Enhanced/blob/main/LICENSE\" target=\"_blank\" rel=\"noopener noreferrer\">MIT</a> &middot; Iconos por <a href=\"https://www.flaticon.com\" target=\"_blank\" rel=\"noopener noreferrer\">Flaticon</a>",
+  "dle_settings_about_credits_html": "Hecho por <strong>pixelnull</strong> &middot; Licenciado bajo <a href=\"https://github.com/pixelnull/sillytavern-DeepLore/blob/main/LICENSE\" target=\"_blank\" rel=\"noopener noreferrer\">MIT</a> &middot; Iconos por <a href=\"https://www.flaticon.com\" target=\"_blank\" rel=\"noopener noreferrer\">Flaticon</a>",
   "dle_settings_connection_settings_note": "Ajustes de conexión: <a href=\"#\" class=\"dle-goto-ai-connections\">Conexiones de IA</a> en la pestaña Conexión.",
   "dle_settings_gating_tolerance_lenient": "Permisivo (permitir cuando no haya contexto)",
   "dle_settings_gating_tolerance_moderate": "Moderado (bloquear solo si no coincide)",

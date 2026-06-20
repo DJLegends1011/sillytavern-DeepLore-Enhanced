@@ -148,7 +148,7 @@ If you are using HTTPS (port 27124) and seeing "Failed to fetch" or "Certificate
 1. Open the browser console (F12) and filter for `[DLE]`, or run `/dle-logs`.
 2. Note the exact error message.
 3. Try disabling the extension, refreshing, and re-enabling.
-4. If the error persists, [report it on GitHub](https://github.com/pixelnull/sillytavern-DeepLore-Enhanced/issues) with the error message. Attach the output of `/dle-diagnostics` if you can.
+4. If the error persists, [report it on GitHub](https://github.com/pixelnull/sillytavern-DeepLore/issues) with the error message. Attach the output of `/dle-diagnostics` if you can.
 
 ### Extension freezes SillyTavern
 - This can happen if the generation lock gets stuck.
@@ -176,7 +176,7 @@ The Librarian auto-enables function calling on the active connection when it is 
 2. Run `/dle-logs` (or check the browser console) for `[DLE]` messages.
 3. Run `/dle-status` to see the full extension state.
 4. Run `/dle-diagnostics` to export an anonymized report.
-5. [Open an issue on GitHub](https://github.com/pixelnull/sillytavern-DeepLore-Enhanced/issues) with:
+5. [Open an issue on GitHub](https://github.com/pixelnull/sillytavern-DeepLore/issues) with:
    - Your DeepLore version (see About tab)
    - The error message or unexpected behavior
    - Steps to reproduce

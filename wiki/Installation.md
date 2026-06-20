@@ -23,7 +23,7 @@ Install steps for DeepLore. Install the extension, point it at an Obsidian vault
 3. Click **Install Extension**
 4. Paste the URL:
    ```
-   https://github.com/pixelnull/sillytavern-DeepLore-Enhanced
+   https://github.com/pixelnull/sillytavern-DeepLore
    ```
 5. Click **Install**
 
@@ -31,7 +31,7 @@ Install steps for DeepLore. Install the extension, point it at an Obsidian vault
 
 ```bash
 cd SillyTavern/public/scripts/extensions/third-party
-git clone https://github.com/pixelnull/sillytavern-DeepLore-Enhanced.git
+git clone https://github.com/pixelnull/sillytavern-DeepLore.git
 ```
 
 ---
@@ -90,7 +90,7 @@ If you installed via the built-in installer, SillyTavern shows an update notific
 If you installed manually, pull the latest changes:
 
 ```bash
-cd SillyTavern/public/scripts/extensions/third-party/sillytavern-DeepLore-Enhanced
+cd SillyTavern/public/scripts/extensions/third-party/sillytavern-DeepLore
 git pull
 ```
 
@@ -121,6 +121,6 @@ git pull
 
 ### Extension not appearing in SillyTavern
 
-- **Check the extensions folder:** The extension lives at `SillyTavern/public/scripts/extensions/third-party/sillytavern-DeepLore-Enhanced/` (or `data/default-user/extensions/sillytavern-DeepLore-Enhanced/` if you installed it for a single user) with `manifest.json` at the root.
+- **Check the extensions folder:** The extension lives at `SillyTavern/public/scripts/extensions/third-party/sillytavern-DeepLore/` (or `data/default-user/extensions/sillytavern-DeepLore/` if you installed it for a single user) with `manifest.json` at the root.
 - **Check SillyTavern version:** DeepLore requires SillyTavern v1.12.14+ (enforced by `minimum_client_version` in the manifest). Older versions refuse to load the extension.
 - **Clear browser cache:** Hard-refresh (`Ctrl+Shift+R`) or clear cache and reload.

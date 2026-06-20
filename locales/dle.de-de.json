@@ -1684,7 +1684,7 @@
   "dle_select_all_label": "Alle umschalten",
   "dle_select_button_label": "Auswählen",
   "dle_select_toggle_tooltip": "Zeilenkästchen für Mehrfachauswahl anzeigen",
-  "dle_settings_about_credits_html": "Erstellt von <strong>pixelnull</strong> &middot; Lizenziert unter <a href=\"https://github.com/pixelnull/sillytavern-DeepLore-Enhanced/blob/main/LICENSE\" target=\"_blank\" rel=\"noopener noreferrer\">MIT</a> &middot; Symbole von <a href=\"https://www.flaticon.com\" target=\"_blank\" rel=\"noopener noreferrer\">Flaticon</a>",
+  "dle_settings_about_credits_html": "Erstellt von <strong>pixelnull</strong> &middot; Lizenziert unter <a href=\"https://github.com/pixelnull/sillytavern-DeepLore/blob/main/LICENSE\" target=\"_blank\" rel=\"noopener noreferrer\">MIT</a> &middot; Symbole von <a href=\"https://www.flaticon.com\" target=\"_blank\" rel=\"noopener noreferrer\">Flaticon</a>",
   "dle_settings_connection_settings_note": "Verbindungseinstellungen: <a href=\"#\" class=\"dle-goto-ai-connections\">KI-Verbindungen</a> im Verbindungs-Tab.",
   "dle_settings_gating_tolerance_lenient": "Nachsichtig (erlauben, wenn kein Kontext gesetzt)",
   "dle_settings_gating_tolerance_moderate": "Moderat (nur bei Konflikt blockieren)",
