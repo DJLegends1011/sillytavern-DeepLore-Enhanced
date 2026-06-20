@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — Cache Entry Validation
+ * DeepLore — Cache Entry Validation
  * Pure function extracted from cache.js for testability (no SillyTavern imports).
  */
 

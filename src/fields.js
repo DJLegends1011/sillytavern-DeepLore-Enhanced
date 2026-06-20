@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — Custom Field Definitions
+ * DeepLore — Custom Field Definitions
  * Parsing, validation, defaults, YAML for user-defined frontmatter fields.
  * Pure — no ST imports, Node-testable.
  */

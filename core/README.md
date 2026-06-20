@@ -1,6 +1,6 @@
-# DeepLore Enhanced Core
+# DeepLore Core
 
-Shared utility modules used across DeepLore Enhanced.
+Shared utility modules used across DeepLore.
 
 ## Module Responsibilities
 

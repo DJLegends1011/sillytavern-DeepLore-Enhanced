@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — Client-Side Obsidian REST API Module
+ * DeepLore — Client-Side Obsidian REST API Module
  * Direct browser → Obsidian communication (CORS enabled by Obsidian REST API plugin).
  */
 

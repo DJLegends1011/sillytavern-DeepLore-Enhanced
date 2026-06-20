@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — /dle-lint slash command.
+ * DeepLore — /dle-lint slash command.
  * Reads the parser warning ledger populated by buildIndex / buildIndexWithReuse.
  * Manual invoke only — auto-run after index build is OFF per user directive.
  */

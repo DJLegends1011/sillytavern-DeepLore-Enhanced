@@ -1,4 +1,4 @@
-/** DeepLore Enhanced — Settings UI: load, bind, stats */
+/** DeepLore — Settings UI: load, bind, stats */
 import {
     saveSettingsDebounced,
     chat,
@@ -148,7 +148,7 @@ function bindVaultListEvents(settings, $scope = null, $addBtn = null) {
                 }
                 newName = `${newName} ${counter}`;
                 $(this).val(newName);
-                toastr.warning(`Vault name already in use. Renamed to "${newName}".`, 'DeepLore Enhanced', { timeOut: 4000 });
+                toastr.warning(`Vault name already in use. Renamed to "${newName}".`, 'DeepLore', { timeOut: 4000 });
             }
             settings.vaults[idx].name = newName;
         } else if ($(this).hasClass('dle-vault-host')) {
@@ -296,7 +296,7 @@ function bindVaultListEvents(settings, $scope = null, $addBtn = null) {
         const idx = parseInt(row.data('index'), 10);
         if (isNaN(idx) || !settings.vaults[idx]) return;
         if (settings.vaults.length <= 1) {
-            toastr.warning('At least one vault connection is required. Add another vault before removing this one.', 'DeepLore Enhanced');
+            toastr.warning('At least one vault connection is required. Add another vault before removing this one.', 'DeepLore');
             return;
         }
         const vaultName = settings.vaults[idx].name || `Vault ${idx + 1}`;
@@ -508,7 +508,7 @@ async function saveCurrentAsPreset($container, $select, toolKey, settings) {
     const $textarea = $container.find(`#${tool.textareaId}`);
     const text = $textarea.val()?.trim();
     if (!text) {
-        toastr.warning('Textarea is empty — nothing to save.', 'DeepLore Enhanced');
+        toastr.warning('Textarea is empty — nothing to save.', 'DeepLore');
         $select.val('');
         return;
     }
@@ -539,7 +539,7 @@ async function saveCurrentAsPreset($container, $select, toolKey, settings) {
     saveSettingsDebounced();
     refreshPresetDropdown($select, settings);
     $select.val('');
-    toastr.success(`Preset "${presetName}" saved.`, 'DeepLore Enhanced');
+    toastr.success(`Preset "${presetName}" saved.`, 'DeepLore');
 }
 
 async function deletePreset($container, $select, toolKey, settings) {
@@ -569,7 +569,7 @@ async function deletePreset($container, $select, toolKey, settings) {
         delete settings.promptPresets[toolKey][toDelete];
         saveSettingsDebounced();
         refreshPresetDropdown($select, settings);
-        toastr.success(`Preset "${toDelete}" deleted.`, 'DeepLore Enhanced');
+        toastr.success(`Preset "${toDelete}" deleted.`, 'DeepLore');
     }
     $select.val('');
 }
@@ -1693,7 +1693,7 @@ function bindPopupEvents($container) {
                 : msg.includes('SecurityError') || msg.includes('NotAllowed')
                     ? 'Browser blocked the file download. Check pop-up blocker or security settings.'
                     : 'Try /dle-diagnostics in chat instead, or check browser console (F12) for details.';
-            try { toastr.error(`Diagnostic export failed. ${hint}`, 'DeepLore Enhanced', { timeOut: 10000 }); } catch {}
+            try { toastr.error(`Diagnostic export failed. ${hint}`, 'DeepLore', { timeOut: 10000 }); } catch {}
         } finally {
             $btn.prop('disabled', false).removeClass('disabled');
             // Restore label after a beat so the user sees "Done" briefly.
@@ -1761,11 +1761,11 @@ function bindPopupEvents($container) {
                 });
                 saveSettingsDebounced();
                 bindVaultListEvents(settings, $c('#dle-sp-vault-list'), $c('#dle-sp-add-vault'));
-                toastr.success(`Added ${picked.vaultName} (${picked.host}:${picked.port}) — fill in the API key if needed.`, 'DeepLore Enhanced');
+                toastr.success(`Added ${picked.vaultName} (${picked.host}:${picked.port}) — fill in the API key if needed.`, 'DeepLore');
             }
         } catch (err) {
             console.error('[DLE] Vault scan error:', err);
-            toastr.error('Vault scan didn\'t find anything. Make sure Obsidian is running.', 'DeepLore Enhanced');
+            toastr.error('Vault scan didn\'t find anything. Make sure Obsidian is running.', 'DeepLore');
         } finally {
             $btn.prop('disabled', false).removeClass('disabled');
         }
@@ -2027,7 +2027,7 @@ function bindPopupEvents($container) {
                 try {
                     toastr.warning(
                         `Librarian search enabled, but fuzzy-index rebuild failed: ${err?.message || 'unknown error'}. Run /dle-force-refresh.`,
-                        'DeepLore Enhanced',
+                        'DeepLore',
                         { timeOut: 10000 },
                     );
                 } catch { /* toastr unavailable */ }
@@ -2114,12 +2114,12 @@ function bindPopupEvents($container) {
     });
 
     $c('#dle-sp-preview-ai').on('click', async function () {
-        if (!chat || chat.length === 0) { toastr.info('No active chat.', 'DeepLore Enhanced'); return; }
+        if (!chat || chat.length === 0) { toastr.info('No active chat.', 'DeepLore'); return; }
         await ensureIndexFresh();
-        if (vaultIndex.length === 0) { toastr.info('No entries indexed.', 'DeepLore Enhanced'); return; }
+        if (vaultIndex.length === 0) { toastr.info('No entries indexed.', 'DeepLore'); return; }
         let candidateManifest, candidateHeader, modeLabel;
         if (settings.aiSearchMode === 'ai-only') { const r = buildCandidateManifest(vaultIndex); candidateManifest = r.manifest; candidateHeader = r.header; modeLabel = 'AI-only (full vault)'; }
-        else { const kr = matchEntries(chat); const nc = kr.matched.filter(e => !e.constant); if (nc.length === 0) { toastr.warning('No entries matched the current chat. Try /dle-simulate for details.', 'DeepLore Enhanced'); return; } const r = buildCandidateManifest(kr.matched); candidateManifest = r.manifest; candidateHeader = r.header; modeLabel = `Two-stage (${nc.length} candidates)`; }
+        else { const kr = matchEntries(chat); const nc = kr.matched.filter(e => !e.constant); if (nc.length === 0) { toastr.warning('No entries matched the current chat. Try /dle-simulate for details.', 'DeepLore'); return; } const r = buildCandidateManifest(kr.matched); candidateManifest = r.manifest; candidateHeader = r.header; modeLabel = `Two-stage (${nc.length} candidates)`; }
         const chatContext = buildAiChatContext(chat, settings.aiSearchScanDepth);
         const maxE = settings.unlimitedEntries ? 'as many as are relevant' : String(settings.maxEntries);
         // Preview-only AI search prompt (Settings popup). Same fallback chain
@@ -2137,7 +2137,7 @@ function bindPopupEvents($container) {
     $c('#dle-sp-notebook-enabled').on('change', function () {
         settings.notebookEnabled = $(this).prop('checked'); saveSettingsDebounced();
     });
-    $c('#dle-sp-open-notebook').on('click', function () { if (!settings.notebookEnabled) { toastr.warning('Enable the Author Notebook checkbox above to use this feature.', 'DeepLore Enhanced'); return; } showNotebookPopup(); });
+    $c('#dle-sp-open-notebook').on('click', function () { if (!settings.notebookEnabled) { toastr.warning('Enable the Author Notebook checkbox above to use this feature.', 'DeepLore'); return; } showNotebookPopup(); });
 
     // ── Features — AI Notebook ──
     $c('#dle-sp-ai-notepad-enabled').on('change', function () {
@@ -2171,7 +2171,7 @@ function bindPopupEvents($container) {
         // Tag mode never calls AI — hide its connection accordion.
         $c('.dle-conn-accordion[data-tool="aiNotepad"]').toggle(!isTag);
     });
-    $c('#dle-sp-open-ai-notepad').on('click', function () { if (!settings.aiNotepadEnabled) { toastr.warning('Enable the AI Notepad checkbox above to use this feature.', 'DeepLore Enhanced'); return; } showAiNotepadPopup(); });
+    $c('#dle-sp-open-ai-notepad').on('click', function () { if (!settings.aiNotepadEnabled) { toastr.warning('Enable the AI Notepad checkbox above to use this feature.', 'DeepLore'); return; } showAiNotepadPopup(); });
 
     // ── Features — Scribe ──
     $c('#dle-sp-scribe-enabled').on('change', function () {
@@ -2202,12 +2202,12 @@ function bindPopupEvents($container) {
         const $btn = $(this), $icon = $btn.find('i');
         // Wave I: hide the rotate glyph, show a goo-spinner while re-indexing.
         $btn.prop('disabled', true); $icon.hide(); $btn.append('<goo-spinner class="dle-btn-goo" size="22" color="currentColor" aria-hidden="true"></goo-spinner>');
-        try { setVaultIndex([]); setIndexTimestamp(0); await buildIndex(); toastr.success(`Indexed ${vaultIndex.length} entries.`, 'DeepLore Enhanced'); updatePopupIndexStats(); }
-        catch (err) { console.warn('[DLE] Refresh index failed:', err); toastr.error('Couldn\'t refresh your lore. Check your Obsidian connection.', 'DeepLore Enhanced'); }
+        try { setVaultIndex([]); setIndexTimestamp(0); await buildIndex(); toastr.success(`Indexed ${vaultIndex.length} entries.`, 'DeepLore'); updatePopupIndexStats(); }
+        catch (err) { console.warn('[DLE] Refresh index failed:', err); toastr.error('Couldn\'t refresh your lore. Check your Obsidian connection.', 'DeepLore'); }
         finally { $btn.prop('disabled', false); $btn.find('.dle-btn-goo').remove(); $icon.show(); }
     });
     $c('#dle-sp-browse-entries').on('click', () => showBrowsePopup());
-    $c('#dle-sp-test-match').on('click', () => toastr.info('Use /dle-simulate in chat for a full match test.', 'DeepLore Enhanced'));
+    $c('#dle-sp-test-match').on('click', () => toastr.info('Use /dle-simulate in chat for a full match test.', 'DeepLore'));
     $c('#dle-sp-cache-ttl').on('input', function () { settings.cacheTTL = numVal($(this).val(), 300); saveSettingsDebounced(); });
     $c('#dle-sp-sync-interval').on('input', function () { settings.syncPollingInterval = numVal($(this).val(), 0); saveSettingsDebounced(); setupSyncPolling(buildIndexWithReuse, buildIndexWithReuse); });
     $c('#dle-sp-index-rebuild-trigger').on('change', function () {
@@ -2230,7 +2230,7 @@ function bindPopupEvents($container) {
 
     $c('#dle-sp-reset-defaults').on('click', async function () {
         const confirmed = await callGenericPopup(
-            '<div style="text-align:center;"><p><strong>Reset all DeepLore Enhanced settings to defaults?</strong></p><p>This cannot be undone. Your vault connections and AI connection profiles will be preserved.</p></div>',
+            '<div style="text-align:center;"><p><strong>Reset all DeepLore settings to defaults?</strong></p><p>This cannot be undone. Your vault connections and AI connection profiles will be preserved.</p></div>',
             POPUP_TYPE.CONFIRM, '', { okButton: 'Reset', cancelButton: 'Cancel' },
         );
         if (!confirmed) return;
@@ -2303,9 +2303,9 @@ function bindPopupEvents($container) {
                     const { deleted, failures } = await bulkDeletePromptsThroughCage(connection, overrideKeys);
                     try { await loadDlePrompts(settings.aiPromptLocale, connection); } catch { /* non-fatal */ }
                     if (failures.length === 0) {
-                        toastr.success(`Deleted ${deleted} prompt file(s).`, 'DeepLore Enhanced');
+                        toastr.success(`Deleted ${deleted} prompt file(s).`, 'DeepLore');
                     } else {
-                        toastr.warning(`Deleted ${deleted}, ${failures.length} failed. Check console.`, 'DeepLore Enhanced');
+                        toastr.warning(`Deleted ${deleted}, ${failures.length} failed. Check console.`, 'DeepLore');
                         console.warn('[DLE prompts] reset-settings prompt cleanup failures:', failures);
                     }
                 }
@@ -2313,7 +2313,7 @@ function bindPopupEvents($container) {
         }
 
         loadPopupSettings($container);
-        toastr.success('All settings reset to defaults. Connections preserved.', 'DeepLore Enhanced');
+        toastr.success('All settings reset to defaults. Connections preserved.', 'DeepLore');
     });
 
     // PR #28.1 — Settings-side Reset AI Breaker.
@@ -2325,9 +2325,9 @@ function bindPopupEvents($container) {
         if (!confirmed) return;
         const result = resetAiCircuitBreaker();
         if (result.wasOpen) {
-            toastr.success(result.hadPendingCooldown ? 'AI breaker reset — pending cooldown discarded.' : 'AI breaker reset.', 'DeepLore Enhanced');
+            toastr.success(result.hadPendingCooldown ? 'AI breaker reset — pending cooldown discarded.' : 'AI breaker reset.', 'DeepLore');
         } else {
-            toastr.info('AI breaker was already closed.', 'DeepLore Enhanced');
+            toastr.info('AI breaker was already closed.', 'DeepLore');
         }
     });
 
@@ -2437,7 +2437,7 @@ function renderReferenceTab($container) {
         if (!cmd) return;
         try {
             await navigator.clipboard.writeText(cmd);
-            toastr.success(`Copied ${cmd}`, 'DeepLore Enhanced', { timeOut: 1500 });
+            toastr.success(`Copied ${cmd}`, 'DeepLore', { timeOut: 1500 });
         } catch {
             // Clipboard API unavailable (insecure context) — fall back to selection.
             const range = document.createRange();

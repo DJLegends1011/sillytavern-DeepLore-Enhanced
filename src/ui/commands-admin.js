@@ -1,4 +1,4 @@
-/** DeepLore Enhanced — Slash Commands: Admin & Status */
+/** DeepLore — Slash Commands: Admin & Status */
 import { saveSettingsDebounced, chat_metadata } from '../../../../../../script.js';
 import { saveMetadataDebounced } from '../../../../../extensions.js';
 import { escapeHtml } from '../../../../../utils.js';
@@ -85,7 +85,7 @@ export function registerAdminCommands() {
             if (subcommand === 'clear') {
                 chat_metadata.deeplore_ai_notepad = '';
                 saveMetadataDebounced();
-                toastr.success(tr('dle_cmd_ai_notepad_cleared_toast'), 'DeepLore Enhanced');
+                toastr.success(tr('dle_cmd_ai_notepad_cleared_toast'), 'DeepLore');
                 return '';
             }
             await showAiNotepadPopup();
@@ -137,7 +137,7 @@ export function registerAdminCommands() {
             });
             return msg;
         },
-        helpString: 'Show DeepLore Enhanced connection status and index stats.',
+        helpString: 'Show DeepLore connection status and index stats.',
         returns: ARGUMENT_TYPE.STRING,
     }));
 
@@ -146,11 +146,11 @@ export function registerAdminCommands() {
         callback: async () => {
             const settings = getSettings();
             if (!settings.scribeFolder) {
-                toastr.warning(tr('dle_cmd_scribehistory_nowfolder_toast'), 'DeepLore Enhanced');
+                toastr.warning(tr('dle_cmd_scribehistory_nowfolder_toast'), 'DeepLore');
                 return '';
             }
 
-            toastr.info(tr('dle_cmd_scribehistory_fetching_toast'), 'DeepLore Enhanced', { timeOut: 2000 });
+            toastr.info(tr('dle_cmd_scribehistory_fetching_toast'), 'DeepLore', { timeOut: 2000 });
 
             try {
                 // Scribe writes go to the per-tool configured vault (#32). Reading
@@ -161,7 +161,7 @@ export function registerAdminCommands() {
                 if (!data.ok) throw new Error(data.error || 'Failed to fetch notes');
 
                 if (!data.notes || data.notes.length === 0) {
-                    toastr.info(tr('dle_cmd_scribehistory_nonotes_toast'), 'DeepLore Enhanced');
+                    toastr.info(tr('dle_cmd_scribehistory_nonotes_toast'), 'DeepLore');
                     return '';
                 }
 
@@ -239,7 +239,7 @@ export function registerAdminCommands() {
                 await callGenericPopup(container, POPUP_TYPE.TEXT, '', { wide: true, large: true, allowVerticalScrolling: true });
             } catch (err) {
                 console.error('[DLE] Scribe history error:', err);
-                toastr.error(classifyError(err), 'DeepLore Enhanced');
+                toastr.error(classifyError(err), 'DeepLore');
             }
             return '';
         },
@@ -329,9 +329,9 @@ export function registerAdminCommands() {
             try {
                 const { triggerDiagnosticDownload } = await import('../diagnostics/ui.js');
                 await triggerDiagnosticDownload();
-                toastr.success(tr('dle_cmd_diagnostics_downloaded_toast'), 'DeepLore Enhanced', { timeOut: 8000 });
+                toastr.success(tr('dle_cmd_diagnostics_downloaded_toast'), 'DeepLore', { timeOut: 8000 });
             } catch (err) {
-                toastr.error(`Diagnostic export failed: ${classifyError(err)}`, 'DeepLore Enhanced');
+                toastr.error(`Diagnostic export failed: ${classifyError(err)}`, 'DeepLore');
                 console.error('[DLE] /dle-diagnostics failed:', err);
             }
             return '';
@@ -436,7 +436,7 @@ export function registerAdminCommands() {
                         if (!text) return;
                         try {
                             await navigator.clipboard.writeText(text);
-                            toastr.success(trf('dle_toast_title_copied', text), 'DeepLore Enhanced', { timeOut: 1200 });
+                            toastr.success(trf('dle_toast_title_copied', text), 'DeepLore', { timeOut: 1200 });
                         } catch { /* clipboard unavailable */ }
                     });
                 },
@@ -486,7 +486,7 @@ export function registerAdminCommands() {
                 onOpen: () => {
                     document.querySelector('.dle-cache-clear-btn')?.addEventListener('click', async () => {
                         await clearIndexCache();
-                        toastr.success(tr('dle_cmd_cacheinfo_cleared_toast'), 'DeepLore Enhanced');
+                        toastr.success(tr('dle_cmd_cacheinfo_cleared_toast'), 'DeepLore');
                         document.querySelector('.dle-cache-clear-btn')?.closest('.popup')?.querySelector('.popup-button-ok')?.click();
                     });
                 },
@@ -518,7 +518,7 @@ export function registerAdminCommands() {
             else settings.debugMode = !settings.debugMode;
             saveSettingsDebounced();
             notifyDebugModeChanged();
-            toastr.success(trf('dle_cmd_debug_toggled_toast', settings.debugMode ? 'ON' : 'OFF'), 'DeepLore Enhanced');
+            toastr.success(trf('dle_cmd_debug_toggled_toast', settings.debugMode ? 'ON' : 'OFF'), 'DeepLore');
             return '';
         },
         unnamedArgumentList: [SlashCommandArgument.fromProps({
@@ -548,7 +548,7 @@ export function registerAdminCommands() {
             const recent = dleEntries.slice(-n);
 
             if (recent.length === 0) {
-                toastr.info(tr('dle_cmd_logs_nologs_toast'), 'DeepLore Enhanced');
+                toastr.info(tr('dle_cmd_logs_nologs_toast'), 'DeepLore');
                 return '';
             }
 

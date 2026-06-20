@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — VerdictStore (live).
+ * DeepLore — VerdictStore (live).
  *
  * Per-Turn Decision Record store. In-memory ring buffer + IndexedDB spill
  * (per-chat, capped, auto-pruned). Single source of truth for

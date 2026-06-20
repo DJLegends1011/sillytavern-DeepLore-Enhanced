@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — Caveman text compressor (#18).
+ * DeepLore — Caveman text compressor (#18).
  *
  * Pure utility for shrinking lore prose at import time. Drops words that
  * carry low information density (articles, fillers, pleasantries) without

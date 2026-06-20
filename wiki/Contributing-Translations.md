@@ -1,6 +1,6 @@
 # Contributing Translations
 
-DeepLore Enhanced ships UI strings and AI prompts in 7 languages. **English (`en`) is the canonical source.** The other six — Spanish (`es-es`), French (`fr-fr`), German (`de-de`), Japanese (`ja-jp`), Simplified Chinese (`zh-cn`), Russian (`ru-ru`) — are machine-translated by Claude Opus (95.8-97.3% UI coverage per locale, 100% AI-prompt coverage), then refined by the community.
+DeepLore ships UI strings and AI prompts in 7 languages. **English (`en`) is the canonical source.** The other six — Spanish (`es-es`), French (`fr-fr`), German (`de-de`), Japanese (`ja-jp`), Simplified Chinese (`zh-cn`), Russian (`ru-ru`) — are machine-translated by Claude Opus (95.8-97.3% UI coverage per locale, 100% AI-prompt coverage), then refined by the community.
 
 > **Help wanted.** If you're a native or fluent speaker of any of the six target languages, your refinements make DLE feel like home for thousands of users. No coding required — just edit JSON or JavaScript and open a PR.
 

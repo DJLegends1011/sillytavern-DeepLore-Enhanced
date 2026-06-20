@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — AI Search module
+ * DeepLore — AI Search module
  */
 import { ConnectionManagerRequestService } from '../../../../shared.js';
 import { simpleHash, buildAiChatContext } from '../../core/utils.js';

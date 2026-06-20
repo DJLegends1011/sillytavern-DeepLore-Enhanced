@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — Delete cage validators for editable prompts.
+ * DeepLore — Delete cage validators for editable prompts.
  *
  * Pure functions, no I/O. Tests in `test/prompts-delete-safety.test.mjs`
  * cover every check below with dedicated TDD assertions.

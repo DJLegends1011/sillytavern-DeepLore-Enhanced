@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — WI Import Report (Wave 5, v2.5 WI parity)
+ * DeepLore — WI Import Report (Wave 5, v2.5 WI parity)
  *
  * Browser wrapper around wi-import-report-pure.js. Renders the structured
  * post-import popup that replaces the old success/warning toast. Resolves
@@ -56,7 +56,7 @@ function buildI18nStrings() {
         emSection: () => _resolved('dle_wi_import_report_em_section', 'Example Messages handling'),
         emAppendedCount: (n) => _interp(_resolved('dle_wi_import_report_em_appended', '${0} appended as subheader'), n),
         emSkippedCount: (n) => _interp(_resolved('dle_wi_import_report_em_skipped', '${0} skipped'), n),
-        emExplainer: () => _resolved('dle_wi_import_report_em_explainer', 'SillyTavern\'s "Example Messages" slot is a special prompt position for sample dialogue lines that ride alongside the example messages already in your chat. DeepLore doesn\'t have that slot — by default we tuck these entries\' content under a "## Example Dialogue" subheader inside the entry body, so they still reach the model when the entry triggers.<br><br>Honestly, one short flavor quote inside a character entry is usually enough to teach an LLM the voice. If you\'d rather skip them on future imports, the button below flips the setting permanently (until you change it back in <code>Settings → DeepLore Enhanced → Matching → Import → WI Example Messages on import</code>). Entries already imported stay in the vault — <code>/dle-delete</code> them by name if you want them gone.'),
+        emExplainer: () => _resolved('dle_wi_import_report_em_explainer', 'SillyTavern\'s "Example Messages" slot is a special prompt position for sample dialogue lines that ride alongside the example messages already in your chat. DeepLore doesn\'t have that slot — by default we tuck these entries\' content under a "## Example Dialogue" subheader inside the entry body, so they still reach the model when the entry triggers.<br><br>Honestly, one short flavor quote inside a character entry is usually enough to teach an LLM the voice. If you\'d rather skip them on future imports, the button below flips the setting permanently (until you change it back in <code>Settings → DeepLore → Matching → Import → WI Example Messages on import</code>). Entries already imported stay in the vault — <code>/dle-delete</code> them by name if you want them gone.'),
         emSkipButton: () => _resolved('dle_wi_import_report_em_skip_button', 'Always skip Example Messages on import (reversible in settings)'),
         emEntriesTitle: (n) => _interp(_resolved('dle_wi_import_report_em_entries_title', 'Entry titles (${0})'), n),
         skippedTag: () => _resolved('dle_wi_import_report_skipped_tag', '(skipped)'),
@@ -80,7 +80,7 @@ export async function showImportReport(result, source, folder, deps = {}) {
     // body, in case some other UI later reuses the class name.
     const doneText = _resolved(
         'dle_wi_import_report_em_skip_done',
-        'Done — Example Messages will be skipped on future imports. Revert in Settings → DeepLore Enhanced → Matching → Import.',
+        'Done — Example Messages will be skipped on future imports. Revert in Settings → DeepLore → Matching → Import.',
     );
     const onClick = (ev) => {
         const btn = ev.target.closest('.dle-import-skip-em-future');

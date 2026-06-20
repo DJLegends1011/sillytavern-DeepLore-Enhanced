@@ -1,4 +1,4 @@
-/** DeepLore Enhanced — Slash Commands Orchestrator. Delegates to sub-modules. */
+/** DeepLore — Slash Commands Orchestrator. Delegates to sub-modules. */
 import { registerPipelineCommands } from './commands-pipeline.js';
 import { registerVaultCommands } from './commands-vault.js';
 import { registerAiCommands } from './commands-ai.js';

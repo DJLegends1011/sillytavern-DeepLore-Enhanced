@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced Core — Vault Change Detection
+ * DeepLore Core — Vault Change Detection
  */
 
 import { simpleHash } from './utils.js';

@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — Entry Matching Engine
+ * DeepLore — Entry Matching Engine
  * Extracted from pipeline.js for testability (no SillyTavern imports).
  *
  * Performs keyword matching with: constants, bootstrap, warmup/probability/cooldown

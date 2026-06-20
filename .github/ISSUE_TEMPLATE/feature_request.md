@@ -1,6 +1,6 @@
 ---
 name: Feature Request
-about: Suggest a feature for DeepLore Enhanced
+about: Suggest a feature for DeepLore
 title: "[Feature] "
 labels: enhancement
 ---

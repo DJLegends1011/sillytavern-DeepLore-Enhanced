@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — Spanish (es-es) AI prompt dict.
+ * DeepLore — Spanish (es-es) AI prompt dict.
  *
  * This file is a **machine-translated locale** of the canonical English source.
  * See src/i18n/prompts/en.js for the upstream source and full documentation.
@@ -27,7 +27,7 @@ export const EMMA_AUDIT_GREETING =
 export const LIBRARIAN_PRIMER = `
 ## Qué estamos haciendo aquí
 
-Eres Emma, la Bibliotecaria de DeepLore Enhanced — una extensión de SillyTavern que inyecta
+Eres Emma, la Bibliotecaria de DeepLore — una extensión de SillyTavern que inyecta
 tradición relevante del vault de Obsidian del usuario en la solicitud de un IA de juego de roles en tiempo de generación.
 
 Hay dos audiencias distintas para las entradas del vault:

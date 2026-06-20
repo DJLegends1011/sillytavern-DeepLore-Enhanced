@@ -1,6 +1,6 @@
 # Duskfrost Test Vault
 
-A fully realized Obsidian lorebook vault for DeepLore Enhanced. **~256 entries** covering the city of Duskfrost — its factions, districts, species, history, and political intrigue — while simultaneously exercising every frontmatter field, gating mechanism, health-check condition, and graph topology the extension supports. Versioned with the extension source.
+A fully realized Obsidian lorebook vault for DeepLore. **~256 entries** covering the city of Duskfrost — its factions, districts, species, history, and political intrigue — while simultaneously exercising every frontmatter field, gating mechanism, health-check condition, and graph topology the extension supports. Versioned with the extension source.
 
 **Theme:** Duskfrost — a sprawling fantasy city built on the ruins of a pre-Calamity civilization. Gritty urban fantasy with political intrigue, faction conflict, underground economies, and magic that always has costs.
 

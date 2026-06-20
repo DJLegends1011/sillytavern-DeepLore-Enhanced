@@ -20,7 +20,7 @@ Every DeepLore setting, with default, range, and effect. Values match `settings.
 
 | Setting | Default | Range | Description |
 |---------|---------|-------|-------------|
-| **Enable DeepLore Enhanced** | Off | Toggle | Master switch (`enabled`). When off, no entries match, no AI calls run, no prompts get injected. The setting is mirrored in the bottom of the SillyTavern Extensions panel and on the About tab of the settings popup. |
+| **Enable DeepLore** | Off | Toggle | Master switch (`enabled`). When off, no entries match, no AI calls run, no prompts get injected. The setting is mirrored in the bottom of the SillyTavern Extensions panel and on the About tab of the settings popup. |
 
 ## Vault connections (Connection tab → Obsidian sub-tab)
 

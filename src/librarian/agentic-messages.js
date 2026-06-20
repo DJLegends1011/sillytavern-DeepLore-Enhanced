@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — Agentic loop message assembly.
+ * DeepLore — Agentic loop message assembly.
  */
 import { getContext } from '../../../../../extensions.js';
 import { chat_metadata } from '../../../../../../script.js';

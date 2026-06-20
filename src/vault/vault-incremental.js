@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — Incremental Derived-State Updates (P3 / 2026-05-22)
+ * DeepLore — Incremental Derived-State Updates (P3 / 2026-05-22)
  *
  * Pure helpers (no SillyTavern globals) that update mentionWeights, BM25, and
  * entityShortNameRegexes for a small diff between two entry sets instead of

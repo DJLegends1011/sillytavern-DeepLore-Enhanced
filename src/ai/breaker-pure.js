@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — AI circuit breaker pure helpers.
+ * DeepLore — AI circuit breaker pure helpers.
  *
  * Split out so the shared classifier (and any other future breaker pure helper)
  * can be regression-tested without ST globals. NO imports from ST modules and

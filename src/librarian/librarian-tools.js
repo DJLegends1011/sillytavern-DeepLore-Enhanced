@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — Librarian tool action implementations.
+ * DeepLore — Librarian tool action implementations.
  * search_lore and flag_lore — called by the agentic loop during generation.
  */
 import { getCurrentChatId } from '../../../../../../script.js';

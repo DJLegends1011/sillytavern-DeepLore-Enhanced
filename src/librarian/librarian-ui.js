@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — Librarian UI: per-message tool-call dropdown.
+ * DeepLore — Librarian UI: per-message tool-call dropdown.
  * Mirrors ST's reasoning block ("Thought for X seconds") visually.
  */
 import { getSettings } from '../../settings.js';

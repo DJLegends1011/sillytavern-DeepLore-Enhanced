@@ -147,7 +147,7 @@ export function initDagLayout(gs, dbg) {
         const ids = [...idSet];
         if (ids.length === 0) {
             if (typeof toastr !== 'undefined') {
-                toastr.info('No requires/cascade dependencies to lay out. Add requires:/cascade_links: to entries.', 'DeepLore Enhanced');
+                toastr.info('No requires/cascade dependencies to lay out. Add requires:/cascade_links: to entries.', 'DeepLore');
             }
             if (dbg) dbg('DAG: no requires/cascade participants — staying in force mode');
             return false;

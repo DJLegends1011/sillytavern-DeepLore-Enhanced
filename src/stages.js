@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — Pipeline Stages
+ * DeepLore — Pipeline Stages
  * Pure(ish) — each stage takes explicit inputs, no implicit global reads.
  */
 import { trackerKey } from './state.js';

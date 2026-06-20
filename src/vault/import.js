@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — SillyTavern Lorebook Import Bridge (Lite)
+ * DeepLore — SillyTavern Lorebook Import Bridge (Lite)
  * Converts ST World Info JSON entries into Obsidian vault notes with frontmatter.
  */
 import { writeNote, obsidianFetch, encodeVaultPath } from './obsidian-api.js';

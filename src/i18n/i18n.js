@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced i18n loader
+ * DeepLore i18n loader
  *
  * Hooks into ST's built-in i18n system (`public/scripts/i18n.js`):
  *   - `addLocaleData(localeId, dict)`  — register extra keys for current locale

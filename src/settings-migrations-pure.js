@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — settings migration pure helpers.
+ * DeepLore — settings migration pure helpers.
  *
  * Extracted so version-to-version transformations can be regression-tested
  * without ST globals. NO imports from ST modules. NO imports from state.js.

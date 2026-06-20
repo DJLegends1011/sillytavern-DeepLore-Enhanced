@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — Settings popup "Prompts" tab.
+ * DeepLore — Settings popup "Prompts" tab.
  *
  * Owns every name that belongs to one feature: language dropdown, folder
  * path input, Export / Reload / Reset-All buttons, the per-prompt status
@@ -338,7 +338,7 @@ async function resolveCanonicalForKey(locale, key) {
 async function handlePromptRowAction($container, settings, action, key) {
     const connection = buildPromptsConnection(settings);
     if (!connection) {
-        toastr.warning('No enabled Obsidian vault. Connect a vault on the Connection tab first.', 'DeepLore Enhanced');
+        toastr.warning('No enabled Obsidian vault. Connect a vault on the Connection tab first.', 'DeepLore');
         return;
     }
     const $status = $container.find('#dle-sp-prompts-status');
@@ -438,7 +438,7 @@ export function bindPromptsTabHandlers($container, settings) {
         const raw = String($(this).val() || '').trim();
         const sanitized = sanitizePromptsFolderPath(raw);
         if (!sanitized) {
-            toastr.warning('Prompts folder path failed sanitization. Reverted to default.', 'DeepLore Enhanced');
+            toastr.warning('Prompts folder path failed sanitization. Reverted to default.', 'DeepLore');
             $(this).val(DLE_PROMPTS_DEFAULT_DIR);
             settings.promptsFolderPath = DLE_PROMPTS_DEFAULT_DIR;
         } else {
@@ -453,7 +453,7 @@ export function bindPromptsTabHandlers($container, settings) {
         if ($(this).hasClass('disabled')) return;
         const connection = buildPromptsConnection(settings);
         if (!connection) {
-            toastr.warning('No enabled Obsidian vault. Connect a vault on the Connection tab first.', 'DeepLore Enhanced');
+            toastr.warning('No enabled Obsidian vault. Connect a vault on the Connection tab first.', 'DeepLore');
             return;
         }
 
@@ -475,10 +475,10 @@ export function bindPromptsTabHandlers($container, settings) {
             renderPromptsGrid($container);
             if (failed.length === 0) {
                 setPromptsStatus($status, `Exported ${written} prompts. ${result.vaultCount} active overrides.`, 'ok');
-                toastr.success(`Exported ${written} prompts to vault.`, 'DeepLore Enhanced');
+                toastr.success(`Exported ${written} prompts to vault.`, 'DeepLore');
             } else {
                 setPromptsStatus($status, `Exported ${written}, failed ${failed.length}. See console.`, 'warn');
-                toastr.warning(`Exported ${written}, ${failed.length} failed. Check console.`, 'DeepLore Enhanced');
+                toastr.warning(`Exported ${written}, ${failed.length} failed. Check console.`, 'DeepLore');
                 console.warn('[DLE prompts] export failures:', failed);
             }
         } catch (err) {
@@ -516,7 +516,7 @@ export function bindPromptsTabHandlers($container, settings) {
         if ($(this).hasClass('disabled')) return;
         const connection = buildPromptsConnection(settings);
         if (!connection) {
-            toastr.warning('No enabled Obsidian vault. Connect a vault on the Connection tab first.', 'DeepLore Enhanced');
+            toastr.warning('No enabled Obsidian vault. Connect a vault on the Connection tab first.', 'DeepLore');
             return;
         }
         const confirmed = await callGenericPopup(
@@ -537,10 +537,10 @@ export function bindPromptsTabHandlers($container, settings) {
         $(this).removeClass('disabled');
         if (failures.length === 0) {
             setPromptsStatus($status, `Reset complete. Deleted ${deleted}, ${alreadyMissing} already missing.`, 'ok');
-            toastr.success(`Reset ${deleted} prompts.`, 'DeepLore Enhanced');
+            toastr.success(`Reset ${deleted} prompts.`, 'DeepLore');
         } else {
             setPromptsStatus($status, `Deleted ${deleted}, ${failures.length} failed. See console.`, 'warn');
-            toastr.warning(`Deleted ${deleted}, ${failures.length} failed. Check console.`, 'DeepLore Enhanced');
+            toastr.warning(`Deleted ${deleted}, ${failures.length} failed. Check console.`, 'DeepLore');
             console.warn('[DLE prompts] reset failures:', failures);
         }
     });

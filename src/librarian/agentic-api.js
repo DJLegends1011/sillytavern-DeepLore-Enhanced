@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — Agentic Loop API Layer
+ * DeepLore — Agentic Loop API Layer
  * Wraps CMRS for tool-calling. 4 provider formats: Claude, Google
  * (Gemini/Vertex), OpenAI-compatible, Cohere. Proxy mode hits the Anthropic
  * Messages API directly via the ST CORS bridge.

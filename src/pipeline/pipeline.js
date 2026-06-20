@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — Pipeline runner
+ * DeepLore — Pipeline runner
  */
 import { getSettings, PROMPT_TAG_PREFIX } from '../../settings.js';
 import { formatAndGroup, clearScanTextCache } from '../../core/matching.js';

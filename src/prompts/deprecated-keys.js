@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — Deprecated prompt keys allowlist.
+ * DeepLore — Deprecated prompt keys allowlist.
  *
  * Layer 2 of the delete cage (see `prompt-validators.js`) refuses to delete
  * any vault prompt file whose stem is not a recognized key. This breaks

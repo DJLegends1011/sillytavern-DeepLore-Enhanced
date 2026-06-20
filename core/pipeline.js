@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced Core — Pipeline Helpers
+ * DeepLore Core — Pipeline Helpers
  */
 
 import { parseFrontmatter, extractWikiLinks, cleanContent, extractTitle } from './utils.js';

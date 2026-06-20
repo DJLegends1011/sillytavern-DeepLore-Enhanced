@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — IndexedDB Persistent Vault Cache
+ * DeepLore — IndexedDB Persistent Vault Cache
  * Stores parsed vault index with content hashes for instant hydration on page load.
  * Validates against Obsidian in background after hydration.
  */

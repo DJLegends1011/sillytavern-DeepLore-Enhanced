@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — Session Scribe
+ * DeepLore — Session Scribe
  */
 import {
     generateQuietPrompt,
@@ -208,7 +208,7 @@ export async function runScribe(customPrompt) {
                 saveMetadataDebounced();
             }
             pushEvent('scribe', { action: 'completed', chatLength: chatLenAtWrite });
-            toastr.success(trf('dle_scribe_toast_saved', filename), 'DeepLore Enhanced', { timeOut: 5000 });
+            toastr.success(trf('dle_scribe_toast_saved', filename), 'DeepLore', { timeOut: 5000 });
             if (epoch !== chatEpoch) {
                 if (getSettings().debugMode) console.log('[DLE] Scribe: chat changed before reindex, skipping buildIndex');
                 return;
@@ -220,7 +220,7 @@ export async function runScribe(customPrompt) {
                 try {
                     toastr.warning(
                         trf('dle_scribe_toast_reindex_failed', reidxErr?.message || 'unknown error'),
-                        'DeepLore Enhanced',
+                        'DeepLore',
                         { timeOut: 10000 },
                     );
                 } catch { /* toastr unavailable */ }

@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — Librarian Chat Tools.
+ * DeepLore — Librarian Chat Tools.
  * Local-execution only — NOT registered with ST's ToolManager. Read-only except
  * `flag_entry_update`, which writes a gap record to loreGaps/chat_metadata.
  */

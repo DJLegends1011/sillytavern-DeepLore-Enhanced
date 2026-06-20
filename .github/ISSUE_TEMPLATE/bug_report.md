@@ -1,6 +1,6 @@
 ---
 name: Bug Report
-about: Report a bug in DeepLore Enhanced
+about: Report a bug in DeepLore
 title: "[Bug] "
 labels: bug
 ---

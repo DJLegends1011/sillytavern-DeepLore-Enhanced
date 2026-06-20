@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — Emma bootstrap prompts + seeded greetings.
+ * DeepLore — Emma bootstrap prompts + seeded greetings.
  *
  * Historically held inline string constants. As of v2.5, the 5 prompt strings
  * (EMMA_*_GREETING, DLE_PRIMER_FOR_EMMA, FIRSTRUN_QA_SCRIPT) live in the

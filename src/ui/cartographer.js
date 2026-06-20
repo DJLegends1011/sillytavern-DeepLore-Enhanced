@@ -1,4 +1,4 @@
-/** DeepLore Enhanced — Context Cartographer */
+/** DeepLore — Context Cartographer */
 import { escapeHtml } from '../../../../../utils.js';
 import { callGenericPopup, POPUP_TYPE } from '../../../../../popup.js';
 import { buildCopyButton, attachCopyHandler } from './popups.js';

@@ -17,7 +17,7 @@ New here? Start with **[[What is DeepLore]]**, then **[[Quick Start]]** to get i
 ![DeepLore drawer panel showing the Browse tab with a filterable entry list, token budget bar, priority badges, and temperature heatmap coloring](images/dle-drawer.png)
 
 > [!NOTE]
-> The older standalone [`sillytavern-DeepLore`](https://github.com/pixelnull/sillytavern-DeepLore) extension is deprecated. This repo (formerly DeepLore Enhanced) is the active project. Do not run both at once. Running both corrupts prompt injection.
+> The older standalone [`sillytavern-DeepLore`](https://github.com/pixelnull/sillytavern-DeepLore) extension is deprecated. This repo (formerly DeepLore) is the active project. Do not run both at once. Running both corrupts prompt injection.
 
 ## Key features
 

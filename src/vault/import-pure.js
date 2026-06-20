@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — WI Import (pure helpers)
+ * DeepLore — WI Import (pure helpers)
  *
  * Pure split of import.js — parsers and transforms that need NO ST imports or
  * settings access. Node-testable in isolation (import.js transitively pulls

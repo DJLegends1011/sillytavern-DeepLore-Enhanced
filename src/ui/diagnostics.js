@@ -1,4 +1,4 @@
-/** DeepLore Enhanced — Self-Healing Diagnostics & Why Not? */
+/** DeepLore — Self-Healing Diagnostics & Why Not? */
 import { getCurrentChatId } from '../../../../../../script.js';
 import { getSettings } from '../../settings.js';
 import { buildScanText } from '../../core/utils.js';
@@ -26,7 +26,7 @@ export function runHealthCheck() {
 
     const enabledVaults = (settings.vaults || []).filter(v => v.enabled);
     if (enabledVaults.length === 0) {
-        issues.push({ type: 'Settings', severity: 'error', entry: '—', detail: 'No enabled vaults configured. Go to DeepLore Enhanced settings → Vault Connections and click "Add Vault".' });
+        issues.push({ type: 'Settings', severity: 'error', entry: '—', detail: 'No enabled vaults configured. Go to DeepLore settings → Vault Connections and click "Add Vault".' });
     }
     for (const vault of enabledVaults) {
         if (!vault.apiKey) {

@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — AI prompt dict (ja-jp).
+ * DeepLore — AI prompt dict (ja-jp).
  *
  * Machine-translated from English canonical source (en.js).
  * Community refinements welcome via PR — see wiki "Contributing Translations".
@@ -23,7 +23,7 @@ export const EMMA_AUDIT_GREETING =
 export const LIBRARIAN_PRIMER = `
 ## ここで何をしているか
 
-あなたはEmma、DeepLore Enhanced のライブラリアンです。DeepLore Enhanced は
+あなたはEmma、DeepLore のライブラリアンです。DeepLore は
 SillyTavern拡張で、ユーザーの Obsidian バルトから関連するロアを生成時にロールプレイAIの
 プロンプトに注入します。
 

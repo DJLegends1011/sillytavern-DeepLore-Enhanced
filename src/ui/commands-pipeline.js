@@ -1,4 +1,4 @@
-/** DeepLore Enhanced — Slash Commands: Pipeline Inspection */
+/** DeepLore — Slash Commands: Pipeline Inspection */
 import { chat, chat_metadata, getCurrentChatId } from '../../../../../../script.js';
 import { escapeHtml } from '../../../../../utils.js';
 import { callGenericPopup, POPUP_TYPE } from '../../../../../popup.js';
@@ -34,15 +34,15 @@ export function registerPipelineCommands() {
         name: 'dle-simulate',
         callback: async () => {
             if (!chat || chat.length === 0) {
-                toastr.info(tr('dle_cmd_simulate_nochat_toast'), 'DeepLore Enhanced');
+                toastr.info(tr('dle_cmd_simulate_nochat_toast'), 'DeepLore');
                 return '';
             }
             if (!await ensureFreshOrToast('/dle-simulate')) return '';
             if (vaultIndex.length === 0) {
-                toastr.info(NO_ENTRIES_MSG, 'DeepLore Enhanced');
+                toastr.info(NO_ENTRIES_MSG, 'DeepLore');
                 return '';
             }
-            toastr.info(tr('dle_cmd_simulate_running_toast'), 'DeepLore Enhanced', { timeOut: 2000 });
+            toastr.info(tr('dle_cmd_simulate_running_toast'), 'DeepLore', { timeOut: 2000 });
             const timeline = runSimulation(chat);
             showSimulationPopup(timeline);
             return '';
@@ -56,18 +56,18 @@ export function registerPipelineCommands() {
         aliases: ['dle-context'],
         callback: async () => {
             if (!chat || chat.length === 0) {
-                toastr.info(tr('dle_toast_no_active_chat'), 'DeepLore Enhanced');
+                toastr.info(tr('dle_toast_no_active_chat'), 'DeepLore');
                 return '';
             }
             if (generationLock) {
-                toastr.warning('A generation is in progress — wait for it to finish.', 'DeepLore Enhanced');
+                toastr.warning('A generation is in progress — wait for it to finish.', 'DeepLore');
                 return '';
             }
             // Wait for any in-progress index build to prevent concurrent pipeline execution.
             if (buildPromise) await buildPromise;
             if (!await ensureFreshOrToast('/dle-why')) return '';
             if (vaultIndex.length === 0) {
-                toastr.info(NO_ENTRIES_MSG, 'DeepLore Enhanced');
+                toastr.info(NO_ENTRIES_MSG, 'DeepLore');
                 return '';
             }
 
@@ -87,7 +87,7 @@ export function registerPipelineCommands() {
                 ({ finalEntries, matchedKeys } = await runPipeline(chat, getWriterVisibleEntries(), gatingContext, { pins: cmdPins, blocks: cmdBlocks, folderFilter }));
             } catch (err) {
                 console.warn('[DLE] /dle-why pipeline failed:', err);
-                toastr.error(classifyError(err), 'DeepLore Enhanced');
+                toastr.error(classifyError(err), 'DeepLore');
                 return '';
             }
 
@@ -116,7 +116,7 @@ export function registerPipelineCommands() {
             const injected = acceptedEntries || gated.slice(0, injectedCount);
 
             if (injected.length === 0) {
-                toastr.info('No entries would be injected right now — no keywords or fuzzy matches found in the current chat.', 'DeepLore Enhanced');
+                toastr.info('No entries would be injected right now — no keywords or fuzzy matches found in the current chat.', 'DeepLore');
                 return '';
             }
 
@@ -142,7 +142,7 @@ export function registerPipelineCommands() {
         callback: async () => {
             const _inspectTrace = _currentVerdictForChat()?.trace ?? null;
             if (!_inspectTrace) {
-                toastr.info(tr('dle_cmd_inspect_nodata_toast'), 'DeepLore Enhanced');
+                toastr.info(tr('dle_cmd_inspect_nodata_toast'), 'DeepLore');
                 return '';
             }
             const t = _inspectTrace;

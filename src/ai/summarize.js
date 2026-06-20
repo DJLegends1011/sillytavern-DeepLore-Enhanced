@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — Dedicated summary feature (#15).
+ * DeepLore — Dedicated summary feature (#15).
  *
  * `/dle-summarize-range start-end | N` runs an AI summary of the named chat range,
  * hides the originals via ST's is_system flag, and inserts the summary as a new

@@ -1,4 +1,4 @@
-/** DeepLore Enhanced — Vault Scan Popup. Runs scanner, user picks discovered vault. */
+/** DeepLore — Vault Scan Popup. Runs scanner, user picks discovered vault. */
 import { callGenericPopup, POPUP_TYPE } from '../../../../../popup.js';
 import { scanVaults } from '../vault/scanner.js';
 import { abortWith } from '../diagnostics/interceptors.js';

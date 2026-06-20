@@ -108,7 +108,7 @@ ST positions 5 (`before_example_messages`) and 6 (`after_example_messages`) inje
 
 Most users find a single short flavor quote inside the parent character entry is enough to teach an LLM the voice; the EM slot is often noise once the model has the character description. The post-import popup explains this and offers a one-click "Skip Example Messages on future imports" button that flips the setting. Already-imported EM entries stay in the vault — `/dle-delete` them by name if you want them gone.
 
-Override the default in `Settings → DeepLore Enhanced → Matching → Import`, or per-call via `options.emHandling: 'append' | 'skip'` for companion-extension integrations.
+Override the default in `Settings → DeepLore → Matching → Import`, or per-call via `options.emHandling: 'append' | 'skip'` for companion-extension integrations.
 
 ---
 

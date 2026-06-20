@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — Shared mutable state
+ * DeepLore — Shared mutable state
  * All globals live here; modules import and read/write directly.
  */
 // Late-bound pushEvent — avoids circular import at module eval. Lazy on first use.

@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — Librarian review popup.
+ * DeepLore — Librarian review popup.
  * Two-panel: entry editor + Emma chat. Entry points: gap, new, review, audit.
  */
 import { callGenericPopup, POPUP_TYPE, POPUP_RESULT } from '../../../../../popup.js';
@@ -1185,7 +1185,7 @@ async function writeToVault(session, opts = {}) {
     const settings = getSettings();
     const draft = session.draftState;
     if (!draft || !draft.title) {
-        toastr.warning(tr('dle_lib_toast_no_draft'), 'DeepLore Enhanced');
+        toastr.warning(tr('dle_lib_toast_no_draft'), 'DeepLore');
         setStatus('Needs a title.', 'err');
         return false;
     }
@@ -1256,7 +1256,7 @@ async function writeToVault(session, opts = {}) {
     try {
         const data = await writeNote(vault.host, vault.port, vault.apiKey, filename, fileContent, !!vault.https);
         if (data.ok) {
-            toastr.success(trf('dle_lib_toast_written', draft.title, filename), 'DeepLore Enhanced');
+            toastr.success(trf('dle_lib_toast_written', draft.title, filename), 'DeepLore');
             setStatus(`Written to ${filename}`, 'ok');
 
             if (session.gapRecord?.id) {
@@ -1289,7 +1289,7 @@ async function writeToVault(session, opts = {}) {
                 try {
                     toastr.warning(
                         trf('dle_lib_toast_reindex_failed', err?.message || 'unknown error'),
-                        'DeepLore Enhanced',
+                        'DeepLore',
                         { timeOut: 10000 },
                     );
                 } catch { /* toastr unavailable */ }
@@ -1297,12 +1297,12 @@ async function writeToVault(session, opts = {}) {
             return true;
         } else {
             console.warn('[DLE] Librarian write failed:', data && data.error);
-            toastr.error(tr('dle_lib_toast_write_failed'), 'DeepLore Enhanced');
+            toastr.error(tr('dle_lib_toast_write_failed'), 'DeepLore');
             setStatus('Write failed.', 'err');
             return false;
         }
     } catch (err) {
-        toastr.error(classifyError(err), 'DeepLore Enhanced');
+        toastr.error(classifyError(err), 'DeepLore');
         setStatus('Write failed.', 'err');
         return false;
     }

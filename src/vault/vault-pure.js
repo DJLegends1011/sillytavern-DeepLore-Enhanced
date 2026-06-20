@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — Pure Vault Functions
+ * DeepLore — Pure Vault Functions
  * Extracted from vault.js for testability (no SillyTavern imports).
  */
 

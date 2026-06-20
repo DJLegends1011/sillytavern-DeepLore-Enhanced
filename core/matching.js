@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced Core — Matching, Gating & Formatting
+ * DeepLore Core — Matching, Gating & Formatting
  */
 
 import { escapeRegex, truncateToSentence, escapeXml } from './utils.js';

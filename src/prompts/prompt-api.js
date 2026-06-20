@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — Obsidian REST API helpers for editable prompts.
+ * DeepLore — Obsidian REST API helpers for editable prompts.
  *
  * All prompt-folder I/O passes through this module. The DELETE primitive
  * lives here and is the SOLE call site in the codebase that issues

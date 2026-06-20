@@ -364,7 +364,7 @@ function buildSummarySection(snapshot, scrubbedGenerations) {
     return lines.join('\n');
 }
 
-const HEADER = `# DeepLore Enhanced — Diagnostic Report
+const HEADER = `# DeepLore — Diagnostic Report
 
 > **For support:** Attach this file when opening an issue at <${ISSUE_URL}>.
 >
@@ -406,7 +406,7 @@ If you find something the scrubber missed, **that's a bug** — please open an i
 // Base64-encoded in the report so it doesn't clutter GitHub issues.
 const AI_INSTRUCTIONS = `## How to Read This File (for AI assistants)
 
-You are looking at a DeepLore Enhanced (DLE) diagnostic report. Your job is to
+You are looking at a DeepLore (DLE) diagnostic report. Your job is to
 diagnose what's wrong with the user's setup.
 
 1. Start with **Summary Data** above — it's pre-digested.

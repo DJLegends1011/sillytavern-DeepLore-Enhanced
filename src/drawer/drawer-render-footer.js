@@ -45,9 +45,9 @@ async function handleResetClick(e) {
     if (!confirmed) return;
     const result = resetAiCircuitBreaker();
     if (result.wasOpen) {
-        toastr.success(result.hadPendingCooldown ? tr('dle_toast_breaker_reset_with_cooldown') : tr('dle_toast_breaker_reset_normal'), 'DeepLore Enhanced');
+        toastr.success(result.hadPendingCooldown ? tr('dle_toast_breaker_reset_with_cooldown') : tr('dle_toast_breaker_reset_normal'), 'DeepLore');
     } else {
-        toastr.info(tr('dle_toast_breaker_already_closed'), 'DeepLore Enhanced');
+        toastr.info(tr('dle_toast_breaker_already_closed'), 'DeepLore');
     }
     // Re-render so the conditional button hides without waiting for the next event.
     try { renderFooter(); } catch { /* drawer may be teardown-mid */ }

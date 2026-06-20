@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — Verdict pure helpers.
+ * DeepLore — Verdict pure helpers.
  *
  * Per-Turn Decision Record ("Verdict"). Replaces 4 racing globals
  * (`lastInjectionSources`, `lastPipelineTrace`, `previousSources`, `lastInjectionEpoch`)

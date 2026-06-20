@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — Vault index building and cache management
+ * DeepLore — Vault index building and cache management
  */
 import { getTokenCountAsync } from '../../../../../tokenizers.js';
 import { oai_settings } from '../../../../../openai.js';
@@ -284,7 +284,7 @@ async function finalizeIndex({ entries, settings, skipCacheSave = false, previou
         finalizeIndex._largeVaultWarned = true;
         toastr.info(
             `Large vault detected (${entries.length} entries). Consider using folder filtering or reducing scan depth for better performance.`,
-            'DeepLore Enhanced',
+            'DeepLore',
             { timeOut: 8000 },
         );
     }
@@ -649,7 +649,7 @@ export async function buildIndex() {
             if (/ECONNREFUSED|Failed to fetch|NetworkError|fetch/i.test(raw)) {
                 userMsg = `Connection failed. Check: (1) Obsidian is running, (2) Local REST API plugin is enabled, (3) port is correct. Run /dle-health for diagnostics. (${raw})`;
             } else if (/No enabled vaults/i.test(raw)) {
-                userMsg = 'No enabled vaults configured. Go to DeepLore Enhanced settings → Vault Connections and add a vault.';
+                userMsg = 'No enabled vaults configured. Go to DeepLore settings → Vault Connections and add a vault.';
             } else if (/401|403|auth/i.test(raw)) {
                 userMsg = `Authentication failed. Check your vault API key in settings. Run /dle-health for diagnostics. (${raw})`;
             } else if (/timeout|timed out/i.test(raw)) {

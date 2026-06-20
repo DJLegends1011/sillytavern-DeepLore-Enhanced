@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — entry point.
+ * DeepLore — entry point.
  * Wires the generation interceptor, ST event listeners, and UI initialization.
  */
 // MUST be the first import — installs console/fetch/XHR/error interceptors at module-eval
@@ -1573,7 +1573,7 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
                     const pct = Math.round(ratio * 100);
                     toastr.warning(
                         trf('dle_warn_context_usage', pct, totalTokens, injectedCount),
-                        'DeepLore Enhanced',
+                        'DeepLore',
                         { preventDuplicates: true, timeOut: 8000 },
                     );
                     setLastWarningRatio(ratio);
@@ -3050,10 +3050,10 @@ async function _doInit() {
 
         _dleInitCount++;
         pushEvent('init', { initCount: _dleInitCount, vaultCount: (getSettings().vaults || []).filter(v => v.enabled).length });
-        console.log('[DLE] DeepLore Enhanced client extension initialized');
+        console.log('[DLE] DeepLore client extension initialized');
     } catch (err) {
         console.error('[DLE] Failed to initialize:', err);
-        toastr.error('DeepLore Enhanced failed to initialize. Check the browser console (F12) for details.', 'DLE Error', { timeOut: 0 });
+        toastr.error('DeepLore failed to initialize. Check the browser console (F12) for details.', 'DLE Error', { timeOut: 0 });
     }
 }
 

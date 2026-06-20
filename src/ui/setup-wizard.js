@@ -1,4 +1,4 @@
-/** DeepLore Enhanced — First-Run Setup Wizard */
+/** DeepLore — First-Run Setup Wizard */
 import { saveSettingsDebounced } from '../../../../../../script.js';
 import { escapeHtml } from '../../../../../utils.js';
 import { renderExtensionTemplateAsync } from '../../../../../extensions.js';
@@ -151,7 +151,7 @@ function wireNavigation() {
             await applyWizardSettings();
         } catch (err) {
             console.error('[DLE] Wizard finish error:', err);
-            toastr.warning('Setup saved but index build failed — it will retry on first generation.', 'DeepLore Enhanced');
+            toastr.warning('Setup saved but index build failed — it will retry on first generation.', 'DeepLore');
         }
         // Close popup regardless — settings are already saved before buildIndex().
         // Wizard popup has no okButton/cancelButton so .popup_ok doesn't exist;
@@ -370,8 +370,8 @@ function wireDemoVault() {
     $wizard.find('#dle-wiz-demo-copy').on('click', () => {
         const path = $wizard.find('#dle-wiz-demo-path').text();
         navigator.clipboard.writeText(path).then(
-            () => toastr.info('Path copied to clipboard', 'DeepLore Enhanced'),
-            () => toastr.warning('Failed to copy — select and copy manually', 'DeepLore Enhanced'),
+            () => toastr.info('Path copied to clipboard', 'DeepLore'),
+            () => toastr.warning('Failed to copy — select and copy manually', 'DeepLore'),
         );
     });
 
@@ -389,7 +389,7 @@ function wireDemoVault() {
         updateNavButtons();
         // API key is the only field the user must still enter.
         $wizard.find('#dle-wiz-api-key').val('').focus();
-        toastr.info('Connection fields filled — enter your Obsidian API key and click Test', 'DeepLore Enhanced');
+        toastr.info('Connection fields filled — enter your Obsidian API key and click Test', 'DeepLore');
     });
 }
 
@@ -682,7 +682,7 @@ async function runVaultStructureCreation() {
             const folder = ($wizard.find('#dle-wiz-sessions-path').val().trim()) || 'Sessions';
             getSettings().scribeFolder = folder;
             saveSettingsDebounced();
-            await writeNote(host, port, apiKey, `${folder}/.gitkeep`, '# Session Scribe\nThis folder is used by DeepLore Enhanced Session Scribe.\n', useHttps);
+            await writeNote(host, port, apiKey, `${folder}/.gitkeep`, '# Session Scribe\nThis folder is used by DeepLore Session Scribe.\n', useHttps);
             outcome.sessions = 'created';
         } catch (err) {
             outcome.sessions = 'failed';
@@ -732,7 +732,7 @@ function wireImport() {
         $wizard.find('#dle-wiz-import-file-name').text(file.name);
         const reader = new FileReader();
         reader.onload = () => { importJsonData = /** @type {string} */ (reader.result); };
-        reader.onerror = () => { toastr.error('Failed to read file.', 'DeepLore Enhanced'); };
+        reader.onerror = () => { toastr.error('Failed to read file.', 'DeepLore'); };
         reader.readAsText(file);
     });
 
@@ -743,13 +743,13 @@ function wireImport() {
             const { loadWorldInfo } = await import('../../../../../world-info.js');
             const data = await loadWorldInfo(name);
             if (!data) {
-                toastr.error(`Failed to load lorebook "${name}".`, 'DeepLore Enhanced');
+                toastr.error(`Failed to load lorebook "${name}".`, 'DeepLore');
                 return;
             }
             importJsonData = JSON.stringify(data, null, 2);
         } catch (err) {
             console.error('[DLE] Wizard loadWorldInfo error:', err);
-            toastr.error('Couldn\'t load that lorebook. Try a different one or paste the JSON directly.', 'DeepLore Enhanced');
+            toastr.error('Couldn\'t load that lorebook. Try a different one or paste the JSON directly.', 'DeepLore');
         }
     });
 
@@ -766,7 +766,7 @@ function wireImport() {
         }
 
         if (!jsonText) {
-            toastr.warning('No data to import. Select a lorebook, upload a file, or paste JSON first.', 'DeepLore Enhanced');
+            toastr.warning('No data to import. Select a lorebook, upload a file, or paste JSON first.', 'DeepLore');
             return;
         }
 

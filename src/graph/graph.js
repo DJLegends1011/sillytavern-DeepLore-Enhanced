@@ -31,7 +31,7 @@ function dbg(...args) {
 export async function showGraphPopup() {
     await ensureIndexFresh();
     if (vaultIndex.length === 0) {
-        toastr.info(NO_ENTRIES_MSG, 'DeepLore Enhanced');
+        toastr.info(NO_ENTRIES_MSG, 'DeepLore');
         return;
     }
 
@@ -47,7 +47,7 @@ export async function showGraphPopup() {
     if (graphEntries.length > 500) {
         toastr.warning(
             trf('dle_graph_toast_large', graphEntries.length),
-            'DeepLore Enhanced',
+            'DeepLore',
             { timeOut: 8000, preventDuplicates: true },
         );
     }
@@ -86,7 +86,7 @@ export async function showGraphPopup() {
         dbg('Title collisions detected:', titleCollisions.map(c => `"${c.title}" (idx ${c.existing} vs ${c.duplicate})`));
         toastr.warning(
             trf('dle_graph_toast_collisions', titleCollisions.length),
-            'DeepLore Enhanced',
+            'DeepLore',
             { timeOut: 8000, preventDuplicates: true },
         );
     }

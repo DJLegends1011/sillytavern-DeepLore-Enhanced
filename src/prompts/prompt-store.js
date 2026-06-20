@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — Runtime prompt resolver + cache.
+ * DeepLore — Runtime prompt resolver + cache.
  *
  * Two-layer resolution:
  *   1. In-memory `promptCache` Map (populated at boot from vault override

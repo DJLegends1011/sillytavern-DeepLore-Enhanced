@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — Vault change detection and sync polling
+ * DeepLore — Vault change detection and sync polling
  */
 import { escapeHtml } from '../../../../../utils.js';
 import { getSettings } from '../../settings.js';
@@ -39,7 +39,7 @@ export function showChangesToast(changes) {
         parts.push(`Keys changed: ${truncList(changes.keysChanged)}`);
     }
 
-    toastr.info(parts.join('<br>'), 'DeepLore Enhanced', {
+    toastr.info(parts.join('<br>'), 'DeepLore', {
         timeOut: SYNC_TOAST_TIMEOUT,
         extendedTimeOut: SYNC_EXTENDED_TIMEOUT,
         progressBar: true,

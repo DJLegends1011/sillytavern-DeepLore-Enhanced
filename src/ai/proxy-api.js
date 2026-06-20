@@ -4,7 +4,7 @@
  * Do NOT add new consumers. Do NOT call from new code paths.
  */
 /**
- * DeepLore Enhanced — CORS-Bridged AI Proxy Module
+ * DeepLore — CORS-Bridged AI Proxy Module
  * Routes proxy-mode calls through SillyTavern's built-in CORS proxy (/proxy/:url).
  * Requires `enableCorsProxy: true` in ST's config.yaml.
  */

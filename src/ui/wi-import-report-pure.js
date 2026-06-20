@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — WI Import Report (pure helpers)
+ * DeepLore — WI Import Report (pure helpers)
  *
  * Pure split of wi-import-report.js for node testability. No ST imports, no
  * DOM. The report builder + HTML renderer live here; the popup wrapper +
@@ -92,7 +92,7 @@ reach the model when the entry triggers.
 Honestly, one short flavor quote inside a character entry is usually enough to
 teach an LLM the voice. If you'd rather skip them on future imports, the button
 below flips the setting permanently (until you change it back in
-<code>Settings → DeepLore Enhanced → Matching → Import → WI Example Messages on import</code>).
+<code>Settings → DeepLore → Matching → Import → WI Example Messages on import</code>).
 Entries already imported stay in the vault — <code>/dle-delete</code> them by
 name if you want them gone.`,
     emSkipButton: () => 'Always skip Example Messages on import (reversible in settings)',

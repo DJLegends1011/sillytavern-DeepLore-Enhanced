@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — Slash Commands: shared helpers.
+ * DeepLore — Slash Commands: shared helpers.
  *
  * Small cross-command utilities pulled out of the individual command modules so
  * the same toast/console copy and the same fuzzy entry-resolution flow live in
@@ -30,7 +30,7 @@ export async function ensureFreshOrToast(cmdName) {
         await ensureIndexFresh();
         return true;
     } catch (err) {
-        toastr.error(trf('dle_cmd_refresh_error_toast', classifyError(err)), 'DeepLore Enhanced');
+        toastr.error(trf('dle_cmd_refresh_error_toast', classifyError(err)), 'DeepLore');
         console.error(`[DLE] ensureIndexFresh failed in ${cmdName}:`, err);
         return false;
     }
@@ -58,12 +58,12 @@ export async function resolveEntryByName(name, candidates, { commandLabel }) {
     const titles = candidates.map(c => c.title);
     const matches = fuzzyTitleMatchAll(name, titles, 0.6);
     if (matches.length === 0) {
-        toastr.warning(trf('dle_helper_resolveentrybyname_nomatch_toast', name), 'DeepLore Enhanced');
+        toastr.warning(trf('dle_helper_resolveentrybyname_nomatch_toast', name), 'DeepLore');
         return null;
     }
     if (matches.length === 1) {
         const match = candidates.find(c => c.title === matches[0].title);
-        toastr.info(`Matched "${match.title}" (${Math.round(matches[0].similarity * 100)}%).`, 'DeepLore Enhanced');
+        toastr.info(`Matched "${match.title}" (${Math.round(matches[0].similarity * 100)}%).`, 'DeepLore');
         return match;
     }
 

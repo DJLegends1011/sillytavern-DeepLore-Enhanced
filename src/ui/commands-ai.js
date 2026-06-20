@@ -1,4 +1,4 @@
-/** DeepLore Enhanced — Slash Commands: AI Features */
+/** DeepLore — Slash Commands: AI Features */
 import {
     sendMessageAsUser,
     Generate,
@@ -30,18 +30,18 @@ export function registerAiCommands() {
         callback: async (_args, entryName) => {
             if (!await ensureFreshOrToast('/dle-optimize-keys')) return '';
             if (vaultIndex.length === 0) {
-                toastr.info(NO_ENTRIES_MSG, 'DeepLore Enhanced');
+                toastr.info(NO_ENTRIES_MSG, 'DeepLore');
                 return '';
             }
             const name = (entryName || '').trim();
             if (!name) {
-                toastr.info(tr('dle_cmd_optimizekeys_usage_toast'), 'DeepLore Enhanced');
+                toastr.info(tr('dle_cmd_optimizekeys_usage_toast'), 'DeepLore');
                 return '';
             }
             // Shared fuzzy resolver so a typo / partial name doesn't drop on the floor.
             const entry = await resolveEntryByName(name, vaultIndex, { commandLabel: 'Optimize keys' });
             if (!entry) return '';
-            const loadingToast = toastr.info(trf('dle_cmd_optimizekeys_loading_toast', entry.title), 'DeepLore Enhanced', { timeOut: 0, extendedTimeOut: 0 });
+            const loadingToast = toastr.info(trf('dle_cmd_optimizekeys_loading_toast', entry.title), 'DeepLore', { timeOut: 0, extendedTimeOut: 0 });
             try {
                 const result = await optimizeEntryKeys(entry);
                 toastr.clear(loadingToast);
@@ -49,7 +49,7 @@ export function registerAiCommands() {
             } catch (err) {
                 toastr.clear(loadingToast);
                 console.error('[DLE] Optimize keys error:', err);
-                toastr.error(classifyError(err), 'DeepLore Enhanced');
+                toastr.error(classifyError(err), 'DeepLore');
             }
             return '';
         },
@@ -65,10 +65,10 @@ export function registerAiCommands() {
 
     const newloreCallback = async () => {
         if (!chat || chat.length === 0) {
-            toastr.info(tr('dle_cmd_newlore_nochat_toast'), 'DeepLore Enhanced');
+            toastr.info(tr('dle_cmd_newlore_nochat_toast'), 'DeepLore');
             return '';
         }
-        const loadingToast = toastr.info(tr('dle_cmd_newlore_analyzing_toast'), 'DeepLore Enhanced', { timeOut: 0, extendedTimeOut: 0 });
+        const loadingToast = toastr.info(tr('dle_cmd_newlore_analyzing_toast'), 'DeepLore', { timeOut: 0, extendedTimeOut: 0 });
         try {
             const suggestions = await runAutoSuggest();
             toastr.clear(loadingToast);
@@ -76,7 +76,7 @@ export function registerAiCommands() {
         } catch (err) {
             toastr.clear(loadingToast);
             console.error('[DLE] Auto-suggest error:', err);
-            toastr.error(classifyError(err), 'DeepLore Enhanced');
+            toastr.error(classifyError(err), 'DeepLore');
         }
         return '';
     };
@@ -98,16 +98,16 @@ export function registerAiCommands() {
         name: 'dle-scribe',
         callback: async (_args, userPrompt) => {
             if (scribeInProgress) {
-                toastr.warning(tr('dle_cmd_scribe_inprogress_toast'), 'DeepLore Enhanced');
+                toastr.warning(tr('dle_cmd_scribe_inprogress_toast'), 'DeepLore');
                 return '';
             }
             // BUG-AUDIT-H23: missing scribeFolder would write to "undefined/".
             const settings = getSettings();
             if (!settings.scribeFolder) {
-                toastr.warning(tr('dle_cmd_scribe_nofolder_toast'), 'DeepLore Enhanced');
+                toastr.warning(tr('dle_cmd_scribe_nofolder_toast'), 'DeepLore');
                 return '';
             }
-            toastr.info(tr('dle_cmd_scribe_writing_toast'), 'DeepLore Enhanced');
+            toastr.info(tr('dle_cmd_scribe_writing_toast'), 'DeepLore');
             await runScribe(userPrompt?.trim() || '');
             return 'Session note written.';
         },
@@ -133,7 +133,7 @@ export function registerAiCommands() {
             const reviewEntries = vaultIndex.filter(e => !e.guide);
 
             if (reviewEntries.length === 0) {
-                toastr.info(NO_ENTRIES_MSG, 'DeepLore Enhanced');
+                toastr.info(NO_ENTRIES_MSG, 'DeepLore');
                 return '';
             }
 
@@ -159,12 +159,12 @@ export function registerAiCommands() {
             const defaultQuestion = 'Review this lorebook/world-building vault. Comment on consistency, gaps, interesting connections between entries, and any suggestions for improvement.';
             const question = (userPrompt && userPrompt.trim()) ? userPrompt.trim() : defaultQuestion;
 
-            const message = `[DeepLore Enhanced Review — ${reviewEntries.length} entries, ~${totalTokens} tokens]\n\n${loreDump}\n\n---\n\n${question}${budgetHint}`;
+            const message = `[DeepLore Review — ${reviewEntries.length} entries, ~${totalTokens} tokens]\n\n${loreDump}\n\n---\n\n${question}${budgetHint}`;
             if (settings.debugMode) {
                 console.log('[DLE] Lore review prompt:', message);
             }
 
-            toastr.info(`Sending ${reviewEntries.length} entries (~${totalTokens} tokens)...`, 'DeepLore Enhanced', { timeOut: 5000 });
+            toastr.info(`Sending ${reviewEntries.length} entries (~${totalTokens} tokens)...`, 'DeepLore', { timeOut: 5000 });
 
             // Bypass DLE pipeline for this generation — review prompt is the entire vault.
             setSkipNextPipeline(true);
@@ -178,7 +178,7 @@ export function registerAiCommands() {
             return '';
             } catch (err) {
                 console.warn('[DLE] /dle-review failed:', err);
-                toastr.error(tr('dle_cmd_review_error_msg'), 'DeepLore Enhanced');
+                toastr.error(tr('dle_cmd_review_error_msg'), 'DeepLore');
                 return '';
             }
         },
@@ -196,13 +196,13 @@ export function registerAiCommands() {
         callback: async () => {
             if (!await ensureFreshOrToast('/dle-summarize')) return '';
             if (vaultIndex.length === 0) {
-                toastr.info(NO_ENTRIES_MSG, 'DeepLore Enhanced');
+                toastr.info(NO_ENTRIES_MSG, 'DeepLore');
                 return '';
             }
 
             const missingSummary = vaultIndex.filter(e => !e.summary || !e.summary.trim());
             if (missingSummary.length === 0) {
-                toastr.success(tr('dle_cmd_summarize_allhave_toast'), 'DeepLore Enhanced');
+                toastr.success(tr('dle_cmd_summarize_allhave_toast'), 'DeepLore');
                 return '';
             }
 
@@ -218,7 +218,7 @@ export function registerAiCommands() {
             let msg = `Done: ${result.generated} written, ${result.skipped} skipped, ${result.failed} failed`;
             if (result.aborted > 0) msg += `, ${result.aborted} aborted`;
             msg += '.';
-            toastr.success(msg, 'DeepLore Enhanced');
+            toastr.success(msg, 'DeepLore');
 
             if (result.generated > 0) {
                 setIndexTimestamp(0);
@@ -234,7 +234,7 @@ export function registerAiCommands() {
         name: 'dle-librarian',
         callback: async (_args, subcommand) => {
             if (!getSettings().librarianEnabled) {
-                toastr.warning(tr('dle_cmd_librarian_disabled_toast'), 'DeepLore Enhanced');
+                toastr.warning(tr('dle_cmd_librarian_disabled_toast'), 'DeepLore');
                 return '';
             }
             const { openLibrarianPopup } = await import('../librarian/librarian-review.js');
@@ -245,7 +245,7 @@ export function registerAiCommands() {
                 const gapId = sub.slice(4).trim();
                 const gap = loreGaps.find(g => g.id === gapId);
                 if (!gap) {
-                    toastr.warning(`Gap "${gapId}" not found.`, 'DeepLore Enhanced');
+                    toastr.warning(`Gap "${gapId}" not found.`, 'DeepLore');
                     return '';
                 }
                 await openLibrarianPopup('gap', { gap });
@@ -286,15 +286,15 @@ export function registerAiCommands() {
         name: 'dle-summarize-range',
         callback: async (_args, rangeArg) => {
             if (!chat || chat.length === 0) {
-                toastr.info(tr('dle_cmd_summarizerange_nochat_toast'), 'DeepLore Enhanced');
+                toastr.info(tr('dle_cmd_summarizerange_nochat_toast'), 'DeepLore');
                 return '';
             }
             const range = parseRange(rangeArg || '', chat.length);
             if (!range) {
-                toastr.warning(tr('dle_cmd_summarizerange_usage_toast'), 'DeepLore Enhanced');
+                toastr.warning(tr('dle_cmd_summarizerange_usage_toast'), 'DeepLore');
                 return '';
             }
-            const loading = toastr.info(`Summarizing messages ${range.start}–${range.end}...`, 'DeepLore Enhanced', { timeOut: 0, extendedTimeOut: 0 });
+            const loading = toastr.info(`Summarizing messages ${range.start}–${range.end}...`, 'DeepLore', { timeOut: 0, extendedTimeOut: 0 });
             // L-16: summarizeRange accepts a signal but nothing ever passed one, so a
             // slow summary couldn't be cancelled and would mutate the chat even after
             // the user switched away. Abort on CHAT_CHANGED so it bails before the
@@ -308,14 +308,14 @@ export function registerAiCommands() {
                 const result = await summarizeRange(range, summarizeAbort.signal);
                 toastr.clear(loading);
                 if (!result.ok) {
-                    toastr.error(result.error, 'DeepLore Enhanced');
+                    toastr.error(result.error, 'DeepLore');
                     return '';
                 }
-                toastr.success(`Summarized ${result.hiddenCount} messages. ID: ${result.summaryId} (use /dle-summarize-rollback ${result.summaryId} to undo).`, 'DeepLore Enhanced', { timeOut: 8000 });
+                toastr.success(`Summarized ${result.hiddenCount} messages. ID: ${result.summaryId} (use /dle-summarize-rollback ${result.summaryId} to undo).`, 'DeepLore', { timeOut: 8000 });
                 return result.summaryId;
             } catch (err) {
                 toastr.clear(loading);
-                toastr.error(trf('dle_cmd_summarizerange_error_msg', err.message), 'DeepLore Enhanced');
+                toastr.error(trf('dle_cmd_summarizerange_error_msg', err.message), 'DeepLore');
                 return '';
             } finally {
                 try { eventSource.removeListener(event_types.CHAT_CHANGED, onChatChange); } catch { /* noop */ }
@@ -336,10 +336,10 @@ export function registerAiCommands() {
             const id = (idArg || '').trim();
             const result = await rollbackSummary(id || 'all');
             if (!result.ok) {
-                toastr.warning(result.error || 'Rollback failed', 'DeepLore Enhanced');
+                toastr.warning(result.error || 'Rollback failed', 'DeepLore');
                 return '';
             }
-            toastr.success(`Restored ${result.restored} messages, removed ${result.removed} summary message${result.removed === 1 ? '' : 's'}.`, 'DeepLore Enhanced');
+            toastr.success(`Restored ${result.restored} messages, removed ${result.removed} summary message${result.removed === 1 ? '' : 's'}.`, 'DeepLore');
             return '';
         },
         unnamedArgumentList: [SlashCommandArgument.fromProps({
@@ -383,7 +383,7 @@ export async function summarizeEntries(entries) {
 
     for (let i = 0; i < entries.length; i++) {
         const entry = entries[i];
-        toastr.info(`Generating summary ${i + 1}/${entries.length}: "${entry.title}"...`, 'DeepLore Enhanced', { timeOut: 0, extendedTimeOut: 0 });
+        toastr.info(`Generating summary ${i + 1}/${entries.length}: "${entry.title}"...`, 'DeepLore', { timeOut: 0, extendedTimeOut: 0 });
 
         try {
             const systemPrompt = 'You are a lore librarian. Write a concise AI search summary (max 600 chars) for the following lorebook entry. The summary should answer: What is this? When should it be selected? Key relationships? Do NOT include physical descriptions or atmospheric prose. Write for an AI that needs to decide whether to inject this entry.';

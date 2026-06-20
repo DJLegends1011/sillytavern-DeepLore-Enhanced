@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — Pure helpers (no ST imports). Browser + Node testable.
+ * DeepLore — Pure helpers (no ST imports). Browser + Node testable.
  */
 import { yamlEscape } from '../core/utils.js';
 import { compressCaveman, resolveCompressMode, APPLIED_COMPRESS_MODES } from './caveman.js';

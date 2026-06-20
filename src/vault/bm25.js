@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — BM25 Fuzzy Search Index
+ * DeepLore — BM25 Fuzzy Search Index
  * Pure (no ST globals). _debugMode injected by vault.js via setDebugMode().
  */
 let _debugMode = false;

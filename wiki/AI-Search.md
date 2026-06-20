@@ -51,7 +51,7 @@ Skips keyword matching entirely. A manifest of **all** non-constant vault entrie
 
 ### Keyword only
 
-Disables AI search entirely. Pure keyword + BM25 fuzzy matching, like base DeepLore. Free.
+Disables AI search entirely. Pure keyword + BM25 fuzzy matching, like the original standalone DeepLore. Free.
 
 ---
 
@@ -171,7 +171,7 @@ See [[Writing Vault Entries]] for how to tag entries as seed or bootstrap.
 | AI returns `[]` | Only constants injected | Only constants injected |
 | AI response unparseable | Same as error | Same as error |
 | No chat context | Skip AI search entirely | Skip AI search entirely |
-| AI search disabled | Keywords only (base DeepLore behavior) | N/A |
+| AI search disabled | Keywords only (original standalone DeepLore behavior) | N/A |
 
 The timeout is configurable (default 10000ms, range 1000-999999ms). Local LLMs may need 60000-120000ms; cloud APIs typically respond in 5000-15000ms. The cap is intentionally permissive — set past 120000ms only if your provider routinely runs longer.
 

@@ -177,13 +177,13 @@ export async function createDrawerPanel() {
             <div class="drawer-toggle drawer-header">
                 <div id="deeploreDrawerIcon"
                      class="drawer-icon interactable closedIcon dle-drawer-icon-svg"
-                     title="Open DeepLore Enhanced drawer"
+                     title="Open DeepLore drawer"
                      tabindex="0"
                      role="button"
                      aria-expanded="false"
-                     aria-label="Open DeepLore Enhanced drawer"><i class="fa-solid fa-book-open fa-fw" aria-hidden="true"></i></div>
+                     aria-label="Open DeepLore drawer"><i class="fa-solid fa-book-open fa-fw" aria-hidden="true"></i></div>
             </div>
-            <div id="deeplore-panel" class="drawer-content closedDrawer fillRight" role="region" aria-label="DeepLore Enhanced panel">
+            <div id="deeplore-panel" class="drawer-content closedDrawer fillRight" role="region" aria-label="DeepLore panel">
                 <div id="deeplore-panelheader" class="fa-solid fa-grip drag-grabber" aria-hidden="true"></div>
                 <div class="dle-drawer-controls">
                     <div class="dle-drawer-pin" title="Pin drawer open">

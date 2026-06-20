@@ -1,4 +1,4 @@
-/** DeepLore Enhanced — Rule Builder Popup. Custom frontmatter gating field editor. */
+/** DeepLore — Rule Builder Popup. Custom frontmatter gating field editor. */
 import { escapeHtml } from '../../../../../utils.js';
 import { callGenericPopup, POPUP_TYPE, POPUP_RESULT } from '../../../../../popup.js';
 import { getSettings, getPrimaryVault, invalidateSettingsCache } from '../../settings.js';

@@ -139,7 +139,7 @@ export function initEvents(gs, dbg) {
             case 'copy-title':
                 navigator.clipboard.writeText(node.title).then(
                     () => toastr.success(trf('dle_graph_toast_copied', node.title), '', { timeOut: 2000 }),
-                    () => toastr.warning(tr('dle_graph_toast_clipboard_denied'), 'DeepLore Enhanced', { timeOut: 3000 }),
+                    () => toastr.warning(tr('dle_graph_toast_clipboard_denied'), 'DeepLore', { timeOut: 3000 }),
                 );
                 break;
             case 'details': {
@@ -193,9 +193,9 @@ export function initEvents(gs, dbg) {
             link.download = `dle-graph-${new Date().toISOString().slice(0, 10)}.png`;
             link.href = dataUrl;
             link.click();
-            toastr.success(tr('dle_graph_toast_export_png_success'), 'DeepLore Enhanced');
+            toastr.success(tr('dle_graph_toast_export_png_success'), 'DeepLore');
         } catch (e) {
-            console.warn('[DLE] PNG export failed:', e); toastr.error(tr('dle_graph_toast_export_png_fail'), 'DeepLore Enhanced');
+            console.warn('[DLE] PNG export failed:', e); toastr.error(tr('dle_graph_toast_export_png_fail'), 'DeepLore');
         }
     }
 
@@ -230,10 +230,10 @@ export function initEvents(gs, dbg) {
             link.href = objectUrl;
             link.click();
             dbg(`JSON exported: ${data.nodes.length} nodes, ${data.edges.length} edges`);
-            toastr.success(tr('dle_graph_toast_export_json_success'), 'DeepLore Enhanced');
+            toastr.success(tr('dle_graph_toast_export_json_success'), 'DeepLore');
         } catch (e) {
             dbg('JSON export failed:', e.message);
-            console.warn('[DLE] JSON export failed:', e); toastr.error(tr('dle_graph_toast_export_json_fail'), 'DeepLore Enhanced');
+            console.warn('[DLE] JSON export failed:', e); toastr.error(tr('dle_graph_toast_export_json_fail'), 'DeepLore');
         } finally {
             if (objectUrl) URL.revokeObjectURL(objectUrl);
         }

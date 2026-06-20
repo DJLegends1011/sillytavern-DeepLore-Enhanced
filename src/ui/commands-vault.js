@@ -1,4 +1,4 @@
-/** DeepLore Enhanced — Slash Commands: Vault Management */
+/** DeepLore — Slash Commands: Vault Management */
 import { escapeHtml } from '../../../../../utils.js';
 import { callGenericPopup, POPUP_TYPE } from '../../../../../popup.js';
 import { SlashCommandParser } from '../../../../../slash-commands/SlashCommandParser.js';
@@ -50,11 +50,11 @@ export function registerVaultCommands() {
                 setIndexTimestamp(0);
                 await buildIndex();
                 const msg = `Indexed ${vaultIndex.length} entries.`;
-                toastr.success(msg, 'DeepLore Enhanced');
+                toastr.success(msg, 'DeepLore');
                 return msg;
             } catch (err) {
                 console.warn('[DLE] /dle-refresh failed:', err);
-                toastr.error(trf('dle_cmd_refresh_error_toast', classifyError(err)), 'DeepLore Enhanced');
+                toastr.error(trf('dle_cmd_refresh_error_toast', classifyError(err)), 'DeepLore');
                 return '';
             }
         },
@@ -118,7 +118,7 @@ export function registerVaultCommands() {
                             try {
                                 const data = await loadWorldInfo(name);
                                 if (!data) {
-                                    toastr.error(trf('dle_toast_lorebook_load_failed', name), 'DeepLore Enhanced');
+                                    toastr.error(trf('dle_toast_lorebook_load_failed', name), 'DeepLore');
                                     return;
                                 }
                                 const json = JSON.stringify(data, null, 2);
@@ -126,7 +126,7 @@ export function registerVaultCommands() {
                                 capturedJson = json;
                             } catch (err) {
                                 console.error('[DLE] loadWorldInfo error:', err);
-                                toastr.error(classifyError(err), 'DeepLore Enhanced');
+                                toastr.error(classifyError(err), 'DeepLore');
                             }
                         });
                     }
@@ -145,7 +145,7 @@ export function registerVaultCommands() {
                                 capturedJson = text;
                             };
                             reader.onerror = () => {
-                                toastr.error(tr('dle_cmd_import_readfailed_toast'), 'DeepLore Enhanced');
+                                toastr.error(tr('dle_cmd_import_readfailed_toast'), 'DeepLore');
                             };
                             reader.readAsText(file);
                         });
@@ -157,7 +157,7 @@ export function registerVaultCommands() {
 
             const jsonText = capturedJson.trim();
             if (!jsonText) {
-                toastr.warning(tr('dle_cmd_import_nojson_toast'), 'DeepLore Enhanced');
+                toastr.warning(tr('dle_cmd_import_nojson_toast'), 'DeepLore');
                 return '';
             }
 
@@ -173,14 +173,14 @@ export function registerVaultCommands() {
                 JSON.parse(jsonText);
             } catch (parseErr) {
                 console.warn('[DLE] /dle-import JSON parse failed:', parseErr);
-                toastr.error(tr('dle_cmd_import_invalidjson_toast'), 'DeepLore Enhanced');
+                toastr.error(tr('dle_cmd_import_invalidjson_toast'), 'DeepLore');
                 return '';
             }
 
             try {
                 const { entries, source } = parseWorldInfoJson(jsonText);
                 if (entries.length === 0) {
-                    toastr.info(tr('dle_cmd_import_noentries_toast'), 'DeepLore Enhanced');
+                    toastr.info(tr('dle_cmd_import_noentries_toast'), 'DeepLore');
                     return '';
                 }
 
@@ -188,7 +188,7 @@ export function registerVaultCommands() {
                     (!e.content || !e.content.trim()) && (!e.key || !e.key.length || e.key.every(k => !k.trim())),
                 ).length;
                 if (emptyCount > 0) {
-                    toastr.warning(trf('dle_cmd_import_emptyentries_toast', emptyCount), 'DeepLore Enhanced');
+                    toastr.warning(trf('dle_cmd_import_emptyentries_toast', emptyCount), 'DeepLore');
                 }
 
                 const confirmed = await callGenericPopup(
@@ -198,7 +198,7 @@ export function registerVaultCommands() {
                 );
                 if (!confirmed) return '';
 
-                const progressToast = toastr.info(`Importing 0/${entries.length} entries...`, 'DeepLore Enhanced', { timeOut: 0, extendedTimeOut: 0 });
+                const progressToast = toastr.info(`Importing 0/${entries.length} entries...`, 'DeepLore', { timeOut: 0, extendedTimeOut: 0 });
                 const result = await importEntries(entries, folder, (done, total) => {
                     progressToast.find('.toast-message').text(`Importing ${done}/${total} entries...`);
                 });
@@ -246,7 +246,7 @@ export function registerVaultCommands() {
                             if (imported.length > 0) {
                                 const { summarizeEntries } = await import('./commands-ai.js');
                                 const sumResult = await summarizeEntries(imported);
-                                toastr.success(`Summaries: ${sumResult.generated} written, ${sumResult.skipped} skipped, ${sumResult.failed} failed.`, 'DeepLore Enhanced');
+                                toastr.success(`Summaries: ${sumResult.generated} written, ${sumResult.skipped} skipped, ${sumResult.failed} failed.`, 'DeepLore');
                                 if (sumResult.generated > 0) needsRebuild = true;
                             }
                         }
@@ -259,7 +259,7 @@ export function registerVaultCommands() {
                 }
             } catch (err) {
                 console.error('[DLE] Import error:', err);
-                toastr.error(classifyError(err), 'DeepLore Enhanced');
+                toastr.error(classifyError(err), 'DeepLore');
             }
             return '';
         },

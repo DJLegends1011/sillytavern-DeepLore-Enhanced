@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — Claude Adaptive-Thinking Misconfiguration Detector
+ * DeepLore — Claude Adaptive-Thinking Misconfiguration Detector
  *
  * Claude opus-4-6 / sonnet-4-6 use adaptive thinking. ST's chat-completions path
  * requires `reasoning_effort` set to low/medium/high on the OpenAI completion

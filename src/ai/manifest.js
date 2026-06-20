@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — AI Candidate Manifest Builder
+ * DeepLore — AI Candidate Manifest Builder
  * Extracted from ai.js for testability (no SillyTavern imports).
  */
 

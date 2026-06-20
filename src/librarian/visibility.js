@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — Librarian Visibility
+ * DeepLore — Librarian Visibility
  *
  * Surfaces handled here: drawer tab/panel, per-message dropdowns.
  * Other surfaces self-gate: ToolManager (settings-ui.js), injectLibrarianDropdown

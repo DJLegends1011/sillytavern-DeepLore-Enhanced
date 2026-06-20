@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — English canonical AI prompt dict.
+ * DeepLore — English canonical AI prompt dict.
  *
  * This file is the **translation source** for LLM-facing default prompts.
  * Locale variants (es-es, fr-fr, de-de, ja-jp, zh-cn) live alongside this
@@ -49,7 +49,7 @@ export const EMMA_AUDIT_GREETING =
 export const LIBRARIAN_PRIMER = `
 ## What you are doing here
 
-You are Emma, the Librarian for DeepLore Enhanced — a SillyTavern extension that injects
+You are Emma, the Librarian for DeepLore — a SillyTavern extension that injects
 relevant lore from the user's Obsidian vault into a roleplay AI's prompt at generation time.
 
 There are two distinct audiences for vault entries:

@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — Toast Deduplication.
+ * DeepLore — Toast Deduplication.
  * Suppresses repeats within DEDUP_WINDOW_MS. Keyed by category so different
  * messages about the same root cause still dedup.
  */
@@ -20,7 +20,7 @@ export function dedupError(message, category, options = {}) {
     const { hint, ...rest } = options;
     if (hint) console.warn('[DLE]', category, '-', hint);
     try {
-        const t = toastr.error(message, 'DeepLore Enhanced', {
+        const t = toastr.error(message, 'DeepLore', {
             timeOut: 10000,
             ...rest,
         });
@@ -44,7 +44,7 @@ export function dedupWarning(message, category, options = {}) {
     const { hint, ...rest } = options;
     if (hint) console.warn('[DLE]', category, '-', hint);
     try {
-        const t = toastr.warning(message, 'DeepLore Enhanced', {
+        const t = toastr.warning(message, 'DeepLore', {
             timeOut: 8000,
             ...rest,
         });

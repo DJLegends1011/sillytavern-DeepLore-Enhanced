@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — German (de-de) AI prompt dict.
+ * DeepLore — German (de-de) AI prompt dict.
  *
  * Machine-translated from en.js canonical source.
  * Locale variants are regenerated from the EN file via the translation pipeline.
@@ -28,7 +28,7 @@ export const EMMA_AUDIT_GREETING =
 export const LIBRARIAN_PRIMER = `
 ## Was du hier tust
 
-Du bist Emma, die Bibliothekarin von DeepLore Enhanced — eine SillyTavern-Erweiterung, die
+Du bist Emma, die Bibliothekarin von DeepLore — eine SillyTavern-Erweiterung, die
 relevante Lore aus dem Obsidian-Vault des Benutzers zum Generierungszeitpunkt in den Prompt
 einer Rollenspiel-KI einspritzt.
 

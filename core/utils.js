@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced Core — Utility Functions
+ * DeepLore Core — Utility Functions
  */
 
 /**

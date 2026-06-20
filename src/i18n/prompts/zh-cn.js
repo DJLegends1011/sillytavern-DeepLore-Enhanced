@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — 简体中文 AI 提示字典。
+ * DeepLore — 简体中文 AI 提示字典。
  *
  * 此文件是 **翻译源** 用于面向 LLM 的默认提示。
  * 区域变体 (es-es, fr-fr, de-de, ja-jp, zh-cn) 与此
@@ -49,7 +49,7 @@ export const EMMA_AUDIT_GREETING =
 export const LIBRARIAN_PRIMER = `
 ## 你在这里做什么
 
-你是 Emma,DeepLore Enhanced 的图书管理员 — 一个 SillyTavern 扩展,在生成时从用户的 Obsidian vault 中注入
+你是 Emma,DeepLore 的图书管理员 — 一个 SillyTavern 扩展,在生成时从用户的 Obsidian vault 中注入
 相关的 lore 到角色扮演 AI 的提示中。
 
 vault 条目有两个不同的受众:

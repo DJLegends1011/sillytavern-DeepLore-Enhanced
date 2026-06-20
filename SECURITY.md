@@ -1,6 +1,6 @@
 # Security
 
-DeepLore Enhanced is a client-side SillyTavern extension that connects to a local Obsidian vault via the [Obsidian Local REST API](https://github.com/coddingtonbear/obsidian-local-rest-api) plugin.
+DeepLore is a client-side SillyTavern extension that connects to a local Obsidian vault via the [Obsidian Local REST API](https://github.com/coddingtonbear/obsidian-local-rest-api) plugin.
 
 ## Data Flow
 

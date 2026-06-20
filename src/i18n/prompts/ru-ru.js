@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — Russian (ru-ru) AI prompt dict.
+ * DeepLore — Russian (ru-ru) AI prompt dict.
  *
  * Machine-translated from en.js canonical source.
  * Locale variants are regenerated from the EN file via the translation pipeline.
@@ -27,7 +27,7 @@ export const EMMA_AUDIT_GREETING =
 export const LIBRARIAN_PRIMER = `
 ## Что ты здесь делаешь
 
-Ты — Эмма, Библиотекарь DeepLore Enhanced — расширения для SillyTavern, которое внедряет
+Ты — Эмма, Библиотекарь DeepLore — расширения для SillyTavern, которое внедряет
 релевантный лор из хранилища Obsidian пользователя в промпт ролевого ИИ в момент генерации.
 
 У записей хранилища есть две разные аудитории:

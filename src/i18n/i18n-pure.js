@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — i18n pure helpers.
+ * DeepLore — i18n pure helpers.
  *
  * No ST imports. Safe to unit-test with `node test/i18n.test.mjs`.
  * The ST-integrated loader lives in `i18n.js` and re-uses these.

@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to DeepLore Enhanced are documented here. This file follows
+All notable changes to DeepLore are documented here. This file follows
 [Keep a Changelog](https://keepachangelog.com/) conventions.
 
 > **Older releases** (`1.0.0-beta` and all pre-1.0 `ALPHA` builds) live in
@@ -8,9 +8,9 @@ All notable changes to DeepLore Enhanced are documented here. This file follows
 
 ---
 
-## [2.5.0]
+## [2.5.0] - 2026-06-20
 
-> Six-locale UI, single source of truth for pipeline verdicts, Custom Proxy retirement, editable AI prompts, and a wide reliability sweep.
+> Six-locale UI, single source of truth for pipeline verdicts, Custom Proxy retirement, editable AI prompts, new graph layouts + vault health, and a wide reliability sweep.
 
 ### Added
 
@@ -31,6 +31,13 @@ All notable changes to DeepLore Enhanced are documented here. This file follows
   - **Round-trip preserved** (snake_case frontmatter, surfaced by `/dle-lint` as new `W_WI_ROUND_TRIP` code): `vectorized`, `selective`, `use_probability`, `prevent_recursion`, `delay_until_recursion`, `group_override`, `use_group_scoring`, `case_sensitive`, `match_whole_words`, `automation_id`, `add_memo`, `display_index`, plus 6 `match_*` scan-source toggles (Wave 2).
   - **Structured import report popup** replaces the old success/warning toast — shows per-field counts, EM handling breakdown, friendly EM explainer with one-click "Skip on future imports" button that flips the `wiImportEmHandling` setting (Wave 5).
 
+#### Graph view modes
+
+- **Layout selector in the graph toolbar** — a new "Layout" dropdown beside "Color:". Force-directed stays the default; positions morph (no teleport) when you switch.
+- **Layered DAG view** — a directed dependency layout over `requires` + `cascade` edges: cycle-break → longest-path layering → arrowheads, so you can read what pulls in what at a glance. Double-click-to-focus is gated off in DAG; Reset always returns to Force.
+- **Vault Health / World Doctor** — a structural problem report surfaced as a side panel with graph highlighting: broken references (`requires`/`excludes`/`cascade` pointing at a title no entry has), contradictory gating (an entry that both requires and excludes the same target), circular `requires` (including via cascade), and orphans. Severity-ranked (breaks-silently / won't-fire / quality).
+- **Force-directed layout unchanged** — default on open, with saved-layout restore and reveal animation exactly as before; the new modes are purely additive.
+
 #### Other new features
 
 - **VerdictStore** — single source of truth for "what DLE decided this turn." Replaces the racing globals `lastInjectionSources` / `lastPipelineTrace` / `previousSources` / `lastInjectionEpoch`. Ring buffer (50) + per-chat IndexedDB spill (~200) survives chat switches and page reloads. 14 call sites migrated. See `docs/gotchas.md` #46.
@@ -46,6 +53,22 @@ All notable changes to DeepLore Enhanced are documented here. This file follows
 - **AI Notepad polish** ([#25](https://github.com/pixelnull/sillytavern-DeepLore-Enhanced/issues/25)) — entry-count FIFO cap, pinned entries survive the cap, manual fuzzy dedup, refuse threshold=0 / empty input (data-wipe guard).
 - **Per-tool default write vault + Librarian per-write override** ([#29](https://github.com/pixelnull/sillytavern-DeepLore-Enhanced/issues/29), [#32](https://github.com/pixelnull/sillytavern-DeepLore-Enhanced/issues/32)) — auto-suggest, scribe, librarian can each target a different vault.
 - **Librarian tool-call budgets** surfaced as user settings (previously hard-coded).
+- **Per-connection Test button** — every AI feature's connection config gets a Test button that fires a real probe and reports back with an ST-style green/red toast, so you can verify a profile before relying on it.
+
+#### Interface, accessibility & onboarding
+
+- **Why? tab redesign** — a verdict funnel header with a KEY › AI breadcrumb and source-vault chip, pipeline-ordered rejection groups, hover/focus-reveal Fix-It pins (pin or block an entry right where it was dropped), and a **live budget pressure meter** showing pre-truncation context pressure before anything gets cut.
+- **New goo-spinner everywhere** — replaces every old spinner (status dot, toasts, empty states, refresh buttons, setup wizard), accent-colored and dark/light aware. The pipeline status toast is larger and cross-fades between phases instead of restarting its spinner each time.
+- **Accessibility hardening** — high-contrast (`forced-colors`) support across tabs, radios, toggles, and browse rows; arrow-key navigation on radio groups; press feedback on every control; `prefers-reduced-motion` honored throughout, with `role=status` / `aria-live` on the pipeline toast.
+- **Onboarding remediation** — connection failures over plain HTTP now open the guided checklist instead of dead-ending; a no-Connection-Profiles state explains how to create one (with a Keywords-Only escape hatch) in both the setup wizard and settings.
+- **Drawer clarity pass** — calmer header bars, a footer that only turns red on real problems, canonical pipeline phase labels, and clearer mode/outcome wording.
+- **Actionable AI-error toasts** — parse / shape / empty-result failures now tell you the next step, translated 1:1 across all 7 locales.
+- **ST-native theming** — DLE themes entirely through ST `--SmartTheme*` / `--dle-*` tokens (via `color-mix`), tracking your ST theme in dark and light.
+- **Drawer render performance** — heavy drawer tabs no longer repaint while the drawer is closed; Browse repaint is hash-guarded against redundant work.
+
+### Changed
+
+- **`librarianPerMessageActivity` now defaults ON** — Librarian gaps clear at generation start and persist across swipes, and per-message dropdown data is kept. Existing users who had explicitly turned it off keep their setting.
 
 ### Removed
 
@@ -72,6 +95,8 @@ All notable changes to DeepLore Enhanced are documented here. This file follows
 - **Slash commands**: `unnamedArgumentList` + `enumProviders` backfilled across remaining commands (BUG-040); `/dle-librarian` autocomplete + popup-scoped pickers + prefill lifecycle fixed.
 - **Summary rollback data corruption** + summarize/batch-optimize hardening.
 - **Audit batch** (onboarding, persistence, breaker, security, perf, correctness) — first-run wizard now imports using the live tested connection and re-verifies on Finish; empty-title entries skipped at parse; notepad + injection-log persist immediately so a fast chat switch can't drop them; verdict IDB reads scoped to the chat; circuit breaker releases the half-open probe on excluded errors; network debug buffer scrubbed on read with JWT/short-token patterns; pseudonymization replaces longest names first; embedded URL secrets stripped from connection references; lazy titleMap + requires/excludes early-out perf.
+- **Release-day audit sweep** — a 5-agent independent pass confirmed and fixed **27 additional bugs: 3 high, 13 medium, 11 low** (one further report refuted as a non-bug). Highlights: a diagnostics-privacy cluster (the shareable export no longer leaks AI prose, prompt/preset settings, sub-32-char header secrets, or `user:pass@` URL credentials) and Librarian provider-routing fixes that resolve the gate, provider format, and tool-choice from the configured Librarian profile instead of ST's global connection (mixed-provider multi-turn no longer breaks).
+- **Install path resolved at runtime** — DLE now derives its own extension folder from the module URL instead of a hardcoded name, so locale, icon, and template loading keep working regardless of what the install folder is called (and stay correct through a future repo/folder rename).
 
 ### Tests
 

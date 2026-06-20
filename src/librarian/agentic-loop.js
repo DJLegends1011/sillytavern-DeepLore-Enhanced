@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — Agentic Loop
+ * DeepLore — Agentic Loop
  * State machine: SEARCH → FLAG → DONE. DLE-owned generation loop, replaces
  * ST ToolManager-based tool calling for Librarian.
  */

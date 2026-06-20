@@ -1,4 +1,4 @@
-# Contributing to DeepLore Enhanced
+# Contributing to DeepLore
 
 ## Development Setup
 
@@ -16,7 +16,7 @@ No build step — DLE ships as plain ES modules, no bundler. Edit a file, reload
 
 ## The `core/` Directory
 
-`core/` contains shared utility modules (parsing, matching, formatting). It was historically shared with a base DeepLore extension via git subtree, but that project is deprecated. `core/` is now owned entirely by Enhanced.
+`core/` contains shared utility modules (parsing, matching, formatting). It was historically shared with the original standalone `sillytavern-DeepLore` extension via git subtree, but that project is deprecated. `core/` is now owned entirely by DeepLore.
 
 ## Running Tests
 

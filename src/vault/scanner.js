@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — Obsidian Vault Scanner.
+ * DeepLore — Obsidian Vault Scanner.
  * Diagnostic scanner that probes a range of ports × HTTPS/HTTP for Local REST API instances.
  *
  * Bypasses obsidianFetch() and the circuit breaker entirely — calls fetch() directly so a tripped

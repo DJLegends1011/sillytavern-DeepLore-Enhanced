@@ -1,5 +1,5 @@
 /**
- * DeepLore Enhanced — Pure helpers for the editable-prompts subsystem.
+ * DeepLore — Pure helpers for the editable-prompts subsystem.
  *
  * No I/O, no module-level mutable state, no DOM or ST dependencies. Every
  * function here is straight input → output so unit tests can hammer it
