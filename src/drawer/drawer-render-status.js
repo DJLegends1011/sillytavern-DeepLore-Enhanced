@@ -9,6 +9,7 @@ import {
     suppressNextAgenticLoop,
 } from '../state.js';
 import { getCurrentForChat as getCurrentVerdictForChat } from '../verdict/verdict-store.js';
+import { tr } from '../i18n/i18n.js';
 
 // Local helper — UI consumers must read the CURRENT CHAT's verdict, not the
 // ring-global newest. See docs/gotchas.md #46 ("UI consumer rule").
@@ -106,7 +107,7 @@ export function renderStatusZone() {
     if (!indexEverLoaded && vaultIndex.length === 0 && !indexing) {
         $drawer.find('[data-stat="entries"]').html('<span class="dle-shimmer">…</span>');
         $drawer.find('[data-stat="tokens"]').html('<span class="dle-shimmer">…</span>');
-        $drawer.find('.dle-pipeline-label').text('Connecting to Obsidian…');
+        $drawer.find('.dle-pipeline-label').text(tr('dle_status_connecting', 'Connecting to Obsidian…'));
     }
 
     // Stat values get a flash animation on change. Verdict store holds the authoritative

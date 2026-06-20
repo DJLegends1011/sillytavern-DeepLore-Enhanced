@@ -460,12 +460,33 @@ function _updatePipelineStatus(text) {
         if (!target) return; // No DOM at all — skip (test envs / cold-boot).
         el = document.createElement('div');
         el.id = 'dle-pipeline-status';
+        // a11y (Wave D): live region so screen readers announce each phase change.
+        // aria-atomic re-reads the whole line (prefix + phase) on every swap.
+        el.setAttribute('role', 'status');
+        el.setAttribute('aria-live', 'polite');
+        el.setAttribute('aria-atomic', 'true');
         // Prepended into #form_sheld so it sits above the send form (CSS positioned absolute).
         // Fallback to document.body keeps the element observable rather than orphaning it.
         target.prepend(el);
     }
     el.classList.remove('dle-toast-out');
-    el.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> DeepLore: ${text}`;
+    // Wave D: stable structure — a decorative spinner (aria-hidden, never re-rendered so
+    // its spin animation never restarts mid-pipeline) + a swappable text span that
+    // cross-fades on phase change. Building via querySelector self-heals any pre-Wave-D
+    // element left behind by a hot reload.
+    let span = el.querySelector('.dle-pipeline-status-text');
+    if (!span) {
+        el.innerHTML = '<i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i>'
+            + '<span class="dle-pipeline-status-text"></span>';
+        span = el.querySelector('.dle-pipeline-status-text');
+    }
+    const full = trf('dle_status_header', text); // "DeepLore: ${text}" — localizable prefix.
+    if (span.textContent === full) return;       // unchanged → keep spin smooth, skip re-fade.
+    span.textContent = full;
+    // Re-trigger the cross-fade keyframe: remove → reflow → re-add.
+    span.classList.remove('dle-phase-swap');
+    void span.offsetWidth;
+    span.classList.add('dle-phase-swap');
 }
 
 function _removePipelineStatus() {

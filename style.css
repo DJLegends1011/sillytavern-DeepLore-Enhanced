@@ -5630,6 +5630,32 @@ button.dle-chip-x:focus-visible { outline: 2px solid var(--dle-accent); outline-
 #dle-pipeline-status.dle-toast-out { animation: dle-toast-out 0.2s ease-in forwards; }
 #dle-pipeline-status i.fa-spinner { font-size: 0.85em; opacity: 0.7; }
 
+/* Wave D: phase text cross-fades on change (the spinner node is left untouched so its
+   spin never restarts). Uses the Wave A motion tokens. The swap class is re-triggered
+   from JS via a remove → reflow → re-add cycle in _updatePipelineStatus. */
+.dle-pipeline-status-text { display: inline-block; }
+.dle-pipeline-status-text.dle-phase-swap {
+    animation: dle-phase-swap var(--dle-dur-fast, 120ms) var(--dle-ease-out, ease-out);
+}
+@keyframes dle-phase-swap {
+    from { opacity: 0; transform: translateY(2px); }
+    to   { opacity: 1; transform: none; }
+}
+
+/* Wave D: explicit reduced-motion coverage. #dle-pipeline-status lives in #form_sheld,
+   OUTSIDE the descendant-scoped reduced-motion block (which only covers .dle-settings *
+   and #deeplore-drawer *), so it needs its own opt-out. _removePipelineStatus has a
+   setTimeout fallback, so killing dle-toast-out's animationend is safe.
+   (Wave G may fold this into the consolidated reduced-motion block.) */
+@media (prefers-reduced-motion: reduce) {
+    #dle-pipeline-status,
+    #dle-pipeline-status.dle-toast-out,
+    .dle-pipeline-status-text.dle-phase-swap,
+    #dle-pipeline-status i.fa-spinner {
+        animation: none !important;
+    }
+}
+
 /* GOTCHA: translateY(%) is relative to element's own height, not parent's.
    calc(100% + var(--bottomFormBlockSize)) ensures the toast hides behind the
    variable-height send form (textarea can be resized). */
