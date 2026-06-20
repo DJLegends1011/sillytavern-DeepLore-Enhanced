@@ -250,6 +250,14 @@
     #deeplore-panel.dle-overlay-mode {
         backdrop-filter: none !important;
     }
+    /* Wave G: explicit kill for the new tab-panel fade (the wildcard above already
+       clamps its duration; this makes the intent unambiguous). The :active press
+       feedback is an instantaneous state change, not timed motion, so it is left
+       intact under reduced motion by design. NOTE: this block is the canonical
+       motion-kill for the .dle-settings / #deeplore-drawer / .dle-popup subtrees;
+       the only DLE motion living OUTSIDE them is #dle-pipeline-status (in #form_sheld),
+       which carries its own reduced-motion block near its definition. */
+    .dle-tab-panel.active { animation: none !important; }
 }
 
 /* --- Section spacing between settings groups --- */
@@ -1042,6 +1050,14 @@ dle-notes { display: none !important; }
 .dle-tab-panel.active {
     display: flex;
     flex-direction: column;
+    /* Wave G: gentle fade/rise on tab switch (re-fires whenever the panel regains
+       .active). In-drawer, so the broad prefers-reduced-motion block neutralizes it;
+       an explicit kill is also listed there for clarity. */
+    animation: dle-tab-fade var(--dle-dur-base, 200ms) var(--dle-ease-out, ease-out);
+}
+@keyframes dle-tab-fade {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: none; }
 }
 
 /* Panel toolbar (shared across tabs: label + diff + expand) */
@@ -5646,7 +5662,8 @@ button.dle-chip-x:focus-visible { outline: 2px solid var(--dle-accent); outline-
    OUTSIDE the descendant-scoped reduced-motion block (which only covers .dle-settings *
    and #deeplore-drawer *), so it needs its own opt-out. _removePipelineStatus has a
    setTimeout fallback, so killing dle-toast-out's animationend is safe.
-   (Wave G may fold this into the consolidated reduced-motion block.) */
+   Wave G decision: kept HERE, next to the toast it governs, rather than folded into the
+   broad block — locality wins, and the broad block can't reach #form_sheld anyway. */
 @media (prefers-reduced-motion: reduce) {
     #dle-pipeline-status,
     #dle-pipeline-status.dle-toast-out,
@@ -5675,6 +5692,68 @@ button.dle-chip-x:focus-visible { outline: 2px solid var(--dle-accent); outline-
 }
 .dle-action-btn.dle-toggle-active i {
     color: var(--dle-warning, #e2a832);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Wave G — a11y hardening (Windows High Contrast) + universal press feedback
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Universal pressed feedback — every DLE button / role=button / role=radio dips on
+   :active so a click registers physically (was a single :active rule in the whole
+   sheet). Instantaneous state change (no transition) → reduced-motion safe. Scoped
+   to DLE roots so ST's own controls are untouched. */
+#deeplore-drawer button:active,
+#deeplore-drawer [role="button"]:active,
+#deeplore-drawer [role="radio"]:active,
+.dle-settings button:active,
+.dle-settings [role="button"]:active,
+.dle-popup button:active,
+.dle-popup [role="button"]:active {
+    transform: translateY(1px);
+}
+
+/* Forced-colors (Windows High Contrast): DLE leans on color-mix(…transparent) tints
+   and custom borders that the OS palette strips, so state conveyed by background tint
+   disappears. Restore it with system colors + explicit borders. The preview harness
+   can't emulate forced-colors, so these are authored conservatively against verified
+   class names rather than visually tuned. */
+@media (forced-colors: active) {
+    /* Keyboard focus must be a visible system outline everywhere DLE renders. */
+    #deeplore-drawer :focus-visible,
+    .dle-settings :focus-visible,
+    .dle-popup :focus-visible {
+        outline: 2px solid Highlight !important;
+        outline-offset: 2px;
+    }
+
+    /* Panel delineation — its tinted bg/border collapse to Canvas. */
+    #deeplore-panel { border: 1px solid CanvasText; }
+
+    /* Selected radio / active tab / pressed quick-filter: the "current" tint vanishes
+       → mark with a system border + Highlight text. */
+    .dle-tab.active,
+    .dle-why-filter-btn[aria-checked="true"],
+    .dle-librarian-sub-tab[aria-checked="true"],
+    .dle-qf-pill[aria-pressed="true"] {
+        border: 1px solid Highlight !important;
+        color: Highlight !important;
+    }
+
+    /* Browse row state cues (injected / selected) read via bg → add an inset ring. */
+    .dle-browse-injected { outline: 1px solid Highlight; outline-offset: -1px; }
+    .dle-browse-selected { outline: 2px solid Highlight; outline-offset: -2px; }
+
+    /* Pin / block toggles signal "engaged" via tint → border them when active. */
+    .dle-pin-active,
+    .dle-block-active { border: 1px solid Highlight !important; }
+
+    /* Health dots, temperature tints and token heat are color-as-data — preserve their
+       hues instead of letting the OS flatten them to CanvasText. */
+    #dle-drawer-footer [data-health],
+    .dle-status-dot,
+    .dle-temp-hot,
+    .dle-temp-cold,
+    .dle-why-tokens { forced-color-adjust: none; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

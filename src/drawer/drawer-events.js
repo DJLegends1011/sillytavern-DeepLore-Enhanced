@@ -373,13 +373,18 @@ export function wireInjectionTab($drawer) {
     });
 
     // BUG-AUDIT-C11: roving tabindex for Why? filter radiogroup — mirrors Librarian sub-tabs.
+    // Wave G: full ARIA radiogroup keys — Up/Left = prev, Down/Right = next (Enter/Space
+    // select natively via the <button>). Enter is also handled explicitly (legacy; idempotent
+    // for a radio).
     $drawer.on('keydown', '.dle-why-filter-btn', function (e) {
         if (e.key === 'Enter') { e.preventDefault(); $(this).trigger('click'); return; }
-        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        const fwd = e.key === 'ArrowRight' || e.key === 'ArrowDown';
+        const back = e.key === 'ArrowLeft' || e.key === 'ArrowUp';
+        if (!fwd && !back) return;
         e.preventDefault();
         const $btns = $drawer.find('.dle-why-filter-btn');
         const idx = $btns.index(this);
-        const next = e.key === 'ArrowRight' ? (idx + 1) % $btns.length : (idx - 1 + $btns.length) % $btns.length;
+        const next = fwd ? (idx + 1) % $btns.length : (idx - 1 + $btns.length) % $btns.length;
         $btns.eq(next).trigger('click').focus();
     });
 
@@ -1158,12 +1163,16 @@ export function wireLibrarianTab($drawer) {
         scheduleRender(renderLibrarianTab);
     });
 
+    // Wave G: full ARIA radiogroup keys — Up/Left = prev, Down/Right = next (Enter/Space
+    // select natively via the <button>).
     $drawer.on('keydown', '.dle-librarian-sub-tab', function (e) {
-        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        const fwd = e.key === 'ArrowRight' || e.key === 'ArrowDown';
+        const back = e.key === 'ArrowLeft' || e.key === 'ArrowUp';
+        if (!fwd && !back) return;
         e.preventDefault();
         const $tabs = $drawer.find('.dle-librarian-sub-tab');
         const idx = $tabs.index(this);
-        const next = e.key === 'ArrowRight' ? (idx + 1) % $tabs.length : (idx - 1 + $tabs.length) % $tabs.length;
+        const next = fwd ? (idx + 1) % $tabs.length : (idx - 1 + $tabs.length) % $tabs.length;
         $tabs.eq(next).trigger('click').focus();
     });
 
