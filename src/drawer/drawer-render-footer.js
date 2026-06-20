@@ -15,7 +15,7 @@ function _currentVerdictForChat() {
     return getCurrentVerdictForChat(cid);
 }
 import { getCircuitState } from '../vault/obsidian-api.js';
-import { ds, formatTokensCompact, activityLog, announceToScreenReader } from './drawer-state.js';
+import { ds, formatTokensCompact, activityLog, announceToScreenReader, isDrawerVisible } from './drawer-state.js';
 import { callGenericPopup, POPUP_TYPE } from '../../../../../popup.js';
 import { tr } from '../i18n/i18n.js';
 
@@ -53,14 +53,50 @@ async function handleResetClick(e) {
     try { renderFooter(); } catch { /* drawer may be teardown-mid */ }
 }
 
+// Wave F: footer selector cache. The footer DOM is rendered once per drawer lifetime, but
+// renderFooter is driven by the high-frequency CHAT_COMPLETION_PROMPT_READY tick — re-querying
+// ~16 selectors every call is wasted work. Rebuild only when the footer element identity changes
+// (drawer destroy/recreate, HMR). Cached elements are only mutated in place (class/attr/text/.html
+// on the node itself), never replaced, so the captured jQuery refs stay valid.
+let _fc = null;
+let _fcRoot = null;
+function _footerCache($footer) {
+    const root = $footer[0];
+    if (_fc && _fcRoot === root) return _fc;
+    _fcRoot = root;
+    _fc = {
+        barContainer: $footer.find('.dle-context-bar-container'),
+        barContext: $footer.find('.dle-context-bar-context'),
+        barResponse: $footer.find('.dle-context-bar-response'),
+        barLabel: $footer.find('.dle-context-bar-label'),
+        libUsage: $footer.find('.dle-librarian-usage'),
+        activityFeed: $footer.find('.dle-activity-feed'),
+        vault: $footer.find('[data-health="vault"]'),
+        conn: $footer.find('[data-health="connection"]'),
+        pipe: $footer.find('[data-health="pipeline"]'),
+        cache: $footer.find('[data-health="cache"]'),
+        ai: $footer.find('[data-health="ai"]'),
+        reset: $footer.find('#dle-reset-ai-breaker'),
+        aiCalls: $footer.find('[data-ai-stat="calls"]'),
+        aiCached: $footer.find('[data-ai-stat="cached"]'),
+        aiTokens: $footer.find('[data-ai-stat="tokens"]'),
+        aiStats: $footer.find('.dle-ai-stats'),
+    };
+    return _fc;
+}
+
 export function renderFooter() {
     const $drawer = ds.$drawer;
     if (!$drawer) return;
     const $footer = $drawer.find('#dle-drawer-footer');
     if (!$footer.length) return;
+    // Wave F: skip footer repaint into a hidden drawer (CHAT_COMPLETION_PROMPT_READY drives this
+    // every prompt-ready tick); replayed on open (drawer.js toggle handler).
+    if (!isDrawerVisible()) return;
+    const fc = _footerCache($footer);
 
     // ── Context window bar ──
-    const $barContainer = $footer.find('.dle-context-bar-container');
+    const $barContainer = fc.barContainer;
 
     // Non-OAI backends don't expose prompt token tracking — hide the bar entirely.
     if (!ds.contextBarAvailable) {
@@ -83,8 +119,8 @@ export function renderFooter() {
         const contextPct = Math.min(100, (contextUsed / maxContext) * 100);
         const responsePct = Math.min(100 - contextPct, (responseTokens / maxContext) * 100);
 
-        $footer.find('.dle-context-bar-context').css('width', `${contextPct}%`);
-        $footer.find('.dle-context-bar-response').css({
+        fc.barContext.css('width', `${contextPct}%`);
+        fc.barResponse.css({
             left: `${contextPct}%`,
             width: `${responsePct}%`,
         });
@@ -99,7 +135,7 @@ export function renderFooter() {
         const label = contextUsed
             ? `${formatTokensCompact(contextUsed)} / ${formatTokensCompact(maxContext)}`
             : `— / ${formatTokensCompact(maxContext)}`;
-        $footer.find('.dle-context-bar-label').text(label);
+        fc.barLabel.text(label);
 
         // A4: announce used and reserved SEPARATELY — aria-valuenow is the used prompt only
         // (never used + reserved, which conflated reservation with consumption). The reserve
@@ -115,9 +151,9 @@ export function renderFooter() {
             .attr('aria-valuetext', `${formatTokensCompact(contextUsed)} used, ${formatTokensCompact(responseTokens)} reserved for reply, of ${formatTokensCompact(maxContext)} max`)
             .attr('title', contextTitle);
     } else {
-        $footer.find('.dle-context-bar-context').css('width', '0%');
-        $footer.find('.dle-context-bar-response').css({ left: '0%', width: '0%' });
-        $footer.find('.dle-context-bar-label').text('Context data unavailable \u2014 waiting for first generation');
+        fc.barContext.css('width', '0%');
+        fc.barResponse.css({ left: '0%', width: '0%' });
+        fc.barLabel.text('Context data unavailable \u2014 waiting for first generation');
         $barContainer.removeClass('dle-context-high dle-context-critical');
         $barContainer.attr('aria-valuenow', 0).attr('aria-valuemax', 0).removeAttr('aria-valuetext');
         $barContainer.attr('title', 'Context data unavailable \u2014 waiting for first generation');
@@ -127,7 +163,7 @@ export function renderFooter() {
     // set from result.usage). A distinct readout \u2014 Librarian runs its own API call via
     // CMRS, so its cost is NOT part of ST's settled prompt window above. Hidden until a
     // Librarian turn has run this chat.
-    const $libUsage = $footer.find('.dle-librarian-usage');
+    const $libUsage = fc.libUsage;
     if ($libUsage.length) {
         const lib = librarianLastUsage || { input: 0, output: 0, total: 0 };
         if (lib.total > 0) {
@@ -141,7 +177,7 @@ export function renderFooter() {
     }
 
     // ── Activity feed ──
-    const $activityFeed = $footer.find('.dle-activity-feed');
+    const $activityFeed = fc.activityFeed;
     $activityFeed.attr('role', 'log').attr('aria-live', 'polite');
     if ($activityFeed.length && activityLog.length > 0) {
         // Content-hash guard — the feed DOM only changes when activityLog mutates (once per
@@ -178,7 +214,7 @@ export function renderFooter() {
     // ── Health icons ──
     const settings = getSettings();
 
-    const $vault = $footer.find('[data-health="vault"]');
+    const $vault = fc.vault;
     if (lastHealthResult) {
         const { errors, warnings } = lastHealthResult;
         if (errors > 0) {
@@ -197,7 +233,7 @@ export function renderFooter() {
     }
 
     // Connection icon = aggregate Obsidian circuit-breaker state across vaults.
-    const $conn = $footer.find('[data-health="connection"]');
+    const $conn = fc.conn;
     const circuit = getCircuitState();
     if (circuit.state === 'closed') {
         $conn.removeClass('dle-health-warn dle-health-error').addClass('dle-health-ok');
@@ -210,7 +246,7 @@ export function renderFooter() {
         $conn.attr('aria-label', `Obsidian: unreachable (${circuit.failures} failures) — click to view connection status`).attr('title', `Obsidian: unreachable (${circuit.failures} failures) — click to view connection status`);
     }
 
-    const $pipe = $footer.find('[data-health="pipeline"]');
+    const $pipe = fc.pipe;
     const _footerTrace = _currentVerdictForChat()?.trace ?? null;
     if (_footerTrace) {
         const entryCount = _footerTrace.injected?.length || 0;
@@ -227,7 +263,7 @@ export function renderFooter() {
         $pipe.attr('aria-label', 'Lore selection: no runs yet').attr('title', 'Lore selection: no runs yet — send a message to trigger');
     }
 
-    const $cache = $footer.find('[data-health="cache"]');
+    const $cache = fc.cache;
     if (indexEverLoaded && indexTimestamp) {
         const ageMs = Date.now() - indexTimestamp;
         const cacheTTL = (settings.cacheTTL || 300) * 1000;
@@ -253,8 +289,8 @@ export function renderFooter() {
         $cache.attr('aria-label', 'Cache: empty — no index loaded').attr('title', 'Cache: empty — no index loaded');
     }
 
-    const $ai = $footer.find('[data-health="ai"]');
-    const $reset = $footer.find('#dle-reset-ai-breaker');
+    const $ai = fc.ai;
+    const $reset = fc.reset;
     const breakerOpen = isAiCircuitOpen();
     if (breakerOpen) {
         $ai.removeClass('dle-health-ok dle-health-warn').addClass('dle-health-error');
@@ -284,13 +320,13 @@ export function renderFooter() {
     }
 
     // ── AI stats ──
-    $footer.find('[data-ai-stat="calls"]').text(`${aiSearchStats.calls} calls`);
-    $footer.find('[data-ai-stat="cached"]').text(`${aiSearchStats.cachedHits} cached`);
+    fc.aiCalls.text(`${aiSearchStats.calls} calls`);
+    fc.aiCached.text(`${aiSearchStats.cachedHits} cached`);
     const totalTok = aiSearchStats.totalInputTokens + aiSearchStats.totalOutputTokens;
-    $footer.find('[data-ai-stat="tokens"]').text(`${formatTokensCompact(totalTok)} tokens`);
+    fc.aiTokens.text(`${formatTokensCompact(totalTok)} tokens`);
 
     // Click/keyboard surface — announces input/output token split for screen readers.
-    const $aiStats = $footer.find('.dle-ai-stats');
+    const $aiStats = fc.aiStats;
     if ($aiStats.length && (aiSearchStats.totalInputTokens > 0 || aiSearchStats.totalOutputTokens > 0)) {
         const splitTitle = `${formatTokensCompact(aiSearchStats.totalInputTokens)} input tokens · ${formatTokensCompact(aiSearchStats.totalOutputTokens)} output tokens`;
         $aiStats.attr('title', splitTitle).attr('role', 'button').attr('tabindex', '0');

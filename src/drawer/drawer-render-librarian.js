@@ -8,7 +8,7 @@ import { escapeHtml } from '../../../../../utils.js';
 import { loreGaps } from '../state.js';
 import { getSettings } from '../../settings.js';
 import { getHiddenGapIds, getDismissedGapIds, buildLibrarianActivityFeed } from '../librarian/librarian-tools.js';
-import { ds } from './drawer-state.js';
+import { ds, isDrawerVisible } from './drawer-state.js';
 
 // ════════════════════════════════════════════════════════════════════════════
 // Helpers
@@ -57,6 +57,11 @@ function relativeTime(ts) {
 export function renderLibrarianTab() {
     const $drawer = ds.$drawer;
     if (!$drawer) return;
+    // Wave F: skip painting into a hidden drawer; replayed on open (drawer.js toggle handler).
+    // Safe because the librarian tab-bar badge (.dle-librarian-badge) is written below in THIS
+    // function but only needs to be live while the drawer is open — gating is drawer-visible-only
+    // (not active-tab), so the badge refreshes for every tab whenever the drawer is open.
+    if (!isDrawerVisible()) return;
 
     const $list = $drawer.find('.dle-librarian-list');
     const $empty = $drawer.find('#dle-panel-librarian .dle-empty-state');

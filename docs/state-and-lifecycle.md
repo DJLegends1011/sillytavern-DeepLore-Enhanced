@@ -97,6 +97,7 @@ under `multiVaultConflictResolution='all'` (CLAUDE.md trackerKey invariant).
 | `consecutiveInjections` | `Map<trackerKey, count>` | Chat (cleared) | trackGeneration, CHAT_CHANGED | decay calculation |
 | `injectionHistory` | `Map<trackerKey, lastGen>` | Chat (cleared) | trackGeneration, CHAT_CHANGED | reinjection cooldown |
 | `chatInjectionCounts` | `Map<trackerKey, count>` | Chat (hydrated) | onGenerate stage 9, MESSAGE_SWIPED, CHAT_CHANGED | drawer, analytics |
+| `chatInjectionCountsVersion` | `number` (monotonic) | Session (never reset) | `notifyChatInjectionCountsUpdated()` (`++`) | Browse-tab render hash-guard (Wave F) — cheap "counts may have changed" signal so a count mutation re-renders ×N badges / temperature tints / count-dependent sorts |
 | `perSwipeInjectedKeys` | `Map<swipeKey, Set<trackerKey>>` | Chat (hydrated) | onGenerate stage 9, CHAT_CHANGED | swipe rollback |
 | `lastGenerationTrackerSnapshot` | `object\|null` | Chat (→null) | onGenerate swipe phase, CHAT_CHANGED | swipe rollback |
 | `lastWarningRatio` | `number` | Chat (→0) | onGenerate context warning | warning dedup |

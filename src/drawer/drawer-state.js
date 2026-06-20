@@ -209,6 +209,35 @@ export function invalidateTemperatureCache() {
     _tempCache = null;
 }
 
+// ─── Render Gating (Wave F) ───
+
+/**
+ * Is the drawer panel currently shown to the user?
+ *
+ * The signal is the `openDrawer` class — ST's `doNavbarIconClick` adds it on open
+ * and removes it on close (drawer.js's toggle handler reads the same class to set
+ * aria-expanded). `pinnedOpen` is *pin state*, NOT visibility: a pinned-but-closed
+ * drawer is `closedDrawer pinnedOpen` with offsetHeight 0, so it must NOT count as
+ * visible. A pinned-AND-open drawer carries `openDrawer pinnedOpen`, so checking
+ * `openDrawer` alone is correct for both pinned and unpinned cases. Class-based
+ * (NOT offsetParent/offsetHeight) so it never forces a reflow on the hot paths.
+ *
+ * The heavy tab/footer painters gate on this so generation-time observer churn
+ * (verdict / counts / prompt-ready ticks) doesn't filter+sort the whole vault or
+ * repaint the footer into a hidden drawer. Renders deferred while closed are
+ * replayed on open (see drawer.js toggle handler + flushDrawerRenders). Gating is
+ * **drawer-visible only, NOT active-tab** — the tab-bar badges (`.dle-librarian-badge`
+ * in renderLibrarianTab, the browse count via `ds.browseFilteredEntries`) stay live
+ * for every tab whenever the drawer is open. See docs/gotchas.md (Wave F).
+ *
+ * @returns {boolean}
+ */
+export function isDrawerVisible() {
+    const el = ds.$drawer ? ds.$drawer.find('#deeplore-panel')[0] : null;
+    if (!el) return false;
+    return el.classList.contains('openDrawer');
+}
+
 // ─── Render Scheduling ───
 
 let renderPending = false;

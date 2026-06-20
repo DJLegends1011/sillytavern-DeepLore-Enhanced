@@ -87,6 +87,17 @@ export let consecutiveInjections = new Map();
 /** Per-chat injection counts: trackerKey → number of generations this entry was injected (reset per chat) */
 export let chatInjectionCounts = new Map();
 
+/**
+ * Monotonic version stamp for `chatInjectionCounts`, bumped in
+ * `notifyChatInjectionCountsUpdated()`. A cheap, complete signal that the count
+ * Map's *contents* may have changed (increments, decrements, reset) without
+ * iterating it. Consumed by the Browse-tab render hash-guard (Wave F) so a
+ * count change re-renders the ×N badges / temperature tints / count-dependent
+ * sorts while skipping renders when nothing changed. As reliable as the existing
+ * re-render trigger — both ride the same notify choke point.
+ */
+export let chatInjectionCountsVersion = 0;
+
 /** Last health check result for settings badge */
 export let lastHealthResult = null;
 
@@ -699,6 +710,7 @@ export function onChatInjectionCountsUpdated(callback) {
 export function clearChatInjectionCountsCallbacks() { chatInjectionCountsCallbacks.clear(); }
 
 export function notifyChatInjectionCountsUpdated() {
+    chatInjectionCountsVersion++;
     for (const cb of [...chatInjectionCountsCallbacks]) {
         try { cb(); } catch (err) { console.warn('[DLE] chatInjectionCounts callback error:', err.message); }
     }

@@ -29,7 +29,7 @@ import {
 } from './drawer-state.js';
 import {
     renderStatusZone, renderInjectionTab, updateInjectionCountBadges,
-    renderBrowseTab, renderGatingTab, renderTimers, renderFooter,
+    renderBrowseTab, renderBrowseWindow, renderGatingTab, renderTimers, renderFooter,
 } from './drawer-render.js';
 import { renderLibrarianTab } from './drawer-render-librarian.js';
 import {
@@ -98,6 +98,26 @@ export function resetDrawerState() {
     if ($folder.length) $folder.val('');
     // Re-render librarian tab to clear stale gaps from the previous chat.
     scheduleRender(renderLibrarianTab);
+}
+
+/**
+ * Wave F: replay the heavy tab/footer renders that gate out while the drawer is closed (their
+ * isDrawerVisible() guard short-circuits). Called on the closed→open transition. Gating is
+ * drawer-visible-only (not active-tab) so while OPEN every observer keeps all tabs fresh — no
+ * flush-on-tab-switch needed; only the closed→open boundary must be replayed here.
+ * renderStatusZone runs LAST so the tab-bar badges (browse count via ds.browseFilteredEntries)
+ * reflect the freshly-rebuilt Browse render; renderBrowseWindow is deferred a frame so the
+ * virtual-scroll math sees the panel's painted height.
+ */
+function flushDrawerRenders() {
+    renderInjectionTab();
+    renderBrowseTab();
+    renderGatingTab();
+    renderLibrarianTab();
+    renderTimers();
+    renderFooter();
+    renderStatusZone();
+    requestAnimationFrame(renderBrowseWindow);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -219,6 +239,8 @@ export async function createDrawerPanel() {
             $drawer.find('#deeploreDrawerIcon').attr('aria-expanded', String(isOpen));
             pushEvent('drawer', { action: isOpen ? 'open' : 'close' });
             updateOverlayMode();
+            // Wave F: replay renders deferred while the drawer was closed.
+            if (isOpen) flushDrawerRenders();
         });
     });
 
@@ -670,6 +692,10 @@ export function navigateToBrowseEntry(title) {
 
     // Focus the search input after render so keyboard users can immediately refine.
     renderBrowseTab();
+    // Wave F: this path opens the drawer directly (bypassing the toggle handler's flush), so when
+    // it was opened from a closed state the other tabs would still be gated-stale until their next
+    // observer fires. Replay them now so a tab-switch immediately after nav shows fresh content.
+    flushDrawerRenders();
     setTimeout(() => ds.$drawer?.find('.dle-browse-input').focus(), 0);
 }
 

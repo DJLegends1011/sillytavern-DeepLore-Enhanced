@@ -3,9 +3,9 @@ import { escapeHtml } from '../../../../../utils.js';
 import { getSettings } from '../../settings.js';
 import { tr, trf } from '../i18n/i18n.js';
 import {
-    vaultIndex,
+    vaultIndex, indexTimestamp,
     generationLock, indexing,
-    cooldownTracker, decayTracker, chatInjectionCounts, trackerKey,
+    cooldownTracker, decayTracker, chatInjectionCounts, chatInjectionCountsVersion, trackerKey,
     fieldDefinitions,
 } from '../state.js';
 import { getCurrentForChat as getCurrentVerdictForChat, getPrevious as getPreviousVerdict } from '../verdict/verdict-store.js';
@@ -22,7 +22,7 @@ import { DEFAULT_FIELD_DEFINITIONS } from '../fields.js';
 import { buildObsidianURI, categorizeRejections, resolveEntryVault, normalizePinBlock, comparePriority, parseMatchReason } from '../helpers.js';
 import {
     ds, BROWSE_ROW_HEIGHT, BROWSE_OVERSCAN,
-    getMatchLabel, computeEntryTemperatures,
+    getMatchLabel, computeEntryTemperatures, isDrawerVisible,
 } from './drawer-state.js';
 import { buildBrowseRowModel, topFolderOf } from './drawer-browse-pure.js';
 
@@ -35,6 +35,10 @@ let _cachedFieldValues = null;
 let _cachedFieldValuesIndexLen = -1;
 // Hash of last renderInjectionTab inputs — skip render when unchanged.
 let _lastInjectionRenderHash = null;
+// Wave F: hash of last renderBrowseTab inputs — skip the full vault filter+sort+rowmodel
+// rebuild when unchanged. Completeness rests on chatInjectionCountsVersion (covers ×N
+// badges / temperature tints / count-dependent sorts) + the verdict signature + indexTimestamp.
+let _lastBrowseRenderHash = null;
 
 // Wave C: render-site pipeline-stage ranking for the "Filtered Out" groups. The shared
 // categorizeRejections() contract is consumed by the cartographer + browse popups too, so we
@@ -78,6 +82,8 @@ function _fixItPinLabel(stage) {
 export function renderInjectionTab() {
     const $drawer = ds.$drawer;
     if (!$drawer) return;
+    // Wave F: skip painting into a hidden drawer; replayed on open (drawer.js toggle handler).
+    if (!isDrawerVisible()) return;
     // Verdict store is the single source of truth for "what did DLE decide this turn."
     // Empty verdict (injectedSources=[]) is a valid result; null means no verdict written yet.
     // UI consumers must read the CURRENT CHAT's verdict (not ring-global newest) so a
@@ -363,6 +369,43 @@ export function updateInjectionCountBadges() {
 export function renderBrowseTab() {
     const $drawer = ds.$drawer;
     if (!$drawer) return;
+    // Wave F: skip painting into a hidden drawer; replayed on open (drawer.js toggle handler).
+    if (!isDrawerVisible()) return;
+
+    // Wave F: content-hash guard — skip the full vault filter + sort + row-model rebuild when
+    // nothing that affects Browse output changed. Completeness: chatInjectionCountsVersion covers
+    // the ×N badges / temperature tints / count-dependent sorts+filters; the verdict signature
+    // covers injected/since-gen/rejection state; indexTimestamp+length cover vault content. Pins/
+    // blocks, all filters, sort, grouping, expanded folders, selection, and field defs are hashed
+    // directly. Bypassed when a nav target is pending (auto-expand must run). Computed before any
+    // DOM/range-cache mutation so a skip leaves the virtual-scroll cache valid.
+    const _bVerdict = _currentVerdictForChat();
+    const _bPrev = getPreviousVerdict();
+    const _browseHash = [
+        indexTimestamp || 0,
+        vaultIndex ? vaultIndex.length : 0,
+        chatInjectionCountsVersion,
+        indexing ? '1' : '0',
+        ds.browseQuery || '',
+        ds.browseStatusFilter || 'all',
+        ds.browseTagFilter || '',
+        ds.browseFolderFilter || '',
+        JSON.stringify(ds.browseCustomFieldFilters || {}),
+        ds.browseQuickFilter ?? '',
+        ds.browseSort || '',
+        ds.browseFolderGrouping ? '1' : '0',
+        ds.browseExpandedFolders instanceof Set ? [...ds.browseExpandedFolders].sort().join('|') : '',
+        ds.browseSelectMode ? '1' : '0',
+        ds.browseSelected instanceof Set ? [...ds.browseSelected].sort().join('|') : '',
+        fieldDefinitions.length,
+        JSON.stringify(chat_metadata?.deeplore_pins || []),
+        JSON.stringify(chat_metadata?.deeplore_blocks || []),
+        `${_bVerdict?.epoch ?? ''}.${_bVerdict?.msgIdx ?? ''}.${_bVerdict?.ts ?? ''}`,
+        `${_bPrev?.epoch ?? ''}.${_bPrev?.msgIdx ?? ''}`,
+    ].join('#');
+    if (!ds.browseNavigateTarget && _browseHash === _lastBrowseRenderHash) return;
+    _lastBrowseRenderHash = _browseHash;
+
     // Invalidate virtual scroll cache so stale entry references are never rendered.
     ds.browseLastRangeStart = -1;
     ds.browseLastRangeEnd = -1;
@@ -991,6 +1034,8 @@ export function renderBrowseWindow() {
 export function renderGatingTab() {
     const $drawer = ds.$drawer;
     if (!$drawer) return;
+    // Wave F: skip painting into a hidden drawer; replayed on open (drawer.js toggle handler).
+    if (!isDrawerVisible()) return;
     const ctx = chat_metadata?.deeplore_context;
 
     // ── Folder filter section ──
