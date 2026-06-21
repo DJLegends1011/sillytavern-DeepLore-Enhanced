@@ -28,11 +28,12 @@ function pinBlockKey(item) {
 }
 
 function entryKey(entry) {
-    return `${entry.vaultSource || ''}:${lower(entry.title)}`;
+    const normalized = typeof entry === 'string' ? { title: entry } : (entry || {});
+    return `${normalized.vaultSource || ''}:${lower(normalized.title)}`;
 }
 
-function makeTitleSet(items = []) {
-    return new Set((items || []).map(item => lower(item?.title || item)).filter(Boolean));
+function makeEntryKeySet(items = []) {
+    return new Set((items || []).map(entryKey).filter(key => key !== ':'));
 }
 
 function makePinBlockSet(items = []) {
@@ -107,15 +108,14 @@ export function buildMobileBrowseOptions(entries = []) {
 
 export function filterMobileBrowseEntries(entries = [], rawState = {}, context = {}) {
     const state = normalizeMobileBrowseState(rawState);
-    const injectedTitles = makeTitleSet(context.injectedSources);
+    const injectedKeys = makeEntryKeySet(context.injectedSources);
     const pinSet = makePinBlockSet(context.pins);
     const blockSet = makePinBlockSet(context.blocks);
     const counts = context.chatInjectionCounts instanceof Map ? context.chatInjectionCounts : new Map();
 
     let filtered = entries.filter(entry => {
-        const title = lower(entry.title);
         if (state.query && !matchesQuery(entry, state.query)) return false;
-        if (state.status === 'injected' && !injectedTitles.has(title)) return false;
+        if (state.status === 'injected' && !injectedKeys.has(entryKey(entry))) return false;
         if (state.status === 'pinned' && !pinSet.has(entryKey(entry))) return false;
         if (state.status === 'blocked' && !blockSet.has(entryKey(entry))) return false;
         if (state.status === 'constant' && !entry.constant) return false;
@@ -123,7 +123,7 @@ export function filterMobileBrowseEntries(entries = [], rawState = {}, context =
         if (state.tag && !(entry.tags || []).includes(state.tag)) return false;
         if (state.folder && (!entry.folderPath || (entry.folderPath !== state.folder && !entry.folderPath.startsWith(`${state.folder}/`)))) return false;
         if (state.quick === 'never-injected' && (counts.get(trackerKey(entry)) || 0) > 0) return false;
-        if (state.quick === 'since-gen' && !injectedTitles.has(title)) return false;
+        if (state.quick === 'since-gen' && !injectedKeys.has(entryKey(entry))) return false;
         return true;
     });
 
@@ -133,8 +133,8 @@ export function filterMobileBrowseEntries(entries = [], rawState = {}, context =
         case 'alpha_desc': filtered.sort((a, b) => b.title.localeCompare(a.title)); break;
         case 'tokens_desc': filtered.sort((a, b) => (b.tokenEstimate || 0) - (a.tokenEstimate || 0)); break;
         case 'tokens_asc': filtered.sort((a, b) => (a.tokenEstimate || 0) - (b.tokenEstimate || 0)); break;
-        case 'priority_desc': filtered.sort((a, b) => (b.priority || 50) - (a.priority || 50)); break;
-        default: filtered.sort((a, b) => (a.priority || 50) - (b.priority || 50));
+        case 'priority_desc': filtered.sort((a, b) => (b.priority ?? 50) - (a.priority ?? 50)); break;
+        default: filtered.sort((a, b) => (a.priority ?? 50) - (b.priority ?? 50));
     }
 
     const isFiltered = state.query || state.status !== 'all' || state.tag || state.folder || state.quick;
@@ -147,7 +147,7 @@ export function filterMobileBrowseEntries(entries = [], rawState = {}, context =
 }
 
 export function buildMobileBrowseRows(entries = [], context = {}) {
-    const injectedTitles = makeTitleSet(context.injectedSources);
+    const injectedKeys = makeEntryKeySet(context.injectedSources);
     const pinSet = makePinBlockSet(context.pins);
     const blockSet = makePinBlockSet(context.blocks);
     const counts = context.chatInjectionCounts instanceof Map ? context.chatInjectionCounts : new Map();
@@ -161,10 +161,10 @@ export function buildMobileBrowseRows(entries = [], context = {}) {
             title: entry.title || 'Untitled',
             keysLabel: entry.constant ? '(constant)' : (entry.keys || []).slice(0, 4).join(', '),
             folderLabel: entry.folderPath || entry.vaultSource || 'Vault entry',
-            priorityLabel: entry.constant ? 'CONST' : `P${entry.priority || 50}`,
+            priorityLabel: entry.constant ? 'CONST' : `P${entry.priority ?? 50}`,
             tokenLabel: entry.tokenEstimate ? `${entry.tokenEstimate} tokens` : '',
             injectedCount: count,
-            isInjected: injectedTitles.has(lower(entry.title)),
+            isInjected: injectedKeys.has(entryKey(entry)),
             isPinned: pinSet.has(entryKey(entry)),
             isBlocked: blockSet.has(entryKey(entry)),
             preview: entry.summary || (entry.content ? `${entry.content.slice(0, 220)}${entry.content.length > 220 ? '...' : ''}` : 'No content preview.'),

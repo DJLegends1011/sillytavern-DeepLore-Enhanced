@@ -15,6 +15,7 @@ import {
 import {
     computeEdgeSnap,
     computeSnapX,
+    parseSafeAreaInsets,
     clampPosition,
     isDrag,
     loadPosition,
@@ -92,6 +93,21 @@ test('computeSnapX: right edge returns viewport - size - margin', () => {
 test('computeSnapX: respects safe area insets', () => {
     assertEqual(computeSnapX('left', 390, 20, 0), EDGE_MARGIN + 20);
     assertEqual(computeSnapX('right', 390, 0, 15), 390 - FAB_SIZE - EDGE_MARGIN - 15);
+});
+
+test('parseSafeAreaInsets: parses computed inset properties as non-negative pixels', () => {
+
+    assertEqual(parseSafeAreaInsets({
+        top: '10px',
+        left: '20.5px',
+        right: 'auto',
+        bottom: '-3px',
+    }), {
+        top: 10,
+        left: 20.5,
+        right: 0,
+        bottom: 0,
+    });
 });
 
 section('FAB — Tap vs Drag Threshold');
@@ -323,6 +339,7 @@ test('shouldHideForStSurface: remains visible when chat input bar is present', (
 });
 
 function makeVisibleElement(rect = {}) {
+    const listeners = new Map();
     return {
         hidden: false,
         open: false,
@@ -344,8 +361,16 @@ function makeVisibleElement(rect = {}) {
             this.parentNode.children = this.parentNode.children.filter((child) => child !== this);
             this.parentNode = null;
         },
-        addEventListener() {},
-        removeEventListener() {},
+        addEventListener(type, listener) {
+            if (!listeners.has(type)) listeners.set(type, new Set());
+            listeners.get(type).add(listener);
+        },
+        removeEventListener(type, listener) {
+            listeners.get(type)?.delete(listener);
+        },
+        dispatchEvent(event) {
+            for (const listener of listeners.get(event.type) || []) listener(event);
+        },
         setPointerCapture() {},
         releasePointerCapture() {},
         closest() { return null; },
@@ -361,29 +386,56 @@ function makeVisibleElement(rect = {}) {
     };
 }
 
-function withCharacterLibraryDom({ launcherVisible = false, embeddedVisible = false }, callback) {
+function withCharacterLibraryDom({ launcherVisible = false, embeddedVisible = false, safeInsets = {} }, callback) {
     const previousDocument = globalThis.document;
     const previousWindow = globalThis.window;
     const previousGetComputedStyle = globalThis.getComputedStyle;
+    const previousRequestAnimationFrame = globalThis.requestAnimationFrame;
+    const previousCancelAnimationFrame = globalThis.cancelAnimationFrame;
     const formSheld = makeVisibleElement({ top: 700, bottom: 744, width: 390, height: 44 });
     const launcher = makeVisibleElement({ top: 80, bottom: 160, width: 220, height: 80 });
     const embedded = makeVisibleElement({ top: 0, bottom: 844, width: 390, height: 844 });
     const body = makeVisibleElement({ top: 0, bottom: 844, width: 390, height: 844 });
     const documentElement = makeVisibleElement({ top: 0, bottom: 844, width: 390, height: 844 });
+    const windowListeners = new Map();
 
     globalThis.window = {
         innerWidth: 390,
         innerHeight: 844,
-        addEventListener() {},
-        removeEventListener() {},
+        addEventListener(type, listener) {
+            if (!windowListeners.has(type)) windowListeners.set(type, new Set());
+            windowListeners.get(type).add(listener);
+        },
+        removeEventListener(type, listener) {
+            windowListeners.get(type)?.delete(listener);
+        },
+        dispatchEvent(event) {
+            for (const listener of windowListeners.get(event.type) || []) listener(event);
+        },
     };
-    globalThis.getComputedStyle = (el) => ({
-        display: el?.style?.display || 'block',
-        visibility: el?.style?.visibility || 'visible',
-        position: el?.style?.position || 'fixed',
-        opacity: el?.style?.opacity || '1',
-        getPropertyValue() { return ''; },
-    });
+    globalThis.requestAnimationFrame = (callback) => {
+        callback();
+        return 1;
+    };
+    globalThis.cancelAnimationFrame = () => {};
+    globalThis.getComputedStyle = (el) => {
+        const isSafeAreaProbe = String(el?.style?.cssText || '').includes('safe-area-inset');
+        return {
+            display: el?.style?.display || 'block',
+            visibility: el?.style?.visibility || 'visible',
+            position: el?.style?.position || 'fixed',
+            opacity: el?.style?.opacity || '1',
+            paddingTop: isSafeAreaProbe ? `${safeInsets.top || 0}px` : '0px',
+            paddingLeft: isSafeAreaProbe ? `${safeInsets.left || 0}px` : '0px',
+            paddingRight: isSafeAreaProbe ? `${safeInsets.right || 0}px` : '0px',
+            paddingBottom: isSafeAreaProbe ? `${safeInsets.bottom || 0}px` : '0px',
+            top: isSafeAreaProbe ? `${safeInsets.top || 0}px` : (el?.style?.top || 'auto'),
+            left: isSafeAreaProbe ? `${safeInsets.left || 0}px` : (el?.style?.left || 'auto'),
+            right: isSafeAreaProbe ? `${safeInsets.right || 0}px` : (el?.style?.right || 'auto'),
+            bottom: isSafeAreaProbe ? `${safeInsets.bottom || 0}px` : (el?.style?.bottom || 'auto'),
+            getPropertyValue(property) { return this[property] || ''; },
+        };
+    };
     globalThis.document = {
         body,
         documentElement,
@@ -403,14 +455,43 @@ function withCharacterLibraryDom({ launcherVisible = false, embeddedVisible = fa
     };
 
     try {
-        return callback();
+        return callback({ window: globalThis.window, document: globalThis.document });
     } finally {
         destroyFab();
         globalThis.document = previousDocument;
         globalThis.window = previousWindow;
         globalThis.getComputedStyle = previousGetComputedStyle;
+        globalThis.requestAnimationFrame = previousRequestAnimationFrame;
+        globalThis.cancelAnimationFrame = previousCancelAnimationFrame;
     }
 }
+
+test('createFab: drag settling snaps to the nearest safe edge and preserves clamped Y', () => {
+    mockStorage.clear();
+    withCharacterLibraryDom({ safeInsets: { top: 10, left: 20, right: 8, bottom: 4 } }, ({ window }) => {
+        const wrapper = createFab();
+        const button = wrapper.children[0];
+
+        button.dispatchEvent({
+            type: 'pointerdown',
+            pointerId: 1,
+            pointerType: 'touch',
+            clientX: 342,
+            clientY: 660,
+        });
+        window.dispatchEvent({
+            type: 'pointermove',
+            pointerId: 1,
+            clientX: 120,
+            clientY: 300,
+            preventDefault() {},
+        });
+        window.dispatchEvent({ type: 'pointerup', pointerId: 1 });
+
+        assertEqual(loadPosition(), { left: EDGE_MARGIN + 20, top: 284 },
+            'settled drag should persist the snapped X and unchanged clamped Y');
+    });
+});
 
 test('createFab: remains visible for CharacterLibrary launcher picker', () => {
     withCharacterLibraryDom({ launcherVisible: true }, () => {

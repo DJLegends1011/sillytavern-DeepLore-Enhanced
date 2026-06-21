@@ -18,6 +18,20 @@ export function computeSnapX(edge, viewportWidth, safeLeft = 0, safeRight = 0) {
     return viewportWidth - FAB_SIZE - EDGE_MARGIN - safeRight;
 }
 
+function parseCssPixels(value) {
+    const parsed = Number.parseFloat(String(value ?? ''));
+    return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+}
+
+export function parseSafeAreaInsets(insets = {}) {
+    return {
+        top: parseCssPixels(insets.top),
+        left: parseCssPixels(insets.left),
+        right: parseCssPixels(insets.right),
+        bottom: parseCssPixels(insets.bottom),
+    };
+}
+
 export function clampPosition(x, y, viewportWidth, viewportHeight, inputBarTop = viewportHeight, safeInsets = {}) {
     const safeTop = safeInsets.top || 0;
     const safeLeft = safeInsets.left || 0;
@@ -169,6 +183,7 @@ let viewportResizeHandler = null;
 let inputResizeObserver = null;
 let overlayObserver = null;
 let overlayRafId = null;
+let safeAreaProbe = null;
 let inputBarEl = null;
 let inputTextEl = null;
 let desiredVisible = true;
@@ -253,17 +268,43 @@ function getInputBarTop() {
     return tops.length ? Math.min(...tops) : viewportHeight;
 }
 
+function getSafeAreaProbe() {
+    if (safeAreaProbe) return safeAreaProbe;
+    if (typeof document === 'undefined') return null;
+
+    const parent = document.documentElement || document.body;
+    if (!parent?.appendChild || !document.createElement) return null;
+
+    const probe = document.createElement('div');
+    probe.setAttribute?.('aria-hidden', 'true');
+    probe.style.cssText = [
+        'position:fixed',
+        'visibility:hidden',
+        'pointer-events:none',
+        'width:0',
+        'height:0',
+        'padding-top:env(safe-area-inset-top, 0px)',
+        'padding-left:env(safe-area-inset-left, 0px)',
+        'padding-right:env(safe-area-inset-right, 0px)',
+        'padding-bottom:env(safe-area-inset-bottom, 0px)',
+    ].join(';');
+    parent.appendChild(probe);
+    safeAreaProbe = probe;
+    return safeAreaProbe;
+}
+
 function getSafeInsets() {
     try {
-        if (typeof getComputedStyle === 'function') {
-            const style = getComputedStyle(document.documentElement);
-            return {
-                top: parseInt(style.getPropertyValue('env(safe-area-inset-top)'), 10) || 0,
-                left: parseInt(style.getPropertyValue('env(safe-area-inset-left)'), 10) || 0,
-                right: parseInt(style.getPropertyValue('env(safe-area-inset-right)'), 10) || 0,
-                bottom: parseInt(style.getPropertyValue('env(safe-area-inset-bottom)'), 10) || 0,
-            };
-        }
+        if (typeof getComputedStyle !== 'function') throw new Error('computed style unavailable');
+        const probe = getSafeAreaProbe();
+        if (!probe) throw new Error('safe-area probe unavailable');
+        const style = getComputedStyle(probe);
+        return parseSafeAreaInsets({
+            top: style.paddingTop || style.getPropertyValue?.('padding-top'),
+            left: style.paddingLeft || style.getPropertyValue?.('padding-left'),
+            right: style.paddingRight || style.getPropertyValue?.('padding-right'),
+            bottom: style.paddingBottom || style.getPropertyValue?.('padding-bottom'),
+        });
     } catch { /* test environment */ }
     return { top: 0, left: 0, right: 0, bottom: 0 };
 }
@@ -304,8 +345,11 @@ function settlePosition(x, y, animate = true) {
     const inputTop = getInputBarTop();
     const insets = getSafeInsets();
     const clamped = clampPosition(x, y, vw, vh, inputTop, insets);
-    desiredPosition = { x: clamped.x, y: clamped.y };
-    applyPosition(clamped.x, clamped.y, animate);
+    const edge = computeEdgeSnap(clamped.x, vw);
+    const snappedX = computeSnapX(edge, vw, insets.left, insets.right);
+    const settled = clampPosition(snappedX, clamped.y, vw, vh, inputTop, insets);
+    desiredPosition = { x: settled.x, y: settled.y };
+    applyPosition(settled.x, settled.y, animate);
     savePosition(desiredPosition.x, desiredPosition.y);
 }
 
@@ -575,6 +619,8 @@ export function destroyFab() {
     overlayObserver = null;
     if (overlayRafId) cancelAnimationFrame(overlayRafId);
     overlayRafId = null;
+    safeAreaProbe?.remove?.();
+    safeAreaProbe = null;
     viewportResizeHandler = null;
     if (reclampRafId) cancelAnimationFrame(reclampRafId);
     reclampRafId = null;

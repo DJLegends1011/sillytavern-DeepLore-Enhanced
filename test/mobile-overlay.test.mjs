@@ -18,6 +18,14 @@ import {
     normalizeMobileTab,
     createMobileUiState,
 } from '../src/mobile/mobile-state.js';
+import {
+    buildMobileBrowseRows,
+    filterMobileBrowseEntries,
+} from '../src/mobile/mobile-browse.js';
+import {
+    splitInjectionEntries,
+} from '../src/mobile/mobile-injection.js';
+
 
 section('Mobile State — Tabs');
 
@@ -73,6 +81,73 @@ test('createMobileUiState: instances do not share scrollPositions', () => {
     assertEqual(b.scrollPositions.browse, undefined);
 });
 
+
+section('Mobile Browse — Identity and Priority');
+
+test('Browse: injected status and rows distinguish same-title entries across vaults', () => {
+    const entries = [
+        { title: 'Shared Lore', vaultSource: 'vault-a' },
+        { title: 'Shared Lore', vaultSource: 'vault-b' },
+    ];
+    const context = {
+        injectedSources: [{ title: 'Shared Lore', vaultSource: 'vault-a' }],
+    };
+
+    const filtered = filterMobileBrowseEntries(entries, { status: 'injected' }, context);
+    assertEqual(filtered.entries.map(entry => entry.vaultSource), ['vault-a'],
+        'injected filtering should select only the matching vault-qualified entry');
+
+    const rows = buildMobileBrowseRows(entries, context);
+    assertEqual(rows.map(row => row.isInjected), [true, false],
+        'row injection state should not leak to a same-title entry in another vault');
+});
+
+test('Browse: priority zero sorts literally and renders as P0', () => {
+    const entries = [
+        { title: 'Default', vaultSource: 'vault-a' },
+        { title: 'Ten', vaultSource: 'vault-a', priority: 10 },
+        { title: 'Zero', vaultSource: 'vault-a', priority: 0 },
+    ];
+
+    const sorted = filterMobileBrowseEntries(entries, { sort: 'priority_asc' });
+    assertEqual(sorted.entries.map(entry => entry.title), ['Zero', 'Ten', 'Default'],
+        'priority zero should sort ahead of positive and default priorities');
+
+    const rows = buildMobileBrowseRows(entries);
+    assertEqual(rows.find(row => row.title === 'Zero')?.priorityLabel, 'P0',
+        'priority zero should retain its literal label');
+});
+
+section('Mobile Injection — Identity');
+
+test('Injection: a filtered same-title entry from another vault is retained', () => {
+    const result = splitInjectionEntries(
+        [{ title: 'Shared Lore', vaultSource: 'vault-a' }],
+        {
+            gatedOut: [{ title: 'Shared Lore', vaultSource: 'vault-b' }],
+        },
+        'both',
+    );
+
+    assertEqual(
+        result.entries.map(entry => `${entry.vaultSource}:${entry.isFiltered}`),
+        ['vault-a:false', 'vault-b:true'],
+        'injected identity should not suppress a filtered entry from another vault',
+    );
+});
+
+test('Injection: filtered dedup keeps same-title entries from different vaults', () => {
+    const result = splitInjectionEntries([], {
+        gatedOut: [{ title: 'Shared Lore', vaultSource: 'vault-a' }],
+        cooldownRemoved: [{ title: 'Shared Lore', vaultSource: 'vault-b' }],
+    }, 'filtered');
+
+    assertEqual(
+        result.entries.map(entry => entry.vaultSource),
+        ['vault-a', 'vault-b'],
+        'filtered identity should deduplicate by vaultSource:title instead of bare title',
+    );
+});
 import {
     OVERLAY_ID,
     OVERLAY_TAB_DEFS,

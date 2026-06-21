@@ -13,7 +13,14 @@ export function normalizeMobileInjectionState(input = {}) {
     return { filter, expandedKey };
 }
 
-function collectFilteredEntries(trace, injectedTitles) {
+function normalizedEntryKey(item) {
+    const normalized = typeof item === 'string' ? { title: item } : (item || {});
+    const title = normalized.title || normalized.id || 'Untitled';
+    return `${normalized.vaultSource || ''}:${String(title).toLowerCase()}`;
+}
+
+
+function collectFilteredEntries(trace, injectedKeys) {
     if (!trace) return [];
     const seen = new Set();
     const entries = [];
@@ -21,8 +28,9 @@ function collectFilteredEntries(trace, injectedTitles) {
     function add(items, reason) {
         for (const item of items || []) {
             const title = item.title || item.id || 'Untitled';
-            if (injectedTitles.has(title) || seen.has(title)) continue;
-            seen.add(title);
+            const key = normalizedEntryKey({ ...item, title });
+            if (injectedKeys.has(key) || seen.has(key)) continue;
+            seen.add(key);
             const entryReason = item.reason || reason;
             entries.push({ ...item, title, reason: entryReason, isFiltered: true });
         }
@@ -38,7 +46,7 @@ function collectFilteredEntries(trace, injectedTitles) {
 
 export function splitInjectionEntries(sources, trace, filterMode) {
     const safeSourcesList = Array.isArray(sources) ? sources : [];
-    const injectedTitles = new Set(safeSourcesList.map(s => s.title));
+    const injectedKeys = new Set(safeSourcesList.map(normalizedEntryKey));
 
     if (filterMode === 'injected') {
         const entries = safeSourcesList.map(s => ({ ...s, isFiltered: false }));
@@ -49,7 +57,7 @@ export function splitInjectionEntries(sources, trace, filterMode) {
         };
     }
 
-    const filteredEntries = collectFilteredEntries(trace, injectedTitles);
+    const filteredEntries = collectFilteredEntries(trace, injectedKeys);
 
     if (filterMode === 'filtered') {
         return {
