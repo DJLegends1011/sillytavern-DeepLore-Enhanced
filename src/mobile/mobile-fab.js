@@ -75,7 +75,7 @@ export function savePosition(left, top) {
     } catch { /* storage full or unavailable */ }
 }
 
-export function defaultPosition(viewportWidth = 390, viewportHeight = 844, inputBarTop = viewportHeight, safeInsets = {}) {
+export function defaultPosition(viewportWidth = 390, viewportHeight = 844, _inputBarTop = viewportHeight, safeInsets = {}) {
     const x = viewportWidth - FAB_SIZE - EDGE_MARGIN - (safeInsets.right || 0);
     const y = viewportHeight - FAB_SIZE - EDGE_MARGIN - (safeInsets.bottom || 0);
     const clamped = clampPosition(x, y, viewportWidth, viewportHeight, viewportHeight, safeInsets);
@@ -459,8 +459,8 @@ function onPointerDown(e) {
         offsetY: e.clientY - currentPosition.y,
         isDragging: false,
         rafId: null,
-        lastX: currentPosition.x,
-        lastY: currentPosition.y,
+        pendingX: currentPosition.x,
+        pendingY: currentPosition.y,
     };
     fabEl.setPointerCapture?.(e.pointerId);
 }
@@ -479,36 +479,40 @@ function onPointerMove(e) {
     }
 
     e.preventDefault?.();
-    const newX = e.clientX - dragState.offsetX;
-    const newY = e.clientY - dragState.offsetY;
+    const state = dragState;
+    const newX = e.clientX - state.offsetX;
+    const newY = e.clientY - state.offsetY;
+    state.pendingX = newX;
+    state.pendingY = newY;
 
-    if (dragState.rafId) cancelAnimationFrame(dragState.rafId);
-    dragState.rafId = requestAnimationFrame(() => {
+    if (state.rafId) cancelAnimationFrame(state.rafId);
+    state.rafId = requestAnimationFrame(() => {
+        if (dragState !== state) return;
+        state.rafId = null;
         const { vw, vh } = getViewportSize();
         const inputTop = getInputBarTop();
         const insets = getSafeInsets();
-        const clamped = clampPosition(newX, newY, vw, vh, inputTop, insets);
+        const clamped = clampPosition(state.pendingX, state.pendingY, vw, vh, inputTop, insets);
         applyPosition(clamped.x, clamped.y, false);
-        dragState.lastX = clamped.x;
-        dragState.lastY = clamped.y;
     });
 }
 
 function onPointerEnd(e) {
     if (!dragState) return;
-    const wasDragging = dragState.isDragging;
-    const lastX = dragState.lastX;
-    const lastY = dragState.lastY;
-    const pointerId = dragState.pointerId ?? e?.pointerId;
+    const state = dragState;
+    const wasDragging = state.isDragging;
+    const pendingX = state.pendingX;
+    const pendingY = state.pendingY;
+    const pointerId = state.pointerId ?? e?.pointerId;
 
-    if (dragState.rafId) cancelAnimationFrame(dragState.rafId);
+    if (state.rafId) cancelAnimationFrame(state.rafId);
     fabEl?.classList?.remove('dle-mobile-fab--dragging');
     fabEl?.releasePointerCapture?.(pointerId);
     dragState = null;
 
     if (wasDragging) {
-        settlePosition(lastX, lastY);
-    } else {
+        settlePosition(pendingX, pendingY);
+    } else if (e?.type !== 'pointercancel') {
         onTapCallback?.();
     }
 }
@@ -628,6 +632,7 @@ export function destroyFab() {
     fabWrapper = null;
     fabEl = null;
     badgeEl = null;
+    if (dragState?.rafId) cancelAnimationFrame(dragState.rafId);
     dragState = null;
     onTapCallback = null;
     currentPosition = { x: 0, y: 0 };

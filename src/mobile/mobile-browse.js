@@ -1,4 +1,4 @@
-import { normalizePinBlock } from '../helpers.js';
+import { matchesPinBlock } from '../helpers.js';
 import { trackerKey } from '../state.js';
 
 export const MOBILE_BROWSE_DEFAULT_STATE = Object.freeze({
@@ -22,10 +22,6 @@ function lower(value) {
     return String(value || '').toLowerCase();
 }
 
-function pinBlockKey(item) {
-    const normalized = normalizePinBlock(item || '');
-    return `${normalized.vaultSource || ''}:${lower(normalized.title)}`;
-}
 
 function entryKey(entry) {
     const normalized = typeof entry === 'string' ? { title: entry } : (entry || {});
@@ -36,8 +32,9 @@ function makeEntryKeySet(items = []) {
     return new Set((items || []).map(entryKey).filter(key => key !== ':'));
 }
 
-function makePinBlockSet(items = []) {
-    return new Set((items || []).map(pinBlockKey));
+function makePinBlockMatcher(items = []) {
+    const pinBlocks = items || [];
+    return entry => pinBlocks.some(item => matchesPinBlock(item, entry));
 }
 
 function parseQuery(query) {
@@ -109,15 +106,15 @@ export function buildMobileBrowseOptions(entries = []) {
 export function filterMobileBrowseEntries(entries = [], rawState = {}, context = {}) {
     const state = normalizeMobileBrowseState(rawState);
     const injectedKeys = makeEntryKeySet(context.injectedSources);
-    const pinSet = makePinBlockSet(context.pins);
-    const blockSet = makePinBlockSet(context.blocks);
+    const matchesPin = makePinBlockMatcher(context.pins);
+    const matchesBlock = makePinBlockMatcher(context.blocks);
     const counts = context.chatInjectionCounts instanceof Map ? context.chatInjectionCounts : new Map();
 
     let filtered = entries.filter(entry => {
         if (state.query && !matchesQuery(entry, state.query)) return false;
         if (state.status === 'injected' && !injectedKeys.has(entryKey(entry))) return false;
-        if (state.status === 'pinned' && !pinSet.has(entryKey(entry))) return false;
-        if (state.status === 'blocked' && !blockSet.has(entryKey(entry))) return false;
+        if (state.status === 'pinned' && !matchesPin(entry)) return false;
+        if (state.status === 'blocked' && !matchesBlock(entry)) return false;
         if (state.status === 'constant' && !entry.constant) return false;
         if (state.status === 'regular' && entry.constant) return false;
         if (state.tag && !(entry.tags || []).includes(state.tag)) return false;
@@ -148,8 +145,8 @@ export function filterMobileBrowseEntries(entries = [], rawState = {}, context =
 
 export function buildMobileBrowseRows(entries = [], context = {}) {
     const injectedKeys = makeEntryKeySet(context.injectedSources);
-    const pinSet = makePinBlockSet(context.pins);
-    const blockSet = makePinBlockSet(context.blocks);
+    const matchesPin = makePinBlockMatcher(context.pins);
+    const matchesBlock = makePinBlockMatcher(context.blocks);
     const counts = context.chatInjectionCounts instanceof Map ? context.chatInjectionCounts : new Map();
 
     return entries.map(entry => {
@@ -165,8 +162,8 @@ export function buildMobileBrowseRows(entries = [], context = {}) {
             tokenLabel: entry.tokenEstimate ? `${entry.tokenEstimate} tokens` : '',
             injectedCount: count,
             isInjected: injectedKeys.has(entryKey(entry)),
-            isPinned: pinSet.has(entryKey(entry)),
-            isBlocked: blockSet.has(entryKey(entry)),
+            isPinned: matchesPin(entry),
+            isBlocked: matchesBlock(entry),
             preview: entry.summary || (entry.content ? `${entry.content.slice(0, 220)}${entry.content.length > 220 ? '...' : ''}` : 'No content preview.'),
         };
     });

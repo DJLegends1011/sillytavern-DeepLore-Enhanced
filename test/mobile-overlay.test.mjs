@@ -118,6 +118,55 @@ test('Browse: priority zero sorts literally and renders as P0', () => {
         'priority zero should retain its literal label');
 });
 
+test('Browse: legacy bare pins and blocks match same-title entries in every vault', () => {
+    const entries = [
+        { title: 'Shared Lore', vaultSource: 'vault-a' },
+        { title: 'Shared Lore', vaultSource: 'vault-b' },
+        { title: 'Other Lore', vaultSource: 'vault-a' },
+    ];
+    const context = {
+        pins: ['Shared Lore'],
+        blocks: ['Shared Lore'],
+    };
+
+    const pinned = filterMobileBrowseEntries(entries, { status: 'pinned' }, context);
+    const blocked = filterMobileBrowseEntries(entries, { status: 'blocked' }, context);
+    assertEqual(pinned.entries.map(entry => entry.vaultSource), ['vault-a', 'vault-b'],
+        'legacy bare pins should match the title in every vault');
+    assertEqual(blocked.entries.map(entry => entry.vaultSource), ['vault-a', 'vault-b'],
+        'legacy bare blocks should match the title in every vault');
+
+    const rows = buildMobileBrowseRows(entries, context);
+    assertEqual(rows.map(row => row.isPinned), [true, true, false],
+        'row pin state should apply legacy title wildcards across vaults');
+    assertEqual(rows.map(row => row.isBlocked), [true, true, false],
+        'row block state should apply legacy title wildcards across vaults');
+});
+
+test('Browse: structured pins and blocks remain exact-vault matches', () => {
+    const entries = [
+        { title: 'Shared Lore', vaultSource: 'vault-a' },
+        { title: 'Shared Lore', vaultSource: 'vault-b' },
+    ];
+    const context = {
+        pins: [{ title: 'Shared Lore', vaultSource: 'vault-a' }],
+        blocks: [{ title: 'Shared Lore', vaultSource: 'vault-b' }],
+    };
+
+    const pinned = filterMobileBrowseEntries(entries, { status: 'pinned' }, context);
+    const blocked = filterMobileBrowseEntries(entries, { status: 'blocked' }, context);
+    assertEqual(pinned.entries.map(entry => entry.vaultSource), ['vault-a'],
+        'structured pins should match only their vault');
+    assertEqual(blocked.entries.map(entry => entry.vaultSource), ['vault-b'],
+        'structured blocks should match only their vault');
+
+    const rows = buildMobileBrowseRows(entries, context);
+    assertEqual(rows.map(row => row.isPinned), [true, false],
+        'row pin state should preserve exact-vault identity');
+    assertEqual(rows.map(row => row.isBlocked), [false, true],
+        'row block state should preserve exact-vault identity');
+});
+
 section('Mobile Injection — Identity');
 
 test('Injection: a filtered same-title entry from another vault is retained', () => {

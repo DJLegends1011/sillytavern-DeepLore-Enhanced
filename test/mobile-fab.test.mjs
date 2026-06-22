@@ -386,7 +386,12 @@ function makeVisibleElement(rect = {}) {
     };
 }
 
-function withCharacterLibraryDom({ launcherVisible = false, embeddedVisible = false, safeInsets = {} }, callback) {
+function withCharacterLibraryDom({
+    launcherVisible = false,
+    embeddedVisible = false,
+    safeInsets = {},
+    queueAnimationFrames = false,
+}, callback) {
     const previousDocument = globalThis.document;
     const previousWindow = globalThis.window;
     const previousGetComputedStyle = globalThis.getComputedStyle;
@@ -398,6 +403,9 @@ function withCharacterLibraryDom({ launcherVisible = false, embeddedVisible = fa
     const body = makeVisibleElement({ top: 0, bottom: 844, width: 390, height: 844 });
     const documentElement = makeVisibleElement({ top: 0, bottom: 844, width: 390, height: 844 });
     const windowListeners = new Map();
+    const rafCallbacks = new Map();
+    const cancelledRafIds = new Set();
+    let nextRafId = 1;
 
     globalThis.window = {
         innerWidth: 390,
@@ -414,10 +422,15 @@ function withCharacterLibraryDom({ launcherVisible = false, embeddedVisible = fa
         },
     };
     globalThis.requestAnimationFrame = (callback) => {
-        callback();
-        return 1;
+        const id = nextRafId++;
+        if (queueAnimationFrames) rafCallbacks.set(id, callback);
+        else callback();
+        return id;
     };
-    globalThis.cancelAnimationFrame = () => {};
+    globalThis.cancelAnimationFrame = (id) => {
+        cancelledRafIds.add(id);
+        rafCallbacks.delete(id);
+    };
     globalThis.getComputedStyle = (el) => {
         const isSafeAreaProbe = String(el?.style?.cssText || '').includes('safe-area-inset');
         return {
@@ -455,7 +468,14 @@ function withCharacterLibraryDom({ launcherVisible = false, embeddedVisible = fa
     };
 
     try {
-        return callback({ window: globalThis.window, document: globalThis.document });
+        return callback({
+            window: globalThis.window,
+            document: globalThis.document,
+            raf: {
+                pendingIds: () => [...rafCallbacks.keys()],
+                wasCancelled: (id) => cancelledRafIds.has(id),
+            },
+        });
     } finally {
         destroyFab();
         globalThis.document = previousDocument;
@@ -490,6 +510,85 @@ test('createFab: drag settling snaps to the nearest safe edge and preserves clam
 
         assertEqual(loadPosition(), { left: EDGE_MARGIN + 20, top: 284 },
             'settled drag should persist the snapped X and unchanged clamped Y');
+    });
+});
+
+test('createFab: release before queued drag frame settles from the latest pointer position', () => {
+    mockStorage.clear();
+    withCharacterLibraryDom({
+        safeInsets: { top: 10, left: 20, right: 8, bottom: 4 },
+        queueAnimationFrames: true,
+    }, ({ window, raf }) => {
+        const wrapper = createFab();
+        const button = wrapper.children[0];
+
+        button.dispatchEvent({
+            type: 'pointerdown',
+            pointerId: 1,
+            pointerType: 'touch',
+            clientX: 342,
+            clientY: 660,
+        });
+        window.dispatchEvent({
+            type: 'pointermove',
+            pointerId: 1,
+            clientX: 120,
+            clientY: 300,
+            preventDefault() {},
+        });
+        const [queuedDragFrame] = raf.pendingIds();
+        window.dispatchEvent({ type: 'pointerup', pointerId: 1 });
+
+        assert(raf.wasCancelled(queuedDragFrame), 'release should cancel the queued drag frame');
+        assertEqual(loadPosition(), { left: EDGE_MARGIN + 20, top: 284 },
+            'settling should persist the edge and Y from the latest pointer position');
+    });
+});
+
+test('destroyFab: cancels an active drag animation frame', () => {
+    withCharacterLibraryDom({ queueAnimationFrames: true }, ({ window, raf }) => {
+        const wrapper = createFab();
+        const button = wrapper.children[0];
+
+        button.dispatchEvent({
+            type: 'pointerdown',
+            pointerId: 1,
+            pointerType: 'touch',
+            clientX: 342,
+            clientY: 660,
+        });
+        window.dispatchEvent({
+            type: 'pointermove',
+            pointerId: 1,
+            clientX: 120,
+            clientY: 300,
+            preventDefault() {},
+        });
+        const [queuedDragFrame] = raf.pendingIds();
+
+        destroyFab();
+
+        assert(raf.wasCancelled(queuedDragFrame), 'destroy should cancel the active drag frame');
+        assertEqual(raf.pendingIds(), [], 'destroy should leave no queued drag frame');
+    });
+});
+
+test('createFab: pointer cancellation never invokes the tap callback', () => {
+    let tapCount = 0;
+    withCharacterLibraryDom({}, ({ window }) => {
+        const wrapper = createFab({ onTap: () => { tapCount += 1; } });
+        const button = wrapper.children[0];
+
+        button.dispatchEvent({
+            type: 'pointerdown',
+            pointerId: 1,
+            pointerType: 'touch',
+            clientX: 342,
+            clientY: 660,
+        });
+        window.dispatchEvent({ type: 'pointercancel', pointerId: 1 });
+
+        assertEqual(tapCount, 0, 'pointercancel should clean up without acting as a tap');
     });
 });
 
