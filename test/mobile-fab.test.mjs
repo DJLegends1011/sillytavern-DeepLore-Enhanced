@@ -592,6 +592,103 @@ test('createFab: pointer cancellation never invokes the tap callback', () => {
     });
 });
 
+test('createFab: mismatched pointer end events do not settle or end the active drag', () => {
+    mockStorage.clear();
+    withCharacterLibraryDom({ queueAnimationFrames: true }, ({ window, raf }) => {
+        const wrapper = createFab();
+        const button = wrapper.children[0];
+
+        button.dispatchEvent({
+            type: 'pointerdown',
+            pointerId: 1,
+            pointerType: 'touch',
+            clientX: 342,
+            clientY: 660,
+        });
+        window.dispatchEvent({
+            type: 'pointermove',
+            pointerId: 1,
+            clientX: 120,
+            clientY: 300,
+            preventDefault() {},
+        });
+        const [queuedDragFrame] = raf.pendingIds();
+
+        window.dispatchEvent({ type: 'pointerup', pointerId: 2 });
+        window.dispatchEvent({ type: 'pointercancel', pointerId: 2 });
+
+        assert(!raf.wasCancelled(queuedDragFrame), 'another pointer should not cancel the active drag frame');
+        assertEqual(loadPosition(), null, 'another pointer should not settle the active drag');
+
+        window.dispatchEvent({ type: 'pointerup', pointerId: 1 });
+
+        assert(raf.wasCancelled(queuedDragFrame), 'the owning pointer should still end the active drag');
+        assertEqual(loadPosition(), { left: EDGE_MARGIN, top: 284 },
+            'the owning pointer should settle the original drag');
+    });
+});
+
+test('createFab: mismatched pointer end events do not tap or end the active press', () => {
+    let tapCount = 0;
+    withCharacterLibraryDom({}, ({ window }) => {
+        const wrapper = createFab({ onTap: () => { tapCount += 1; } });
+        const button = wrapper.children[0];
+
+        button.dispatchEvent({
+            type: 'pointerdown',
+            pointerId: 1,
+            pointerType: 'touch',
+            clientX: 342,
+            clientY: 660,
+        });
+
+        window.dispatchEvent({ type: 'pointerup', pointerId: 2 });
+        window.dispatchEvent({ type: 'pointercancel', pointerId: 2 });
+
+        assertEqual(tapCount, 0, 'another pointer should not invoke the tap callback');
+
+        window.dispatchEvent({ type: 'pointerup', pointerId: 1 });
+
+        assertEqual(tapCount, 1, 'the owning pointer should still complete the active tap');
+    });
+});
+
+test('createFab: ignores a second pointerdown while a gesture is active', () => {
+    mockStorage.clear();
+    let tapCount = 0;
+    withCharacterLibraryDom({}, ({ window }) => {
+        const wrapper = createFab({ onTap: () => { tapCount += 1; } });
+        const button = wrapper.children[0];
+
+        button.dispatchEvent({
+            type: 'pointerdown',
+            pointerId: 1,
+            pointerType: 'touch',
+            clientX: 342,
+            clientY: 660,
+        });
+        button.dispatchEvent({
+            type: 'pointerdown',
+            pointerId: 2,
+            pointerType: 'touch',
+            clientX: 40,
+            clientY: 80,
+        });
+        window.dispatchEvent({
+            type: 'pointermove',
+            pointerId: 1,
+            clientX: 120,
+            clientY: 300,
+            preventDefault() {},
+        });
+        window.dispatchEvent({ type: 'pointerup', pointerId: 1 });
+
+        assertEqual(tapCount, 0, 'the second pointer should not replace the active drag with a tap');
+        assertEqual(loadPosition(), { left: EDGE_MARGIN, top: 284 },
+            'the first pointer should retain ownership of the gesture');
+    });
+});
+
 test('createFab: remains visible for CharacterLibrary launcher picker', () => {
     withCharacterLibraryDom({ launcherVisible: true }, () => {
         const wrapper = createFab();

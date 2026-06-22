@@ -450,6 +450,7 @@ function scheduleSurfaceUpdate() {
 
 function onPointerDown(e) {
     if (!fabEl) return;
+    if (dragState) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     dragState = {
         pointerId: e.pointerId,
@@ -499,6 +500,7 @@ function onPointerMove(e) {
 
 function onPointerEnd(e) {
     if (!dragState) return;
+    if (dragState.pointerId != null && e?.pointerId != null && e.pointerId !== dragState.pointerId) return;
     const state = dragState;
     const wasDragging = state.isDragging;
     const pendingX = state.pendingX;
