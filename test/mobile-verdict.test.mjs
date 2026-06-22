@@ -44,4 +44,35 @@ test('subscribeMobileVerdict: returns the provider cleanup', () => {
     assert(cleaned, 'provider cleanup should run');
 });
 
+test('subscribeMobileVerdict: contains provider setup failures', () => {
+    let cleanup;
+    let threw = false;
+    try {
+        cleanup = subscribeMobileVerdict(() => { throw new Error('provider unavailable'); }, () => {});
+    } catch {
+        threw = true;
+    }
+    assert(!threw, 'provider setup failure should not escape');
+    assert(typeof cleanup === 'function', 'setup failure should return a cleanup function');
+});
+
+test('subscribeMobileVerdict: contains provider cleanup failures', () => {
+    const cleanup = subscribeMobileVerdict(() => () => { throw new Error('cleanup failed'); }, () => {});
+    let threw = false;
+    try {
+        cleanup();
+    } catch {
+        threw = true;
+    }
+    assert(!threw, 'provider cleanup failure should not escape');
+});
+
+test('subscribeMobileVerdict: cleanup is idempotent', () => {
+    let cleanupCalls = 0;
+    const cleanup = subscribeMobileVerdict(() => () => { cleanupCalls++; }, () => {});
+    cleanup();
+    cleanup();
+    assertEqual(cleanupCalls, 1, 'provider cleanup should run only once');
+});
+
 summary('Mobile Verdict adapter tests');

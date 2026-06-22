@@ -25,6 +25,19 @@ export function readMobileVerdict(getCurrentVerdict) {
 
 export function subscribeMobileVerdict(onVerdictChanged, callback) {
     if (typeof onVerdictChanged !== 'function' || typeof callback !== 'function') return () => {};
-    const unsubscribe = onVerdictChanged(callback);
-    return typeof unsubscribe === 'function' ? unsubscribe : () => {};
+    let unsubscribe;
+    try {
+        unsubscribe = onVerdictChanged(callback);
+    } catch {
+        return () => {};
+    }
+    if (typeof unsubscribe !== 'function') return () => {};
+    let cleaned = false;
+    return () => {
+        if (cleaned) return;
+        cleaned = true;
+        try {
+            return unsubscribe();
+        } catch {}
+    };
 }
