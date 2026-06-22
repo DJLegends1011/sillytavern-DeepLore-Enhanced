@@ -391,6 +391,7 @@ function withCharacterLibraryDom({
     embeddedVisible = false,
     safeInsets = {},
     queueAnimationFrames = false,
+    visualViewport = null,
 }, callback) {
     const previousDocument = globalThis.document;
     const previousWindow = globalThis.window;
@@ -403,13 +404,32 @@ function withCharacterLibraryDom({
     const body = makeVisibleElement({ top: 0, bottom: 844, width: 390, height: 844 });
     const documentElement = makeVisibleElement({ top: 0, bottom: 844, width: 390, height: 844 });
     const windowListeners = new Map();
+    const visualViewportListeners = new Map();
     const rafCallbacks = new Map();
     const cancelledRafIds = new Set();
     let nextRafId = 1;
 
+    const visualViewportTarget = visualViewport ? {
+        ...visualViewport,
+        addEventListener(type, listener) {
+            if (!visualViewportListeners.has(type)) visualViewportListeners.set(type, new Set());
+            visualViewportListeners.get(type).add(listener);
+        },
+        removeEventListener(type, listener) {
+            visualViewportListeners.get(type)?.delete(listener);
+        },
+        dispatchEvent(event) {
+            for (const listener of visualViewportListeners.get(event.type) || []) listener(event);
+        },
+        listenerCount(type) {
+            return visualViewportListeners.get(type)?.size || 0;
+        },
+    } : null;
+
     globalThis.window = {
         innerWidth: 390,
         innerHeight: 844,
+        visualViewport: visualViewportTarget,
         addEventListener(type, listener) {
             if (!windowListeners.has(type)) windowListeners.set(type, new Set());
             windowListeners.get(type).add(listener);
@@ -471,6 +491,7 @@ function withCharacterLibraryDom({
         return callback({
             window: globalThis.window,
             document: globalThis.document,
+            visualViewport: visualViewportTarget,
             raf: {
                 pendingIds: () => [...rafCallbacks.keys()],
                 wasCancelled: (id) => cancelledRafIds.has(id),
@@ -485,6 +506,63 @@ function withCharacterLibraryDom({
         globalThis.cancelAnimationFrame = previousCancelAnimationFrame;
     }
 }
+
+test('createFab: applies touch-action through the production element style', () => {
+    withCharacterLibraryDom({}, () => {
+        const wrapper = createFab();
+        const button = wrapper.children[0];
+
+        assertEqual(button.style.touchAction, 'none', 'the controller should disable browser touch gestures');
+    });
+});
+
+test('createFab: clamps above a panned visual viewport top and safe area', () => {
+    mockStorage.clear();
+    savePosition(100, 20);
+
+    withCharacterLibraryDom({
+        safeInsets: { top: 10 },
+        visualViewport: { height: 460, offsetTop: 100 },
+    }, () => {
+        const wrapper = createFab();
+        const button = wrapper.children[0];
+
+        assertEqual(button.style.transform, `translate(100px, ${100 + 10 + EDGE_MARGIN}px)`);
+    });
+});
+
+test('createFab: visual viewport scroll reclamps against its new top', () => {
+    mockStorage.clear();
+    savePosition(100, 80);
+
+    withCharacterLibraryDom({
+        visualViewport: { height: 460, offsetTop: 0 },
+    }, ({ visualViewport }) => {
+        const wrapper = createFab();
+        const button = wrapper.children[0];
+        assertEqual(button.style.transform, 'translate(100px, 80px)');
+
+        visualViewport.offsetTop = 100;
+        visualViewport.dispatchEvent({ type: 'scroll' });
+
+        assertEqual(button.style.transform, `translate(100px, ${100 + EDGE_MARGIN}px)`);
+    });
+});
+
+test('destroyFab: removes visual viewport resize and scroll listeners', () => {
+    withCharacterLibraryDom({
+        visualViewport: { height: 460, offsetTop: 0 },
+    }, ({ visualViewport }) => {
+        createFab();
+        assertEqual(visualViewport.listenerCount('resize'), 1);
+        assertEqual(visualViewport.listenerCount('scroll'), 1);
+
+        destroyFab();
+
+        assertEqual(visualViewport.listenerCount('resize'), 0);
+        assertEqual(visualViewport.listenerCount('scroll'), 0);
+    });
+});
 
 test('createFab: drag settling snaps to the nearest safe edge and preserves clamped Y', () => {
     mockStorage.clear();

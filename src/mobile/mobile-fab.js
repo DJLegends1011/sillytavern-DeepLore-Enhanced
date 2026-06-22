@@ -109,9 +109,12 @@ export function effectiveViewportHeight(innerHeight, visualViewport) {
 
 function getViewportSize() {
     const innerH = window.innerHeight || 844;
+    const visualOffsetTop = window.visualViewport?.offsetTop;
+    const viewportTop = Number.isFinite(visualOffsetTop) ? Math.round(visualOffsetTop) : 0;
     return {
         vw: window.innerWidth || 390,
         vh: effectiveViewportHeight(innerH, window.visualViewport),
+        viewportTop,
     };
 }
 
@@ -293,20 +296,22 @@ function getSafeAreaProbe() {
     return safeAreaProbe;
 }
 
-function getSafeInsets() {
+function getSafeInsets(viewportTop = 0) {
     try {
         if (typeof getComputedStyle !== 'function') throw new Error('computed style unavailable');
         const probe = getSafeAreaProbe();
         if (!probe) throw new Error('safe-area probe unavailable');
         const style = getComputedStyle(probe);
-        return parseSafeAreaInsets({
+        const insets = parseSafeAreaInsets({
             top: style.paddingTop || style.getPropertyValue?.('padding-top'),
             left: style.paddingLeft || style.getPropertyValue?.('padding-left'),
             right: style.paddingRight || style.getPropertyValue?.('padding-right'),
             bottom: style.paddingBottom || style.getPropertyValue?.('padding-bottom'),
         });
+        insets.top += viewportTop;
+        return insets;
     } catch { /* test environment */ }
-    return { top: 0, left: 0, right: 0, bottom: 0 };
+    return { top: viewportTop, left: 0, right: 0, bottom: 0 };
 }
 
 function applyPosition(x, y, animate = false) {
@@ -321,9 +326,9 @@ function applyPosition(x, y, animate = false) {
 
 function reclampPosition() {
     if (!fabEl?.style || dragState) return;
-    const { vw, vh } = getViewportSize();
+    const { vw, vh, viewportTop } = getViewportSize();
     const inputTop = getInputBarTop();
-    const insets = getSafeInsets();
+    const insets = getSafeInsets(viewportTop);
     const clamped = resolveVisiblePosition(desiredPosition, vw, vh, inputTop, insets);
     applyPosition(clamped.x, clamped.y, true);
 }
@@ -341,9 +346,9 @@ function scheduleReclamp() {
 }
 
 function settlePosition(x, y, animate = true) {
-    const { vw, vh } = getViewportSize();
+    const { vw, vh, viewportTop } = getViewportSize();
     const inputTop = getInputBarTop();
-    const insets = getSafeInsets();
+    const insets = getSafeInsets(viewportTop);
     const clamped = clampPosition(x, y, vw, vh, inputTop, insets);
     const edge = computeEdgeSnap(clamped.x, vw);
     const snappedX = computeSnapX(edge, vw, insets.left, insets.right);
@@ -490,9 +495,9 @@ function onPointerMove(e) {
     state.rafId = requestAnimationFrame(() => {
         if (dragState !== state) return;
         state.rafId = null;
-        const { vw, vh } = getViewportSize();
+        const { vw, vh, viewportTop } = getViewportSize();
         const inputTop = getInputBarTop();
-        const insets = getSafeInsets();
+        const insets = getSafeInsets(viewportTop);
         const clamped = clampPosition(state.pendingX, state.pendingY, vw, vh, inputTop, insets);
         applyPosition(clamped.x, clamped.y, false);
     });
@@ -570,16 +575,16 @@ export function createFab({ onTap, container } = {}) {
     fabEl.className = 'dle-mobile-fab';
     fabEl.setAttribute('type', 'button');
     fabEl.setAttribute('aria-label', 'Open DeepLore panel');
-    fabEl.setAttribute('touch-action', 'none');
+    fabEl.style.touchAction = 'none';
     fabEl.innerHTML = '<i class="fa-solid fa-book-open" aria-hidden="true"></i>';
 
     wrapper.appendChild(fabEl);
     parent.appendChild(wrapper);
     fabWrapper = wrapper;
 
-    const { vw, vh } = getViewportSize();
+    const { vw, vh, viewportTop } = getViewportSize();
     const inputTop = getInputBarTop();
-    const insets = getSafeInsets();
+    const insets = getSafeInsets(viewportTop);
     const saved = loadPosition();
     const desired = saved || defaultPosition(vw, vh, inputTop, insets);
     desiredPosition = { x: desired.left, y: desired.top };
@@ -598,6 +603,7 @@ export function createFab({ onTap, container } = {}) {
     window.addEventListener('resize', viewportResizeHandler);
     if (window.visualViewport) {
         window.visualViewport.addEventListener('resize', viewportResizeHandler);
+        window.visualViewport.addEventListener('scroll', viewportResizeHandler);
     }
 
     observeInputBar();
@@ -617,6 +623,7 @@ export function destroyFab() {
         window.removeEventListener('pointercancel', onPointerEnd);
         window.removeEventListener('resize', viewportResizeHandler);
         window.visualViewport?.removeEventListener('resize', viewportResizeHandler);
+        window.visualViewport?.removeEventListener('scroll', viewportResizeHandler);
     }
     inputTextEl?.removeEventListener?.('input', scheduleSurfaceUpdate);
     inputResizeObserver?.disconnect();
