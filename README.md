@@ -229,6 +229,16 @@ If you had **DeepLore Enhanced** (the previous name of this extension), update i
 
 If you had the older standalone `sillytavern-DeepLore` extension, uninstall it first. Running both at once corrupts prompt injection.
 
+## Star History
+
+<a href="https://star-history.com/#pixelnull/sillytavern-DeepLore&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=pixelnull/sillytavern-DeepLore&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=pixelnull/sillytavern-DeepLore&type=Date" />
+    <img alt="Star history chart for pixelnull/sillytavern-DeepLore" src="https://api.star-history.com/svg?repos=pixelnull/sillytavern-DeepLore&type=Date" width="600" />
+  </picture>
+</a>
+
 ## License
 
 MIT. Made by [pixelnull](https://infosec.exchange/@pixelnull).
