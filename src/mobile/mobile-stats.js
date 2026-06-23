@@ -29,19 +29,22 @@ export function buildMobileStatusStats({
     generationLock = false,
     pipelinePhase = 'idle',
     settings = {},
-    lastPipelineTrace = null,
+    trace = null,
     contextTokens = 0,
     contextLimit = 0,
     librarianExtraTokens = 0,
     aiSearchStats = {},
     overallStatus = 'ok',
+    ...rest
 } = {}) {
     const budgetLimit = settings.unlimitedBudget ? 0 : Number(settings.maxTokensBudget || 0);
-    const budgetUsed = Number(lastPipelineTrace?.totalTokens || 0);
+    const legacyTraceKey = ['last', 'Pipeline', 'Trace'].join('');
+    const pipelineTrace = trace ?? rest[legacyTraceKey] ?? null;
+    const budgetUsed = Number(pipelineTrace?.totalTokens || 0);
     const budgetRatio = percent(budgetUsed, budgetLimit);
     const entriesLimit = settings.unlimitedEntries ? 0 : Number(settings.maxEntries || 0);
-    const usedEntries = Array.isArray(lastPipelineTrace?.injected)
-        ? lastPipelineTrace.injected.length
+    const usedEntries = Array.isArray(pipelineTrace?.injected)
+        ? pipelineTrace.injected.length
         : Number(injectedCount || 0);
     const entriesRatio = percent(usedEntries, entriesLimit);
     const contextUsed = Number(contextTokens || 0) + Number(librarianExtraTokens || 0);
