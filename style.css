@@ -6224,9 +6224,9 @@ body.dle-mobile-ui-active .dle-mobile-shell {
     background: color-mix(in srgb, var(--SmartThemeBlurTintColor) 88%, transparent);
     backdrop-filter: blur(16px);
     -webkit-backdrop-filter: blur(16px);
-    border: 1px solid color-mix(in srgb, var(--SmartThemeBodyColor) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--dle-text) 8%, transparent);
     box-shadow: 0 8px 32px var(--SmartThemeShadowColor);
-    color: var(--SmartThemeBodyColor);
+    color: var(--dle-text);
     will-change: transform;
 }
 /* Open animation runs only on the closed-to-open render — every re-render
@@ -6282,14 +6282,14 @@ body.no-blur .dle-mobile-overlay-panel {
     min-width: 0;
 }
 .dle-mobile-overlay-status-text small {
-    color: var(--SmartThemeEmColor);
+    color: var(--dle-text-muted);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 .dle-mobile-overlay-icon-btn {
-    background: color-mix(in srgb, var(--SmartThemeBodyColor) 3%, transparent);
-    border: 1px solid color-mix(in srgb, var(--SmartThemeBodyColor) 8%, transparent);
+    background: color-mix(in srgb, var(--dle-text) 3%, transparent);
+    border: 1px solid color-mix(in srgb, var(--dle-text) 8%, transparent);
     border-radius: 10px;
     color: inherit;
     min-width: 40px;
@@ -6315,12 +6315,12 @@ body.no-blur .dle-mobile-overlay-panel {
     background: none;
     border: 1px solid transparent;
     border-radius: 10px;
-    color: var(--SmartThemeEmColor);
+    color: var(--dle-text-muted);
 }
 .dle-mobile-overlay-tab[aria-selected="true"] {
-    background: color-mix(in srgb, var(--SmartThemeUnderlineColor) 15%, transparent);
-    border-color: color-mix(in srgb, var(--SmartThemeUnderlineColor) 30%, transparent);
-    color: var(--SmartThemeBodyColor);
+    background: color-mix(in srgb, var(--dle-info) 15%, transparent);
+    border-color: color-mix(in srgb, var(--dle-info) 30%, transparent);
+    color: var(--dle-text);
 }
 .dle-mobile-overlay-tab-dot {
     position: absolute;
@@ -6337,7 +6337,7 @@ body.no-blur .dle-mobile-overlay-panel {
     padding: 0 12px 8px;
     overflow-x: auto;
     scrollbar-width: none;
-    border-bottom: 1px solid color-mix(in srgb, var(--SmartThemeBodyColor) 8%, transparent);
+    border-bottom: 1px solid color-mix(in srgb, var(--dle-text) 8%, transparent);
 }
 .dle-mobile-overlay-quick-btn {
     flex: 0 0 auto;
@@ -6350,19 +6350,19 @@ body.no-blur .dle-mobile-overlay-panel {
     min-height: 46px;
     padding: 5px 8px;
     border-radius: 12px;
-    background: color-mix(in srgb, var(--SmartThemeBodyColor) 3%, transparent);
-    border: 1px solid color-mix(in srgb, var(--SmartThemeBodyColor) 8%, transparent);
+    background: color-mix(in srgb, var(--dle-text) 3%, transparent);
+    border: 1px solid color-mix(in srgb, var(--dle-text) 8%, transparent);
     color: inherit;
 }
 .dle-mobile-overlay-quick-label {
     font-size: 0.58em;
     line-height: 1;
-    color: var(--SmartThemeEmColor);
+    color: var(--dle-text-muted);
     white-space: nowrap;
 }
 .dle-mobile-overlay-quick-active {
-    background: color-mix(in srgb, var(--SmartThemeUnderlineColor) 15%, transparent);
-    border-color: color-mix(in srgb, var(--SmartThemeUnderlineColor) 30%, transparent);
+    background: color-mix(in srgb, var(--dle-info) 15%, transparent);
+    border-color: color-mix(in srgb, var(--dle-info) 30%, transparent);
 }
 .dle-mobile-overlay-content {
     flex: 1;
@@ -6402,9 +6402,9 @@ body.no-blur .dle-mobile-overlay-panel {
     gap: 8px;
     padding: 16px;
     text-align: center;
-    border: 1px dashed color-mix(in srgb, var(--SmartThemeBodyColor) 15%, transparent);
+    border: 1px dashed color-mix(in srgb, var(--dle-text) 15%, transparent);
     border-radius: 12px;
-    color: var(--SmartThemeEmColor);
+    color: var(--dle-text-muted);
 }
 
 .dle-mobile-actions {
@@ -6423,7 +6423,7 @@ body.no-blur .dle-mobile-overlay-panel {
     min-height: 44px;
     min-width: 0;
     padding: 10px 12px;
-    border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,0.16));
+    border: 1px solid var(--dle-border, rgba(255,255,255,0.16));
     border-radius: 8px;
     background: color-mix(in srgb, var(--SmartThemeQuoteColor, #d4a847) 18%, transparent);
     color: var(--dle-text);
@@ -6451,7 +6451,7 @@ body.no-blur .dle-mobile-overlay-panel {
     gap: 4px;
     min-width: 0;
     padding: 10px;
-    border: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor, rgba(255,255,255,0.16)) 75%, transparent);
+    border: 1px solid color-mix(in srgb, var(--dle-border, rgba(255,255,255,0.16)) 75%, transparent);
     border-radius: 8px;
     background: color-mix(in srgb, var(--dle-text) 6%, transparent);
 }
@@ -6464,7 +6464,7 @@ body.no-blur .dle-mobile-overlay-panel {
 }
 
 .dle-mobile-list span {
-    color: var(--SmartThemeEmColor, #aaa);
+    color: var(--dle-text-muted, #aaa);
     font-size: 12px;
 }
 
@@ -6489,11 +6489,11 @@ body.no-blur .dle-mobile-overlay-panel {
     gap: 8px;
     margin-top: 12px;
     padding-top: 12px;
-    border-top: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,0.16));
+    border-top: 1px solid var(--dle-border, rgba(255,255,255,0.16));
 }
 
 .dle-mobile-mode-group > span {
-    color: var(--SmartThemeEmColor, #aaa);
+    color: var(--dle-text-muted, #aaa);
     font-size: 12px;
 }
 
@@ -6506,7 +6506,7 @@ body.no-blur .dle-mobile-overlay-panel {
 .dle-mobile-mode-btn {
     min-height: 40px;
     min-width: 0;
-    border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,0.16));
+    border: 1px solid var(--dle-border, rgba(255,255,255,0.16));
     border-radius: 8px;
     background: color-mix(in srgb, var(--dle-text) 7%, transparent);
     color: inherit;
@@ -6566,8 +6566,8 @@ body.no-blur .dle-mobile-overlay-panel {
 
 .dle-mobile-search button {
     background: var(--SmartThemeBlurTintColor, #252540);
-    color: var(--SmartThemeBodyColor, #ccc);
-    border: 1px solid var(--SmartThemeBorderColor, #555);
+    color: var(--dle-text, #ccc);
+    border: 1px solid var(--dle-border, #555);
     border-radius: 6px;
     cursor: pointer;
     min-width: 40px;
@@ -6585,8 +6585,8 @@ body.no-blur .dle-mobile-overlay-panel {
 
 .dle-mobile-search input {
     background: var(--SmartThemeBlurTintColor, #252540);
-    color: var(--SmartThemeBodyColor, #ccc);
-    border: 1px solid var(--SmartThemeBorderColor, #555);
+    color: var(--dle-text, #ccc);
+    border: 1px solid var(--dle-border, #555);
     border-radius: 6px;
     padding: 6px 10px;
     font-size: 0.9em;
@@ -6594,10 +6594,10 @@ body.no-blur .dle-mobile-overlay-panel {
 
 .dle-mobile-browse-help {
     padding: 10px 12px;
-    border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,0.16));
+    border: 1px solid var(--dle-border, rgba(255,255,255,0.16));
     border-radius: 8px;
     background: color-mix(in srgb, var(--SmartThemeBlurTintColor, #111) 92%, transparent);
-    color: var(--SmartThemeBodyColor, #ccc);
+    color: var(--dle-text, #ccc);
     font-size: 0.85em;
     line-height: 1.5;
 }
@@ -6606,7 +6606,7 @@ body.no-blur .dle-mobile-overlay-panel {
     display: block;
     margin-bottom: 6px;
     font-size: 0.9em;
-    color: var(--SmartThemeEmColor, #aaa);
+    color: var(--dle-text-muted, #aaa);
     text-transform: uppercase;
     letter-spacing: 0.05em;
 }
@@ -6630,8 +6630,8 @@ body.no-blur .dle-mobile-overlay-panel {
 
 .dle-mobile-browse-filter-grid select {
     background: var(--SmartThemeBlurTintColor, #252540);
-    color: var(--SmartThemeBodyColor, #ccc);
-    border: 1px solid var(--SmartThemeBorderColor, #555);
+    color: var(--dle-text, #ccc);
+    border: 1px solid var(--dle-border, #555);
     border-radius: 6px;
     padding: 6px 8px;
     font-size: 0.85em;
@@ -6655,8 +6655,8 @@ body.no-blur .dle-mobile-overlay-panel {
 .dle-mobile-browse-summary button {
     min-height: 36px;
     background: var(--SmartThemeBlurTintColor, #252540);
-    color: var(--SmartThemeBodyColor, #ccc);
-    border: 1px solid var(--SmartThemeBorderColor, #555);
+    color: var(--dle-text, #ccc);
+    border: 1px solid var(--dle-border, #555);
     border-radius: 6px;
     padding: 4px 10px;
     font-size: 0.85em;
@@ -6672,23 +6672,23 @@ body.no-blur .dle-mobile-overlay-panel {
     overflow: hidden;
     border-radius: 8px;
     background: color-mix(in srgb, var(--SmartThemeBotMesBlurTintColor, #222) 82%, transparent);
-    border: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor, #444) 55%, transparent);
+    border: 1px solid color-mix(in srgb, var(--dle-border, #444) 55%, transparent);
     padding: 10px;
     display: grid;
     gap: 8px;
 }
 
 .dle-mobile-browse-injected {
-    border-color: color-mix(in srgb, var(--dle-success, #7ecb27) 70%, var(--SmartThemeBorderColor, #444));
+    border-color: color-mix(in srgb, var(--dle-success, #7ecb27) 70%, var(--dle-border, #444));
     box-shadow: inset 3px 0 0 var(--dle-success, #7ecb27);
 }
 
 .dle-mobile-browse-pinned {
-    border-color: color-mix(in srgb, var(--SmartThemeQuoteColor, #d69a00) 70%, var(--SmartThemeBorderColor, #444));
+    border-color: color-mix(in srgb, var(--SmartThemeQuoteColor, #d69a00) 70%, var(--dle-border, #444));
 }
 
 .dle-mobile-browse-blocked {
-    border-color: color-mix(in srgb, var(--dle-danger, #ff4d6d) 70%, var(--SmartThemeBorderColor, #444));
+    border-color: color-mix(in srgb, var(--dle-danger, #ff4d6d) 70%, var(--dle-border, #444));
     opacity: 0.82;
 }
 
@@ -6718,7 +6718,7 @@ body.no-blur .dle-mobile-overlay-panel {
 }
 
 .dle-mobile-browse-meta {
-    color: var(--SmartThemeEmColor, #aaa);
+    color: var(--dle-text-muted, #aaa);
     font-size: 0.9em;
 }
 
@@ -6750,8 +6750,8 @@ body.no-blur .dle-mobile-overlay-panel {
     min-width: 40px;
     border-radius: 8px;
     background: var(--SmartThemeBlurTintColor, #252540);
-    color: var(--SmartThemeBodyColor, #ccc);
-    border: 1px solid var(--SmartThemeBorderColor, #555);
+    color: var(--dle-text, #ccc);
+    border: 1px solid var(--dle-border, #555);
     cursor: pointer;
     font-size: 0.85em;
     padding: 4px 10px;
@@ -6773,7 +6773,7 @@ body.no-blur .dle-mobile-overlay-panel {
 }
 
 .dle-mobile-browse-preview {
-    border-top: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor, #444) 50%, transparent);
+    border-top: 1px solid color-mix(in srgb, var(--dle-border, #444) 50%, transparent);
     padding-top: 8px;
     overflow-wrap: anywhere;
 }
@@ -6789,10 +6789,10 @@ body.no-blur .dle-mobile-overlay-panel {
 .dle-mobile-injection-filter-btn {
     flex: 1;
     padding: 4px 8px;
-    border: 1px solid var(--SmartThemeBorderColor, #555);
+    border: 1px solid var(--dle-border, #555);
     border-radius: 4px;
     background: transparent;
-    color: var(--SmartThemeBodyColor, #ccc);
+    color: var(--dle-text, #ccc);
     font-size: 0.8em;
     cursor: pointer;
 }
@@ -6806,7 +6806,7 @@ body.no-blur .dle-mobile-overlay-panel {
 .dle-mobile-injection-summary {
     padding: 0 12px 6px;
     font-size: 0.75em;
-    color: var(--SmartThemeBodyColor, #999);
+    color: var(--dle-text, #999);
 }
 
 .dle-mobile-injection-count {
@@ -6832,7 +6832,7 @@ body.no-blur .dle-mobile-overlay-panel {
 
 .dle-mobile-injection-card.dle-mobile-injection-filtered {
     opacity: 0.6;
-    border-left-color: var(--SmartThemeBorderColor, #555);
+    border-left-color: var(--dle-border, #555);
 }
 
 .dle-mobile-injection-card.dle-mobile-injection-expanded {
@@ -6879,11 +6879,11 @@ body.no-blur .dle-mobile-overlay-panel {
 }
 
 .dle-mobile-injection-badge {
-    background: var(--SmartThemeBorderColor, #555);
+    background: var(--dle-border, #555);
     padding: 1px 5px;
     border-radius: 3px;
     font-size: 0.7em;
-    color: var(--SmartThemeBodyColor, #ccc);
+    color: var(--dle-text, #ccc);
 }
 
 .dle-mobile-injection-badge-key {
@@ -6894,7 +6894,7 @@ body.no-blur .dle-mobile-overlay-panel {
 .dle-mobile-injection-detail {
     padding: 6px 0 2px 18px;
     font-size: 0.75em;
-    color: var(--SmartThemeBodyColor, #aaa);
+    color: var(--dle-text, #aaa);
 }
 
 .dle-mobile-injection-links {
@@ -6961,7 +6961,7 @@ body.no-blur .dle-mobile-overlay-panel {
 
 .dle-mobile-injection-timer-empty {
     font-size: 0.75em;
-    color: var(--SmartThemeBodyColor, #666);
+    color: var(--dle-text, #666);
     padding: 4px 0;
     opacity: 0.5;
 }
@@ -6986,5 +6986,44 @@ body.no-blur .dle-mobile-overlay-panel {
     .dle-mobile-browse-card {
         border: 1px solid CanvasText;
         forced-color-adjust: auto;
+    }
+
+    .dle-mobile-overlay-tab[aria-selected="true"] {
+        background: Highlight;
+        border-color: Highlight;
+        color: HighlightText;
+        outline: 2px solid Highlight;
+        outline-offset: -2px;
+    }
+
+    .dle-mobile-overlay-quick-active,
+    .dle-mobile-mode-btn[aria-pressed="true"],
+    .dle-mobile-injection-filter-btn.active {
+        background: Highlight;
+        border-color: Highlight;
+        color: HighlightText;
+        outline: 2px solid Highlight;
+        outline-offset: 2px;
+    }
+
+    .dle-mobile-browse-injected {
+        border-color: Highlight;
+        box-shadow: none;
+        outline: 2px solid Highlight;
+        outline-offset: -2px;
+    }
+
+    .dle-mobile-browse-pinned {
+        border-color: Mark;
+        outline: 2px solid Mark;
+        outline-offset: -2px;
+    }
+
+    .dle-mobile-browse-blocked {
+        border-color: GrayText;
+        color: GrayText;
+        opacity: 1;
+        outline: 2px dashed GrayText;
+        outline-offset: -2px;
     }
 }

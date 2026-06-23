@@ -78,6 +78,37 @@ test('v2.5 mobile styles and wizard behavior are present', () => {
     assertMatch(wizard, /\.dle-wizard-body'\)\.scrollTop\(0\)/);
     assertMatch(wizard, /scrollIntoView\(\{[\s\S]*block: 'nearest'[\s\S]*inline: 'center'/);
 });
+
+test('v2.5 mobile styles use semantic tokens inside the mobile block', () => {
+    const css = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    const marker = '/* --- Mobile shell foundation --- */';
+    const block = css.slice(css.indexOf(marker));
+    assert(!/var\(--SmartTheme(?:BodyColor|BorderColor|EmColor|UnderlineColor|HyperlinkColor)\b/.test(block),
+        'mobile block should use v2.5 semantic text/border/accent tokens');
+    assertMatch(block, /var\(--dle-text\)/, 'mobile block should use primary text token');
+    assertMatch(block, /var\(--dle-text-muted\)/, 'mobile block should use muted text token');
+    assertMatch(block, /var\(--dle-border\)/, 'mobile block should use border token');
+    assertMatch(block, /var\(--dle-info\)/, 'mobile block should use info/accent token');
+});
+
+test('v2.5 forced-colors mobile styles preserve active state cues', () => {
+    const css = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    const forced = css.slice(css.indexOf('@media (forced-colors: active)'));
+    assertMatch(forced, /\.dle-mobile-overlay-tab\[aria-selected="true"\][\s\S]*Highlight/,
+        'selected tab should have a high-contrast state cue');
+    assertMatch(forced, /\.dle-mobile-overlay-quick-active[\s\S]*Highlight/,
+        'active quick action should have a high-contrast state cue');
+    assertMatch(forced, /\.dle-mobile-mode-btn\[aria-pressed="true"\][\s\S]*Highlight/,
+        'pressed mode button should have a high-contrast state cue');
+    assertMatch(forced, /\.dle-mobile-injection-filter-btn\.active[\s\S]*Highlight/,
+        'active injection filter should have a high-contrast state cue');
+    assertMatch(forced, /\.dle-mobile-browse-injected[\s\S]*Highlight/,
+        'injected Browse card should have a high-contrast state cue');
+    assertMatch(forced, /\.dle-mobile-browse-pinned[\s\S]*(Mark|Highlight)/,
+        'pinned Browse card should have a high-contrast state cue');
+    assertMatch(forced, /\.dle-mobile-browse-blocked[\s\S]*(GrayText|Mark|Highlight)/,
+        'blocked Browse card should have a high-contrast state cue');
+});
 class MockClassList {
     constructor() {
         this.values = new Set();
