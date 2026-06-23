@@ -60,6 +60,14 @@ import {
     setVaultIndex,
 } from '../src/state.js';
 
+test('v2.5 lifecycle: index injects Verdict providers and tears mobile down', () => {
+    const indexSource = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    assertMatch(indexSource, /createMobileShell\(\{[\s\S]*getCurrentVerdict:[\s\S]*onVerdictChanged:/,
+        'index should inject current-chat Verdict services');
+    assertMatch(indexSource, /function _teardownDleExtension\(\)[\s\S]*destroyMobileShell\(\)/,
+        'teardown should destroy mobile UI');
+});
+
 class MockClassList {
     constructor() {
         this.values = new Set();

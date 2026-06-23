@@ -82,7 +82,8 @@ import { loadSettingsUI, bindSettingsEvents, teardownSettingsUI } from './src/ui
 import { registerSlashCommands } from './src/ui/commands.js';
 import { dedupError, dedupWarning } from './src/toast-dedup.js';
 import { createDrawerPanel, resetDrawerState, destroyDrawerPanel } from './src/drawer/drawer.js';
-import { pushActivity } from './src/drawer/drawer-state.js';
+import { ds, pushActivity } from './src/drawer/drawer-state.js';
+import { createMobileShell, destroyMobileShell } from './src/mobile/mobile-shell.js';
 import { extractAiNotes, normalizeLoreGap, normalizeNotepadLine } from './src/helpers.js';
 import { clearSessionActivityLog, persistGaps } from './src/librarian/librarian-tools.js';
 import { injectLibrarianDropdown, removeLibrarianDropdown } from './src/librarian/librarian-ui.js';
@@ -97,6 +98,8 @@ import {
     setCurrentChatId as setVerdictChatId,
     hydrateChat as hydrateVerdictChat,
     getCurrent as getCurrentVerdictForRender,
+    getCurrentForChat as getCurrentVerdictForChat,
+    onVerdictChanged,
     clearChatIdb,
 } from './src/verdict/verdict-store.js';
 import { tr, trf } from './src/i18n/i18n.js';
@@ -173,6 +176,12 @@ function _installRealChatChangedHandler(handler) {
     }
 }
 
+function _getCurrentMobileVerdict() {
+    let chatId = null;
+    try { chatId = getCurrentChatId() || null; } catch { /* ST may not be ready */ }
+    return getCurrentVerdictForChat(chatId);
+}
+
 // Unsubscriber for the debugMode observer that installs/uninstalls __DLE_DEBUG.
 // Captured at init, released by _teardownDleExtension so re-init doesn't double-register.
 let _debugNamespaceUnsub = null;
@@ -205,6 +214,7 @@ function _teardownDleExtension() {
         try { _debugNamespaceUnsub(); } catch { /* ignore */ }
         _debugNamespaceUnsub = null;
     }
+    try { destroyMobileShell(); } catch (err) { console.warn('[DLE] destroyMobileShell failed:', err?.message); }
     try { destroyDrawerPanel(); } catch (err) { console.warn('[DLE] destroyDrawerPanel failed:', err?.message); }
     // BUG-062: namespaced delegated handler on #chat needs explicit detach.
     try { $('#chat').off('.dle-carto'); } catch { /* ignore */ }
@@ -2038,6 +2048,16 @@ async function _doInit() {
         $('#extensions_settings2').append(settingsHtml);
 
         await createDrawerPanel();
+        createMobileShell({
+            buildIndex,
+            getSettings,
+            getDrawerState: () => ds,
+            getChatMetadata: () => chat_metadata,
+            getCurrentVerdict: _getCurrentMobileVerdict,
+            onVerdictChanged: onVerdictChanged,
+            translate: tr,
+            format: trf,
+        });
 
         loadSettingsUI();
         bindSettingsEvents(buildIndex);
