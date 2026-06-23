@@ -35,16 +35,13 @@ export function buildMobileStatusStats({
     librarianExtraTokens = 0,
     aiSearchStats = {},
     overallStatus = 'ok',
-    ...rest
 } = {}) {
     const budgetLimit = settings.unlimitedBudget ? 0 : Number(settings.maxTokensBudget || 0);
-    const legacyTraceKey = ['last', 'Pipeline', 'Trace'].join('');
-    const pipelineTrace = trace ?? rest[legacyTraceKey] ?? null;
-    const budgetUsed = Number(pipelineTrace?.totalTokens || 0);
+    const budgetUsed = Number(trace?.totalTokens || 0);
     const budgetRatio = percent(budgetUsed, budgetLimit);
     const entriesLimit = settings.unlimitedEntries ? 0 : Number(settings.maxEntries || 0);
-    const usedEntries = Array.isArray(pipelineTrace?.injected)
-        ? pipelineTrace.injected.length
+    const usedEntries = Array.isArray(trace?.injected)
+        ? trace.injected.length
         : Number(injectedCount || 0);
     const entriesRatio = percent(usedEntries, entriesLimit);
     const contextUsed = Number(contextTokens || 0) + Number(librarianExtraTokens || 0);

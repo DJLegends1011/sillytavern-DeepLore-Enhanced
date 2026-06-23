@@ -377,6 +377,26 @@ test('buildMobileStatusStats: derives collapsed warning and expanded metrics', (
     assertEqual(stats.health.value, 'Degraded', 'overall status should format as a label');
 });
 
+test('buildMobileStatusStats: ignores legacy pipeline-trace option name', () => {
+    const legacyTraceKey = ['last', 'Pipeline', 'Trace'].join('');
+    const stats = buildMobileStatusStats({
+        injectedCount: 2,
+        settings: {
+            maxTokensBudget: 1000,
+            unlimitedBudget: false,
+            maxEntries: 10,
+            unlimitedEntries: false,
+        },
+        [legacyTraceKey]: {
+            totalTokens: 999,
+            injected: Array.from({ length: 9 }, (_, idx) => ({ title: `Legacy ${idx}` })),
+        },
+    });
+
+    assertEqual(stats.budget.value, '0 / 1.0k', 'legacy trace should not feed budget stats');
+    assertEqual(stats.entries.value, '2 / 10', 'legacy trace should not override injected count');
+});
+
 test('buildMobileShellSnapshot: derives Injection state from current Verdict', () => {
     const trace = { gatedOut: [{ title: 'Filtered', reason: 'on cooldown' }] };
     const snapshot = buildMobileShellSnapshot({
@@ -1332,25 +1352,43 @@ test('mobile quick actions: skip librarian toggles suppression and pressed state
 });
 
 await testAsync('runMobileReroll: clears cache and injection log without clearing Verdict', async () => {
-    let cacheCleared = false;
-    let metadataSaved = false;
-    const verdict = { injectedSources: [{ title: 'Keep visible' }], trace: {} };
-    const chatMetadata = { deeplore_injection_log: [{ title: 'Old' }] };
+    const dom = installMobileDom({ viewportWidth: 390 });
+    try {
+        let cacheCleared = false;
+        let metadataSaved = false;
+        const trace = { injected: [{ title: 'Keep visible' }] };
+        const verdict = { injectedSources: [{ title: 'Keep visible' }], trace };
+        const chatMetadata = { deeplore_injection_log: [{ title: 'Old' }] };
 
-    const result = await runMobileReroll({
-        resetSearchCache: () => { cacheCleared = true; },
-        readMetadata: async () => ({
-            chatMetadata,
-            saveMetadataDebounced: () => { metadataSaved = true; },
-        }),
-        notify: () => {},
-    });
+        createMobileShell({
+            getCurrentVerdict: () => verdict,
+            getSettings: () => ({}),
+            getDrawerState: () => ({}),
+        });
 
-    assert(cacheCleared, 'AI cache should clear');
-    assertEqual(chatMetadata.deeplore_injection_log.length, 0);
-    assert(metadataSaved, 'metadata should save');
-    assertEqual(result.metadataCleared, true);
-    assertEqual(verdict.injectedSources[0].title, 'Keep visible');
+        assertEqual(buildMobileShellSnapshot().injectedSources[0]?.title, 'Keep visible');
+        assert(buildMobileShellSnapshot().trace === trace, 'shell should read current Verdict trace before reroll');
+
+        const result = await runMobileReroll({
+            resetSearchCache: () => { cacheCleared = true; },
+            readMetadata: async () => ({
+                chatMetadata,
+                saveMetadataDebounced: () => { metadataSaved = true; },
+            }),
+            notify: () => {},
+        });
+        const after = buildMobileShellSnapshot();
+
+        assertEqual(after.injectedSources[0]?.title, 'Keep visible');
+        assert(after.trace === trace, 'reroll should not clear current Verdict trace');
+        assert(cacheCleared, 'AI cache should clear');
+        assertEqual(chatMetadata.deeplore_injection_log.length, 0);
+        assert(metadataSaved, 'metadata should save');
+        assertEqual(result.metadataCleared, true);
+    } finally {
+        destroyMobileShell();
+        dom.restore();
+    }
 });
 
 summary('Mobile UI foundation tests');
