@@ -880,6 +880,7 @@ function handleMobileClick(event) {
                 try {
                     navigator.clipboard.writeText(titles).catch(() => {
                         setMobileError('Clipboard access denied.');
+                        renderCurrentState();
                     });
                 } catch {
                     setMobileError('Clipboard access denied.');
