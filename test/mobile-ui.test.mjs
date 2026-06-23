@@ -56,6 +56,8 @@ import { readFileSync } from 'node:fs';
 import {
     suppressNextAgenticLoop,
     setSuppressNextAgenticLoop,
+    vaultIndex,
+    setVaultIndex,
 } from '../src/state.js';
 
 class MockClassList {
@@ -899,6 +901,30 @@ test('renderMobileShell: Browse cards expose visible pin and block states', () =
     assertMatch(html, /aria-pressed="true"[^>]*>Blocked</, 'active block button should use a visible active label');
 });
 
+await testAsync('mobile Browse actions: Obsidian uses row vaultSource when settings are stale', async () => {
+    const dom = installMobileDom({ viewportWidth: 390 });
+    try {
+        const root = createMobileShell({
+            getSettings: () => ({ vaults: [{ name: 'Default Vault' }] }),
+            getDrawerState: () => ({}),
+        });
+        const target = new MockElement('button');
+        target.ownerDocument = root.ownerDocument;
+        target.parentElement = root;
+        target.setAttribute('data-dle-mobile-browse-action', 'obsidian');
+        target.setAttribute('data-vault', 'Unlisted Vault');
+        target.setAttribute('data-filename', 'Notes/Hidden.md');
+        clickMobileRoot(root, target);
+        await settleMobilePromises();
+        const frame = globalThis.document.body.children.find(child => child.tagName === 'IFRAME');
+        assert(frame, 'Obsidian open should append hidden iframe');
+        assertEqual(frame.src, 'obsidian://open?vault=Unlisted%20Vault&file=Notes/Hidden');
+    } finally {
+        destroyMobileShell();
+        dom.restore();
+    }
+});
+
 test('mobile Browse actions: shell keeps ST metadata imports dynamic', () => {
     const source = readFileSync(new URL('../src/mobile/mobile-shell.js', import.meta.url), 'utf8');
 
@@ -908,6 +934,33 @@ test('mobile Browse actions: shell keeps ST metadata imports dynamic', () => {
     assertMatch(source, /notifyPinBlockChanged\(\)/, 'pin and block actions should notify DeepLore state observers');
     assertMatch(source, /navigator\.clipboard\.writeText/, 'copy action should use the clipboard when available');
     assertMatch(source, /openObsidianUri/, 'Obsidian action should use the shared Obsidian URI helper');
+});
+
+test('mobile Injection actions: Browse arrow reveals the selected Browse card', () => {
+    const previous = [...vaultIndex];
+    const dom = installMobileDom({ viewportWidth: 390 });
+    try {
+        setVaultIndex([{ title: 'Keisha', keys: ['keisha'], vaultSource: 'First Vault', summary: 'Selected character preview.', filename: 'Characters/Keisha.md' }]);
+        const root = createMobileShell({
+            getCurrentVerdict: () => ({ injectedSources: [{ title: 'Keisha', vaultSource: 'First Vault', filename: 'Characters/Keisha.md' }], trace: {} }),
+            getSettings: () => ({}),
+            getDrawerState: () => ({}),
+        });
+        const target = new MockElement('button');
+        target.ownerDocument = root.ownerDocument;
+        target.parentElement = root;
+        target.setAttribute('data-dle-mobile-injection-action', 'browse');
+        target.setAttribute('data-title', 'Keisha');
+        target.setAttribute('data-vault', 'First Vault');
+        clickMobileRoot(root, target);
+        assertMatch(root.innerHTML, /data-dle-mobile-tab="browse" aria-selected="true"/, 'Browse tab should activate');
+        assertMatch(root.innerHTML, /value="Keisha"/, 'Browse query should focus the selected title');
+        assertMatch(root.innerHTML, /Selected character preview\./, 'selected Browse card should be expanded');
+    } finally {
+        setVaultIndex(previous);
+        destroyMobileShell();
+        dom.restore();
+    }
 });
 
 test('mobile Injection actions: shell routes entry titles and Browse arrows', () => {
@@ -1260,6 +1313,23 @@ test('mobile shell: injection filter clicks update state', () => {
 
 
 // ── Task 5: Tab switching behavior ──────────────────────────────────────────
+
+test('destroyMobileShell: clears current Verdict provider references', () => {
+    const dom = installMobileDom({ viewportWidth: 390 });
+    try {
+        createMobileShell({
+            getCurrentVerdict: () => ({ injectedSources: [{ title: 'Stale provider' }], trace: {} }),
+            getSettings: () => ({}),
+            getDrawerState: () => ({}),
+        });
+        assertEqual(buildMobileShellSnapshot().injectedSources[0]?.title, 'Stale provider');
+        destroyMobileShell();
+        assertEqual(buildMobileShellSnapshot().injectedSources.length, 0, 'destroy should drop current Verdict provider');
+    } finally {
+        destroyMobileShell();
+        dom.restore();
+    }
+});
 
 test('mobile shell: tab clicks switch the active tab and keep overlay open', () => {
     const dom = installMobileDom({ viewportWidth: 390 });

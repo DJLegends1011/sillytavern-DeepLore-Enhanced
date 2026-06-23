@@ -193,11 +193,6 @@ function countInjected(sources) {
     return Array.isArray(sources) ? sources.length : 0;
 }
 
-function normalizeInjectedSources(sources, trace) {
-    if (Array.isArray(sources) && sources.length > 0) return sources;
-    if (Array.isArray(trace?.injected) && trace.injected.length > 0) return trace.injected;
-    return [];
-}
 
 function statusForState(source) {
     if (source.indexing) return 'Indexing';
@@ -303,7 +298,7 @@ function renderInjectionCard(row, state) {
                 ${row.reason ? `<div>Reason: ${escapeHtml(row.reason)}</div>` : ''}
                 <div class="dle-mobile-injection-links">
                     ${row.filename ? `<button type="button" data-dle-mobile-injection-action="obsidian" data-filename="${escapeHtml(row.filename)}" data-vault="${escapeHtml(row.vaultSource)}">Open in Obsidian</button>` : ''}
-                    <button type="button" data-dle-mobile-injection-action="browse" data-title="${escapeHtml(row.title)}">Go to Browse →</button>
+                    <button type="button" data-dle-mobile-injection-action="browse" data-title="${escapeHtml(row.title)}" data-vault="${escapeHtml(row.vaultSource)}" data-filename="${escapeHtml(row.filename)}">Go to Browse →</button>
                 </div>
             </div>` : ''}
         </article>
@@ -670,7 +665,7 @@ async function copyMobileBrowseTitle(title) {
 function openMobileBrowseObsidian(filename, vaultSource) {
     const settings = mobileShellOptions.getSettings?.() ?? {};
     const vault = vaultSource && settings.vaults ? settings.vaults.find(v => v.name === vaultSource) : null;
-    const vaultName = vault?.name || settings.vaults?.[0]?.name || '';
+    const vaultName = vault?.name || vaultSource || settings.vaults?.[0]?.name || '';
     const uri = filename ? buildObsidianURI(vaultName, filename) : null;
     if (!uri) {
         setMobileError('Could not open Obsidian link from this browser context.');
@@ -891,8 +886,16 @@ function handleMobileClick(event) {
             const vaultSource = injectionActionEl.getAttribute('data-vault') || '';
             openMobileBrowseObsidian(filename, vaultSource || null);
         } else if (action === 'browse') {
+            const title = injectionActionEl.getAttribute('data-title') || '';
+            const vaultSource = injectionActionEl.getAttribute('data-vault') || '';
+            const currentBrowse = normalizeMobileBrowseState(mobileState.browse);
             mobileState.tab = 'browse';
+            mobileState.open = true;
             mobileState.errorMessage = '';
+            if (title) {
+                mobileState.browse = normalizeMobileBrowseState({ sort: currentBrowse.sort, query: title });
+                mobileState.browseExpandedKey = `${vaultSource || ''}:${title}`;
+            }
         }
         renderCurrentState();
         return;
@@ -1093,5 +1096,6 @@ export function destroyMobileShell() {
     if (typeof document !== 'undefined') {
         document.body.classList.remove('dle-mobile-ui-active');
     }
+    mobileShellOptions = {};
     mobileState = createMobileUiState();
 }
