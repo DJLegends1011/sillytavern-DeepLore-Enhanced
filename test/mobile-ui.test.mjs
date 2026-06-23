@@ -68,6 +68,16 @@ test('v2.5 lifecycle: index injects Verdict providers and tears mobile down', ()
         'teardown should destroy mobile UI');
 });
 
+test('v2.5 mobile styles and wizard behavior are present', () => {
+    const css = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    const wizard = readFileSync(new URL('../src/ui/setup-wizard.js', import.meta.url), 'utf8');
+    assertMatch(css, /\/\* --- Mobile shell foundation --- \*\//);
+    assertMatch(css, /\.dle-mobile-overlay-panel/);
+    assertMatch(css, /@media \(prefers-reduced-motion: reduce\)/);
+    assertMatch(css, /@media \(forced-colors: active\)/);
+    assertMatch(wizard, /\.dle-wizard-body'\)\.scrollTop\(0\)/);
+    assertMatch(wizard, /scrollIntoView\(\{[\s\S]*block: 'nearest'[\s\S]*inline: 'center'/);
+});
 class MockClassList {
     constructor() {
         this.values = new Set();

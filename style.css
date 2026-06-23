@@ -6100,3 +6100,891 @@ button.dle-browse-copy-title-btn:focus-visible {
     border-radius: 4px;
     margin: 0.5em 0;
 }
+
+/* --- Mobile shell foundation --- */
+#dle-mobile-root[hidden] {
+    display: none !important;
+}
+
+/* ST puts a transform/perspective on <html> (computed height 0), which makes
+   it the containing block for fixed elements — inset alone collapses to 0px
+   tall, so the root and overlay need explicit viewport heights. */
+#dle-mobile-root {
+    position: fixed;
+    inset: 0;
+    height: 100vh;
+    height: 100dvh;
+    z-index: 5002;
+    pointer-events: none;
+}
+
+.dle-mobile-shell {
+    display: none;
+}
+
+body.dle-mobile-ui-active #deeplore-drawer {
+    display: none !important;
+}
+
+body.dle-mobile-ui-active .dle-mobile-shell {
+    display: block;
+}
+
+/* ─── FAB Glass Orb ─────────────────────────────────────────────────────── */
+
+.dle-mobile-fab-anchor {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 5001;
+    pointer-events: none;
+    transition: opacity var(--dle-dur-fast) var(--dle-ease);
+}
+
+.dle-mobile-fab {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: 1px solid color-mix(in srgb, var(--dle-text) 8%, transparent);
+    background: color-mix(in srgb, var(--SmartThemeBlurTintColor, #111) 88%, transparent);
+    backdrop-filter: blur(16px);
+    box-shadow: 0 8px 24px var(--SmartThemeShadowColor, rgba(0,0,0,0.4));
+    color: var(--dle-text);
+    font-size: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: auto;
+    touch-action: none;
+    cursor: grab;
+    will-change: transform;
+    -webkit-tap-highlight-color: transparent;
+}
+
+@supports not (backdrop-filter: blur(1px)) {
+    .dle-mobile-fab {
+        background: color-mix(in srgb, var(--SmartThemeBlurTintColor, #111) 92%, transparent);
+    }
+}
+
+.dle-mobile-fab--dragging {
+    cursor: grabbing;
+    transform: scale(1.1);
+    box-shadow: 0 12px 32px var(--SmartThemeShadowColor, rgba(0,0,0,0.55));
+    border-color: color-mix(in srgb, var(--dle-text) 12%, transparent);
+}
+
+.dle-mobile-fab__badge {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    min-width: 18px;
+    height: 18px;
+    border-radius: 999px;
+    background: var(--SmartThemeQuoteColor, #d4a847);
+    color: #111;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 18px;
+    text-align: center;
+    padding: 0 4px;
+    pointer-events: none;
+}
+
+/* ─── End FAB ───────────────────────────────────────────────────────────── */
+
+/* ── Mobile glass overlay ─────────────────────────────────────────── */
+.dle-mobile-overlay {
+    position: fixed;
+    inset: 0;
+    height: 100vh;
+    height: 100dvh;
+    z-index: 5002;
+    display: none;
+}
+.dle-mobile-overlay.dle-mobile-open {
+    display: flex;
+    flex-direction: column;
+    pointer-events: auto;
+}
+.dle-mobile-overlay-scrim {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+}
+.dle-mobile-overlay-panel {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    background: color-mix(in srgb, var(--SmartThemeBlurTintColor) 88%, transparent);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid color-mix(in srgb, var(--SmartThemeBodyColor) 8%, transparent);
+    box-shadow: 0 8px 32px var(--SmartThemeShadowColor);
+    color: var(--SmartThemeBodyColor);
+    will-change: transform;
+}
+/* Open animation runs only on the closed-to-open render — every re-render
+   rebuilds the panel, and an always-on animation replays from opacity 0,
+   making the whole UI blink on tab switches and refreshes. */
+.dle-mobile-overlay-opening {
+    animation: dle-mobile-overlay-in var(--dle-dur-base) var(--dle-ease-out);
+}
+@supports not (backdrop-filter: blur(1px)) {
+    .dle-mobile-overlay-panel {
+        background: color-mix(in srgb, var(--SmartThemeBlurTintColor) 92%, transparent);
+    }
+}
+/* ST's "No Blur Effect" setting suppresses backdrop-filter at runtime, which
+   @supports cannot detect — compensate with a near-opaque tint so the page
+   underneath stops ghosting through. */
+body.no-blur .dle-mobile-overlay-panel {
+    background: color-mix(in srgb, var(--SmartThemeBlurTintColor) 96%, transparent);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+}
+@keyframes dle-mobile-overlay-in {
+    from { opacity: 0; transform: scale(0.95); }
+    to { opacity: 1; transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .dle-mobile-overlay-opening {
+        animation: none;
+    }
+}
+.dle-mobile-overlay-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: calc(8px + env(safe-area-inset-top)) 12px 8px;
+    touch-action: pan-y;
+}
+.dle-mobile-overlay-status {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+    min-width: 0;
+    background: none;
+    border: none;
+    color: inherit;
+    text-align: left;
+    padding: 4px;
+}
+.dle-mobile-overlay-status-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+.dle-mobile-overlay-status-text small {
+    color: var(--SmartThemeEmColor);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.dle-mobile-overlay-icon-btn {
+    background: color-mix(in srgb, var(--SmartThemeBodyColor) 3%, transparent);
+    border: 1px solid color-mix(in srgb, var(--SmartThemeBodyColor) 8%, transparent);
+    border-radius: 10px;
+    color: inherit;
+    min-width: 40px;
+    min-height: 40px;
+}
+.dle-mobile-overlay-tabs {
+    display: flex;
+    gap: 4px;
+    padding: 0 8px 8px;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+.dle-mobile-overlay-tab {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    flex: 1;
+    min-height: 48px;
+    padding: 6px 4px;
+    font-size: 0.72em;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    color: var(--SmartThemeEmColor);
+}
+.dle-mobile-overlay-tab[aria-selected="true"] {
+    background: color-mix(in srgb, var(--SmartThemeUnderlineColor) 15%, transparent);
+    border-color: color-mix(in srgb, var(--SmartThemeUnderlineColor) 30%, transparent);
+    color: var(--SmartThemeBodyColor);
+}
+.dle-mobile-overlay-tab-dot {
+    position: absolute;
+    top: 4px;
+    right: 10px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--SmartThemeQuoteColor);
+}
+.dle-mobile-overlay-quick {
+    display: flex;
+    gap: 6px;
+    padding: 0 12px 8px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    border-bottom: 1px solid color-mix(in srgb, var(--SmartThemeBodyColor) 8%, transparent);
+}
+.dle-mobile-overlay-quick-btn {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    min-width: 52px;
+    min-height: 46px;
+    padding: 5px 8px;
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--SmartThemeBodyColor) 3%, transparent);
+    border: 1px solid color-mix(in srgb, var(--SmartThemeBodyColor) 8%, transparent);
+    color: inherit;
+}
+.dle-mobile-overlay-quick-label {
+    font-size: 0.58em;
+    line-height: 1;
+    color: var(--SmartThemeEmColor);
+    white-space: nowrap;
+}
+.dle-mobile-overlay-quick-active {
+    background: color-mix(in srgb, var(--SmartThemeUnderlineColor) 15%, transparent);
+    border-color: color-mix(in srgb, var(--SmartThemeUnderlineColor) 30%, transparent);
+}
+.dle-mobile-overlay-content {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 10px 12px calc(12px + env(safe-area-inset-bottom));
+    -webkit-overflow-scrolling: touch;
+}
+/* Tab-switch transition: applied only on renders where the active tab
+   changed, so routine state re-renders do not flicker. */
+/* Deliberately NOT guarded by ST's body.reduced-motion/no_animation classes:
+   stock ST applies those to <body> even with the settings unchecked, which
+   silently killed this fade on real devices. OS-level accessibility settings
+   still win via the media query below. */
+.dle-mobile-tab-enter {
+    animation: dle-mobile-tab-enter var(--dle-dur-base) var(--dle-ease-out);
+}
+@keyframes dle-mobile-tab-enter {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .dle-mobile-tab-enter {
+        animation: none;
+    }
+}
+.dle-mobile-tab-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+.dle-mobile-filters-stub {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 16px;
+    text-align: center;
+    border: 1px dashed color-mix(in srgb, var(--SmartThemeBodyColor) 15%, transparent);
+    border-radius: 12px;
+    color: var(--SmartThemeEmColor);
+}
+
+.dle-mobile-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.dle-mobile-action,
+.dle-mobile-wide-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 44px;
+    min-width: 0;
+    padding: 10px 12px;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,0.16));
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--SmartThemeQuoteColor, #d4a847) 18%, transparent);
+    color: var(--dle-text);
+    font-size: 13px;
+    touch-action: manipulation;
+}
+
+.dle-mobile-action span,
+.dle-mobile-wide-action {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dle-mobile-list {
+    display: grid;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.dle-mobile-list li {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+    padding: 10px;
+    border: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor, rgba(255,255,255,0.16)) 75%, transparent);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--dle-text) 6%, transparent);
+}
+
+.dle-mobile-list strong,
+.dle-mobile-list span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dle-mobile-list span {
+    color: var(--SmartThemeEmColor, #aaa);
+    font-size: 12px;
+}
+
+.dle-mobile-wide-action {
+    width: 100%;
+    margin-top: 12px;
+}
+
+.dle-mobile-error {
+    margin-bottom: 10px;
+    padding: 10px;
+    border: 1px solid color-mix(in srgb, var(--dle-error, #ef5350) 50%, transparent);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--dle-error, #ef5350) 14%, transparent);
+    color: var(--dle-text);
+    font-size: 12px;
+    line-height: 1.35;
+}
+
+.dle-mobile-mode-group {
+    display: grid;
+    gap: 8px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,0.16));
+}
+
+.dle-mobile-mode-group > span {
+    color: var(--SmartThemeEmColor, #aaa);
+    font-size: 12px;
+}
+
+.dle-mobile-mode-group > div {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.dle-mobile-mode-btn {
+    min-height: 40px;
+    min-width: 0;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,0.16));
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--dle-text) 7%, transparent);
+    color: inherit;
+    font-size: 12px;
+    touch-action: manipulation;
+}
+
+.dle-mobile-mode-btn[aria-pressed="true"] {
+    border-color: var(--SmartThemeQuoteColor, #d4a847);
+    background: color-mix(in srgb, var(--SmartThemeQuoteColor, #d4a847) 22%, transparent);
+}
+
+.dle-mobile-status-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.dle-mobile-status-metric {
+    min-width: 0;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--SmartThemeBotMesBlurTintColor, #222) 78%, transparent);
+    padding: 8px;
+    display: grid;
+    gap: 3px;
+}
+
+.dle-mobile-status-metric strong,
+.dle-mobile-status-metric small {
+    overflow-wrap: anywhere;
+}
+
+.dle-mobile-status-bar {
+    height: 5px;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.45);
+    overflow: hidden;
+}
+
+.dle-mobile-status-bar span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--SmartThemeQuoteColor, #d69a00);
+}
+
+.dle-mobile-browse-controls {
+    display: grid;
+    gap: 8px;
+}
+
+.dle-mobile-search {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 44px;
+    gap: 8px;
+}
+
+.dle-mobile-search button {
+    background: var(--SmartThemeBlurTintColor, #252540);
+    color: var(--SmartThemeBodyColor, #ccc);
+    border: 1px solid var(--SmartThemeBorderColor, #555);
+    border-radius: 6px;
+    cursor: pointer;
+    min-width: 40px;
+    min-height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.dle-mobile-search input,
+.dle-mobile-browse-filter-grid select {
+    min-width: 0;
+    min-height: 40px;
+}
+
+.dle-mobile-search input {
+    background: var(--SmartThemeBlurTintColor, #252540);
+    color: var(--SmartThemeBodyColor, #ccc);
+    border: 1px solid var(--SmartThemeBorderColor, #555);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 0.9em;
+}
+
+.dle-mobile-browse-help {
+    padding: 10px 12px;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,0.16));
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--SmartThemeBlurTintColor, #111) 92%, transparent);
+    color: var(--SmartThemeBodyColor, #ccc);
+    font-size: 0.85em;
+    line-height: 1.5;
+}
+
+.dle-mobile-browse-help strong {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 0.9em;
+    color: var(--SmartThemeEmColor, #aaa);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.dle-mobile-browse-help-grid {
+    display: grid;
+    gap: 4px;
+}
+
+.dle-mobile-browse-help-grid code {
+    background: color-mix(in srgb, var(--dle-text) 8%, transparent);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 0.95em;
+}
+
+.dle-mobile-browse-help-grid em {
+    color: var(--SmartThemeQuoteColor, #d4a847);
+    font-style: normal;
+}
+
+.dle-mobile-browse-filter-grid select {
+    background: var(--SmartThemeBlurTintColor, #252540);
+    color: var(--SmartThemeBodyColor, #ccc);
+    border: 1px solid var(--SmartThemeBorderColor, #555);
+    border-radius: 6px;
+    padding: 6px 8px;
+    font-size: 0.85em;
+    appearance: none;
+    -webkit-appearance: none;
+}
+
+.dle-mobile-browse-filter-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.dle-mobile-browse-quick {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.dle-mobile-browse-quick button,
+.dle-mobile-browse-summary button {
+    min-height: 36px;
+    background: var(--SmartThemeBlurTintColor, #252540);
+    color: var(--SmartThemeBodyColor, #ccc);
+    border: 1px solid var(--SmartThemeBorderColor, #555);
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 0.85em;
+    cursor: pointer;
+}
+
+.dle-mobile-browse-list {
+    display: grid;
+    gap: 10px;
+}
+
+.dle-mobile-browse-card {
+    overflow: hidden;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--SmartThemeBotMesBlurTintColor, #222) 82%, transparent);
+    border: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor, #444) 55%, transparent);
+    padding: 10px;
+    display: grid;
+    gap: 8px;
+}
+
+.dle-mobile-browse-injected {
+    border-color: color-mix(in srgb, var(--dle-success, #7ecb27) 70%, var(--SmartThemeBorderColor, #444));
+    box-shadow: inset 3px 0 0 var(--dle-success, #7ecb27);
+}
+
+.dle-mobile-browse-pinned {
+    border-color: color-mix(in srgb, var(--SmartThemeQuoteColor, #d69a00) 70%, var(--SmartThemeBorderColor, #444));
+}
+
+.dle-mobile-browse-blocked {
+    border-color: color-mix(in srgb, var(--dle-danger, #ff4d6d) 70%, var(--SmartThemeBorderColor, #444));
+    opacity: 0.82;
+}
+
+.dle-mobile-browse-title-row,
+.dle-mobile-browse-meta,
+.dle-mobile-browse-states,
+.dle-mobile-browse-actions {
+    min-width: 0;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.dle-mobile-browse-title-row strong {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.dle-mobile-browse-title-row button {
+    min-width: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    padding: 0;
+    text-align: left;
+}
+
+.dle-mobile-browse-meta {
+    color: var(--SmartThemeEmColor, #aaa);
+    font-size: 0.9em;
+}
+
+.dle-mobile-browse-state-pill {
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: 0.78em;
+    font-weight: 700;
+    line-height: 1.5;
+}
+
+.dle-mobile-browse-state-injected {
+    color: var(--dle-success, #7ecb27);
+    background: color-mix(in srgb, var(--dle-success, #7ecb27) 16%, transparent);
+}
+
+.dle-mobile-browse-state-pin {
+    color: var(--SmartThemeQuoteColor, #d69a00);
+    background: color-mix(in srgb, var(--SmartThemeQuoteColor, #d69a00) 18%, transparent);
+}
+
+.dle-mobile-browse-state-block {
+    color: var(--dle-danger, #ff4d6d);
+    background: color-mix(in srgb, var(--dle-danger, #ff4d6d) 16%, transparent);
+}
+
+.dle-mobile-browse-actions button {
+    min-height: 40px;
+    min-width: 40px;
+    border-radius: 8px;
+    background: var(--SmartThemeBlurTintColor, #252540);
+    color: var(--SmartThemeBodyColor, #ccc);
+    border: 1px solid var(--SmartThemeBorderColor, #555);
+    cursor: pointer;
+    font-size: 0.85em;
+    padding: 4px 10px;
+}
+
+.dle-mobile-browse-actions button[aria-pressed="true"] {
+    border-color: currentColor;
+    font-weight: 700;
+}
+
+.dle-mobile-browse-actions button[data-dle-mobile-browse-action="pin"][aria-pressed="true"] {
+    color: var(--SmartThemeQuoteColor, #d69a00);
+    background: color-mix(in srgb, var(--SmartThemeQuoteColor, #d69a00) 20%, transparent);
+}
+
+.dle-mobile-browse-actions button[data-dle-mobile-browse-action="block"][aria-pressed="true"] {
+    color: var(--dle-danger, #ff4d6d);
+    background: color-mix(in srgb, var(--dle-danger, #ff4d6d) 18%, transparent);
+}
+
+.dle-mobile-browse-preview {
+    border-top: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor, #444) 50%, transparent);
+    padding-top: 8px;
+    overflow-wrap: anywhere;
+}
+
+/* ── Mobile Injection Tab ── */
+
+.dle-mobile-injection-filters {
+    display: flex;
+    gap: 4px;
+    padding: 0 12px 8px;
+}
+
+.dle-mobile-injection-filter-btn {
+    flex: 1;
+    padding: 4px 8px;
+    border: 1px solid var(--SmartThemeBorderColor, #555);
+    border-radius: 4px;
+    background: transparent;
+    color: var(--SmartThemeBodyColor, #ccc);
+    font-size: 0.8em;
+    cursor: pointer;
+}
+
+.dle-mobile-injection-filter-btn.active {
+    border-color: var(--SmartThemeQuoteColor, #f5a623);
+    color: var(--SmartThemeQuoteColor, #f5a623);
+    background: rgba(245, 166, 35, 0.1);
+}
+
+.dle-mobile-injection-summary {
+    padding: 0 12px 6px;
+    font-size: 0.75em;
+    color: var(--SmartThemeBodyColor, #999);
+}
+
+.dle-mobile-injection-count {
+    background: var(--SmartThemeQuoteColor, #f5a623);
+    color: #000;
+    border-radius: 10px;
+    padding: 1px 7px;
+    font-size: 0.75em;
+    margin-left: 4px;
+}
+
+.dle-mobile-injection-list {
+    padding: 0 12px;
+}
+
+.dle-mobile-injection-card {
+    background: var(--SmartThemeBlurTintColor, #252540);
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin-bottom: 4px;
+    border-left: 3px solid var(--SmartThemeQuoteColor, #f5a623);
+}
+
+.dle-mobile-injection-card.dle-mobile-injection-filtered {
+    opacity: 0.6;
+    border-left-color: var(--SmartThemeBorderColor, #555);
+}
+
+.dle-mobile-injection-card.dle-mobile-injection-expanded {
+    border: 1px solid var(--SmartThemeQuoteColor, #f5a623);
+    border-left-width: 3px;
+}
+
+.dle-mobile-injection-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+}
+
+.dle-mobile-injection-title-row button {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: none;
+    border: none;
+    color: var(--SmartThemeQuoteColor, #f5a623);
+    font-weight: bold;
+    font-size: 0.85em;
+    cursor: pointer;
+    padding: 0;
+    text-align: left;
+}
+
+.dle-mobile-injection-title-row button i {
+    font-size: 0.7em;
+    color: var(--dle-text-muted);
+}
+
+.dle-mobile-injection-meta {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.dle-mobile-injection-tokens {
+    color: hsl(120, 60%, 50%);
+    font-size: 0.75em;
+}
+
+.dle-mobile-injection-badge {
+    background: var(--SmartThemeBorderColor, #555);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 0.7em;
+    color: var(--SmartThemeBodyColor, #ccc);
+}
+
+.dle-mobile-injection-badge-key {
+    background: var(--SmartThemeQuoteColor, #f5a623);
+    color: #000;
+}
+
+.dle-mobile-injection-detail {
+    padding: 6px 0 2px 18px;
+    font-size: 0.75em;
+    color: var(--SmartThemeBodyColor, #aaa);
+}
+
+.dle-mobile-injection-links {
+    display: flex;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+.dle-mobile-injection-links button {
+    background: none;
+    border: none;
+    color: var(--dle-info);
+    text-decoration: underline;
+    cursor: pointer;
+    padding: 0;
+    font-size: 1em;
+}
+
+.dle-mobile-injection-empty {
+    padding: 16px 0;
+    text-align: center;
+    color: var(--dle-text-muted);
+}
+
+.dle-mobile-injection-empty strong {
+    display: block;
+    margin-bottom: 4px;
+}
+
+.dle-mobile-injection-timers {
+    margin: 8px 12px 0;
+    border-top: 1px solid var(--dle-border);
+}
+
+.dle-mobile-injection-timers summary {
+    padding: 6px 0;
+    font-size: 0.8em;
+    color: var(--dle-text-muted);
+    cursor: pointer;
+}
+
+.dle-mobile-injection-timer {
+    display: flex;
+    justify-content: space-between;
+    padding: 3px 0;
+    font-size: 0.75em;
+}
+
+.dle-mobile-injection-timer-badge {
+    border-radius: 3px;
+    padding: 1px 5px;
+    font-size: 0.9em;
+}
+
+.dle-mobile-injection-timer-cooldown {
+    background: rgba(245, 166, 35, 0.2);
+    color: var(--SmartThemeQuoteColor, #f5a623);
+}
+
+.dle-mobile-injection-timer-decay {
+    background: rgba(255, 100, 100, 0.2);
+    color: #ff6464;
+}
+
+.dle-mobile-injection-timer-empty {
+    font-size: 0.75em;
+    color: var(--SmartThemeBodyColor, #666);
+    padding: 4px 0;
+    opacity: 0.5;
+}
+
+.dle-mobile-wide-action-sm {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: var(--dle-text-muted);
+    font-size: 0.7em;
+    cursor: pointer;
+    padding: 4px 8px;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+@media (forced-colors: active) {
+    .dle-mobile-fab,
+    .dle-mobile-overlay-panel,
+    .dle-mobile-overlay-tab,
+    .dle-mobile-overlay-quick-btn,
+    .dle-mobile-injection-card,
+    .dle-mobile-browse-card {
+        border: 1px solid CanvasText;
+        forced-color-adjust: auto;
+    }
+}

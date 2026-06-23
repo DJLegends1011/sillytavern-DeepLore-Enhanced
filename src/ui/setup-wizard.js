@@ -179,6 +179,11 @@ function goToPage(page) {
 
     $wizard.find('.dle-wizard-step').removeClass('active').attr('aria-selected', 'false').removeAttr('aria-current');
     $wizard.find(`.dle-wizard-step[data-step="${page}"]`).addClass('active').attr('aria-selected', 'true').attr('aria-current', 'step');
+    $wizard.find('.dle-wizard-body').scrollTop(0);
+    $wizard.find(`.dle-wizard-step[data-step="${page}"]`).get(0)?.scrollIntoView({
+        block: 'nearest',
+        inline: 'center',
+    });
 
     updateNavButtons();
 
