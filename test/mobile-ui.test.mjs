@@ -963,6 +963,33 @@ test('mobile Injection actions: Browse arrow reveals the selected Browse card', 
     }
 });
 
+test('mobile Injection actions: copy titles handles missing clipboard API', () => {
+    const dom = installMobileDom({ viewportWidth: 390 });
+    const previousNavigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+    try {
+        Object.defineProperty(globalThis, 'navigator', { configurable: true, value: {} });
+        const root = createMobileShell({
+            getCurrentVerdict: () => ({
+                injectedSources: [{ title: 'Keisha' }],
+                trace: {},
+            }),
+            getSettings: () => ({}),
+            getDrawerState: () => ({}),
+        });
+        const target = new MockElement('button');
+        target.ownerDocument = root.ownerDocument;
+        target.parentElement = root;
+        target.setAttribute('data-dle-mobile-injection-action', 'copy-titles');
+        clickMobileRoot(root, target);
+        assertMatch(root.innerHTML, /Clipboard access denied\./, 'missing clipboard should render mobile error instead of throwing');
+    } finally {
+        destroyMobileShell();
+        if (previousNavigatorDescriptor) Object.defineProperty(globalThis, 'navigator', previousNavigatorDescriptor);
+        else delete globalThis.navigator;
+        dom.restore();
+    }
+});
+
 test('mobile Injection actions: shell routes entry titles and Browse arrows', () => {
     const source = readFileSync(new URL('../src/mobile/mobile-shell.js', import.meta.url), 'utf8');
 

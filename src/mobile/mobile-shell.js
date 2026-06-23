@@ -877,9 +877,13 @@ function handleMobileClick(event) {
             const sources = buildMobileShellSnapshot().injectedSources;
             const titles = sources.map(s => s.title).filter(Boolean).join('\n');
             if (titles) {
-                navigator.clipboard.writeText(titles).catch(() => {
+                try {
+                    navigator.clipboard.writeText(titles).catch(() => {
+                        setMobileError('Clipboard access denied.');
+                    });
+                } catch {
                     setMobileError('Clipboard access denied.');
-                });
+                }
             }
         } else if (action === 'obsidian') {
             const filename = injectionActionEl.getAttribute('data-filename') || '';
