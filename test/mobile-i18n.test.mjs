@@ -30,8 +30,10 @@ test('mobile i18n: every referenced key exists in canonical English', () => {
     const keys = new Set();
     for (const file of files) {
         const source = readFileSync(new URL(file, import.meta.url), 'utf8');
-        for (const match of source.matchAll(/mtf?\(['"](dle_mobile_[^'"]+)/g)) keys.add(match[1]);
+        for (const match of source.matchAll(/['"](dle_mobile_[^'"]+)['"]/g)) keys.add(match[1]);
     }
+    assert(keys.has('dle_mobile_quick_refresh_label'), 'metadata labelKey references are scanned');
+    assert(keys.has('dle_mobile_status_degraded'), 'tuple status label references are scanned');
     const dict = JSON.parse(readFileSync(new URL('../locales/dle.en.json', import.meta.url), 'utf8'));
     for (const key of keys) assert(Object.hasOwn(dict, key), `missing English key: ${key}`);
 });
