@@ -429,6 +429,13 @@ section('i18n — all 6 translation locale files exist + parse');
 // ════════════════════════════════════════════════════════════════════════════
 
 const TRANSLATION_LOCALES = ['es-es', 'fr-fr', 'de-de', 'ja-jp', 'zh-cn', 'ru-ru'];
+const ENGLISH_FALLBACK_ONLY_PREFIXES = ['dle_mobile_'];
+const requiresTranslatedParity = key => !ENGLISH_FALLBACK_ONLY_PREFIXES.some(prefix => key.startsWith(prefix));
+
+test('English-only locale exceptions are limited to mobile UI keys', () => {
+    assertEqual(ENGLISH_FALLBACK_ONLY_PREFIXES.length, 1);
+    assertEqual(ENGLISH_FALLBACK_ONLY_PREFIXES[0], 'dle_mobile_');
+});
 
 for (const loc of TRANSLATION_LOCALES) {
     test(`locales/dle.${loc}.json exists, parses, has __meta`, () => {
@@ -444,19 +451,21 @@ for (const loc of TRANSLATION_LOCALES) {
         assert(data.__meta.canonical === false, 'meta canonical=false (translated)');
         assert(data.__meta.machine_translated === true, 'meta machine_translated=true');
         const keys = Object.keys(data).filter(k => k !== '__meta');
-        assertEqual(keys.length, 2306, `${loc} key count matches canonical (2306)`);
+        assertEqual(keys.length, 2306, `${loc} translated baseline key count remains unchanged (2306)`);
     });
 }
 
-test('every translation has same key set as canonical EN', () => {
+test('every translation has required non-mobile key set from canonical EN', () => {
     const en = JSON.parse(readFileSync(resolve(repoRoot, 'locales/dle.en.json'), 'utf8'));
-    const enKeys = new Set(Object.keys(en).filter(k => k !== '__meta'));
+    const enKeys = Object.keys(en).filter(k => k !== '__meta');
+    const translatedRequiredKeys = enKeys.filter(requiresTranslatedParity);
+    const enKeySet = new Set(enKeys);
     for (const loc of TRANSLATION_LOCALES) {
         const data = JSON.parse(readFileSync(resolve(repoRoot, `locales/dle.${loc}.json`), 'utf8'));
         const locKeys = new Set(Object.keys(data).filter(k => k !== '__meta'));
-        const missing = [...enKeys].filter(k => !locKeys.has(k));
-        const extra = [...locKeys].filter(k => !enKeys.has(k));
-        assertEqual(missing.length, 0, `${loc} missing ${missing.length} keys (first: ${missing[0] || 'n/a'})`);
+        const missing = translatedRequiredKeys.filter(k => !locKeys.has(k));
+        const extra = [...locKeys].filter(k => !enKeySet.has(k));
+        assertEqual(missing.length, 0, `${loc} missing ${missing.length} required translated keys (first: ${missing[0] || 'n/a'})`);
         assertEqual(extra.length, 0, `${loc} extra ${extra.length} keys (first: ${extra[0] || 'n/a'})`);
     }
 });

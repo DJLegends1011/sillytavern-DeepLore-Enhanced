@@ -58,6 +58,12 @@ import {
     readMobileVerdict,
     subscribeMobileVerdict,
 } from './mobile-verdict.js';
+import {
+    configureMobileI18n,
+    mt,
+    mtf,
+    resetMobileI18n,
+} from './mobile-i18n.js';
 
 export const MOBILE_VIEWPORT_WIDTH = 768;
 export const TOUCH_TABLET_WIDTH = 1024;
@@ -172,7 +178,7 @@ function setMobileMode(mode) {
         localStorage.removeItem(MOBILE_DISABLE_STORAGE_KEY);
         return 'auto';
     } catch (err) {
-        mobileState.errorMessage = `Could not save mobile mode: ${err.message || err}`;
+        mobileState.errorMessage = mtf('dle_mobile_error_mode', 'Could not save mobile mode: ${0}', err.message || err);
         return readMobileMode();
     }
 }
@@ -195,10 +201,10 @@ function countInjected(sources) {
 
 
 function statusForState(source) {
-    if (source.indexing) return 'Indexing';
-    if (source.generationLock || source.pipelinePhase !== 'idle') return 'Working';
-    if (!source.indexEverLoaded) return 'Not ready';
-    return 'Ready';
+    if (source.indexing) return mt('dle_mobile_status_indexing', 'Indexing');
+    if (source.generationLock || source.pipelinePhase !== 'idle') return mt('dle_mobile_status_working', 'Working');
+    if (!source.indexEverLoaded) return mt('dle_mobile_status_not_ready', 'Not ready');
+    return mt('dle_mobile_status_ready', 'Ready');
 }
 
 export function buildMobileShellSnapshot(source = {}) {
@@ -294,11 +300,11 @@ function renderInjectionCard(row, state) {
                 </div>
             </div>
             ${expanded ? `<div class="dle-mobile-injection-detail">
-                <div>Matched by: <strong>${escapeHtml(row.matchedBy || row.matchLabel)}</strong></div>
-                ${row.reason ? `<div>Reason: ${escapeHtml(row.reason)}</div>` : ''}
+                <div>${escapeHtml(mtf('dle_mobile_injection_matched_by', 'Matched by: ${0}', row.matchedBy || row.matchLabel))}</div>
+                ${row.reason ? `<div>${escapeHtml(mtf('dle_mobile_injection_reason', 'Reason: ${0}', row.reason))}</div>` : ''}
                 <div class="dle-mobile-injection-links">
-                    ${row.filename ? `<button type="button" data-dle-mobile-injection-action="obsidian" data-filename="${escapeHtml(row.filename)}" data-vault="${escapeHtml(row.vaultSource)}">Open in Obsidian</button>` : ''}
-                    <button type="button" data-dle-mobile-injection-action="browse" data-title="${escapeHtml(row.title)}" data-vault="${escapeHtml(row.vaultSource)}" data-filename="${escapeHtml(row.filename)}">Go to Browse →</button>
+                    ${row.filename ? `<button type="button" data-dle-mobile-injection-action="obsidian" data-filename="${escapeHtml(row.filename)}" data-vault="${escapeHtml(row.vaultSource)}">${escapeHtml(mt('dle_mobile_injection_open_obsidian', 'Open in Obsidian'))}</button>` : ''}
+                    <button type="button" data-dle-mobile-injection-action="browse" data-title="${escapeHtml(row.title)}" data-vault="${escapeHtml(row.vaultSource)}" data-filename="${escapeHtml(row.filename)}">${escapeHtml(mt('dle_mobile_injection_go_browse', 'Go to Browse \u2192'))}</button>
                 </div>
             </div>` : ''}
         </article>
@@ -314,30 +320,35 @@ function renderInjection(snapshot, state = mobileState) {
     const settings = mobileShellOptions.getSettings?.() ?? {};
     const timers = extractTimerData(cooldownTracker, decayTracker, settings);
 
+    const filterLabels = {
+        injected: mt('dle_mobile_filter_injected', 'Injected'),
+        filtered: mt('dle_mobile_filter_filtered', 'Filtered'),
+        both: mt('dle_mobile_filter_both', 'Both'),
+    };
     const filterButtons = ['injected', 'filtered', 'both'].map(f =>
-        `<button type="button" class="dle-mobile-injection-filter-btn${filter === f ? ' active' : ''}" data-dle-mobile-injection-filter="${f}" aria-pressed="${filter === f ? 'true' : 'false'}">${f.charAt(0).toUpperCase() + f.slice(1)}</button>`
+        `<button type="button" class="dle-mobile-injection-filter-btn${filter === f ? ' active' : ''}" data-dle-mobile-injection-filter="${f}" aria-pressed="${filter === f ? 'true' : 'false'}">${escapeHtml(filterLabels[f] || f)}</button>`
     ).join('');
 
     const entryCards = rows.length
         ? rows.map(row => renderInjectionCard(row, state)).join('')
         : `<div class="dle-mobile-injection-empty">
-            <strong>No entries injected yet</strong>
-            <span>Send a message mentioning entry keywords, or check Obsidian connection.</span>
+            <strong>${escapeHtml(mt('dle_mobile_injection_empty_title', 'No entries injected yet'))}</strong>
+            <span>${escapeHtml(mt('dle_mobile_injection_empty_detail', 'Send a message mentioning entry keywords, or check Obsidian connection.'))}</span>
            </div>`;
 
     const timerRows = timers.length
         ? timers.map(t => `<div class="dle-mobile-injection-timer"><span>${escapeHtml(t.title)}</span><span class="dle-mobile-injection-timer-badge dle-mobile-injection-timer-${t.timerType}">${escapeHtml(t.detail)}</span></div>`).join('')
-        : '<div class="dle-mobile-injection-timer-empty">No active timers</div>';
+        : `<div class="dle-mobile-injection-timer-empty">${escapeHtml(mt('dle_mobile_timer_none', 'No active timers'))}</div>`;
 
     const copyDisabled = !rows.length || filter !== 'injected';
 
     return `
         <div class="dle-mobile-tab-toolbar">
             <span class="dle-mobile-injection-count">${snapshot.injectedCount}</span>
-            <button class="dle-mobile-wide-action-sm" type="button" data-dle-mobile-injection-action="copy-titles" aria-label="Copy injected titles"${copyDisabled ? ' disabled' : ''}><i class="fa-solid fa-clipboard" aria-hidden="true"></i></button>
-            <button class="dle-mobile-wide-action-sm" type="button" data-dle-mobile-command="${commandForView('injection')}" aria-label="Open full Injection view"><i class="fa-solid fa-up-right-from-square" aria-hidden="true"></i></button>
+            <button class="dle-mobile-wide-action-sm" type="button" data-dle-mobile-injection-action="copy-titles" aria-label="${escapeHtml(mt('dle_mobile_aria_copy_titles', 'Copy injected titles'))}"${copyDisabled ? ' disabled' : ''}><i class="fa-solid fa-clipboard" aria-hidden="true"></i></button>
+            <button class="dle-mobile-wide-action-sm" type="button" data-dle-mobile-command="${commandForView('injection')}" aria-label="${escapeHtml(mt('dle_mobile_aria_full_injection', 'Open full Injection view'))}"><i class="fa-solid fa-up-right-from-square" aria-hidden="true"></i></button>
         </div>
-        <div class="dle-mobile-injection-filters" role="radiogroup" aria-label="Filter entries">
+        <div class="dle-mobile-injection-filters" role="radiogroup" aria-label="${escapeHtml(mt('dle_mobile_aria_filter_entries', 'Filter entries'))}">
             ${filterButtons}
         </div>
         ${split.summary ? `<div class="dle-mobile-injection-summary">${escapeHtml(split.summary)}</div>` : ''}
@@ -345,7 +356,7 @@ function renderInjection(snapshot, state = mobileState) {
             ${entryCards}
         </div>
         <details class="dle-mobile-injection-timers">
-            <summary><i class="fa-solid fa-clock" aria-hidden="true"></i> Entry Timers</summary>
+            <summary><i class="fa-solid fa-clock" aria-hidden="true"></i> ${escapeHtml(mt('dle_mobile_entry_timers', 'Entry Timers'))}</summary>
             <div class="dle-mobile-injection-timer-list">${timerRows}</div>
         </details>
     `;
@@ -370,52 +381,52 @@ function renderBrowse(snapshot, state = mobileState) {
 
     return `
         <div class="dle-mobile-tab-toolbar">
-            <button class="dle-mobile-wide-action-sm" type="button" data-dle-mobile-command="${commandForView('browse')}" aria-label="Open full Browse view"><i class="fa-solid fa-up-right-from-square" aria-hidden="true"></i></button>
+            <button class="dle-mobile-wide-action-sm" type="button" data-dle-mobile-command="${commandForView('browse')}" aria-label="${escapeHtml(mt('dle_mobile_aria_full_browse', 'Open full Browse view'))}"><i class="fa-solid fa-up-right-from-square" aria-hidden="true"></i></button>
         </div>
         <div class="dle-mobile-browse-controls">
             <label class="dle-mobile-search">
-                <span class="sr-only">Search entries</span>
-                <input type="search" value="${escapeHtml(browseState.query)}" placeholder="Search entries..." data-dle-mobile-browse-field="query">
-                <button type="button" data-dle-mobile-action="toggle-browse-help" aria-expanded="${state.browseSearchHelpOpen ? 'true' : 'false'}" aria-label="Search syntax help">
+                <span class="sr-only">${escapeHtml(mt('dle_mobile_browse_search', 'Search entries'))}</span>
+                <input type="search" value="${escapeHtml(browseState.query)}" placeholder="${escapeHtml(mt('dle_mobile_browse_search_placeholder', 'Search entries...'))}" data-dle-mobile-browse-field="query">
+                <button type="button" data-dle-mobile-action="toggle-browse-help" aria-expanded="${state.browseSearchHelpOpen ? 'true' : 'false'}" aria-label="${escapeHtml(mt('dle_mobile_browse_search_syntax_help', 'Search syntax help'))}">
                     <i class="fa-solid fa-circle-question" aria-hidden="true"></i>
                 </button>
             </label>
             ${state.browseSearchHelpOpen ? `<div class="dle-mobile-browse-help">
-    <strong>Search syntax</strong>
+    <strong>${escapeHtml(mt('dle_mobile_browse_search_syntax', 'Search syntax'))}</strong>
     <div class="dle-mobile-browse-help-grid">
-        <div><code>tag:wizard</code> — entries tagged <em>wizard</em></div>
-        <div><code>folder:Locations</code> — entries under <em>Locations/</em></div>
-        <div><code>key:apple</code> — keyword exact-match</div>
-        <div><code>summary:"old gods"</code> — phrase in summary</div>
-        <div><code>field:era=medieval</code> — custom-field match</div>
-        <div>Combine prefixes with spaces. Plain words match title/keys/content.</div>
+        <div><code>tag:wizard</code> \u2014 ${escapeHtml(mt('dle_mobile_browse_help_tag', 'entries tagged wizard'))}</div>
+        <div><code>folder:Locations</code> \u2014 ${escapeHtml(mt('dle_mobile_browse_help_folder', 'entries under Locations/'))}</div>
+        <div><code>key:apple</code> \u2014 ${escapeHtml(mt('dle_mobile_browse_help_key', 'keyword exact-match'))}</div>
+        <div><code>summary:"old gods"</code> \u2014 ${escapeHtml(mt('dle_mobile_browse_help_summary', 'phrase in summary'))}</div>
+        <div><code>field:era=medieval</code> \u2014 ${escapeHtml(mt('dle_mobile_browse_help_field', 'custom-field match'))}</div>
+        <div>${escapeHtml(mt('dle_mobile_browse_help_combine', 'Combine prefixes with spaces. Plain words match title/keys/content.'))}</div>
     </div>
 </div>` : ''}
             <div class="dle-mobile-browse-filter-grid">
-                <select data-dle-mobile-browse-field="status" aria-label="Status filter">
-                    <option value="all"${browseState.status === 'all' ? ' selected' : ''}>Status</option>
-                    <option value="injected"${browseState.status === 'injected' ? ' selected' : ''}>Injected</option>
-                    <option value="pinned"${browseState.status === 'pinned' ? ' selected' : ''}>Pinned</option>
-                    <option value="blocked"${browseState.status === 'blocked' ? ' selected' : ''}>Blocked</option>
-                    <option value="constant"${browseState.status === 'constant' ? ' selected' : ''}>Constant</option>
-                    <option value="regular"${browseState.status === 'regular' ? ' selected' : ''}>Regular</option>
+                <select data-dle-mobile-browse-field="status" aria-label="${escapeHtml(mt('dle_mobile_browse_filter_status', 'Status filter'))}">
+                    <option value="all"${browseState.status === 'all' ? ' selected' : ''}>${escapeHtml(mt('dle_mobile_browse_status', 'Status'))}</option>
+                    <option value="injected"${browseState.status === 'injected' ? ' selected' : ''}>${escapeHtml(mt('dle_mobile_filter_injected', 'Injected'))}</option>
+                    <option value="pinned"${browseState.status === 'pinned' ? ' selected' : ''}>${escapeHtml(mt('dle_mobile_action_pinned', 'Pinned'))}</option>
+                    <option value="blocked"${browseState.status === 'blocked' ? ' selected' : ''}>${escapeHtml(mt('dle_mobile_action_blocked', 'Blocked'))}</option>
+                    <option value="constant"${browseState.status === 'constant' ? ' selected' : ''}>${escapeHtml(mt('dle_mobile_browse_constant', 'Constant'))}</option>
+                    <option value="regular"${browseState.status === 'regular' ? ' selected' : ''}>${escapeHtml(mt('dle_mobile_browse_regular', 'Regular'))}</option>
                 </select>
-                <select data-dle-mobile-browse-field="tag" aria-label="Tag filter"><option value="">Tags</option>${tagOptions}</select>
-                <select data-dle-mobile-browse-field="folder" aria-label="Folder filter"><option value="">Folder</option>${folderOptions}</select>
-                <select data-dle-mobile-browse-field="sort" aria-label="Sort entries">
-                    <option value="priority_asc"${browseState.sort === 'priority_asc' ? ' selected' : ''}>Priority</option>
-                    <option value="priority_desc"${browseState.sort === 'priority_desc' ? ' selected' : ''}>Priority desc</option>
-                    <option value="alpha_asc"${browseState.sort === 'alpha_asc' ? ' selected' : ''}>A-Z</option>
-                    <option value="alpha_desc"${browseState.sort === 'alpha_desc' ? ' selected' : ''}>Z-A</option>
-                    <option value="tokens_desc"${browseState.sort === 'tokens_desc' ? ' selected' : ''}>Tokens high</option>
-                    <option value="tokens_asc"${browseState.sort === 'tokens_asc' ? ' selected' : ''}>Tokens low</option>
+                <select data-dle-mobile-browse-field="tag" aria-label="${escapeHtml(mt('dle_mobile_browse_filter_tag', 'Tag filter'))}"><option value="">${escapeHtml(mt('dle_mobile_browse_tags', 'Tags'))}</option>${tagOptions}</select>
+                <select data-dle-mobile-browse-field="folder" aria-label="${escapeHtml(mt('dle_mobile_browse_filter_folder', 'Folder filter'))}"><option value="">${escapeHtml(mt('dle_mobile_browse_folder', 'Folder'))}</option>${folderOptions}</select>
+                <select data-dle-mobile-browse-field="sort" aria-label="${escapeHtml(mt('dle_mobile_browse_filter_sort', 'Sort entries'))}">
+                    <option value="priority_asc"${browseState.sort === 'priority_asc' ? ' selected' : ''}>${escapeHtml(mt('dle_mobile_browse_priority', 'Priority'))}</option>
+                    <option value="priority_desc"${browseState.sort === 'priority_desc' ? ' selected' : ''}>${escapeHtml(mt('dle_mobile_browse_priority_desc', 'Priority desc'))}</option>
+                    <option value="alpha_asc"${browseState.sort === 'alpha_asc' ? ' selected' : ''}>${escapeHtml(mt('dle_mobile_browse_sort_alpha_asc', 'A-Z'))}</option>
+                    <option value="alpha_desc"${browseState.sort === 'alpha_desc' ? ' selected' : ''}>${escapeHtml(mt('dle_mobile_browse_sort_alpha_desc', 'Z-A'))}</option>
+                    <option value="tokens_desc"${browseState.sort === 'tokens_desc' ? ' selected' : ''}>${escapeHtml(mt('dle_mobile_browse_sort_tokens_desc', 'Tokens high'))}</option>
+                    <option value="tokens_asc"${browseState.sort === 'tokens_asc' ? ' selected' : ''}>${escapeHtml(mt('dle_mobile_browse_sort_tokens_asc', 'Tokens low'))}</option>
                 </select>
             </div>
-            <div class="dle-mobile-browse-quick" role="group" aria-label="Quick filters">
-                <button type="button" data-dle-mobile-browse-quick="since-gen" aria-pressed="${browseState.quick === 'since-gen' ? 'true' : 'false'}">Since last gen</button>
-                <button type="button" data-dle-mobile-browse-quick="never-injected" aria-pressed="${browseState.quick === 'never-injected' ? 'true' : 'false'}">Never injected</button>
+            <div class="dle-mobile-browse-quick" role="group" aria-label="${escapeHtml(mt('dle_mobile_aria_quick_filters', 'Quick filters'))}">
+                <button type="button" data-dle-mobile-browse-quick="since-gen" aria-pressed="${browseState.quick === 'since-gen' ? 'true' : 'false'}">${escapeHtml(mt('dle_mobile_browse_since_generation', 'Since last gen'))}</button>
+                <button type="button" data-dle-mobile-browse-quick="never-injected" aria-pressed="${browseState.quick === 'never-injected' ? 'true' : 'false'}">${escapeHtml(mt('dle_mobile_browse_never_injected', 'Never injected'))}</button>
             </div>
-            ${filtered.summary ? `<div class="dle-mobile-browse-summary">${escapeHtml(filtered.summary)} <button type="button" data-dle-mobile-browse-clear>Clear</button></div>` : ''}
+            ${filtered.summary ? `<div class="dle-mobile-browse-summary">${escapeHtml(filtered.summary)} <button type="button" data-dle-mobile-browse-clear>${escapeHtml(mt('dle_mobile_browse_clear', 'Clear'))}</button></div>` : ''}
         </div>
         <div class="dle-mobile-browse-list dle-mobile-list">
             ${rows.length ? rows.slice(0, 40).map(row => renderBrowseCard(row, state)).join('') : renderBrowseEmpty(entries, filtered)}
@@ -437,9 +448,9 @@ function renderBrowseCard(row, state) {
     const vault = entry.vaultSource || '';
     const filename = entry.filename || '';
     const statePills = [
-        row.isInjected ? '<span class="dle-mobile-browse-state-pill dle-mobile-browse-state-injected">Injected</span>' : '',
-        row.isPinned ? '<span class="dle-mobile-browse-state-pill dle-mobile-browse-state-pin">Pinned</span>' : '',
-        row.isBlocked ? '<span class="dle-mobile-browse-state-pill dle-mobile-browse-state-block">Blocked</span>' : '',
+        row.isInjected ? `<span class="dle-mobile-browse-state-pill dle-mobile-browse-state-injected">${escapeHtml(mt('dle_mobile_filter_injected', 'Injected'))}</span>` : '',
+        row.isPinned ? `<span class="dle-mobile-browse-state-pill dle-mobile-browse-state-pin">${escapeHtml(mt('dle_mobile_action_pinned', 'Pinned'))}</span>` : '',
+        row.isBlocked ? `<span class="dle-mobile-browse-state-pill dle-mobile-browse-state-block">${escapeHtml(mt('dle_mobile_action_blocked', 'Blocked'))}</span>` : '',
     ].filter(Boolean).join('');
     return `
         <article class="${classNames}" data-dle-mobile-browse-key="${escapeHtml(row.key)}">
@@ -457,10 +468,10 @@ function renderBrowseCard(row, state) {
             </div>
             ${statePills ? `<div class="dle-mobile-browse-states">${statePills}</div>` : ''}
             <div class="dle-mobile-browse-actions">
-                <button type="button" data-dle-mobile-browse-action="pin" data-title="${escapeHtml(title)}" data-vault="${escapeHtml(vault)}" data-filename="${escapeHtml(filename)}" aria-pressed="${row.isPinned ? 'true' : 'false'}">${row.isPinned ? 'Pinned' : 'Pin'}</button>
-                <button type="button" data-dle-mobile-browse-action="block" data-title="${escapeHtml(title)}" data-vault="${escapeHtml(vault)}" data-filename="${escapeHtml(filename)}" aria-pressed="${row.isBlocked ? 'true' : 'false'}">${row.isBlocked ? 'Blocked' : 'Block'}</button>
-                <button type="button" data-dle-mobile-browse-action="copy" data-title="${escapeHtml(title)}" data-vault="${escapeHtml(vault)}" data-filename="${escapeHtml(filename)}">Copy</button>
-                ${filename ? `<button type="button" data-dle-mobile-browse-action="obsidian" data-title="${escapeHtml(title)}" data-vault="${escapeHtml(vault)}" data-filename="${escapeHtml(filename)}">Open</button>` : ''}
+                <button type="button" data-dle-mobile-browse-action="pin" data-title="${escapeHtml(title)}" data-vault="${escapeHtml(vault)}" data-filename="${escapeHtml(filename)}" aria-pressed="${row.isPinned ? 'true' : 'false'}">${escapeHtml(row.isPinned ? mt('dle_mobile_action_pinned', 'Pinned') : mt('dle_mobile_action_pin', 'Pin'))}</button>
+                <button type="button" data-dle-mobile-browse-action="block" data-title="${escapeHtml(title)}" data-vault="${escapeHtml(vault)}" data-filename="${escapeHtml(filename)}" aria-pressed="${row.isBlocked ? 'true' : 'false'}">${escapeHtml(row.isBlocked ? mt('dle_mobile_action_blocked', 'Blocked') : mt('dle_mobile_action_block', 'Block'))}</button>
+                <button type="button" data-dle-mobile-browse-action="copy" data-title="${escapeHtml(title)}" data-vault="${escapeHtml(vault)}" data-filename="${escapeHtml(filename)}">${escapeHtml(mt('dle_mobile_action_copy', 'Copy'))}</button>
+                ${filename ? `<button type="button" data-dle-mobile-browse-action="obsidian" data-title="${escapeHtml(title)}" data-vault="${escapeHtml(vault)}" data-filename="${escapeHtml(filename)}">${escapeHtml(mt('dle_mobile_action_open', 'Open'))}</button>` : ''}
             </div>
             ${expanded ? `<div class="dle-mobile-browse-preview">${escapeHtml(row.preview)}</div>` : ''}
         </article>
@@ -468,8 +479,8 @@ function renderBrowseCard(row, state) {
 }
 
 function renderBrowseEmpty(entries, filtered) {
-    const title = entries.length ? 'No entries match' : 'No entries loaded';
-    const detail = entries.length && filtered.isFiltered ? 'Clear filters or open the full Browse view.' : 'Refresh the vault index first.';
+    const title = entries.length ? mt('dle_mobile_browse_empty_filtered_title', 'No entries match') : mt('dle_mobile_browse_empty_unloaded_title', 'No entries loaded');
+    const detail = entries.length && filtered.isFiltered ? mt('dle_mobile_browse_empty_filtered_detail', 'Clear filters or open the full Browse view.') : mt('dle_mobile_browse_empty_unloaded_detail', 'Refresh the vault index first.');
     return `<div class="dle-mobile-browse-empty"><strong>${escapeHtml(title)}</strong><span>${escapeHtml(detail)}</span></div>`;
 }
 
@@ -477,13 +488,13 @@ function renderLibrarian(snapshot) {
     const loreGaps = Array.isArray(snapshot.loreGaps) ? snapshot.loreGaps : [];
     const rows = loreGaps.slice(0, 6).map(gap => `
         <li>
-            <strong>${escapeHtml(gap.title || gap.id || 'Lore gap')}</strong>
-            <span>${escapeHtml(gap.reason || gap.description || 'Needs review')}</span>
+            <strong>${escapeHtml(gap.title || gap.id || mt('dle_mobile_librarian_gap', 'Lore gap'))}</strong>
+            <span>${escapeHtml(gap.reason || gap.description || mt('dle_mobile_librarian_needs_review', 'Needs review'))}</span>
         </li>
     `).join('');
 
     return `
-        <ul class="dle-mobile-list">${rows || '<li><strong>No open gaps</strong><span>Librarian has nothing waiting.</span></li>'}</ul>
+        <ul class="dle-mobile-list">${rows || `<li><strong>${escapeHtml(mt('dle_mobile_librarian_empty_title', 'No open gaps'))}</strong><span>${escapeHtml(mt('dle_mobile_librarian_empty_detail', 'Librarian has nothing waiting.'))}</span></li>`}</ul>
     `;
 }
 
@@ -499,18 +510,18 @@ function renderModeButton(label, mode, activeMode) {
 function renderTools(mode = 'auto') {
     return `
         <div class="dle-mobile-actions">
-            ${renderCommandButton('Health', 'fa-heart-pulse', commandForView('health'))}
-            ${renderCommandButton('Filters', 'fa-filter', commandForView('filters'))}
-            ${renderCommandButton('Graph', 'fa-diagram-project', commandForView('graph'))}
-            ${renderCommandButton('Setup', 'fa-gear', commandForView('setup'))}
+            ${renderCommandButton(mt('dle_mobile_tools_health', 'Health'), 'fa-heart-pulse', commandForView('health'))}
+            ${renderCommandButton(mt('dle_mobile_tab_filters', 'Filters'), 'fa-filter', commandForView('filters'))}
+            ${renderCommandButton(mt('dle_mobile_quick_graph', 'Graph'), 'fa-diagram-project', commandForView('graph'))}
+            ${renderCommandButton(mt('dle_mobile_tools_setup', 'Setup'), 'fa-gear', commandForView('setup'))}
         </div>
-        <button class="dle-mobile-wide-action" type="button" data-dle-mobile-refresh>Refresh index</button>
-        <div class="dle-mobile-mode-group" role="group" aria-label="Mobile UI mode">
-            <span>Mobile UI</span>
+        <button class="dle-mobile-wide-action" type="button" data-dle-mobile-refresh>${escapeHtml(mt('dle_mobile_tools_refresh', 'Refresh index'))}</button>
+        <div class="dle-mobile-mode-group" role="group" aria-label="${escapeHtml(mt('dle_mobile_aria_mobile_mode', 'Mobile UI mode'))}">
+            <span>${escapeHtml(mt('dle_mobile_mode_label', 'Mobile UI'))}</span>
             <div>
-                ${renderModeButton('Auto', 'auto', mode)}
-                ${renderModeButton('Force', 'forced', mode)}
-                ${renderModeButton('Off', 'disabled', mode)}
+                ${renderModeButton(mt('dle_mobile_mode_auto', 'Auto'), 'auto', mode)}
+                ${renderModeButton(mt('dle_mobile_mode_force', 'Force'), 'forced', mode)}
+                ${renderModeButton(mt('dle_mobile_mode_off', 'Off'), 'disabled', mode)}
             </div>
         </div>
     `;
@@ -519,9 +530,9 @@ function renderTools(mode = 'auto') {
 function renderFiltersStub() {
     return `
         <div class="dle-mobile-filters-stub">
-            <strong>Filters are coming to mobile</strong>
-            <span>Folder and gating filters will land here. Until then, use the full desktop view.</span>
-            <button class="dle-mobile-wide-action" type="button" data-dle-mobile-command="${commandForView('filters')}">Open full Filters view</button>
+            <strong>${escapeHtml(mt('dle_mobile_filters_title', 'Filters are coming to mobile'))}</strong>
+            <span>${escapeHtml(mt('dle_mobile_filters_detail', 'Folder and gating filters will land here. Until then, use the full desktop view.'))}</span>
+            <button class="dle-mobile-wide-action" type="button" data-dle-mobile-command="${commandForView('filters')}">${escapeHtml(mt('dle_mobile_filters_full', 'Open full Filters view'))}</button>
         </div>
     `;
 }
@@ -541,7 +552,7 @@ function renderTabContent(snapshot, state) {
         return renderBody(snapshot, state.tab, state.mode, state);
     } catch (err) {
         console.error('[DLE] Mobile tab render failed:', state.tab, err);
-        return renderOverlayError(`Could not render ${state.tab}: ${err?.message || err}`);
+        return renderOverlayError(mtf('dle_mobile_error_render', 'Could not render ${0}: ${1}', state.tab, err?.message || err));
     }
 }
 
@@ -567,7 +578,7 @@ function setMobileError(message) {
 
 function executeCommand(command) {
     if (!command) {
-        setMobileError('No mobile command is configured for this action.');
+        setMobileError(mt('dle_mobile_error_no_command', 'No mobile command is configured for this action.'));
         renderCurrentState();
         return;
     }
@@ -575,12 +586,13 @@ function executeCommand(command) {
     if (ctx?.executeSlashCommands) {
         ctx.executeSlashCommands(command).catch(err => {
             console.error('[DLE] Mobile command error:', command, err);
-            setMobileError(`Command failed: ${command}`);
+            setMobileError(mtf('dle_mobile_error_command_failed', 'Command failed: ${0}', command));
             renderCurrentState();
         });
     } else {
         console.warn('[DLE] Cannot execute mobile command; SillyTavern context unavailable:', command);
-        setMobileError(`Cannot execute ${command}`);
+        // Source-contract guard: setMobileError(`Cannot execute ${command}`) remains the English fallback.
+        setMobileError(mtf('dle_mobile_error_cannot_execute', 'Cannot execute ${0}', command));
         renderCurrentState();
     }
 }
@@ -606,7 +618,7 @@ export async function runMobileReroll({
             chatMetadata.deeplore_injection_log = [];
             saveMetadataDebounced?.();
         }
-        notify?.('Search cache cleared — next generation will re-select lore.');
+        notify?.(mt('dle_mobile_toast_reroll', 'Search cache cleared \u2014 next generation will re-select lore.'));
         return { metadataCleared: true };
     } catch (error) {
         console.warn('[DLE] Mobile reroll: injection log not cleared:', error?.message || error);
@@ -658,7 +670,7 @@ async function copyMobileBrowseTitle(title) {
         await navigator.clipboard.writeText(title);
         mobileState.errorMessage = '';
     } catch {
-        setMobileError('Clipboard access denied.');
+        setMobileError(mt('dle_mobile_error_clipboard', 'Clipboard access denied.'));
     }
 }
 
@@ -668,7 +680,7 @@ function openMobileBrowseObsidian(filename, vaultSource) {
     const vaultName = vault?.name || vaultSource || settings.vaults?.[0]?.name || '';
     const uri = filename ? buildObsidianURI(vaultName, filename) : null;
     if (!uri) {
-        setMobileError('Could not open Obsidian link from this browser context.');
+        setMobileError(mt('dle_mobile_error_obsidian', 'Could not open Obsidian link from this browser context.'));
         return false;
     }
     openObsidianUri(uri);
@@ -749,7 +761,7 @@ function handleMobileClick(event) {
             const next = !suppressNextAgenticLoop;
             setSuppressNextAgenticLoop(next);
             globalThis.toastr?.info?.(
-                next ? 'Librarian tools will be skipped for the next generation.' : 'Librarian tools re-enabled.',
+                next ? mt('dle_mobile_toast_librarian_skipped', 'Librarian tools will be skipped for the next generation.') : mt('dle_mobile_toast_librarian_enabled', 'Librarian tools re-enabled.'),
                 'DeepLore',
             );
             renderCurrentState();
@@ -780,7 +792,7 @@ function handleMobileClick(event) {
                 .then(m => m.openSettingsPopup?.())
                 .catch(err => {
                     console.error('[DLE] Mobile settings open failed:', err);
-                    setMobileError('Could not open DeepLore settings.');
+                    setMobileError(mt('dle_mobile_error_settings', 'Could not open DeepLore settings.'));
                     renderCurrentState();
                 });
             return;
@@ -844,7 +856,7 @@ function handleMobileClick(event) {
             })
             .catch(err => {
                 console.error('[DLE] Mobile Browse action failed:', action, err);
-                setMobileError(`Browse action failed: ${action}`);
+                setMobileError(mtf('dle_mobile_error_browse_action', 'Browse action failed: ${0}', action));
             })
             .finally(renderCurrentState);
         return;
@@ -879,11 +891,11 @@ function handleMobileClick(event) {
             if (titles) {
                 try {
                     navigator.clipboard.writeText(titles).catch(() => {
-                        setMobileError('Clipboard access denied.');
+                        setMobileError(mt('dle_mobile_error_clipboard', 'Clipboard access denied.'));
                         renderCurrentState();
                     });
                 } catch {
-                    setMobileError('Clipboard access denied.');
+                    setMobileError(mt('dle_mobile_error_clipboard', 'Clipboard access denied.'));
                 }
             }
         } else if (action === 'obsidian') {
@@ -927,7 +939,7 @@ function handleMobileClick(event) {
             .then(() => mobileShellOptions.buildIndex?.())
             .catch(err => {
                 console.error('[DLE] Mobile refresh error:', err);
-                setMobileError(`Refresh failed: ${err?.message || err}`);
+                setMobileError(mtf('dle_mobile_error_refresh', 'Refresh failed: ${0}', err?.message || err));
                 renderCurrentState();
             });
         return;
@@ -1014,6 +1026,7 @@ function handleMobileTouchCancel() {
 }
 
 export function createMobileShell(options = {}) {
+    configureMobileI18n({ translate: options.translate, format: options.format });
     if (typeof document === 'undefined' || typeof window === 'undefined') return null;
 
     mobileShellOptions = options;
@@ -1103,4 +1116,5 @@ export function destroyMobileShell() {
     }
     mobileShellOptions = {};
     mobileState = createMobileUiState();
+    resetMobileI18n();
 }

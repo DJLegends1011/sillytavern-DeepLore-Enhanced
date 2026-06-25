@@ -1,3 +1,4 @@
+import { mt } from './mobile-i18n.js';
 const FAB_SIZE = 44;
 const DRAG_THRESHOLD = 8;
 const SNAP_DURATION = 200;
@@ -167,7 +168,7 @@ export function renderFabHtml(injectionCount = 0) {
     const badgeHtml = injectionCount > 0
         ? `<span class="dle-mobile-fab__badge">${injectionCount > 99 ? '99+' : injectionCount}</span>`
         : '';
-    return `<button class="dle-mobile-fab" type="button" aria-label="Open DeepLore panel" touch-action="none">
+    return `<button class="dle-mobile-fab" type="button" aria-label="${mt('dle_mobile_aria_open_panel', 'Open DeepLore panel')}" touch-action="none">
     <i class="fa-solid fa-book-open" aria-hidden="true"></i>${badgeHtml}
 </button>`;
 }
@@ -574,7 +575,7 @@ export function createFab({ onTap, container } = {}) {
     fabEl = document.createElement('button');
     fabEl.className = 'dle-mobile-fab';
     fabEl.setAttribute('type', 'button');
-    fabEl.setAttribute('aria-label', 'Open DeepLore panel');
+    fabEl.setAttribute('aria-label', mt('dle_mobile_aria_open_panel', 'Open DeepLore panel'));
     fabEl.style.touchAction = 'none';
     fabEl.innerHTML = '<i class="fa-solid fa-book-open" aria-hidden="true"></i>';
 

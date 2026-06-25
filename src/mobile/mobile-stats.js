@@ -1,3 +1,5 @@
+import { mt, mtf } from './mobile-i18n.js';
+
 export function formatMobileStatNumber(value) {
     const n = Number(value) || 0;
     if (Math.abs(n) >= 1000) return `${(n / 1000).toFixed(1)}k`;
@@ -15,13 +17,24 @@ function toneForRatio(ratio) {
     return 'ok';
 }
 
+const STATUS_LABELS = {
+    degraded: ['dle_mobile_status_degraded', 'Degraded'],
+    limited: ['dle_mobile_status_limited', 'Limited'],
+    offline: ['dle_mobile_status_offline', 'Offline'],
+    ok: ['dle_mobile_status_ok', 'OK'],
+    unknown: ['dle_mobile_status_unknown', 'Unknown'],
+};
+
 function titleCaseStatus(status) {
+    const normalized = String(status || 'unknown').replace(/[-\s]+/g, '_').toLowerCase();
+    const label = STATUS_LABELS[normalized];
+    if (label) return mt(label[0], label[1]);
     const raw = String(status || 'unknown').replace(/[-_]+/g, ' ');
     return raw.charAt(0).toUpperCase() + raw.slice(1);
 }
 
 export function buildMobileStatusStats({
-    statusLabel = 'Ready',
+    statusLabel = mt('dle_mobile_status_ready', 'Ready'),
     entryCount = 0,
     injectedCount = 0,
     indexEverLoaded = false,
@@ -49,44 +62,44 @@ export function buildMobileStatusStats({
     const aiTotalTokens = Number(aiSearchStats.totalInputTokens || 0) + Number(aiSearchStats.totalOutputTokens || 0);
 
     let collapsed = { label: statusLabel, tone: overallStatus === 'ok' ? 'ok' : 'warn' };
-    if (!indexEverLoaded && entryCount === 0) collapsed = { label: 'No index', tone: 'warn' };
-    if (indexing) collapsed = { label: 'Indexing', tone: 'warn' };
-    if (generationLock || pipelinePhase !== 'idle') collapsed = { label: 'Working', tone: 'warn' };
+    if (!indexEverLoaded && entryCount === 0) collapsed = { label: mt('dle_mobile_stat_no_index', 'No index'), tone: 'warn' };
+    if (indexing) collapsed = { label: mt('dle_mobile_status_indexing', 'Indexing'), tone: 'warn' };
+    if (generationLock || pipelinePhase !== 'idle') collapsed = { label: mt('dle_mobile_status_working', 'Working'), tone: 'warn' };
     if (overallStatus === 'offline' || overallStatus === 'limited') collapsed = { label: titleCaseStatus(overallStatus), tone: 'critical' };
-    if (budgetRatio >= 80) collapsed = { label: budgetRatio >= 95 ? 'Budget full' : 'Budget high', tone: toneForRatio(budgetRatio) };
+    if (budgetRatio >= 80) collapsed = { label: budgetRatio >= 95 ? mt('dle_mobile_stat_budget_full', 'Budget full') : mt('dle_mobile_stat_budget_high', 'Budget high'), tone: toneForRatio(budgetRatio) };
 
     return {
         collapsed,
         budget: {
-            label: 'Budget',
+            label: mt('dle_mobile_stat_budget', 'Budget'),
             value: budgetLimit
                 ? `${formatMobileStatNumber(budgetUsed)} / ${formatMobileStatNumber(budgetLimit)}`
-                : `${formatMobileStatNumber(budgetUsed)} used`,
+                : mtf('dle_mobile_stat_used', '${0} used', formatMobileStatNumber(budgetUsed)),
             ratio: budgetRatio,
             tone: toneForRatio(budgetRatio),
         },
         entries: {
-            label: 'Entries',
-            value: entriesLimit ? `${usedEntries} / ${entriesLimit}` : `${usedEntries} used`,
+            label: mt('dle_mobile_stat_entries', 'Entries'),
+            value: entriesLimit ? `${usedEntries} / ${entriesLimit}` : mtf('dle_mobile_stat_used', '${0} used', usedEntries),
             ratio: entriesRatio,
             tone: toneForRatio(entriesRatio),
         },
         context: {
-            label: 'Context',
+            label: mt('dle_mobile_stat_context', 'Context'),
             value: contextLimit
                 ? `${formatMobileStatNumber(contextUsed)} / ${formatMobileStatNumber(contextLimit)}`
-                : `${formatMobileStatNumber(contextUsed)} used`,
+                : mtf('dle_mobile_stat_used', '${0} used', formatMobileStatNumber(contextUsed)),
             ratio: contextRatio,
             tone: toneForRatio(contextRatio),
         },
         ai: {
-            label: 'AI',
-            value: `${Number(aiSearchStats.calls || 0)} calls`,
-            detail: `${Number(aiSearchStats.cachedHits || 0)} cached \u00b7 ${formatMobileStatNumber(aiTotalTokens)} tokens`,
+            label: mt('dle_mobile_stat_ai', 'AI'),
+            value: mtf('dle_mobile_stat_calls', '${0} calls', Number(aiSearchStats.calls || 0)),
+            detail: mtf('dle_mobile_stat_cached_tokens', '${0} cached \u00b7 ${1} tokens', Number(aiSearchStats.cachedHits || 0), formatMobileStatNumber(aiTotalTokens)),
             tone: 'ok',
         },
         health: {
-            label: 'Health',
+            label: mt('dle_mobile_stat_health', 'Health'),
             value: titleCaseStatus(overallStatus),
             detail: statusLabel,
             tone: overallStatus === 'ok' ? 'ok' : overallStatus === 'degraded' ? 'warn' : 'critical',

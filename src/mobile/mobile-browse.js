@@ -1,5 +1,6 @@
 import { matchesPinBlock } from '../helpers.js';
 import { trackerKey } from '../state.js';
+import { mt, mtf } from './mobile-i18n.js';
 
 export const MOBILE_BROWSE_DEFAULT_STATE = Object.freeze({
     query: '',
@@ -139,7 +140,7 @@ export function filterMobileBrowseEntries(entries = [], rawState = {}, context =
         state,
         entries: filtered,
         isFiltered: !!isFiltered,
-        summary: isFiltered ? `Showing ${filtered.length} of ${entries.length} entries` : '',
+        summary: isFiltered ? mtf('dle_mobile_browse_summary', 'Showing ${0} of ${1} entries', filtered.length, entries.length) : '',
     };
 }
 
@@ -155,16 +156,16 @@ export function buildMobileBrowseRows(entries = [], context = {}) {
         return {
             key,
             entry,
-            title: entry.title || 'Untitled',
-            keysLabel: entry.constant ? '(constant)' : (entry.keys || []).slice(0, 4).join(', '),
-            folderLabel: entry.folderPath || entry.vaultSource || 'Vault entry',
+            title: entry.title || mt('dle_mobile_browse_untitled', 'Untitled'),
+            keysLabel: entry.constant ? mt('dle_mobile_browse_constant', 'Constant') : (entry.keys || []).slice(0, 4).join(', '),
+            folderLabel: entry.folderPath || entry.vaultSource || mt('dle_mobile_browse_vault_entry', 'Vault entry'),
             priorityLabel: entry.constant ? 'CONST' : `P${entry.priority ?? 50}`,
-            tokenLabel: entry.tokenEstimate ? `${entry.tokenEstimate} tokens` : '',
+            tokenLabel: entry.tokenEstimate ? mtf('dle_mobile_browse_token_label', '${0} tokens', entry.tokenEstimate) : '',
             injectedCount: count,
             isInjected: injectedKeys.has(entryKey(entry)),
             isPinned: matchesPin(entry),
             isBlocked: matchesBlock(entry),
-            preview: entry.summary || (entry.content ? `${entry.content.slice(0, 220)}${entry.content.length > 220 ? '...' : ''}` : 'No content preview.'),
+            preview: entry.summary || (entry.content ? `${entry.content.slice(0, 220)}${entry.content.length > 220 ? '...' : ''}` : mt('dle_mobile_browse_no_preview', 'No content preview.')),
         };
     });
 }

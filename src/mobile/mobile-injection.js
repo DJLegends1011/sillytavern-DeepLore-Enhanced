@@ -1,4 +1,5 @@
 import { parseMatchReason } from '../helpers.js';
+import { mt, mtf } from './mobile-i18n.js';
 
 const VALID_FILTERS = new Set(['injected', 'filtered', 'both']);
 
@@ -15,7 +16,7 @@ export function normalizeMobileInjectionState(input = {}) {
 
 function normalizedEntryKey(item) {
     const normalized = typeof item === 'string' ? { title: item } : (item || {});
-    const title = normalized.title || normalized.id || 'Untitled';
+    const title = normalized.title || normalized.id || mt('dle_mobile_injection_untitled', 'Untitled');
     return `${normalized.vaultSource || ''}:${String(title).toLowerCase()}`;
 }
 
@@ -27,7 +28,7 @@ function collectFilteredEntries(trace, injectedKeys) {
 
     function add(items, reason) {
         for (const item of items || []) {
-            const title = item.title || item.id || 'Untitled';
+            const title = item.title || item.id || mt('dle_mobile_injection_untitled', 'Untitled');
             const key = normalizedEntryKey({ ...item, title });
             if (injectedKeys.has(key) || seen.has(key)) continue;
             seen.add(key);
@@ -36,10 +37,10 @@ function collectFilteredEntries(trace, injectedKeys) {
         }
     }
 
-    add(trace.gatedOut, 'blocked by dependencies');
-    add(trace.contextualGatingRemoved, 'filtered by context');
-    add(trace.cooldownRemoved, 'on cooldown');
-    add(trace.budgetCut, 'over budget');
+    add(trace.gatedOut, mt('dle_mobile_injection_reason_blocked_dependencies', 'blocked by dependencies'));
+    add(trace.contextualGatingRemoved, mt('dle_mobile_injection_reason_filtered_context', 'filtered by context'));
+    add(trace.cooldownRemoved, mt('dle_mobile_injection_reason_cooldown', 'on cooldown'));
+    add(trace.budgetCut, mt('dle_mobile_injection_reason_over_budget', 'over budget'));
 
     return entries;
 }
@@ -52,7 +53,7 @@ export function splitInjectionEntries(sources, trace, filterMode) {
         const entries = safeSourcesList.map(s => ({ ...s, isFiltered: false }));
         return {
             entries,
-            summary: entries.length ? `${entries.length} injected` : '',
+            summary: entries.length ? mtf('dle_mobile_injection_summary_injected', '${0} injected', entries.length) : '',
             isFiltered: false,
         };
     }
@@ -62,20 +63,25 @@ export function splitInjectionEntries(sources, trace, filterMode) {
     if (filterMode === 'filtered') {
         return {
             entries: filteredEntries,
-            summary: filteredEntries.length ? `${filteredEntries.length} filtered out` : '',
+            summary: filteredEntries.length ? mtf('dle_mobile_injection_summary_filtered', '${0} filtered out', filteredEntries.length) : '',
             isFiltered: true,
         };
     }
 
     const injected = safeSourcesList.map(s => ({ ...s, isFiltered: false }));
     const all = [...injected, ...filteredEntries];
-    const parts = [];
-    if (injected.length) parts.push(`${injected.length} injected`);
-    if (filteredEntries.length) parts.push(`${filteredEntries.length} filtered`);
+    let summary = '';
+    if (injected.length && filteredEntries.length) {
+        summary = mtf('dle_mobile_injection_summary_both', '${0} injected, ${1} filtered', injected.length, filteredEntries.length);
+    } else if (injected.length) {
+        summary = mtf('dle_mobile_injection_summary_injected', '${0} injected', injected.length);
+    } else if (filteredEntries.length) {
+        summary = mtf('dle_mobile_injection_summary_filtered', '${0} filtered out', filteredEntries.length);
+    }
 
     return {
         entries: all,
-        summary: parts.join(', '),
+        summary,
         isFiltered: false,
     };
 }
@@ -86,7 +92,7 @@ const MATCH_LABELS = {
 };
 
 function nameFromTrackerKey(key) {
-    if (!key) return 'Unknown';
+    if (!key) return mt('dle_mobile_status_unknown', 'Unknown');
     return key.includes(':') ? key.split(':').slice(1).join(':') : key;
 }
 
@@ -100,7 +106,7 @@ export function extractTimerData(cooldownTracker, decayTracker, settings = {}) {
             title: nameFromTrackerKey(key),
             timerType: 'cooldown',
             remaining,
-            detail: `${remaining} message${remaining !== 1 ? 's' : ''} cooldown`,
+            detail: remaining === 1 ? mtf('dle_mobile_timer_cooldown', '${0} message cooldown', remaining) : mtf('dle_mobile_timer_cooldown_other', '${0} messages cooldown', remaining),
         });
     }
 
@@ -112,7 +118,7 @@ export function extractTimerData(cooldownTracker, decayTracker, settings = {}) {
                     title: nameFromTrackerKey(key),
                     timerType: 'decay',
                     remaining: staleness,
-                    detail: `stale ${staleness} message${staleness !== 1 ? 's' : ''}`,
+                    detail: staleness === 1 ? mtf('dle_mobile_timer_stale', 'stale ${0} message', staleness) : mtf('dle_mobile_timer_stale_other', 'stale ${0} messages', staleness),
                 });
             }
         }
@@ -128,9 +134,9 @@ export function buildMobileInjectionRows(entries) {
         const tokenCount = Number(entry.tokens) || 0;
         return {
             key: `${entry.vaultSource || ''}:${entry.title || 'untitled'}`,
-            title: entry.title || 'Untitled',
+            title: entry.title || mt('dle_mobile_injection_untitled', 'Untitled'),
             tokenCount,
-            tokenLabel: tokenCount ? `${tokenCount} tok` : '',
+            tokenLabel: tokenCount ? mtf('dle_mobile_injection_token_label', '${0} tok', tokenCount) : '',
             injectionCount: Number(entry.injectionCount) || 0,
             matchedBy: entry.matchedBy || '',
             matchLabel: MATCH_LABELS[type] || (entry.matchedBy?.length > 8 ? 'AI' : entry.matchedBy || '?'),

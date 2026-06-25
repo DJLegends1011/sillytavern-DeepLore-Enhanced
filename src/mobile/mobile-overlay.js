@@ -4,26 +4,27 @@
  * The shell composes these and owns all event handling.
  */
 
+import { mt, mtf } from './mobile-i18n.js';
 import { MOBILE_DEFAULT_TAB, normalizeMobileTab } from './mobile-state.js';
 
 export const OVERLAY_ID = 'dle-mobile-overlay';
 
 export const OVERLAY_TAB_DEFS = [
-    { id: 'injection', label: 'Injection', icon: 'fa-circle-question' },
-    { id: 'browse', label: 'Browse', icon: 'fa-book-open' },
-    { id: 'filters', label: 'Filters', icon: 'fa-filter' },
-    { id: 'librarian', label: 'Librarian', icon: 'fa-book-bookmark' },
-    { id: 'tools', label: 'Tools', icon: 'fa-toolbox' },
+    { id: 'injection', labelKey: 'dle_mobile_tab_injection', label: 'Injection', icon: 'fa-circle-question' },
+    { id: 'browse', labelKey: 'dle_mobile_tab_browse', label: 'Browse', icon: 'fa-book-open' },
+    { id: 'filters', labelKey: 'dle_mobile_tab_filters', label: 'Filters', icon: 'fa-filter' },
+    { id: 'librarian', labelKey: 'dle_mobile_tab_librarian', label: 'Librarian', icon: 'fa-book-bookmark' },
+    { id: 'tools', labelKey: 'dle_mobile_tab_tools', label: 'Tools', icon: 'fa-toolbox' },
 ];
 
 export const QUICK_ACTION_DEFS = [
-    { id: 'refresh', label: 'Refresh index', short: 'Refresh', icon: 'fa-rotate', kind: 'refresh' },
-    { id: 'reroll', label: 'Reroll Lore', short: 'Reroll', icon: 'fa-shuffle', kind: 'action' },
-    { id: 'skip-librarian', label: 'Skip Librarian', short: 'Skip', icon: 'fa-ban', kind: 'toggle' },
-    { id: 'scribe', label: 'Scribe', short: 'Scribe', icon: 'fa-feather-pointed', kind: 'command', command: '/dle-scribe' },
-    { id: 'new-entry', label: 'New Entry', short: 'New', icon: 'fa-plus', kind: 'command', command: '/dle-newlore' },
-    { id: 'librarian-chat', label: 'Librarian Chat', short: 'Chat', icon: 'fa-book-bookmark', kind: 'command', command: '/dle-librarian' },
-    { id: 'graph', label: 'Graph', short: 'Graph', icon: 'fa-diagram-project', kind: 'command', command: '/dle-graph' },
+    { id: 'refresh', labelKey: 'dle_mobile_quick_refresh_label', label: 'Refresh index', shortKey: 'dle_mobile_quick_refresh', short: 'Refresh', icon: 'fa-rotate', kind: 'refresh' },
+    { id: 'reroll', labelKey: 'dle_mobile_quick_reroll_label', label: 'Reroll Lore', shortKey: 'dle_mobile_quick_reroll', short: 'Reroll', icon: 'fa-shuffle', kind: 'action' },
+    { id: 'skip-librarian', labelKey: 'dle_mobile_quick_skip_label', label: 'Skip Librarian', shortKey: 'dle_mobile_quick_skip', short: 'Skip', icon: 'fa-ban', kind: 'toggle' },
+    { id: 'scribe', labelKey: 'dle_mobile_quick_scribe', label: 'Scribe', shortKey: 'dle_mobile_quick_scribe', short: 'Scribe', icon: 'fa-feather-pointed', kind: 'command', command: '/dle-scribe' },
+    { id: 'new-entry', labelKey: 'dle_mobile_quick_new_label', label: 'New Entry', shortKey: 'dle_mobile_quick_new', short: 'New', icon: 'fa-plus', kind: 'command', command: '/dle-newlore' },
+    { id: 'librarian-chat', labelKey: 'dle_mobile_quick_chat_label', label: 'Librarian Chat', shortKey: 'dle_mobile_quick_chat', short: 'Chat', icon: 'fa-book-bookmark', kind: 'command', command: '/dle-librarian' },
+    { id: 'graph', labelKey: 'dle_mobile_quick_graph', label: 'Graph', shortKey: 'dle_mobile_quick_graph', short: 'Graph', icon: 'fa-diagram-project', kind: 'command', command: '/dle-graph' },
 ];
 
 export const SWIPE_DISMISS_VELOCITY = 300; // px/s downward
@@ -52,7 +53,7 @@ export function renderStatusMetric(metric) {
 
 export function renderOverlayHeader(snapshot = {}, uiState = {}) {
     const expanded = !!uiState.statsExpanded;
-    const subtitle = `${snapshot.statusLabel || 'Unknown'} · ${snapshot.injectedCount ?? 0} injected`;
+    const subtitle = mtf('dle_mobile_status_subtitle', '${0} \u00b7 ${1} injected', snapshot.statusLabel || mt('dle_mobile_status_unknown', 'Unknown'), snapshot.injectedCount ?? 0);
     const stats = snapshot.stats;
     return `
         <header class="dle-mobile-overlay-header" data-dle-mobile-swipe-handle>
@@ -64,10 +65,10 @@ export function renderOverlayHeader(snapshot = {}, uiState = {}) {
                 </span>
                 <i class="fa-solid fa-chevron-${expanded ? 'up' : 'down'}" aria-hidden="true"></i>
             </button>
-            <button type="button" class="dle-mobile-overlay-icon-btn" data-dle-mobile-action="settings" aria-label="Open DeepLore settings">
+            <button type="button" class="dle-mobile-overlay-icon-btn" data-dle-mobile-action="settings" aria-label="${escapeHtml(mt('dle_mobile_aria_open_settings', 'Open DeepLore settings'))}">
                 <i class="fa-solid fa-gear" aria-hidden="true"></i>
             </button>
-            <button type="button" class="dle-mobile-overlay-icon-btn" data-dle-mobile-action="close" aria-label="Close DeepLore overlay">
+            <button type="button" class="dle-mobile-overlay-icon-btn" data-dle-mobile-action="close" aria-label="${escapeHtml(mt('dle_mobile_aria_close', 'Close DeepLore overlay'))}">
                 <i class="fa-solid fa-xmark" aria-hidden="true"></i>
             </button>
         </header>
@@ -84,21 +85,25 @@ export function renderOverlayHeader(snapshot = {}, uiState = {}) {
 export function renderOverlayTabBar(activeTab = MOBILE_DEFAULT_TAB, badges) {
     badges = badges ?? {};
     const current = normalizeMobileTab(activeTab);
-    const buttons = OVERLAY_TAB_DEFS.map(tab => `
+    const buttons = OVERLAY_TAB_DEFS.map(tab => {
+        const label = mt(tab.labelKey, tab.label);
+        return `
         <button type="button" role="tab" class="dle-mobile-overlay-tab" data-dle-mobile-tab="${tab.id}" aria-selected="${tab.id === current ? 'true' : 'false'}">
             <i class="fa-solid ${tab.icon}" aria-hidden="true"></i>
-            <span>${escapeHtml(tab.label)}</span>
+            <span>${escapeHtml(label)}</span>
             ${badges[tab.id] ? '<span class="dle-mobile-overlay-tab-dot" aria-hidden="true"></span>' : ''}
         </button>
-    `).join('');
-    return `<nav class="dle-mobile-overlay-tabs" role="tablist" aria-label="DeepLore sections">${buttons}</nav>`;
+    `;
+    }).join('');
+    return `<nav class="dle-mobile-overlay-tabs" role="tablist" aria-label="${escapeHtml(mt('dle_mobile_aria_sections', 'DeepLore sections'))}">${buttons}</nav>`;
 }
 
 export function renderQuickActions(options) {
     const { skipLibrarianActive = false } = options ?? {};
     const buttons = QUICK_ACTION_DEFS.map(action => {
-        const label = escapeHtml(action.label);
-        const body = `<i class="fa-solid ${action.icon}" aria-hidden="true"></i><span class="dle-mobile-overlay-quick-label">${escapeHtml(action.short || action.label)}</span>`;
+        const resolvedLabel = mt(action.labelKey, action.label);
+        const label = escapeHtml(resolvedLabel);
+        const body = `<i class="fa-solid ${action.icon}" aria-hidden="true"></i><span class="dle-mobile-overlay-quick-label">${escapeHtml(mt(action.shortKey, action.short || action.label))}</span>`;
         if (action.kind === 'command') {
             return `<button type="button" class="dle-mobile-overlay-quick-btn" data-dle-mobile-command="${action.command}" aria-label="${label}" title="${label}">${body}</button>`;
         }
@@ -109,7 +114,7 @@ export function renderQuickActions(options) {
         const activeClass = action.kind === 'toggle' && skipLibrarianActive ? ' dle-mobile-overlay-quick-active' : '';
         return `<button type="button" class="dle-mobile-overlay-quick-btn${activeClass}" data-dle-mobile-action="quick-${action.id}"${pressed} aria-label="${label}" title="${label}">${body}</button>`;
     }).join('');
-    return `<div class="dle-mobile-overlay-quick" role="toolbar" aria-label="Quick actions">${buttons}</div>`;
+    return `<div class="dle-mobile-overlay-quick" role="toolbar" aria-label="${escapeHtml(mt('dle_mobile_aria_quick_actions', 'Quick actions'))}">${buttons}</div>`;
 }
 
 export function renderOverlayError(message) {
@@ -119,7 +124,7 @@ export function renderOverlayError(message) {
 export function renderOverlay({ snapshot = {}, uiState = {}, contentHtml = '', skipLibrarianActive = false, contentEntering = false, panelOpening = false } = {}) {
     const open = !!uiState.open;
     return `
-        <section id="${OVERLAY_ID}" class="dle-mobile-overlay${open ? ' dle-mobile-open' : ''}" role="dialog" aria-modal="false" aria-hidden="${open ? 'false' : 'true'}" aria-label="DeepLore mobile overlay"${open ? '' : ' inert'}>
+        <section id="${OVERLAY_ID}" class="dle-mobile-overlay${open ? ' dle-mobile-open' : ''}" role="dialog" aria-modal="false" aria-hidden="${open ? 'false' : 'true'}" aria-label="${escapeHtml(mt('dle_mobile_aria_dialog', 'DeepLore mobile overlay'))}"${open ? '' : ' inert'}>
             <div class="dle-mobile-overlay-scrim" data-dle-mobile-action="close"></div>
             <div class="dle-mobile-overlay-panel${panelOpening ? ' dle-mobile-overlay-opening' : ''}">
                 ${renderOverlayHeader(snapshot, uiState)}
