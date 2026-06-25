@@ -1,6 +1,8 @@
 # Mobile Feature Parity — To-Do List
 
-> Tracks remaining work to bring the mobile drawer to full parity with the desktop drawer.
+> **Historical snapshot/backlog (2026-05-14):** This document was restored for migration context and is not a live remaining-work checklist. Items below preserve older home-view/bottom-sheet assumptions and must be validated against the current v2.5 DeepLore code before any implementation. The v2.5 migration reconciliation guidance already listed below remains authoritative for runtime source, Obsidian launch behavior, and i18n ownership.
+>
+> Historically tracked remaining work to bring the mobile drawer to full parity with the desktop drawer.
 > Based on a side-by-side audit of `drawer.html` vs `src/mobile/mobile-shell.js` (2026-05-14).
 >
 > **Related specs:**
