@@ -48,6 +48,7 @@ import {
 import { DLE_PROMPTS_DEFAULT_DIR } from '../prompts/prompt-api.js';
 import { runHealthCheck } from './diagnostics.js';
 import { DLE_COMMANDS } from './commands-admin.js';
+import { getMobileModePreference, setMobileModePreference } from '../mobile/mobile-shell.js';
 
 // BUG-120: module-scoped so re-opening the settings popup cancels any
 // stale debounced rebuild from the prior instance.
@@ -1261,6 +1262,23 @@ function populateWriteVaultSelect($el, settings, selectedName) {
     }
 }
 
+function mobileModeLabel(mode) {
+    if (mode === 'forced') return 'Force';
+    if (mode === 'disabled') return 'Off';
+    return 'Auto';
+}
+
+function updateMobileModeControls($container) {
+    const mode = getMobileModePreference();
+    $container.find('[data-dle-settings-mobile-mode]').each(function () {
+        const active = this.getAttribute('data-dle-settings-mobile-mode') === mode;
+        jQuery(this)
+            .attr('aria-pressed', String(active))
+            .toggleClass('active', active);
+    });
+    $container.find('#dle-sp-mobile-mode-current').text(mobileModeLabel(mode));
+}
+
 // ── Popup: Load Settings ──
 
 function loadPopupSettings($container) {
@@ -1476,6 +1494,7 @@ function loadPopupSettings($container) {
     $c('#dle-sp-show-sync-toasts').prop('checked', settings.showSyncToasts);
     $c('#dle-sp-review-tokens').val(settings.reviewResponseTokens);
     $c('#dle-sp-debug').prop('checked', settings.debugMode);
+    updateMobileModeControls($container);
 
     // BUG-338: D4 rename migration — gated on persistent flag for once-only execution.
     if (settings.advancedVisible && !settings._advancedVisibleMigratedD4) {
@@ -2222,6 +2241,13 @@ function bindPopupEvents($container) {
     $c('#dle-sp-show-sync-toasts').on('change', function () { settings.showSyncToasts = $(this).prop('checked'); saveSettingsDebounced(); });
     $c('#dle-sp-review-tokens').on('input', function () { settings.reviewResponseTokens = numVal($(this).val(), 0); saveSettingsDebounced(); });
     $c('#dle-sp-debug').on('change', function () { settings.debugMode = $(this).prop('checked'); saveSettingsDebounced(); notifyDebugModeChanged(); });
+    $c('[data-dle-settings-mobile-mode]').on('click', function () {
+        const mode = this.getAttribute('data-dle-settings-mobile-mode') || 'auto';
+        const next = setMobileModePreference(mode);
+        updateMobileModeControls($container);
+        toastr.info(`Mobile UI mode: ${mobileModeLabel(next)}`, 'DeepLore');
+    });
+
 
     $c('#dle-sp-rerun-wizard').on('click', async function () {
         const { showSetupWizard } = await import('./setup-wizard.js');

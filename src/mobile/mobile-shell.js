@@ -183,6 +183,22 @@ function setMobileMode(mode) {
     }
 }
 
+export function getMobileModePreference(env = readMobileEnvironment()) {
+    return readMobileMode(env);
+}
+
+export function setMobileModePreference(mode, { open = true, render = true } = {}) {
+    const requested = mode === 'forced' || mode === 'disabled' ? mode : 'auto';
+    mobileState.mode = setMobileMode(requested);
+    mobileState.open = mobileState.mode === 'disabled' ? false : open !== false;
+
+    if (render && typeof document !== 'undefined' && typeof window !== 'undefined') {
+        renderCurrentState();
+    }
+
+    return mobileState.mode;
+}
+
 function commandForView(view) {
     const commands = {
         injection: '/dle-why',

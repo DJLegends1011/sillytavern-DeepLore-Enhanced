@@ -1348,6 +1348,26 @@
                 </div>
             </div>
             </div>
+            <div class="dle-settings-section">
+            <h4 data-i18n="dle_settings_mobile_ui_h4">Mobile UI</h4>
+            <p class="dle-section-desc" data-i18n="dle_settings_mobile_ui_desc">Controls DeepLore's phone and tablet overlay. Use these buttons if the mobile Tools tab is unavailable.</p>
+            <div id="dle-sp-mobile-mode" class="flex-container" style="gap: 6px; flex-wrap: wrap;" role="group" aria-label="Mobile UI mode" data-i18n="[aria-label]dle_mobile_aria_mobile_mode">
+                <button type="button" class="menu_button menu_button_icon" data-dle-settings-mobile-mode="auto" aria-pressed="false" title="Use the mobile UI automatically on narrow or touch layouts." data-i18n="[title]dle_settings_mobile_ui_auto_tooltip">
+                    <i class="fa-solid fa-mobile-screen" aria-hidden="true"></i>
+                    <span data-i18n="dle_mobile_mode_auto">Auto</span>
+                </button>
+                <button type="button" class="menu_button menu_button_icon" data-dle-settings-mobile-mode="forced" aria-pressed="false" title="Force the mobile UI even on desktop-sized layouts." data-i18n="[title]dle_settings_mobile_ui_force_tooltip">
+                    <i class="fa-solid fa-mobile-screen-button" aria-hidden="true"></i>
+                    <span data-i18n="dle_mobile_mode_force">Force</span>
+                </button>
+                <button type="button" class="menu_button menu_button_icon" data-dle-settings-mobile-mode="disabled" aria-pressed="false" title="Turn off the mobile UI and use the desktop drawer." data-i18n="[title]dle_settings_mobile_ui_off_tooltip">
+                    <i class="fa-solid fa-desktop" aria-hidden="true"></i>
+                    <span data-i18n="dle_mobile_mode_off">Off</span>
+                </button>
+            </div>
+            <small class="dle-muted"><span data-i18n="dle_settings_mobile_ui_current_label">Current mode:</span> <strong id="dle-sp-mobile-mode-current">Auto</strong></small>
+            </div>
+
 
             <div class="dle-settings-section">
             <h4 data-i18n="dle_system_advanced_h4">Advanced</h4>

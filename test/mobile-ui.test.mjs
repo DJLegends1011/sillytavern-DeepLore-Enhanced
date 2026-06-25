@@ -688,6 +688,22 @@ test('mobile mode handling: writes force and disable storage keys', () => {
     assertMatch(source, /target\.closest\('\[data-dle-mobile-mode\]'\)/, 'click handler should route mode buttons');
 });
 
+test('mobile mode handling: settings popup exposes a desktop re-enable path', () => {
+    const popupHtml = readFileSync(new URL('../settings-popup.html', import.meta.url), 'utf8');
+    const settingsUi = readFileSync(new URL('../src/ui/settings-ui.js', import.meta.url), 'utf8');
+    const mobileSource = readFileSync(new URL('../src/mobile/mobile-shell.js', import.meta.url), 'utf8');
+
+    assertMatch(mobileSource, /export function getMobileModePreference\(/, 'mobile shell should export current mode for non-mobile surfaces');
+    assertMatch(mobileSource, /export function setMobileModePreference\(/, 'mobile shell should export a safe preference setter for non-mobile surfaces');
+    assertMatch(popupHtml, /id="dle-sp-mobile-mode"/, 'System settings should expose Mobile UI mode controls outside the mobile shell');
+    assertMatch(popupHtml, /data-dle-settings-mobile-mode="auto"/, 'settings popup should offer Auto mode');
+    assertMatch(popupHtml, /data-dle-settings-mobile-mode="forced"/, 'settings popup should offer Force mode');
+    assertMatch(popupHtml, /data-dle-settings-mobile-mode="disabled"/, 'settings popup should offer Off mode');
+    assertMatch(settingsUi, /getMobileModePreference/, 'settings UI should read the mobile preference for pressed state');
+    assertMatch(settingsUi, /setMobileModePreference\(mode\)/, 'settings UI should route mode clicks through the mobile preference API');
+    assertMatch(settingsUi, /\[data-dle-settings-mobile-mode\]/, 'settings UI should bind the desktop/mobile mode controls');
+});
+
 test('mobile shell commands: set visible errors when command execution is unavailable', () => {
     const source = readFileSync(new URL('../src/mobile/mobile-shell.js', import.meta.url), 'utf8');
 

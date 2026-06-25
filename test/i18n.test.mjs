@@ -429,12 +429,16 @@ section('i18n — all 6 translation locale files exist + parse');
 // ════════════════════════════════════════════════════════════════════════════
 
 const TRANSLATION_LOCALES = ['es-es', 'fr-fr', 'de-de', 'ja-jp', 'zh-cn', 'ru-ru'];
-const ENGLISH_FALLBACK_ONLY_PREFIXES = ['dle_mobile_'];
+const ENGLISH_FALLBACK_ONLY_PREFIXES = [
+    'dle_mobile_',
+    'dle_settings_mobile_ui_',
+];
 const requiresTranslatedParity = key => !ENGLISH_FALLBACK_ONLY_PREFIXES.some(prefix => key.startsWith(prefix));
 
 test('English-only locale exceptions are limited to mobile UI keys', () => {
-    assertEqual(ENGLISH_FALLBACK_ONLY_PREFIXES.length, 1);
+    assertEqual(ENGLISH_FALLBACK_ONLY_PREFIXES.length, 2);
     assertEqual(ENGLISH_FALLBACK_ONLY_PREFIXES[0], 'dle_mobile_');
+    assertEqual(ENGLISH_FALLBACK_ONLY_PREFIXES[1], 'dle_settings_mobile_ui_');
 });
 
 for (const loc of TRANSLATION_LOCALES) {
