@@ -5,6 +5,16 @@ const SNAP_DURATION = 200;
 const EDGE_MARGIN = 12;
 const STORAGE_KEY = 'dleMobileFabPosition';
 
+function escapeAttribute(value) {
+    return String(value ?? '').replace(/[&<>'"]/g, char => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;',
+    }[char]));
+}
+
 export { FAB_SIZE, DRAG_THRESHOLD, EDGE_MARGIN, STORAGE_KEY };
 
 // Pure helpers (testable without DOM)
@@ -168,7 +178,7 @@ export function renderFabHtml(injectionCount = 0) {
     const badgeHtml = injectionCount > 0
         ? `<span class="dle-mobile-fab__badge">${injectionCount > 99 ? '99+' : injectionCount}</span>`
         : '';
-    return `<button class="dle-mobile-fab" type="button" aria-label="${mt('dle_mobile_aria_open_panel', 'Open DeepLore panel')}" touch-action="none">
+    return `<button class="dle-mobile-fab" type="button" aria-label="${escapeAttribute(mt('dle_mobile_aria_open_panel', 'Open DeepLore panel'))}" touch-action="none">
     <i class="fa-solid fa-book-open" aria-hidden="true"></i>${badgeHtml}
 </button>`;
 }

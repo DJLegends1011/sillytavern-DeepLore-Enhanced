@@ -692,7 +692,8 @@ test('mobile shell commands: set visible errors when command execution is unavai
     const source = readFileSync(new URL('../src/mobile/mobile-shell.js', import.meta.url), 'utf8');
 
     assertMatch(source, /function setMobileError\(message\)/, 'mobile shell should centralize visible errors');
-    assertMatch(source, /setMobileError\(`Cannot execute \$\{command\}`\)/, 'missing command context should set a visible error');
+    assertMatch(source, /setMobileError\(mtf\('dle_mobile_error_cannot_execute', 'Cannot execute \$\{0\}', command\)\)/, 'missing command context should use mobile i18n fallback');
+    assert(!/setMobileError\(`Cannot execute \$\{command\}`\)/.test(source), 'missing command context should not rely on legacy literal source pattern');
     assertMatch(source, /Promise\.resolve\(\)[\s\S]*mobileShellOptions\.buildIndex\?\.\(\)[\s\S]*catch/m, 'refresh should catch sync and async buildIndex failures');
 });
 
@@ -874,6 +875,18 @@ test('mobile Browse helpers: filters, quick filters, and sort produce card rows'
     assertEqual(rows[0].priorityLabel, 'P50', 'normal entries should show priority');
     assertEqual(rows[0].isPinned, true, 'pin state should be resolved using vault-aware keys');
     assertEqual(rows[0].keysLabel, 'mimic, illusion', 'keys should be rendered as a compact label');
+});
+
+
+test('mobile Browse helpers: constant rows keep row metadata label fallback', () => {
+    const rows = buildMobileBrowseRows([{
+        title: 'Always On',
+        constant: true,
+        keys: ['always'],
+        priority: 10,
+    }], {});
+
+    assertEqual(rows[0].keysLabel, '(constant)', 'constant row metadata should keep the base English fallback');
 });
 
 test('mobile Browse helpers: derive tag and folder options with counts', () => {

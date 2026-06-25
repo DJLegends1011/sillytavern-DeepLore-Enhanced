@@ -34,6 +34,7 @@ import {
     EDGE_MARGIN,
     STORAGE_KEY,
 } from '../src/mobile/mobile-fab.js';
+import { configureMobileI18n, resetMobileI18n } from '../src/mobile/mobile-i18n.js';
 
 // Mock localStorage
 const mockStorage = new Map();
@@ -792,6 +793,15 @@ test('createFab: hides for CharacterLibrary embedded panel', () => {
 });
 
 section('FAB — Badge Rendering');
+
+
+test('renderFabHtml: escapes translated aria label', () => {
+    configureMobileI18n({ translate: () => 'Open "DeepLore" & panel' });
+    const html = renderFabHtml(0);
+
+    assert(html.includes('aria-label="Open &quot;DeepLore&quot; &amp; panel"'), 'translated aria label should be HTML-attribute escaped');
+    resetMobileI18n();
+});
 
 test('renderFabHtml: no badge when count is 0', () => {
     const html = renderFabHtml(0);

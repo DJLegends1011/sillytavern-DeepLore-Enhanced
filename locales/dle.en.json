@@ -4,7 +4,7 @@
     "canonical": true,
     "machine_translated": false,
     "generated": "2026-05-22",
-    "total_keys": 2450,
+    "total_keys": 2451,
     "source": "DLE i18n Wave 2 final merge",
     "notes": "Ternary plural patterns split into _one/_other pairs (9 base keys → 18 keys; net +9)."
   },
@@ -1462,6 +1462,7 @@
   "dle_mobile_aria_sections": "DeepLore sections",
   "dle_mobile_browse_clear": "Clear",
   "dle_mobile_browse_constant": "Constant",
+  "dle_mobile_browse_constant_label": "(constant)",
   "dle_mobile_browse_empty_filtered_detail": "Clear filters or open the full Browse view.",
   "dle_mobile_browse_empty_filtered_title": "No entries match",
   "dle_mobile_browse_empty_unloaded_detail": "Refresh the vault index first.",

@@ -591,7 +591,6 @@ function executeCommand(command) {
         });
     } else {
         console.warn('[DLE] Cannot execute mobile command; SillyTavern context unavailable:', command);
-        // Source-contract guard: setMobileError(`Cannot execute ${command}`) remains the English fallback.
         setMobileError(mtf('dle_mobile_error_cannot_execute', 'Cannot execute ${0}', command));
         renderCurrentState();
     }
@@ -1026,8 +1025,8 @@ function handleMobileTouchCancel() {
 }
 
 export function createMobileShell(options = {}) {
-    configureMobileI18n({ translate: options.translate, format: options.format });
     if (typeof document === 'undefined' || typeof window === 'undefined') return null;
+    configureMobileI18n({ translate: options.translate, format: options.format });
 
     mobileShellOptions = options;
     const root = ensureRoot();

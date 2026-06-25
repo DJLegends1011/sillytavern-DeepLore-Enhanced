@@ -157,7 +157,7 @@ export function buildMobileBrowseRows(entries = [], context = {}) {
             key,
             entry,
             title: entry.title || mt('dle_mobile_browse_untitled', 'Untitled'),
-            keysLabel: entry.constant ? mt('dle_mobile_browse_constant', 'Constant') : (entry.keys || []).slice(0, 4).join(', '),
+            keysLabel: entry.constant ? mt('dle_mobile_browse_constant_label', '(constant)') : (entry.keys || []).slice(0, 4).join(', '),
             folderLabel: entry.folderPath || entry.vaultSource || mt('dle_mobile_browse_vault_entry', 'Vault entry'),
             priorityLabel: entry.constant ? 'CONST' : `P${entry.priority ?? 50}`,
             tokenLabel: entry.tokenEstimate ? mtf('dle_mobile_browse_token_label', '${0} tokens', entry.tokenEstimate) : '',
