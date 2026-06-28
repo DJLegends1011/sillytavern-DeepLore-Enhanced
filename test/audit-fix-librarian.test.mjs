@@ -60,7 +60,7 @@ const CONNECT_API_MAP = {
 };
 
 const NO_TOOLS_SOURCES = new Set([
-    'ai21', 'perplexity', 'nanogpt', 'pollinations', 'moonshot',
+    'perplexity',
 ]);
 
 const NO_TOOLS_MODELS = [

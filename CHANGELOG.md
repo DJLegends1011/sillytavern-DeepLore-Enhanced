@@ -8,6 +8,14 @@ All notable changes to DeepLore are documented here. This file follows
 
 ---
 
+## [2.5.1] - 2026-06-27
+
+### Fixed
+
+- **Librarian now works through NanoGPT, AI21, Pollinations, and Moonshot.** These four chat-completion sources were wrongly listed as not supporting tool/function calling, so the Librarian was silently disabled for any connection routed through them — no matter the model, preset, or connection profile, the source gate tripped before the model check ever ran. All four are tool-capable per SillyTavern's own tool-calling source list, so the entries were stale; only `perplexity` remains gated. Reasoning-only models (deepseek-reasoner, o1, `*-r1`, etc.) are still gated separately. Surfaced by a NanoGPT user whose function calling never fired regardless of what they changed.
+
+---
+
 ## [2.5.0] - 2026-06-20
 
 > Six-locale UI, single source of truth for pipeline verdicts, Custom Proxy retirement, editable AI prompts, new graph layouts + vault health, and a wide reliability sweep.

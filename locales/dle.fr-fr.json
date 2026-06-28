@@ -24,7 +24,7 @@
   "dle_about_token_estimation_note": "Les nombres de jetons affichés dans DLE (barres de budget, tailles d'entrée, totaux d'injection) sont des estimations basées sur ~4 caractères par jeton. C'est précis pour du texte anglais typique, mais peut sous-estimer pour les écritures non latines, les blocs de code ou le contenu très ponctué. Pour des comptes précis, consulte le tokeniseur de ton fournisseur d'API.",
   "dle_about_troubleshooting_h4": "Dépannage",
   "dle_about_troubleshooting_note": "Relance l'assistant de configuration guidée, ou réinitialise les paramètres aux valeurs par défaut. Les connexions de coffre et les profils de connexion IA sont préservés dans les deux cas.",
-  "dle_about_version_text": "v2.5.0",
+  "dle_about_version_text": "v2.5.1",
   "dle_about_wiki_link": "Wiki",
   "dle_activity_detail_one": "${0} entrée, ${1} jetons",
   "dle_activity_detail_other": "${0} entrées, ${1} jetons",

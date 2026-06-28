@@ -54,7 +54,7 @@ The `lorebook-guide` tag marks an entry as Librarian-only. It is never injected 
 
 The Librarian has its own connection channel (`librarianConnectionMode`), independent of AI Search. Defaults to **Inherit** (resolves to AI Search settings); set it to a specific **Connection Profile** to route Emma through a different model. Tool calling is required, so the resolved provider must support function calling.
 
-Supported tool-calling providers: Claude, Gemini (makersuite/vertexai), OpenAI-compatible, Cohere. Sources without tool support (`ai21`, `perplexity`, `nanogpt`, `pollinations`, `moonshot`) cannot drive the Librarian; the writing AI falls through to ST's normal generation when tool calling is unsupported, and a deduplicated warning fires.
+Supported tool-calling providers: Claude, Gemini (makersuite/vertexai), OpenAI-compatible (incl. NanoGPT, AI21, Pollinations, Moonshot), Cohere. Only `perplexity` is treated as no-tools and cannot drive the Librarian; the writing AI falls through to ST's normal generation when tool calling is unsupported, and a deduplicated warning fires.
 
 ### Setup
 

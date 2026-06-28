@@ -24,7 +24,7 @@
   "dle_about_token_estimation_note": "DLE 各处显示的 token 数(预算条、词条大小、注入总量)均为基于 ~4 字符/token 的估算值。对典型英文文本较为准确,但对非拉丁文字、代码块或高密度标点内容可能低估。如需精确数字,请查阅你的 API 提供商所用的分词器。",
   "dle_about_troubleshooting_h4": "故障排除",
   "dle_about_troubleshooting_note": "重新运行引导式安装向导,或将设置重置为默认值。两种情况下,仓库连接和 AI 连接配置均会被保留。",
-  "dle_about_version_text": "v2.5.0",
+  "dle_about_version_text": "v2.5.1",
   "dle_about_wiki_link": "Wiki",
   "dle_activity_detail_one": "${0} 个词条,${1} tok",
   "dle_activity_detail_other": "${0} 个词条,${1} tok",

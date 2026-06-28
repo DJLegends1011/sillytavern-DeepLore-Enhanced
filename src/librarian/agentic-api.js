@@ -17,9 +17,29 @@ import { isUnderlyingClaudeModel } from './agentic-api-pure.js';
 // Provider Detection
 // ════════════════════════════════════════════════════════════════════════════
 
-/** Sources that don't support tool calling. */
+/**
+ * Sources that don't support tool calling.
+ *
+ * Audited against SillyTavern's own tool-calling `supportedSources` list
+ * (public/scripts/tool-calling.js) on 2026-06-27. ST lists nanogpt, ai21,
+ * pollinations, and moonshot as tool-capable, so it sends `tools` for them and
+ * OpenAI-compatible tool-capable models behind them round-trip fine. They were
+ * stale entries here that hard-disabled the Librarian for those sources
+ * regardless of model — the source gate tripped before the model check ever ran
+ * (the NanoGPT report that surfaced this). Removed.
+ *
+ * Only `perplexity` remains: it is genuinely absent from ST's supportedSources.
+ *
+ * Why removing source entries is low-risk: a source that accepts `tools` but
+ * whose model never calls one degrades gracefully — the agentic loop captures
+ * the model's plain text as prose and breaks (agentic-loop.js, the
+ * `toolCalls.length === 0` path; MAX_ITERATIONS caps any runaway). Reasoning-only
+ * models that leak narrative instead of tool calls are caught independently by
+ * `NO_TOOLS_MODELS` below, regardless of source. A wrong *block*, by contrast,
+ * silently kills the feature — the asymmetry that motivated this audit.
+ */
 const NO_TOOLS_SOURCES = new Set([
-    'ai21', 'perplexity', 'nanogpt', 'pollinations', 'moonshot',
+    'perplexity',
 ]);
 
 /**
