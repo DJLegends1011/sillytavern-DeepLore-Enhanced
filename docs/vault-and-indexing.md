@@ -572,6 +572,18 @@ Surgical frontmatter-field update. Reads the file via REST, hands the content to
 
 `onProgress(imported + failed, total)` called after each entry attempt.
 
+### Import-report reconciliation table (R2, v2.6)
+
+**Files:** `src/ui/wi-import-report-pure.js` (pure builder + HTML renderer), `src/ui/wi-import-report.js` (popup wrapper + i18n + retry hook), call site `src/ui/commands-vault.js`.
+
+Failed/skipped entries now render as a reconciliation TABLE, not the old flat read-only error list. `buildImportReport(result, source, folder)` derives a `failures[]` model where each row is `{ name, reason, category, retryable }`:
+- It parses `result.errors` (flat strings shaped `"${filename}: ${reason}"`) via `classifyFailure()` into a category: `transient` (network/timeout/dedup-check glitch — retry meaningful), `collision` (dedup cap of 20 `_imported_N` siblings exhausted), `convert` (`convertWiEntry` threw — retry low-odds but allowed), `write` (`writeNote` !ok), or `unknown`. All five categories are in `FAILURE_RETRYABLE`, so every row is retryable; the category drives the badge copy and a "retry won't help" hint for low-odds rows.
+- `report.retryableCount` (count of `retryable` rows) drives the "Retry all N" button.
+
+**Retry hook:** `showImportReport(report, deps)` accepts `deps.onRetry(failures[]) → importEntries-shaped result`. The renderer only emits per-row Retry/Dismiss buttons and the "Retry all" button when a retry hook is wired (`strings.__canRetry`); absent it, the table is read-only and shows a "re-run the import from the original source" note instead. The call site (`commands-vault.js`) maps a row's `name` (filename) back to its source WI entry via `convertWiEntry` and re-invokes `importEntries`.
+
+**Forward-compat:** if a future `importEntries` returns a structured `failures: [{filename, title, reason, category}]` array, `buildImportReport` prefers it verbatim over parsing `errors[]` (the flat `errors[]` is retained for back-compat). `import.js` does NOT emit `failures` today — the parser path is the live one.
+
 ---
 
 ## Cross-Cutting Gotchas

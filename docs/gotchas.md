@@ -93,6 +93,7 @@ Format: `#N — title`. Listed under the subsystem you'd most likely be editing 
 - #58 — Every `<button>` MUST specify `type="button"` (a11y / form-safety)
 - #64 — Settings UI MEDIUMs bundle (V-M1/V-M2/V-M4/V-M5)
 - #70 — Editable prompts — delete cage + `getPrompt()` invariants (v2.5)
+- #93 — Drawer overlay is a dual trigger — narrow viewport OR wide chat_width (Issue #39)
 
 ---
 
@@ -1242,7 +1243,9 @@ Cross-module data added this wave: `trace.injected[].outlet` (bool) and `trace.p
 
 The drawer status dot (`.dle-status-dot`) and the phase-text surfaces were two-axis overloaded — the glyph encoded BOTH activity (which mascot) AND health (what color), and the phase was inferred by string-matching the toast label. Wave 2 (C1–C3) split these.
 
-**C1 — glyph = activity only.** `drawer-render-status.js` renders the busy glyph whenever `indexing || pipelinePhase !== 'idle' || ds.stGenerating`, and the static DLE brand icon (`STATUS_SVG_IDLE`) at idle. The old `STATUS_SVG_CHOOSING` / `STATUS_SVG_WRITING` mascot variants were **deleted** — 3 shapes could never honestly map to 6+ phases. Do NOT reintroduce phase-specific glyph shapes; phase granularity is the *text label's* job. **Mechanism update (Wave I / gotcha #87):** the busy glyph is no longer a Font Awesome `fa-spinner fa-spin` — both the drawer status dot and the chat toast now render the vendored `<goo-spinner>` Web Component, and ACTIVITY is encoded by its animation SPEED (idle 0.25 / active 1.4), not by glyph shape (still accent via `currentColor`, no health tint). Reduced-motion is handled by the existing `#deeplore-drawer *` universal animation-kill rule.
+**C1 — glyph = activity only.** `drawer-render-status.js` renders the busy glyph whenever `indexing || pipelinePhase !== 'idle' || ds.stGenerating`, and the static DLE brand icon (`STATUS_SVG_IDLE`) at idle. The old `STATUS_SVG_CHOOSING` / `STATUS_SVG_WRITING` mascot variants were **deleted** — 3 shapes could never honestly map to 6+ phases. Do NOT reintroduce phase-specific glyph shapes; phase granularity is the *text label's* job. **Mechanism update (Wave I / gotcha #87):** the busy glyph is no longer a Font Awesome `fa-spinner fa-spin` — both the drawer status dot and the chat toast now render the vendored `<goo-spinner>` Web Component, and ACTIVITY is encoded by its animation SPEED (idle `speed 0` = parked/still gel / active `1.4`; the old `0.25`-vs-`1.4` wobble was replaced in f027 because nobody read it — idle now reads from STOPPED motion + a desaturated/dimmed dot + muted label, not a slow spin), not by glyph shape (still accent via `currentColor`, no health tint). `drawer-render-status.js` sets `setAttribute('speed', isActive ? '1.4' : '0')`.
+
+**Reduced-motion addendum (v2.6 LP1):** `<goo-spinner>` (`src/vendor/goo-spinner.js`) now reflects its live state onto a non-observed `data-motion-state` host attribute with three values — `running` (physics loop active), `reduced` (frozen by `prefers-reduced-motion`, gel can't carry activity), `paused` (deliberately parked via `speed<=0` = idle, NOT a reduced-motion freeze). Under `prefers-reduced-motion` the gel can't move, so the still-working signal would vanish. Light-DOM CSS supplies it instead: `.dle-status-dot.dle-status-active goo-spinner[data-motion-state="reduced"]` gets a slow stepped opacity pulse (`@keyframes dle-rm-working-pulse`, `2s steps(2, jump-none) infinite`, placed AFTER the #20 wildcard animation-kill so the clamp doesn't neuter it). This survives reduced-motion WITHOUT violating the glyph-is-pure-activity rule — opacity ≠ health color, and `paused`/idle never pulses (the rule requires `.dle-status-active`). The distinction between `reduced` and `paused` is load-bearing: an idle dot parked at `speed 0` must NOT get mistaken for the reduced-motion "still working" case.
 
 **C2 — health off the glyph.** The dot no longer adds `STATUS_CLASSES[status]` colors or the `dle-status-changed` transition pulse. `computeOverallStatus` is kept ONLY to drive the SR-only `announceToScreenReader('Status: …')` live-region signal (a11y, not a visible color). All *visible* system health lives in the footer health icons (vault/connection/pipeline/cache/ai). The dot's tooltip is now activity-oriented ("DeepLore activity: <label> — click for full status"), not "System status: …". Don't put health color back on the glyph.
 
@@ -1507,5 +1510,40 @@ ST clones a git extension into a folder named after the **repo slug** — verifi
 **Rule:** never hardcode the install-folder path. Use `EXTENSION_REF` from `src/ext-path.js` for the `renderExtensionTemplateAsync(ref, name)` first arg, and `new URL('../../<asset>', import.meta.url)` for `fetch()` of bundled assets (locales, `icon.svg`). `ext-path.js` derives the ref from its own `import.meta.url` (pure `parseExtensionRef(pathname)` + a historical-name `FALLBACK_REF` so an unexpected URL shape still resolves for existing installs). The import.meta.url-relative fetches are additionally install-LOCATION agnostic (work for global `third-party/` AND per-user `data/<user>/extensions/`).
 
 **Where:** `src/ext-path.js` (`EXTENSION_REF` + `parseExtensionRef` + `FALLBACK_REF`); consumers `index.js`, `src/drawer/drawer.js` (template + icon fetch), `src/ui/settings-ui.js`, `src/ui/setup-wizard.js` (template + demo-vault display path), `src/i18n/i18n.js` (locale fetch). **Guarded by:** `RENAME-1/2/3` in `test/regression.test.mjs` (no hardcoded path in consumers; `parseExtensionRef` resolves old/renamed/junk; fetches use `import.meta.url`). Auto-update itself survives the rename (ST uses the clone's stored remote + GitHub redirect; never re-derives the URL from the repo name).
+
+---
+
+## 92. `notify` toast facade — single severity-routed surface with dedup + click-to-copy + action buttons (v2.6 E1)
+
+`src/toast-dedup.js` exports a `notify` facade alongside the legacy `dedupError`/`dedupWarning`. It is the **preferred entry point for new toast sites** — raw `toastr.*` is still fine for transient info/success, but error/warning surfaces that benefit from dedup or copyable bodies should route through `notify`.
+
+**API:**
+- `notify({ severity, message, title?, category?/dedupKey?, hint?, copyable?, copyText?, actions?, ...toastrOptions })` → `boolean` (true iff a toast actually rendered).
+- Thin helpers `notify.info/success/warning/error(message, opts?)` with the same `opts` keys.
+- `severity` routes to the matching `toastr` method with a default timeout (info/success 5s, warning 8s, error 10s); any explicit `timeOut` in `opts` overrides.
+- `category` (alias `dedupKey`) applies the **same 10s dedup window** as the legacy helpers — and shares its `recentToasts` Map, so a `notify.warning(..., {category:'ai_circuit'})` and a `dedupWarning(..., 'ai_circuit')` mutually suppress. Omit `category` to bypass dedup entirely (e.g. per-`classifyError` bodies where each error text is distinct).
+- `copyable: true` makes the toast body click-to-copy (`copyText` overrides what gets copied; defaults to `message`). It also forces `timeOut:0 / extendedTimeOut:0 / tapToDismiss:false` so the toast persists long enough to click — unless the caller pins its own values.
+- `actions: [{label, onClick}]` appends buttons; `onClick` errors are swallowed.
+
+**Invariants (don't regress):**
+- **L-34 preserved:** the dedup window is stamped only AFTER a successful render. A thrown `toastr` call shows nothing and must not suppress the next 10s of retries.
+- **Legacy contract intact:** `dedupError`/`dedupWarning` keep their `(message, category, options)` signature and boolean return; they are now thin shims over the shared `_emit` core. Callers that gate side effects on the return (e.g. `markAiCircuitTripSurfaced`) still work. The `'ai_circuit'` shared category (R1) is unchanged.
+- **Dependency-light + re-import-safe:** no top-level side effects; `toastr`, `document`, `navigator` are all probed defensively so importing before the DOM/toastr are ready (or twice) is safe. Copy/action affordances are best-effort — if the DOM is unavailable they no-op and the toast still shows.
+
+**Migration is partial by design** (no big-bang): the first tranche converted error/warning bodies that benefit from copy/dedup (`classifyError(err)` sites + vault/import/ai failures). Most info/success and many transient warnings remain raw `toastr.*` — that's intentional, tracked as a follow-up. New error sites SHOULD use `notify.error(msg, { copyable: true })`.
+
+**Where:** facade + dedup in `src/toast-dedup.js`. First adopters: `src/ui/commands-ai.js`, `commands-vault.js`, `commands-pipeline.js`, `commands-admin.js`, `popups.js`, `src/librarian/librarian-review.js`, `src/ai/auto-suggest.js`, `src/drawer/drawer-events.js`. CSS affordances: `.dle-toast-copyable` / `.dle-toast-copied` / `.dle-toast-actions` / `.dle-toast-action`.
+
+---
+
+## 93. Drawer overlay/full-width mode is a DUAL trigger — narrow viewport OR wide chat_width (Issue #39, v2.6 R2)
+
+`updateOverlayMode()` (`src/drawer/drawer.js`) engages fixed-overlay/full-width mode when EITHER condition holds:
+- `window.innerWidth <= OVERLAY_VIEWPORT_WIDTH_PX` (768, real viewport pixels), OR
+- `chat_width >= OVERLAY_CHAT_WIDTH_THRESHOLD` (60%, the unchanged desktop trigger).
+
+Both constants live in `src/drawer/drawer-state.js`. **Why the viewport source was added:** `chat_width` is a *percentage* preference and never reflects actual pixels — on a phone `chat_width` may be small while the real viewport is narrow, so the percentage threshold alone never engaged and phones never got overlay. The pixel breakpoint keys off `window.innerWidth` so narrow real viewports (phones, narrow desktop windows) now get overlay regardless of the percentage. The two triggers are additive: `chat_width >= 60` keeps its desktop role (wide chat squeezes the side panel) and the new viewport check covers everything the percentage missed. This is a surgical viewport-source fix, NOT the bottom-sheet rebuild.
+
+**Merge-checklist flag for the DJLegends v3 mobile PR:** the v3 mobile UI is a full bottom-sheet rebuild and should SUBSUME/replace `updateOverlayMode` rather than stack a third overlay path on top of it. Reviewers merging the mobile PR must reconcile this dual-trigger with the new mobile layout, not leave both running.
 
 ---

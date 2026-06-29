@@ -12,8 +12,9 @@ import { buildIndex } from '../vault/vault.js';
 // graph.js (~3140 LOC) is lazy-loaded inline below — only paid for when /dle-graph runs.
 import { showBrowsePopup } from './popups.js';
 import { parseWorldInfoJson, importEntries } from '../vault/import.js';
+import { convertWiEntry } from '../helpers.js';
 import { world_names, loadWorldInfo } from '../../../../../world-info.js';
-import { dedupWarning } from '../toast-dedup.js';
+import { dedupWarning, notify } from '../toast-dedup.js';
 import { tr, trf } from '../i18n/i18n.js';
 
 export function registerVaultCommands() {
@@ -54,7 +55,7 @@ export function registerVaultCommands() {
                 return msg;
             } catch (err) {
                 console.warn('[DLE] /dle-refresh failed:', err);
-                toastr.error(trf('dle_cmd_refresh_error_toast', classifyError(err)), 'DeepLore');
+                notify.error(trf('dle_cmd_refresh_error_toast', classifyError(err)), { category: 'obsidian_connect', copyable: true });
                 return '';
             }
         },
@@ -126,7 +127,7 @@ export function registerVaultCommands() {
                                 capturedJson = json;
                             } catch (err) {
                                 console.error('[DLE] loadWorldInfo error:', err);
-                                toastr.error(classifyError(err), 'DeepLore');
+                                notify.error(classifyError(err), { copyable: true });
                             }
                         });
                     }
@@ -211,7 +212,33 @@ export function registerVaultCommands() {
                 // button that flips settings.wiImportEmHandling.
                 if (result.failed > 0) console.warn('[DLE] Import errors:', result.errors);
                 const { showImportReport } = await import('./wi-import-report.js');
-                await showImportReport(result, source, folder, { getSettings, saveSettings: saveSettingsDebounced });
+                // v2.6: map each failure row back to its source WI entry so the recovery
+                // table's per-row Retry can re-run importEntries for just that entry. The report
+                // keys failures by the entry's filename (`${safeTitle}.md`); convertWiEntry
+                // derives that filename from comment/key/uid ONLY (option-independent), so
+                // building the lookup with bare `{}` options reproduces the same key importEntries
+                // used. See wi-import-report.js HOOK + import.js (errors are `${filename}: reason`).
+                const byFilename = new Map();
+                const lorebookTag = getSettings().lorebookTag;
+                for (const e of entries) {
+                    try {
+                        const { filename } = convertWiEntry(e, lorebookTag, {});
+                        if (filename) byFilename.set(filename, e);
+                    } catch { /* convert-fail rows can't be matched here; they stay failed */ }
+                }
+                await showImportReport(result, source, folder, {
+                    getSettings,
+                    saveSettings: saveSettingsDebounced,
+                    onRetry: async (failures) => {
+                        const retryEntries = failures.map(f => byFilename.get(f.name)).filter(Boolean);
+                        if (retryEntries.length === 0) {
+                            // Nothing matched (e.g. convert-fail rows) — report all as still-failed
+                            // in the importEntries-shaped result the report consumes.
+                            return { imported: 0, failed: failures.length, errors: failures.map(f => `${f.name}: not found`) };
+                        }
+                        return importEntries(retryEntries, folder, null);
+                    },
+                });
 
                 // C.2: WI 'Order' → DLE 'priority' inverts semantically — WI sorts
                 // high-first, DLE sorts low-first. Priorities round-trip as raw numbers
@@ -259,7 +286,7 @@ export function registerVaultCommands() {
                 }
             } catch (err) {
                 console.error('[DLE] Import error:', err);
-                toastr.error(classifyError(err), 'DeepLore');
+                notify.error(classifyError(err), { copyable: true });
             }
             return '';
         },

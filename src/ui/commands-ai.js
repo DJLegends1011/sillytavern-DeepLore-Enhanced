@@ -22,6 +22,7 @@ import { optimizeEntryKeys, showOptimizePopup } from './popups.js';
 import { parseRange, summarizeRange, rollbackSummary, listSummaries } from '../ai/summarize.js';
 import { ensureFreshOrToast, resolveEntryByName } from './commands-shared.js';
 import { tr, trf } from '../i18n/i18n.js';
+import { notify } from '../toast-dedup.js';
 import { abortWith } from '../diagnostics/interceptors.js';
 
 export function registerAiCommands() {
@@ -49,7 +50,7 @@ export function registerAiCommands() {
             } catch (err) {
                 toastr.clear(loadingToast);
                 console.error('[DLE] Optimize keys error:', err);
-                toastr.error(classifyError(err), 'DeepLore');
+                notify.error(classifyError(err), { copyable: true });
             }
             return '';
         },
@@ -76,7 +77,7 @@ export function registerAiCommands() {
         } catch (err) {
             toastr.clear(loadingToast);
             console.error('[DLE] Auto-suggest error:', err);
-            toastr.error(classifyError(err), 'DeepLore');
+            notify.error(classifyError(err), { copyable: true });
         }
         return '';
     };
@@ -308,14 +309,14 @@ export function registerAiCommands() {
                 const result = await summarizeRange(range, summarizeAbort.signal);
                 toastr.clear(loading);
                 if (!result.ok) {
-                    toastr.error(result.error, 'DeepLore');
+                    notify.error(result.error, { copyable: true });
                     return '';
                 }
                 toastr.success(`Summarized ${result.hiddenCount} messages. ID: ${result.summaryId} (use /dle-summarize-rollback ${result.summaryId} to undo).`, 'DeepLore', { timeOut: 8000 });
                 return result.summaryId;
             } catch (err) {
                 toastr.clear(loading);
-                toastr.error(trf('dle_cmd_summarizerange_error_msg', err.message), 'DeepLore');
+                notify.error(trf('dle_cmd_summarizerange_error_msg', err.message), { copyable: true });
                 return '';
             } finally {
                 try { eventSource.removeListener(event_types.CHAT_CHANGED, onChatChange); } catch { /* noop */ }

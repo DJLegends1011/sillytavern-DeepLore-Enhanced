@@ -2323,14 +2323,16 @@ test('renderImportReportHtml: shows skip-EM button only when emAppended > 0', ()
     assert(!renderImportReportHtml(r2).includes('dle-import-skip-em-future'), 'button hidden when nothing appended (already opted out)');
 });
 
-test('renderImportReportHtml: truncates long error list', () => {
+test('renderImportReportHtml: renders failed entries as a recovery table', () => {
     const errs = Array.from({ length: 30 }, (_, i) => `err-${i}`);
     const r = buildImportReport({ imported: 0, errors: errs, report: {} }, 'WI', '');
     const html = renderImportReportHtml(r);
-    assert(html.includes('Errors (30)'), 'total count visible');
+    assert(html.includes('dle-import-recovery-table'), 'recovery table rendered');
+    assert(html.includes("Didn't import (30)"), 'total count visible in section header');
     assert(html.includes('err-0'), 'first error shown');
-    assert(html.includes('and 10 more'), 'overflow message shown');
-    assert(!html.includes('err-29'), '21st+ errors not rendered inline');
+    // Table caps at 50, so all 30 rows render with no "and N more" rollup.
+    assert(html.includes('err-29'), 'all 30 rows rendered (cap is 50)');
+    assert(!html.includes('more</p>'), 'no overflow rollup below the cap');
 });
 
 test('renderImportReportHtml: emEntries list truncates with overflow indicator (audit fix-up)', () => {

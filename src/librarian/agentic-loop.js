@@ -131,7 +131,10 @@ const PHASE_FLAG = 'FLAG';
  * @param {AbortSignal} options.signal
  * @param {number} options.epoch - chatEpoch snapshot
  * @param {number} options.lockEpoch - generationLockEpoch snapshot
- * @param {function} options.onStatus
+ * @param {function} options.onStatus - Called with a structured `{ phase, progress }`
+ *   object (phase = canonical PIPELINE_PHASE key; progress = `{ current, total }` or
+ *   null). The consumer sets the phase deterministically and composes the localized
+ *   label — it must NOT string-match display text (gotcha #74). See f025.
  * @param {function} options.onProse - Called when write() fires; awaited so saveReply
  *   completes before the loop returns. The FLAG turn is now backgrounded (see the
  *   `pendingFlag` thunk in the return value) — onProse no longer gates a synchronous
@@ -271,9 +274,11 @@ export async function runAgenticLoop(options) {
                         break;
                     }
                     searchCount++;
-                    // C3: canonical "Searching vault\u2026" prefix (matches PIPELINE_PHASE_LABELS);
-                    // keeps the dynamic (n/m) progress in the chat toast.
-                    onStatus?.(`Searching vault\u2026 (${searchCount}/${maxSearches})`);
+                    // C3 (gotcha #74): never make the consumer infer the phase from display text.
+                    // Pass the canonical phase KEY plus the dynamic (n/m) progress as structured
+                    // data; index.js sets the phase deterministically and composes the localized
+                    // label + progress for the toast. See f025.
+                    onStatus?.({ phase: 'searching', progress: { current: searchCount, total: maxSearches } });
 
                     // CRIT-LIB-2: searchLoreAction returns `{ text, titles }` (see its
                     // doc comment). `titles` is the authoritative matched-entry list;

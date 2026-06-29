@@ -15,6 +15,7 @@ import { diffVerdicts } from '../verdict/verdict-pure.js';
 import { diagnoseEntry } from './diagnostics.js';
 import { STAGE_COLORS, categorizeRejections, resolveEntryVault, parseMatchReason, tokenBarColor, formatRelativeTime, comparePriority, openObsidianUri } from '../helpers.js';
 import { navigateToBrowseEntry } from '../drawer/drawer.js';
+import { tr, trf, trPlural } from '../i18n/i18n.js';
 /**
  * No-op kept for backward compatibility with CHAT_CHANGED handler. Verdict store
  * already wipes per-chat in-memory state on chat switch via clearVerdictRing
@@ -31,7 +32,8 @@ export function injectSourcesButton(messageId) {
     if (mesEl.length === 0) return;
     if (mesEl.find('.mes_deeplore_sources').length > 0) return;
 
-    const btn = $('<div title="Why? — See which lore was injected" class="mes_button mes_deeplore_sources fa-solid fa-book-open" role="button" tabindex="0" aria-label="Why? — See which lore was injected"></div>');
+    const whyLabel = tr('dle_carto_why_button_label', 'Why? — See which lore was injected');
+    const btn = $(`<div title="${escapeHtml(whyLabel)}" class="mes_button mes_deeplore_sources fa-solid fa-book-open" role="button" tabindex="0" aria-label="${escapeHtml(whyLabel)}"></div>`);
     mesEl.find('.extraMesButtons').prepend(btn);
 }
 
@@ -39,10 +41,14 @@ function formatMatchReason(matchedBy) {
     if (!matchedBy) return '';
     const { type, keyword } = parseMatchReason(matchedBy);
     const labels = {
-        constant: '(Constant)', pinned: '(Pinned)', bootstrap: '(Bootstrap)',
-        seed: '(Seed)', ai: '(AI)', unknown: '',
+        constant: tr('dle_carto_match_constant', '(Constant)'),
+        pinned: tr('dle_carto_match_pinned', '(Pinned)'),
+        bootstrap: tr('dle_carto_match_bootstrap', '(Bootstrap)'),
+        seed: tr('dle_carto_match_seed', '(Seed)'),
+        ai: tr('dle_carto_match_ai', '(AI)'),
+        unknown: '',
     };
-    if (type === 'keyword_ai' || type === 'keyword') return `(Keyword: ${escapeHtml(keyword)})`;
+    if (type === 'keyword_ai' || type === 'keyword') return trf('dle_carto_match_keyword', escapeHtml(keyword));
     return labels[type] || '';
 }
 
@@ -60,7 +66,11 @@ export function showSourcesPopup(sources, opts = {}) {
     const totalTokens = sources.reduce((sum, s) => sum + s.tokens, 0);
     const maxTokens = Math.max(...sources.map(s => s.tokens), 1);
     const avgTokens = vaultAvgTokens || 0;
-    const positionLabels = { 0: 'After Main Prompt', 1: 'In-chat', 2: 'Before Main Prompt' };
+    const positionLabels = {
+        0: tr('dle_carto_pos_after_main', 'After Main Prompt'),
+        1: tr('dle_carto_pos_in_chat', 'In-chat'),
+        2: tr('dle_carto_pos_before_main', 'Before Main Prompt'),
+    };
 
     // Keyed by trackerKey (vaultSource:title) so same-title entries across vaults don't collide.
     // Title-only fallback for callers whose input has no vaultSource (e.g. trace data) —
@@ -73,7 +83,7 @@ export function showSourcesPopup(sources, opts = {}) {
         const entry = resolveEntry(src.title, src.vaultSource);
         const pos = entry?.injectionPosition ?? settings.injectionPosition;
         const depth = entry?.injectionDepth ?? settings.injectionDepth;
-        const posKey = pos === 1 ? `In-chat @depth ${depth}` : (positionLabels[pos] || 'Unknown');
+        const posKey = pos === 1 ? trf('dle_carto_pos_in_chat_depth', depth) : (positionLabels[pos] || tr('dle_carto_pos_unknown', 'Unknown'));
         if (!groups.has(posKey)) groups.set(posKey, []);
         groups.get(posKey).push({ ...src, entry });
     }
@@ -99,13 +109,17 @@ export function showSourcesPopup(sources, opts = {}) {
         : getVerdictPreviousForMessage(getCurrentVerdictForChat(_chatId)?.msgIdx ?? Number.MAX_SAFE_INTEGER, _chatId);
     const diff = diffVerdicts(_currentVerdict, _previousVerdict);
 
-    const plainLines = [`Injected Sources (${sources.length} entries, ~${totalTokens} tokens)`, '', 'Entry\tTokens\tMatched By\tFolder\tChat×\tAll-time Inj\tAll-time Match\tLast Used'];
+    const plainLines = [
+        trf('dle_carto_plain_header', trPlural('dle_carto_entry_count', sources.length), totalTokens),
+        '',
+        tr('dle_carto_plain_columns', 'Entry\tTokens\tMatched By\tFolder\tChat×\tAll-time Inj\tAll-time Match\tLast Used'),
+    ];
     for (const src of sources) {
         const ek = src.entry ? trackerKey(src.entry) : `${src.vaultSource || ''}:${src.title}`;
         const cc = chatInjectionCounts.get(ek) || 0;
         const at = settings.analyticsData?.[ek];
         const folder = resolveEntry(src.title, src.vaultSource)?.folderPath || '';
-        plainLines.push(`${src.title}\t${src.tokens}\t${src.matchedBy}\t${folder}\t${cc}\t${at?.injected || 0}\t${at?.matched || 0}\t${at?.lastTriggered ? new Date(at.lastTriggered).toLocaleString() : 'Never'}`);
+        plainLines.push(`${src.title}\t${src.tokens}\t${src.matchedBy}\t${folder}\t${cc}\t${at?.injected || 0}\t${at?.matched || 0}\t${at?.lastTriggered ? new Date(at.lastTriggered).toLocaleString() : tr('dle_carto_never', 'Never')}`);
     }
 
     // Per-render regex cache: large vaults share matchedBy keywords across hundreds
@@ -122,17 +136,17 @@ export function showSourcesPopup(sources, opts = {}) {
 
     let html = `<div class="dle-popup">`;
     html += buildCopyButton(plainLines.join('\n'));
-    html += `<h3>Why? — Injected Sources (${sources.length} entries, ~${totalTokens} tokens)</h3>`;
+    html += `<h3>${escapeHtml(trf('dle_carto_title', trPlural('dle_carto_entry_count', sources.length), totalTokens))}</h3>`;
 
     if (diff.added.length > 0 || diff.removed.length > 0) {
         html += `<div class="dle-card dle-text-sm">`;
         if (diff.added.length > 0) {
             const addedLabels = diff.added.map(s => `${escapeHtml(s.title)} ${formatMatchReason(s.matchedBy)}`);
-            html += `<span class="dle-success">+${diff.added.length} new:</span> <span class="dle-muted">${addedLabels.join(', ')}</span><br>`;
+            html += `<span class="dle-success">${escapeHtml(trf('dle_carto_diff_added', diff.added.length))}</span> <span class="dle-muted">${addedLabels.join(', ')}</span><br>`;
         }
         if (diff.removed.length > 0) {
-            const removedLabels = diff.removed.map(s => `${escapeHtml(s.title)} (${s.removalReason})`);
-            html += `<span class="dle-error">-${diff.removed.length} removed:</span> <span class="dle-muted">${removedLabels.join(', ')}</span>`;
+            const removedLabels = diff.removed.map(s => `${escapeHtml(s.title)} (${escapeHtml(s.removalReason)})`);
+            html += `<span class="dle-error">${escapeHtml(trf('dle_carto_diff_removed', diff.removed.length))}</span> <span class="dle-muted">${removedLabels.join(', ')}</span>`;
         }
         html += `</div>`;
     }
@@ -142,7 +156,7 @@ export function showSourcesPopup(sources, opts = {}) {
         groupSources.sort((a, b) => comparePriority(a, b, settings.priorityReversed));
 
         const groupTokens = groupSources.reduce((sum, s) => sum + s.tokens, 0);
-        html += `<h4 class="dle-carto-heading">${escapeHtml(posLabel)} (~${groupTokens} tokens)</h4>`;
+        html += `<h4 class="dle-carto-heading">${escapeHtml(posLabel)} ${escapeHtml(trf('dle_carto_group_tokens', groupTokens))}</h4>`;
 
         for (const src of groupSources) {
             const pct = Math.max(2, Math.round((src.tokens / maxTokens) * 100));
@@ -159,9 +173,9 @@ export function showSourcesPopup(sources, opts = {}) {
 
             html += `<div class="dle-card">`;
             html += `<div class="dle-ctx-toggle dle-card-header" data-target="dle-ctx-${entryId}" aria-expanded="false" role="button" tabindex="0">`;
-            html += `<span><strong>${titleHtml}</strong> <span class="dle-text-xs dle-faint">pri ${src.priority}</span>`;
-            html += ` <button type="button" class="dle-carto-browse-btn" data-browse-title="${escapeHtml(src.title)}" data-browse-vault="${escapeHtml(src.vaultSource || '')}" title="Show in Browse"><i class="fa-solid fa-arrow-right-to-bracket" aria-hidden="true"></i></button></span>`;
-            html += `<span class="dle-text-xs" style="color: ${barColor};">~${src.tokens} tok</span>`;
+            html += `<span><strong>${titleHtml}</strong> <span class="dle-text-xs dle-faint">${escapeHtml(trf('dle_carto_priority', src.priority))}</span>`;
+            html += ` <button type="button" class="dle-carto-browse-btn" data-browse-title="${escapeHtml(src.title)}" data-browse-vault="${escapeHtml(src.vaultSource || '')}" title="${escapeHtml(tr('dle_carto_show_in_browse', 'Show in Browse'))}"><i class="fa-solid fa-arrow-right-to-bracket" aria-hidden="true"></i></button></span>`;
+            html += `<span class="dle-text-xs" style="color: ${barColor};">${escapeHtml(trf('dle_carto_tok_short', src.tokens))}</span>`;
             html += `</div>`;
             html += `<div class="dle-carto-token-bar">`;
             html += `<div class="dle-carto-token-bar-fill" style="background: ${barColor}; width: ${pct}%;"></div>`;
@@ -174,11 +188,11 @@ export function showSourcesPopup(sources, opts = {}) {
             const chatCount = chatInjectionCounts.get(entryKey) || 0;
             const allTime = settings.analyticsData?.[entryKey];
             const statParts = [];
-            if (chatCount > 0) statParts.push(`This chat: ${chatCount}×`);
+            if (chatCount > 0) statParts.push(trf('dle_carto_stat_this_chat', chatCount));
             if (allTime) {
-                statParts.push(`All-time: ${allTime.injected || 0} injected / ${allTime.matched || 0} matched`);
+                statParts.push(trf('dle_carto_stat_all_time', allTime.injected || 0, allTime.matched || 0));
                 const lastUsed = formatRelativeTime(allTime.lastTriggered);
-                if (lastUsed) statParts.push(`Last: ${lastUsed}`);
+                if (lastUsed) statParts.push(trf('dle_carto_stat_last', lastUsed));
             }
             if (statParts.length > 0) {
                 html += `<div class="dle-carto-stats dle-text-xs">${statParts.join(' · ')}</div>`;
@@ -186,8 +200,8 @@ export function showSourcesPopup(sources, opts = {}) {
 
             if (src.entry) {
                 const meta = [];
-                if (src.entry.keys?.length > 0) meta.push(`Keys: ${src.entry.keys.slice(0, 5).join(', ')}${src.entry.keys.length > 5 ? '...' : ''}`);
-                if (src.entry.requires?.length > 0) meta.push(`Requires: ${src.entry.requires.join(', ')}`);
+                if (src.entry.keys?.length > 0) meta.push(trf('dle_carto_meta_keys', `${src.entry.keys.slice(0, 5).join(', ')}${src.entry.keys.length > 5 ? '...' : ''}`));
+                if (src.entry.requires?.length > 0) meta.push(trf('dle_carto_meta_requires', src.entry.requires.join(', ')));
                 if (src.entry.customFields) {
                     for (const [key, val] of Object.entries(src.entry.customFields)) {
                         if (val != null && val !== '' && (!Array.isArray(val) || val.length > 0)) {
@@ -196,7 +210,7 @@ export function showSourcesPopup(sources, opts = {}) {
                         }
                     }
                 }
-                if (src.entry.resolvedLinks?.length > 0) meta.push(`Links: ${src.entry.resolvedLinks.slice(0, 5).join(', ')}`);
+                if (src.entry.resolvedLinks?.length > 0) meta.push(trf('dle_carto_meta_links', src.entry.resolvedLinks.slice(0, 5).join(', ')));
 
                 // Run regex on raw text BEFORE escaping to avoid matching inside HTML entities;
                 // use \x00 placeholders that survive escapeHtml, then swap to <mark> tags after.
@@ -233,15 +247,15 @@ export function showSourcesPopup(sources, opts = {}) {
 
         if (rejectedGroups.length > 0) {
             const totalRejected = rejectedGroups.reduce((sum, g) => sum + g.entries.length, 0);
-            html += `<hr class="dle-my-3" style="border-color: var(--dle-border);">`;
-            html += `<h4 class="dle-carto-heading" style="color: var(--dle-text-muted);">Not Injected (${totalRejected} entries)</h4>`;
+            html += `<hr class="dle-my-3 dle-carto-divider">`;
+            html += `<h4 class="dle-carto-heading dle-carto-heading--muted">${escapeHtml(trf('dle_carto_not_injected', trPlural('dle_carto_entry_count', totalRejected)))}</h4>`;
 
             for (const group of rejectedGroups) {
                 const groupId = simpleHash(`rejected_${group.label}`);
                 html += `<div class="dle-card dle-carto-rejected">`;
                 html += `<div class="dle-ctx-toggle dle-card-header" data-target="dle-rej-${groupId}" aria-expanded="false" role="button" tabindex="0">`;
-                html += `<span><i class="fa-solid ${group.icon} dle-text-muted" style="margin-right: 6px;"></i><strong>${escapeHtml(group.label)}</strong> <span class="dle-text-xs dle-faint">(${group.entries.length})</span></span>`;
-                html += `<span class="dle-text-xs dle-faint">click to expand</span>`;
+                html += `<span><i class="fa-solid ${group.icon} dle-text-muted dle-carto-section-icon"></i><strong>${escapeHtml(group.label)}</strong> <span class="dle-text-xs dle-faint">(${group.entries.length})</span></span>`;
+                html += `<span class="dle-text-xs dle-faint">${escapeHtml(tr('dle_carto_click_to_expand', 'click to expand'))}</span>`;
                 html += `</div>`;
                 html += `<div id="dle-rej-${groupId}" class="dle-ctx-detail">`;
 
@@ -250,18 +264,20 @@ export function showSourcesPopup(sources, opts = {}) {
                     const entry = resolveEntry(e.title, e.vaultSource);
                     const whynotId = simpleHash(`whynot_${e.title}`);
                     html += `<div class="dle-carto-entry-row">`;
-                    html += `<span class="dle-text-sm">${escapeHtml(e.title)} <button type="button" class="dle-carto-browse-btn" data-browse-title="${escapeHtml(e.title)}" data-browse-vault="${escapeHtml(e.vaultSource || '')}" title="Show in Browse"><i class="fa-solid fa-arrow-right-to-bracket" aria-hidden="true"></i></button></span>`;
+                    html += `<span class="dle-text-sm">${escapeHtml(e.title)} <button type="button" class="dle-carto-browse-btn" data-browse-title="${escapeHtml(e.title)}" data-browse-vault="${escapeHtml(e.vaultSource || '')}" title="${escapeHtml(tr('dle_carto_show_in_browse', 'Show in Browse'))}"><i class="fa-solid fa-arrow-right-to-bracket" aria-hidden="true"></i></button></span>`;
                     if (entry && !entry.constant) {
                         // Audit Q27 (S9-3): carry data-vault through to the whynot handler so
                         // multi-vault same-title entries resolve to the correct entry (gotcha #4).
-                        html += ` <button type="button" class="menu_button dle-carto-whynot-btn dle-text-xs" data-title="${escapeHtml(e.title)}" data-vault="${escapeHtml(e.vaultSource || '')}" data-container="dle-whynot-carto-${whynotId}">Why?</button>`;
+                        html += ` <button type="button" class="menu_button dle-carto-whynot-btn dle-text-xs" data-title="${escapeHtml(e.title)}" data-vault="${escapeHtml(e.vaultSource || '')}" data-container="dle-whynot-carto-${whynotId}">${escapeHtml(tr('dle_carto_whynot_button', 'Why?'))}</button>`;
                         html += `<div id="dle-whynot-carto-${whynotId}"></div>`;
                     }
                     const rejKey = entry ? trackerKey(entry) : `${e.vaultSource || ''}:${e.title}`;
                     const rejAllTime = settings.analyticsData?.[rejKey];
                     if (rejAllTime) {
                         const lastUsed = formatRelativeTime(rejAllTime.lastTriggered);
-                        html += `<div class="dle-carto-stats dle-text-xs">${rejAllTime.injected || 0} injected / ${rejAllTime.matched || 0} matched${lastUsed ? ` · Last: ${lastUsed}` : ''}</div>`;
+                        const rejStats = trf('dle_carto_rej_stats', rejAllTime.injected || 0, rejAllTime.matched || 0);
+                        const rejLast = lastUsed ? ` · ${trf('dle_carto_stat_last', lastUsed)}` : '';
+                        html += `<div class="dle-carto-stats dle-text-xs">${escapeHtml(rejStats)}${escapeHtml(rejLast)}</div>`;
                     }
                     html += `</div>`;
                 }
@@ -273,12 +289,12 @@ export function showSourcesPopup(sources, opts = {}) {
 
     const anyVaultNamed = settings.vaults && settings.vaults.some(v => v.name);
     html += anyVaultNamed
-        ? '<p class="dle-faint dle-text-xs dle-mt-2">Click entry names to open in Obsidian. Click entries to expand content preview.</p>'
-        : '<p class="dle-faint dle-text-xs dle-mt-2">Set vault names in Vault Connections to enable deep links.</p>';
+        ? `<p class="dle-faint dle-text-xs dle-mt-2">${escapeHtml(tr('dle_carto_footer_named', 'Click entry names to open in Obsidian. Click entries to expand content preview.'))}</p>`
+        : `<p class="dle-faint dle-text-xs dle-mt-2">${escapeHtml(tr('dle_carto_footer_unnamed', 'Set vault names in Vault Connections to enable deep links.'))}</p>`;
 
     if (opts.aiNotes) {
         html += `<div class="dle-card dle-mt-2">
-            <h4><i class="fa-solid fa-robot" style="margin-right: 4px;"></i>AI Notes (this message)</h4>
+            <h4><i class="fa-solid fa-robot dle-carto-section-icon"></i>${escapeHtml(tr('dle_carto_ai_notes_header', 'AI Notes (this message)'))}</h4>
             <pre class="dle-text-sm dle-preview">${escapeHtml(opts.aiNotes)}</pre>
         </div>`;
     }
@@ -325,7 +341,7 @@ export function showSourcesPopup(sources, opts = {}) {
         const result = diagnoseEntry(entry, chat);
         const color = STAGE_COLORS[result.stage] || 'var(--dle-text-muted)';
         const suggestions = result.suggestions.length > 0
-            ? `<br><span class="dle-text-xs dle-muted">Suggestion: ${escapeHtml(result.suggestions[0])}</span>`
+            ? `<br><span class="dle-text-xs dle-muted">${escapeHtml(trf('dle_carto_suggestion', result.suggestions[0]))}</span>`
             : '';
         const targetEl = document.getElementById(containerId);
         if (targetEl) {

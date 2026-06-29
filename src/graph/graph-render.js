@@ -70,6 +70,15 @@ export function darkenColor(hex, amount) {
  */
 export function initRender(gs) {
 
+    // Localizers delegate to gs._t/_tf/_tp (injected by graph.js where i18n.js is imported). This
+    // module is imported DIRECTLY by test/unit.mjs for its pure color helpers, so it must NOT import
+    // i18n.js (that pulls ST's script.js into the headless import chain). Headless → English fallback.
+    const T = (key, fallback) => (gs._t ? gs._t(key, fallback) : fallback);
+    const TF = (key, fallback, ...args) => (gs._tf ? gs._tf(key, ...args)
+        : args.reduce((s, a, i) => s.replaceAll(`\${${i}}`, String(a)), fallback));
+    const TP = (key, count, fallbackOne, fallbackOther) => (gs._tp ? gs._tp(key, count)
+        : (count === 1 ? fallbackOne : fallbackOther).replaceAll('${0}', String(count)));
+
     function toScreen(x, y) { return { x: x * gs.zoom + gs.panX, y: y * gs.zoom + gs.panY }; }
     function toWorld(sx, sy) { return { x: (sx - gs.panX) / gs.zoom, y: (sy - gs.panY) / gs.zoom }; }
 
@@ -155,42 +164,42 @@ export function initRender(gs) {
     const LEGEND_SAFETY_CAP = 50;
     function capLegendItems(items, cap = LEGEND_SAFETY_CAP) {
         if (items.length <= cap) return items.join('');
-        return items.slice(0, cap).join('') + `<span class="dle-dimmed">+${items.length - cap} more</span>`;
+        return items.slice(0, cap).join('') + `<span class="dle-dimmed">${escapeHtml(TF('dle_graph_legend_more', '+${0} more', items.length - cap))}</span>`;
     }
 
     function buildColorLegend() {
         switch (gs.colorMode) {
             case 'type': {
                 const items = [
-                    ['Constant', toPastel(gs.nodeColors.constant)],
-                    ['Seed', toPastel(gs.nodeColors.seed)],
-                    ['Bootstrap', toPastel(gs.nodeColors.bootstrap)],
-                    ['Regular', toPastel(gs.nodeColors.regular)],
+                    [T('dle_graph_legend_constant', 'Constant'), toPastel(gs.nodeColors.constant)],
+                    [T('dle_graph_legend_seed', 'Seed'), toPastel(gs.nodeColors.seed)],
+                    [T('dle_graph_legend_bootstrap', 'Bootstrap'), toPastel(gs.nodeColors.bootstrap)],
+                    [T('dle_graph_legend_regular', 'Regular'), toPastel(gs.nodeColors.regular)],
                 ];
                 return items.map(([label, color]) =>
-                    `<span class="dle-graph-legend-swatch"><span class="dle-graph-swatch-dot" style="background:${color};"></span>${label}</span>`
+                    `<span class="dle-graph-legend-swatch"><span class="dle-graph-swatch-dot" style="background:${color};"></span>${escapeHtml(label)}</span>`
                 ).join('');
             }
             case 'priority':
-                return `<span class="dle-graph-legend-gradient">Priority:
-                    <span>High</span>
+                return `<span class="dle-graph-legend-gradient">${escapeHtml(T('dle_graph_legend_priority_label', 'Priority:'))}
+                    <span>${escapeHtml(T('dle_graph_legend_priority_high', 'High'))}</span>
                     <span class="dle-graph-legend-gradient-bar" style="background:linear-gradient(to right,${toPastel('#e53935')},${toPastel('#ff9800')},#ffeb3b,${toPastel('#66bb6a')},${toPastel('#42a5f5')});"></span>
-                    <span>Low</span>
+                    <span>${escapeHtml(T('dle_graph_legend_priority_low', 'Low'))}</span>
                 </span>`;
             case 'centrality':
-                return `<span class="dle-graph-legend-gradient">Connections:
-                    <span>Many</span>
+                return `<span class="dle-graph-legend-gradient">${escapeHtml(T('dle_graph_legend_connections_label', 'Connections:'))}
+                    <span>${escapeHtml(T('dle_graph_legend_connections_many', 'Many'))}</span>
                     <span class="dle-graph-legend-gradient-bar" style="background:linear-gradient(to right,${toPastel('#e53935')},${toPastel('#ff9800')},#ffeb3b,${toPastel('#66bb6a')},${toPastel('#42a5f5')});"></span>
-                    <span>Few</span>
+                    <span>${escapeHtml(T('dle_graph_legend_connections_few', 'Few'))}</span>
                 </span>`;
             case 'frequency':
-                return `<span class="dle-graph-legend-gradient">Injections:
-                    <span>Frequent</span>
+                return `<span class="dle-graph-legend-gradient">${escapeHtml(T('dle_graph_legend_injections_label', 'Injections:'))}
+                    <span>${escapeHtml(T('dle_graph_legend_injections_frequent', 'Frequent'))}</span>
                     <span class="dle-graph-legend-gradient-bar" style="background:linear-gradient(to right,${toPastel('#e53935')},${toPastel('#e87040')},${toPastel('#b08a50')},${toPastel('#6a8db8')},${toPastel('#4a6fa5')});"></span>
-                    <span>Never</span>
+                    <span>${escapeHtml(T('dle_graph_legend_injections_never', 'Never'))}</span>
                 </span>`;
             case 'community': {
-                if (!gs.communities || gs.communities.size === 0) return '<span>No communities detected</span>';
+                if (!gs.communities || gs.communities.size === 0) return `<span>${escapeHtml(T('dle_graph_legend_no_communities', 'No communities detected'))}</span>`;
                 const items = [];
                 for (const [, cm] of gs.communities) {
                     if (cm.members.length === 0) continue;
@@ -205,13 +214,13 @@ export function initRender(gs) {
                     const fieldName = gs.colorMode.slice(6);
                     ensureFieldIndex(fieldName);
                     const idx = fieldColorCache.get(`__idx__${fieldName}`);
-                    if (!idx || idx.size === 0) return `<span>No "${escapeHtml(fieldName)}" values found in vault</span>`;
+                    if (!idx || idx.size === 0) return `<span>${escapeHtml(TF('dle_graph_legend_no_field_values', 'No "${0}" values found in vault', fieldName))}</span>`;
                     const items = [];
                     items.push(`<span class="dle-graph-field-label">${escapeHtml(fieldName)}</span>`);
                     for (const [val, c] of idx) {
                         items.push(`<span class="dle-graph-legend-swatch"><span class="dle-graph-swatch-dot" style="background:${toPastel(c)};"></span>${escapeHtml(val)}</span>`);
                     }
-                    items.push(`<span class="dle-graph-legend-swatch dle-graph-legend-swatch--empty"><span class="dle-graph-swatch-dot" style="background:#555555;"></span>No value</span>`);
+                    items.push(`<span class="dle-graph-legend-swatch dle-graph-legend-swatch--empty"><span class="dle-graph-swatch-dot" style="background:#555555;"></span>${escapeHtml(T('dle_graph_legend_no_value', 'No value'))}</span>`);
                     const count = items.length - 1; // exclude field-label header from count.
                     const html = capLegendItems(items);
                     return wrapLegendScaled(html, count);
@@ -221,10 +230,22 @@ export function initRender(gs) {
         }
     }
 
-    /** Suffix the legend with a transient "Calculating…" / "Layout saved" notice. */
-    function withLayoutNotice(legendHtml) {
-        if (!gs.layoutNotice) return legendHtml;
-        return `${legendHtml}<span class="dle-graph-layout-notice">${gs.layoutNotice}</span>`;
+    /**
+     * Render the color key into the DOCKED legend panel (`#dle-graph-color-legend`).
+     * f055: this used to live in the bottom tooltip bar and was overwritten by node info on
+     * hover — so the color key vanished the instant you inspected a node. It now lives in the
+     * always-visible docked panel and is only refreshed when the color mode changes (not on hover).
+     */
+    function updateColorLegend() {
+        const el = gs.colorLegendEl || (gs.colorLegendEl = document.getElementById('dle-graph-color-legend'));
+        if (!el) return;
+        const legendHtml = buildColorLegend() || '&nbsp;';
+        // Expand chevron once the swatch count is likely to overflow (>8).
+        const swatchCount = (legendHtml.match(/dle-graph-legend-swatch/g) || []).length;
+        const expandToggle = swatchCount > 8
+            ? `<span class="dle-graph-legend-toggle" title="${escapeHtml(T('dle_graph_legend_toggle_title', 'Click to expand/collapse legend'))}" role="button" tabindex="0" aria-label="${escapeHtml(T('dle_graph_legend_toggle_aria', 'Expand or collapse the color legend'))}">&#x25BC;</span>`
+            : '';
+        el.innerHTML = legendHtml + expandToggle;
     }
 
     function updateTooltip() {
@@ -233,13 +254,11 @@ export function initRender(gs) {
         if (!gs.hoverNode || gs.hoverNode.hidden) {
             tooltipEl.classList.add('dle-graph-tooltip--legend');
             tooltipEl.classList.remove('dle-graph-tooltip--expanded');
-            const legendHtml = withLayoutNotice(buildColorLegend()) || '&nbsp;';
-            // Show expand chevron once the swatch count is likely to overflow vertically (>8).
-            const swatchCount = (legendHtml.match(/dle-graph-legend-swatch/g) || []).length;
-            const expandToggle = swatchCount > 8
-                ? `<span class="dle-graph-legend-toggle" title="Click to expand/collapse legend">&#x25BC;</span>`
-                : '';
-            tooltipEl.innerHTML = legendHtml + expandToggle;
+            // Bottom bar now carries only the transient layout notice; the color key is docked
+            // in the legend panel (updateColorLegend) and stays visible during hover.
+            tooltipEl.innerHTML = gs.layoutNotice
+                ? `<span class="dle-graph-layout-notice">${escapeHtml(gs.layoutNotice)}</span>`
+                : '&nbsp;';
             return;
         }
         tooltipEl.classList.remove('dle-graph-tooltip--legend', 'dle-graph-tooltip--expanded');
@@ -248,18 +267,22 @@ export function initRender(gs) {
         const connections = gs.edgeCountByNode.get(n.id) || 0;
         const injections = gs.injectionCounts.get(n.id) || 0;
         const vaultLabel = gs.multiVault && n.vaultSource ? `<span class="dle-dimmed">[${escapeHtml(n.vaultSource)}]</span>` : '';
-        const typeBadge = `<span class="dle-graph-tooltip-badge dle-graph-tooltip-badge--${n.type}">${n.type}</span>`;
+        const TYPE_FALLBACK = { constant: 'Constant', seed: 'Seed', bootstrap: 'Bootstrap', regular: 'Regular' };
+        const TYPE_KEYS = { constant: 'dle_graph_type_constant', seed: 'dle_graph_type_seed', bootstrap: 'dle_graph_type_bootstrap', regular: 'dle_graph_type_regular' };
+        const typeText = T(TYPE_KEYS[n.type] || 'dle_graph_type_regular', TYPE_FALLBACK[n.type] || 'Regular');
+        const typeBadge = `<span class="dle-graph-tooltip-badge dle-graph-tooltip-badge--${n.type}">${escapeHtml(typeText)}</span>`;
 
         let healthBadge = '';
         if (lastHealthResult) {
             const issues = (lastHealthResult.issues || []).filter(i => i.entry === n.title);
             if (issues.length > 0) {
                 const worst = issues.some(i => i.severity === 'error') ? 'error' : 'warning';
-                healthBadge = `<span class="dle-graph-tooltip-badge dle-graph-tooltip-badge--${worst}">${issues.length} issue${issues.length > 1 ? 's' : ''}</span>`;
+                const issuesText = TP('dle_graph_tooltip_issues', issues.length, '${0} issue', '${0} issues');
+                healthBadge = `<span class="dle-graph-tooltip-badge dle-graph-tooltip-badge--${worst}">${escapeHtml(issuesText)}</span>`;
             }
         }
 
-        const pinnedLabel = (n.pinned && !n._treePinned) ? '<span class="dle-graph-tooltip-badge dle-graph-tooltip-badge--pinned">pinned</span>' : '';
+        const pinnedLabel = (n.pinned && !n._treePinned) ? `<span class="dle-graph-tooltip-badge dle-graph-tooltip-badge--pinned">${escapeHtml(T('dle_graph_tooltip_pinned', 'pinned'))}</span>` : '';
         const gatingFields = [];
         // Audit S9-4: `entry` (gs._vaultIndex?.[n.id]) can be undefined when the vault
         // index changes mid-hover (chat switch / rebuild). The original code dereferenced
@@ -271,7 +294,7 @@ export function initRender(gs) {
                     let display = Array.isArray(val) ? val.join(', ') : String(val);
                     // Field-coloring uses only the first multi-value entry — surface the truncation.
                     if (key === activeColorField && Array.isArray(val) && val.length > 1) {
-                        display = `${val[0]} (+${val.length - 1} more)`;
+                        display = TF('dle_graph_tooltip_field_more', '${0} (+${1} more)', val[0], val.length - 1);
                     }
                     gatingFields.push(`${escapeHtml(key)}: ${escapeHtml(display)}`);
                 }
@@ -283,7 +306,7 @@ export function initRender(gs) {
         tooltipEl.innerHTML = `
             <strong>${escapeHtml(n.title)}</strong> ${vaultLabel}
             ${typeBadge}${healthBadge}${pinnedLabel}
-            <span class="dle-graph-tooltip-stats">~${n.tokens} tokens · Priority ${priorityLabel} · ${connections} connections · ${injections} injections</span>
+            <span class="dle-graph-tooltip-stats">${escapeHtml(TF('dle_graph_tooltip_stats', '~${0} tokens · Priority ${1} · ${2} connections · ${3} injections', n.tokens, priorityLabel, connections, injections))}</span>
             ${gatingFields.length > 0 ? `<span class="dle-graph-tooltip-gating">${gatingFields.join(fieldsSeparator)}</span>` : ''}
         `;
     }
@@ -691,17 +714,24 @@ export function initRender(gs) {
         }
     }
 
-    // Legend expand/collapse — signal-scoped to gs.listenerAC so graph teardown releases it,
-    // and guarded by _dleLegendClickWired so render re-runs don't stack duplicate handlers.
-    if (gs.tooltipEl && !gs.tooltipEl._dleLegendClickWired) {
-        gs.tooltipEl.addEventListener('click', (e) => {
-            if (e.target.closest('.dle-graph-legend-toggle')) {
-                gs.tooltipEl.classList.toggle('dle-graph-tooltip--expanded');
+    // Legend expand/collapse — the chevron now lives in the docked color-legend panel (f055), so
+    // wire the toggle there. Signal-scoped to gs.listenerAC so graph teardown releases it, and
+    // guarded by _dleLegendClickWired so render re-runs don't stack duplicate handlers.
+    const colorLegendEl = gs.colorLegendEl || (gs.colorLegendEl = document.getElementById('dle-graph-color-legend'));
+    if (colorLegendEl && !colorLegendEl._dleLegendClickWired) {
+        const toggleExpand = () => colorLegendEl.classList.toggle('dle-graph-legend-color--expanded');
+        colorLegendEl.addEventListener('click', (e) => {
+            if (e.target.closest('.dle-graph-legend-toggle')) toggleExpand();
+        }, { signal: gs.listenerAC?.signal });
+        colorLegendEl.addEventListener('keydown', (e) => {
+            if ((e.key === 'Enter' || e.key === ' ') && e.target.closest('.dle-graph-legend-toggle')) {
+                e.preventDefault();
+                toggleExpand();
             }
         }, { signal: gs.listenerAC?.signal });
-        gs.tooltipEl._dleLegendClickWired = true;
+        colorLegendEl._dleLegendClickWired = true;
         gs.listenerAC?.signal.addEventListener('abort', () => {
-            if (gs.tooltipEl) gs.tooltipEl._dleLegendClickWired = false;
+            if (colorLegendEl) colorLegendEl._dleLegendClickWired = false;
         });
     }
 
@@ -710,6 +740,9 @@ export function initRender(gs) {
     gs.getNodeColor = getNodeColor;
     gs.getNodeRadius = getNodeRadius;
     gs.updateTooltip = updateTooltip;
+    gs.updateColorLegend = updateColorLegend;
+    // Paint the docked color key once on init (color-mode changes refresh it via gs.updateColorLegend).
+    updateColorLegend();
 
-    return { draw, getNodeColor, getNodeRadius, toScreen, toWorld, updateTooltip, buildColorLegend };
+    return { draw, getNodeColor, getNodeRadius, toScreen, toWorld, updateTooltip, updateColorLegend, buildColorLegend };
 }

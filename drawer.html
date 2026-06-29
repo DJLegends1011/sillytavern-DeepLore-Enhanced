@@ -5,13 +5,22 @@
      ═══════════════════════════════════════════════════════════════════════════ -->
 <div id="dle-drawer-status" class="dle-drawer-zone dle-zone-status" role="status" aria-label="DeepLore status" data-i18n="[aria-label]dle_drawer_status_aria">
 
-    <!-- Status + stats row -->
-    <div class="dle-status-row" aria-live="assertive" aria-atomic="true">
-        <span class="dle-status-dot dle-clickable-status" title="System status — click for full status" role="button" tabindex="0" aria-label="System status: loading. Click to open status." data-i18n="[title]dle_status_dot_tooltip"></span>
-        <span class="dle-pipeline-label dle-clickable-status" aria-label="Activity" aria-live="polite" role="button" tabindex="0" title="Click to open full status (/dle-status)" data-i18n="dle_status_idle;[aria-label]dle_librarian_activity_tab">Idle</span>
-        <span class="dle-stat-divider" aria-hidden="true">|</span>
-        <span class="dle-stat" data-stat="entries" title="Vault entries indexed" aria-label="0 vault entries indexed" data-i18n="[title]dle_stat_entries_tooltip">0</span>
-        <span class="dle-stat" data-stat="mode" title="AI search mode" aria-label="Search mode: loading" data-i18n="[title]dle_stat_mode_tooltip">—</span>
+    <!-- Status + stats row. Not a live region itself: phase/status changes are announced once,
+         at polite urgency, through the dedicated visually-hidden #dle-drawer-live region
+         (announceToScreenReader). Nesting live regions here double-announced (f106). -->
+    <div class="dle-status-row" aria-atomic="true">
+        <!-- f028: the live-changing phase label is grouped with the activity dot on its own
+             non-wrapping line; the static stats live in a separate group that no longer
+             reflows when the localized phase string changes width (de/ru run long). -->
+        <div class="dle-status-activity">
+            <span class="dle-status-dot dle-clickable-status" title="System status — click for full status" role="button" tabindex="0" aria-label="System status: loading. Click to open status." data-i18n="[title]dle_status_dot_tooltip"></span>
+            <span class="dle-pipeline-label dle-clickable-status" aria-label="Activity" role="button" tabindex="0" title="Click to open full status (/dle-status)" data-i18n="dle_status_idle;[aria-label]dle_librarian_activity_tab">Idle</span>
+        </div>
+        <div class="dle-status-stats">
+            <span class="dle-stat-divider" aria-hidden="true">|</span>
+            <span class="dle-stat" data-stat="entries" title="Vault entries indexed" aria-label="0 vault entries indexed" data-i18n="[title]dle_stat_entries_tooltip">0</span>
+            <span class="dle-stat" data-stat="mode" title="AI search mode" aria-label="Search mode: loading" data-i18n="[title]dle_stat_mode_tooltip">—</span>
+        </div>
     </div>
 
     <!-- Wave C: divider + muted label group the two budget bars into one calm "Budget" cluster,
@@ -53,7 +62,7 @@
 <div id="dle-drawer-actions" class="dle-zone-actions">
     <div class="dle-action-row" role="toolbar" aria-label="Quick actions" aria-orientation="horizontal">
         <button type="button" class="menu_button menu_button_icon dle-action-btn dle-action-btn-labeled" data-action="refresh" title="Reload lore from Obsidian" aria-label="Reload lore from Obsidian" data-i18n="[title]dle_refresh_tooltip;[aria-label]dle_refresh_tooltip">
-            <i class="fa-solid fa-sync" aria-hidden="true"></i>
+            <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
             <span class="dle-action-label" data-i18n="dle_common_refresh">Refresh</span>
         </button>
         <button type="button" class="menu_button menu_button_icon dle-action-btn" data-action="scribe" title="Run Session Scribe — AI summarizes the conversation and saves notes to Obsidian" aria-label="Run Session Scribe" data-i18n="[title]dle_scribe_action_tooltip">
@@ -131,9 +140,9 @@
          role="tabpanel" aria-labelledby="dle-tab-injection">
         <div class="dle-panel-toolbar">
             <div class="dle-why-filter-toggle" role="radiogroup" aria-label="Filter entries" data-i18n="[aria-label]dle_why_filter_aria">
-                <button type="button" class="dle-why-filter-btn active" data-filter="injected" role="radio" aria-checked="true" data-i18n="dle_analytics_col_injected">Injected</button>
-                <button type="button" class="dle-why-filter-btn" data-filter="filtered" role="radio" aria-checked="false" data-i18n="dle_why_filter_filtered">Filtered</button>
-                <button type="button" class="dle-why-filter-btn" data-filter="both" role="radio" aria-checked="false" data-i18n="dle_why_filter_both">Both</button>
+                <button type="button" class="dle-why-filter-btn active" data-filter="injected" role="radio" aria-checked="true" tabindex="0" data-i18n="dle_analytics_col_injected">Injected</button>
+                <button type="button" class="dle-why-filter-btn" data-filter="filtered" role="radio" aria-checked="false" tabindex="-1" data-i18n="dle_why_filter_filtered">Filtered</button>
+                <button type="button" class="dle-why-filter-btn" data-filter="both" role="radio" aria-checked="false" tabindex="-1" data-i18n="dle_why_filter_both">Both</button>
             </div>
             <span class="dle-section-diff"></span>
             <button type="button" class="menu_button_icon dle-copy-titles-btn" data-action="copy-titles" title="Copy injected entry titles to clipboard" aria-label="Copy injected entry titles to clipboard" data-i18n="[title]dle_copy_titles_tooltip;[aria-label]dle_copy_titles_tooltip">
@@ -165,7 +174,15 @@
                     <li data-i18n="dle_empty_guide_step_2">Send a message mentioning a keyword from your entries</li>
                     <li data-i18n="dle_empty_guide_step_3">This tab will show which entries were injected and why</li>
                 </ol>
-                <p class="dle-empty-commands" data-i18n-html="dle_empty_guide_commands"><code>/dle-setup</code> — configure your vault &nbsp; <code>/dle-browse</code> — see indexed entries</p>
+                <div class="dle-empty-cta-row">
+                    <button type="button" class="menu_button dle-empty-cta-btn" data-empty-action="setup" title="Guided setup wizard" data-i18n="[title]dle_drawer_tool_setup_wizard_tooltip">
+                        <i class="fa-solid fa-hat-wizard" aria-hidden="true"></i> <span data-i18n="dle_empty_cta_setup">Open Setup Wizard</span>
+                    </button>
+                    <button type="button" class="menu_button dle-empty-cta-btn" data-empty-action="import-wi" title="Import World Info (lorebook) entries from SillyTavern to Obsidian" data-i18n="[title]dle_import_wi_tooltip">
+                        <i class="fa-solid fa-file-import" aria-hidden="true"></i> <span data-i18n="dle_empty_cta_import">Import from World Info</span>
+                    </button>
+                </div>
+                <p class="dle-empty-commands dle-text-xs dle-muted" data-i18n-html="dle_empty_cta_hint">Prefer commands? Use <code>/dle-setup</code> or <code>/dle-import</code>.</p>
             </div>
         </div>
         <!-- Entry Timers (cooldown, decay) — collapsible -->
@@ -235,6 +252,10 @@
                 <i class="fa-solid fa-folder-tree" aria-hidden="true"></i>
                 <span class="dle-toolbar-label" data-i18n="dle_group_button_label">Group</span>
             </button>
+            <button type="button" class="menu_button menu_button_icon dle-browse-expand-all-toggle" hidden title="Expand all folders" data-i18n="[title]dle_expand_all_tooltip">
+                <i class="fa-solid fa-chevron-down" aria-hidden="true"></i>
+                <span class="dle-toolbar-label" data-i18n="dle_expand_all_label">Expand all</span>
+            </button>
             <button type="button" class="menu_button menu_button_icon dle-browse-select-toggle" data-pressed="false" aria-pressed="false" title="Show row checkboxes for multi-select" data-i18n="[title]dle_select_toggle_tooltip">
                 <i class="fa-solid fa-square-check" aria-hidden="true"></i>
                 <span class="dle-toolbar-label" data-i18n="dle_cmd_setera_popup_title">Select</span>
@@ -265,7 +286,15 @@
                     <li data-i18n-html="dle_browse_no_data_step_tags"><code>tags: [lorebook]</code> in frontmatter</li>
                     <li data-i18n-html="dle_browse_no_data_step_keys"><code>keys: [keyword1, keyword2]</code> for matching</li>
                 </ul>
-                <p class="dle-empty-commands" data-i18n-html="dle_browse_no_data_commands"><code>/dle-setup</code> — configure vault &nbsp; <code>/dle-import</code> — import from World Info</p>
+                <div class="dle-empty-cta-row">
+                    <button type="button" class="menu_button dle-empty-cta-btn" data-empty-action="setup" title="Guided setup wizard" data-i18n="[title]dle_drawer_tool_setup_wizard_tooltip">
+                        <i class="fa-solid fa-hat-wizard" aria-hidden="true"></i> <span data-i18n="dle_empty_cta_setup">Open Setup Wizard</span>
+                    </button>
+                    <button type="button" class="menu_button dle-empty-cta-btn" data-empty-action="import-wi" title="Import World Info (lorebook) entries from SillyTavern to Obsidian" data-i18n="[title]dle_import_wi_tooltip">
+                        <i class="fa-solid fa-file-import" aria-hidden="true"></i> <span data-i18n="dle_empty_cta_import">Import from World Info</span>
+                    </button>
+                </div>
+                <p class="dle-empty-commands dle-text-xs dle-muted" data-i18n-html="dle_empty_cta_hint">Prefer commands? Use <code>/dle-setup</code> or <code>/dle-import</code>.</p>
             </div>
         </div>
         <!-- Empty state: filters returned no results -->
@@ -327,12 +356,30 @@
                 </select>
             </div>
         </div>
+        <!-- f041: contextual bulk-action bar. Select-all + count are always shown; the action
+             cluster reveals only when rows are picked (.dle-has-selection toggled in render).
+             Action buttons (Open/Done/Remove) + Clear/Invert are delegated in drawer-events.js,
+             so they work identically here as in the retired standalone action row below. -->
         <div class="dle-librarian-select-all-bar" role="group" aria-label="Bulk selection" data-i18n="[aria-label]dle_bulk_selection_aria">
             <label class="dle-librarian-select-all-label">
                 <input type="checkbox" class="dle-librarian-select-all" aria-label="Toggle select all" data-i18n="[aria-label]dle_select_all_aria">
                 <span data-i18n="dle_select_all_aria">Toggle select all</span>
             </label>
             <span class="dle-librarian-select-count dle-text-xs dle-muted" aria-live="polite"></span>
+            <div class="dle-librarian-bulk-actions" role="group" aria-label="Selection actions" data-i18n="[aria-label]dle_librarian_bulk_actions_aria">
+                <button type="button" class="dle-librarian-bulk-btn dle-librarian-action" data-librarian-action="open" title="Open the selected gap in the Librarian editor" aria-label="Open selected gap" disabled data-i18n="[title]dle_librarian_open_tooltip;[aria-label]dle_librarian_open_label">
+                    <i class="fa-solid fa-pen-to-square" aria-hidden="true"></i> <span data-i18n="dle_librarian_open_label">Open</span>
+                </button>
+                <button type="button" class="dle-librarian-bulk-btn dle-librarian-action" data-librarian-action="done" title="Mark selected as written" aria-label="Mark selected as written" disabled data-i18n="[title]dle_librarian_done_tooltip;[aria-label]dle_librarian_mark_done_label">
+                    <i class="fa-solid fa-check" aria-hidden="true"></i> <span data-i18n="dle_librarian_mark_done_label">Mark Done</span>
+                </button>
+                <button type="button" class="dle-librarian-bulk-btn dle-librarian-action dle-librarian-bulk-btn-danger" data-librarian-action="remove" title="Remove (hide on first click, dismiss forever on second)" aria-label="Remove selected" disabled data-i18n="[title]dle_librarian_remove_tooltip;[aria-label]dle_librarian_remove_label">
+                    <i class="fa-solid fa-trash" aria-hidden="true"></i> <span data-i18n="dle_librarian_remove_label">Remove</span>
+                </button>
+                <span class="dle-librarian-bulk-sep" aria-hidden="true"></span>
+                <button type="button" class="dle-librarian-bulk-btn dle-librarian-bulk-btn-ghost dle-librarian-invert-btn" title="Invert selection" aria-label="Invert selection" data-i18n="[title]dle_librarian_invert_tooltip;[aria-label]dle_librarian_invert_label"><span data-i18n="dle_librarian_invert_label">Invert</span></button>
+                <button type="button" class="dle-librarian-bulk-btn dle-librarian-bulk-btn-ghost dle-librarian-clear-btn" title="Clear selection" aria-label="Clear selection" data-i18n="[title]dle_clear_selection_tooltip;[aria-label]dle_clear_selection_tooltip"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+            </div>
         </div>
         <div class="dle-librarian-list" role="list" aria-label="Librarian activity" data-i18n="[aria-label]dle_librarian_list_aria"></div>
         <div class="dle-empty-state dle-visible" id="dle-librarian-empty">
@@ -347,7 +394,10 @@
                 </button>
             </div>
         </div>
-        <div class="dle-librarian-action-row">
+        <!-- f041: SUPERSEDED by the contextual bulk-action bar above. Kept hidden for
+             back-compat (handlers delegate on .dle-librarian-action and still resolve here);
+             render also force-hides it. Safe to delete once no skin depends on the class. -->
+        <div class="dle-librarian-action-row" hidden>
             <button type="button" class="menu_button dle-tool-btn dle-librarian-action" data-librarian-action="open" title="Open the selected gap in the Librarian editor" disabled data-i18n="[title]dle_librarian_open_tooltip">
                 <i class="fa-solid fa-pen-to-square" aria-hidden="true"></i> <span data-i18n="dle_librarian_open_label">Open</span>
             </button>
@@ -430,7 +480,7 @@
                     <i class="fa-solid fa-diagram-project" aria-hidden="true"></i> <span data-i18n="dle_feature_graph_h4">Graph</span>
                 </button>
                 <button type="button" class="menu_button dle-tool-btn" data-action="refresh" title="Refresh vault index from Obsidian" data-i18n="[title]dle_refresh_tool_tooltip">
-                    <i class="fa-solid fa-rotate" aria-hidden="true"></i> <span data-i18n="dle_common_refresh">Refresh</span>
+                    <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i> <span data-i18n="dle_common_refresh">Refresh</span>
                 </button>
                 <button type="button" class="menu_button dle-tool-btn" data-action="pins-blocks" title="View pins and blocks for this chat" data-i18n="[title]dle_pins_blocks_tooltip">
                     <i class="fa-solid fa-thumbtack" aria-hidden="true"></i> <span data-i18n="dle_pins_blocks_button">Pins/Blocks</span>
@@ -480,26 +530,33 @@
 
     <!-- Health icons + AI stats row -->
     <div class="dle-footer-row">
-        <div class="dle-health-icons" role="toolbar" aria-label="System health indicators" data-i18n="[aria-label]dle_health_icons_aria">
-            <button type="button" class="dle-health-icon" data-health="vault" title="Vault health — click to run health check" aria-label="Vault health: loading" data-i18n="[title]dle_vault_health_tooltip">
-                <i class="fa-solid fa-database" aria-hidden="true"></i>
-            </button>
-            <button type="button" class="dle-health-icon" data-health="connection" title="Obsidian connection status — click for full status" aria-label="Connection status: loading" data-i18n="[title]dle_connection_status_tooltip">
-                <i class="fa-solid fa-plug" aria-hidden="true"></i>
-            </button>
-            <button type="button" class="dle-health-icon" data-health="pipeline" title="Lore selection — click to inspect last trace" aria-label="Lore selection: loading" data-i18n="[title]dle_lore_selection_tooltip">
-                <i class="fa-solid fa-diagram-project" aria-hidden="true"></i>
-            </button>
-            <button type="button" class="dle-health-icon" data-health="cache" title="Index cache status — click for details" aria-label="Cache status: loading" data-i18n="[title]dle_cache_status_tooltip">
-                <i class="fa-solid fa-box-archive" aria-hidden="true"></i>
-            </button>
-            <button type="button" class="dle-health-icon" data-health="ai" title="AI search service status — click for details" aria-label="AI service status: loading" data-i18n="[title]dle_ai_service_status_tooltip">
-                <i class="fa-solid fa-robot" aria-hidden="true"></i>
-            </button>
-            <!-- PR #28.1: only visible when breaker open (renderFooter toggles dle-hidden). -->
-            <button type="button" id="dle-reset-ai-breaker" class="dle-health-icon dle-hidden" title="Reset AI breaker — discard pending cooldown" aria-label="Reset AI circuit breaker" data-i18n="[title]dle_reset_ai_breaker_tooltip">
-                <i class="fa-solid fa-rotate-right" aria-hidden="true"></i>
-            </button>
+        <!-- f4-dock: the five health icons are a clickable "diagnostics dock" — each icon opens
+             its own diagnostic (handlers in drawer-events.js wireHealthIcons). The dock framing
+             (label + chrome) + per-icon affordance live in CSS; markup adds the dock label and a
+             hint caret so they no longer read as flat decoration. -->
+        <div class="dle-diag-dock">
+            <span class="dle-diag-dock-label dle-text-xs dle-muted" aria-hidden="true" data-i18n="dle_footer_diagnostics_label">Diagnostics</span>
+            <div class="dle-health-icons" role="toolbar" aria-label="System diagnostics — click an icon to open its check" data-i18n="[aria-label]dle_footer_diagnostics_dock_aria">
+                <button type="button" class="dle-health-icon" data-health="vault" title="Vault health — click to run health check" aria-label="Vault health: loading" data-i18n="[title]dle_vault_health_tooltip">
+                    <i class="fa-solid fa-database" aria-hidden="true"></i>
+                </button>
+                <button type="button" class="dle-health-icon" data-health="connection" title="Obsidian connection status — click for full status" aria-label="Connection status: loading" data-i18n="[title]dle_connection_status_tooltip">
+                    <i class="fa-solid fa-plug" aria-hidden="true"></i>
+                </button>
+                <button type="button" class="dle-health-icon" data-health="pipeline" title="Lore selection — click to inspect last trace" aria-label="Lore selection: loading" data-i18n="[title]dle_lore_selection_tooltip">
+                    <i class="fa-solid fa-list-check" aria-hidden="true"></i>
+                </button>
+                <button type="button" class="dle-health-icon" data-health="cache" title="Index cache status — click for details" aria-label="Cache status: loading" data-i18n="[title]dle_cache_status_tooltip">
+                    <i class="fa-solid fa-box-archive" aria-hidden="true"></i>
+                </button>
+                <button type="button" class="dle-health-icon" data-health="ai" title="AI search service status — click for details" aria-label="AI service status: loading" data-i18n="[title]dle_ai_service_status_tooltip">
+                    <i class="fa-solid fa-robot" aria-hidden="true"></i>
+                </button>
+                <!-- PR #28.1: only visible when breaker open (renderFooter toggles dle-hidden). -->
+                <button type="button" id="dle-reset-ai-breaker" class="dle-health-icon dle-health-icon-action dle-hidden" title="Reset AI breaker — discard pending cooldown" aria-label="Reset AI circuit breaker" data-i18n="[title]dle_reset_ai_breaker_tooltip">
+                    <i class="fa-solid fa-rotate-right" aria-hidden="true"></i>
+                </button>
+            </div>
         </div>
         <div class="dle-ai-stats" aria-label="AI search session statistics — cumulative for this browser session, not per-chat" data-i18n="[aria-label]dle_drawer_ai_stats_aria">
             <!-- D5 (v2.5 Wave 3): visible scope marker. These figures are session-cumulative

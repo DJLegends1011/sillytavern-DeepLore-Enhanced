@@ -28,6 +28,7 @@ import { ensureFreshOrToast } from './commands-shared.js';
 import { showSourcesPopup } from './cartographer.js';
 import { runSimulation, showSimulationPopup, buildCopyButton, attachCopyHandler } from './popups.js';
 import { tr } from '../i18n/i18n.js';
+import { notify } from '../toast-dedup.js';
 
 export function registerPipelineCommands() {
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
@@ -87,7 +88,7 @@ export function registerPipelineCommands() {
                 ({ finalEntries, matchedKeys } = await runPipeline(chat, getWriterVisibleEntries(), gatingContext, { pins: cmdPins, blocks: cmdBlocks, folderFilter }));
             } catch (err) {
                 console.warn('[DLE] /dle-why pipeline failed:', err);
-                toastr.error(classifyError(err), 'DeepLore');
+                notify.error(classifyError(err), { copyable: true });
                 return '';
             }
 

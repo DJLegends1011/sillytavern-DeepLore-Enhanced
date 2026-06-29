@@ -1,7 +1,7 @@
 import { chat_metadata, getCurrentChatId } from '../../../../../../script.js';
 import { escapeHtml } from '../../../../../utils.js';
 import { getSettings } from '../../settings.js';
-import { tr, trf } from '../i18n/i18n.js';
+import { tr, trf, trPlural } from '../i18n/i18n.js';
 import {
     vaultIndex, indexTimestamp,
     generationLock, indexing,
@@ -24,7 +24,7 @@ import {
     ds, BROWSE_ROW_HEIGHT, BROWSE_OVERSCAN,
     getMatchLabel, computeEntryTemperatures, isDrawerVisible,
 } from './drawer-state.js';
-import { buildBrowseRowModel, topFolderOf, resolveNavTarget } from './drawer-browse-pure.js';
+import { buildBrowseRowModel, topFolderOf, resolveNavTarget, listTopFolders } from './drawer-browse-pure.js';
 
 let _cachedRejectionMap = new Map();
 let _cachedRejectionTrace = null;
@@ -75,6 +75,20 @@ function _fixItPinLabel(stage) {
     }
 }
 
+// Button-first call-to-action for the pre-setup empty states (Injection / Browse). Mirrors the
+// static markup in drawer.html so the JS-rebuilt and static variants stay identical. data-empty-action
+// is dispatched in drawer-events.js (executes the same /dle-setup, /dle-import as the Tools tab).
+// Slash-command hint kept as small muted text below for power users (f082).
+function emptyCtaHtml() {
+    return '<div class="dle-empty-cta-row">'
+        + `<button type="button" class="menu_button dle-empty-cta-btn" data-empty-action="setup" title="${escapeHtml(tr('dle_drawer_tool_setup_wizard_tooltip'))}">`
+        + `<i class="fa-solid fa-hat-wizard" aria-hidden="true"></i> <span>${escapeHtml(tr('dle_empty_cta_setup'))}</span></button>`
+        + `<button type="button" class="menu_button dle-empty-cta-btn" data-empty-action="import-wi" title="${escapeHtml(tr('dle_import_wi_tooltip'))}">`
+        + `<i class="fa-solid fa-file-import" aria-hidden="true"></i> <span>${escapeHtml(tr('dle_empty_cta_import'))}</span></button>`
+        + '</div>'
+        + `<p class="dle-empty-commands dle-text-xs dle-muted">${tr('dle_empty_cta_hint')}</p>`;
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // Why? Tab
 // ════════════════════════════════════════════════════════════════════════════
@@ -123,7 +137,8 @@ export function renderInjectionTab() {
         $diff.empty();
         if (generationLock) {
             $empty.html(`<goo-spinner size="72" color="currentColor" aria-hidden="true"></goo-spinner><p>${tr('dle_empty_state_choosing')}</p>`).addClass('dle-visible');
-        } else {
+        } else if (vaultIndex.length === 0) {
+            // PRE-SETUP: no entries indexed → the full connect/keyword/setup onboarding guide.
             // Localized — mirrors the static empty-state in drawer.html. tr() returns the
             // _html keys' markup verbatim, so <code>/<a> render. See gotchas.md #72.
             $empty.html(
@@ -136,8 +151,16 @@ export function renderInjectionTab() {
                 + `<li>${tr('dle_empty_guide_step_2')}</li>`
                 + `<li>${tr('dle_empty_guide_step_3')}</li>`
                 + '</ol>'
-                + `<p class="dle-empty-commands">${tr('dle_empty_guide_commands')}</p>`
+                + emptyCtaHtml()
                 + '</div>',
+            ).addClass('dle-visible');
+        } else {
+            // POST-SETUP-IDLE: vault indexed, just nothing matched this turn. Don't re-pitch
+            // the setup the user already finished — a calm one-liner pointing at Browse instead.
+            $empty.html(
+                '<i class="fa-solid fa-circle-question" aria-hidden="true"></i>'
+                + `<p>${tr('dle_empty_injection')}</p>`
+                + `<p class="dle-empty-guide-idle">${tr('dle_empty_injection_idle')}</p>`,
             ).addClass('dle-visible');
         }
         return;
@@ -435,7 +458,7 @@ export function renderBrowseTab() {
                 + `<li>${tr('dle_browse_no_data_step_tags')}</li>`
                 + `<li>${tr('dle_browse_no_data_step_keys')}</li>`
                 + '</ul>'
-                + `<p class="dle-empty-commands">${tr('dle_browse_no_data_commands')}</p>`
+                + emptyCtaHtml()
                 + '</div>',
             ).addClass('dle-visible');
         }
@@ -735,6 +758,24 @@ export function renderBrowseTab() {
         $toolbar.find('.dle-browse-group-toggle')
             .attr('data-pressed', ds.browseFolderGrouping ? 'true' : 'false')
             .attr('aria-pressed', ds.browseFolderGrouping ? 'true' : 'false');
+        // Expand-all / collapse-all toggle: only meaningful while grouping is on.
+        const $expandAll = $toolbar.find('.dle-browse-expand-all-toggle');
+        if (ds.browseFolderGrouping) {
+            const topFolders = listTopFolders(ds.browseFilteredEntries);
+            const expandedSet = ds.browseExpandedFolders instanceof Set ? ds.browseExpandedFolders : null;
+            // "All expanded" = every top folder is in the set (empty/null set means all collapsed,
+            // matching the pure helper's "explicit Set lists the expanded folders" contract).
+            const allExpanded = topFolders.length > 0 && expandedSet
+                && topFolders.every(f => expandedSet.has(f));
+            $expandAll
+                .prop('hidden', false)
+                .attr('aria-pressed', allExpanded ? 'true' : 'false')
+                .attr('title', allExpanded ? tr('dle_collapse_all_tooltip') : tr('dle_expand_all_tooltip'));
+            $expandAll.find('i').attr('class', allExpanded ? 'fa-solid fa-chevron-right' : 'fa-solid fa-chevron-down');
+            $expandAll.find('.dle-toolbar-label').text(allExpanded ? tr('dle_collapse_all_label') : tr('dle_expand_all_label'));
+        } else {
+            $expandAll.prop('hidden', true);
+        }
         $toolbar.find('.dle-browse-select-toggle')
             .attr('data-pressed', ds.browseSelectMode ? 'true' : 'false')
             .attr('aria-pressed', ds.browseSelectMode ? 'true' : 'false');
@@ -774,15 +815,43 @@ export function renderBrowseTab() {
     renderBrowseWindow();
 
     if (entries.length === 0) {
-        const filterDesc = [];
-        if (statusFilter && statusFilter !== 'all') filterDesc.push(`status=${escapeHtml(statusFilter)}`);
-        if (tagFilter) filterDesc.push(`tag=${escapeHtml(tagFilter)}`);
-        if (ds.browseFolderFilter) filterDesc.push(`folder=${escapeHtml(ds.browseFolderFilter)}`);
-        if (query) filterDesc.push(`search=${escapeHtml(query)}`);
-        for (const [k, v] of Object.entries(ds.browseCustomFieldFilters)) { if (v) filterDesc.push(`${escapeHtml(k)}=${escapeHtml(v)}`); }
-        if (activeQF) filterDesc.push(`quick=${escapeHtml(activeQF)}`);
-        const filterMsg = filterDesc.length ? `No entries match: ${filterDesc.join(', ')}` : 'No entries match your filters';
-        $emptyNoResults.html(`<p>${filterMsg}</p><button class="dle-browse-clear-filters" type="button">Clear all filters</button>`).addClass('dle-visible');
+        // Toggle the localized static empty-state node (drawer.html #dle-browse-empty-no-results)
+        // instead of overwriting it — overwriting threw away the data-i18n'd heading + Clear button
+        // and leaked machine-readable `status=value` strings to end users. We only populate the
+        // active-filters list with humanized, localized chips.
+        const statusLabelKeys = {
+            injected: 'dle_analytics_col_injected',
+            pinned: 'dle_common_pinned',
+            blocked: 'dle_common_blocked',
+            constant: 'dle_graph_filter_type_constant',
+            seed: 'dle_graph_filter_type_seed',
+            bootstrap: 'dle_browse_filter_bootstrap',
+            never_injected: 'dle_browse_filter_never_injected',
+        };
+        const quickLabels = {
+            'since-gen': 'Since last gen',
+            'never-injected': 'Never injected',
+        };
+        const chips = [];
+        if (statusFilter && statusFilter !== 'all') {
+            const label = statusLabelKeys[statusFilter] ? tr(statusLabelKeys[statusFilter]) : statusFilter;
+            chips.push(trf('dle_browse_active_filter_status', label));
+        }
+        if (tagFilter) chips.push(trf('dle_browse_active_filter_tag', tagFilter));
+        if (ds.browseFolderFilter) chips.push(trf('dle_browse_active_filter_folder', ds.browseFolderFilter));
+        if (query) chips.push(trf('dle_browse_active_filter_search', query));
+        for (const [k, v] of Object.entries(ds.browseCustomFieldFilters)) {
+            if (v) chips.push(trf('dle_browse_active_filter_field', k, v));
+        }
+        if (activeQF) chips.push(trf('dle_browse_active_filter_quick', quickLabels[activeQF] || activeQF));
+
+        const $filterList = $emptyNoResults.find('.dle-browse-active-filters-list');
+        if (chips.length) {
+            $filterList.html(chips.map(c => `<span class="dle-browse-active-filter-chip">${escapeHtml(c)}</span>`).join('')).show();
+        } else {
+            $filterList.empty().hide();
+        }
+        $emptyNoResults.addClass('dle-visible');
     } else {
         $emptyNoResults.removeClass('dle-visible');
     }
@@ -905,7 +974,18 @@ export function renderBrowseWindow() {
             html += `<div class="dle-browse-folder-header" data-folder="${escapeHtml(folder)}" data-expanded="${row.expanded ? 'true' : 'false'}" role="button" tabindex="0" aria-expanded="${row.expanded ? 'true' : 'false'}" aria-label="${escapeHtml(folder)} (${row.count} entries) — ${row.expanded ? 'expanded' : 'collapsed'}, click to toggle" style="position:absolute;top:${top}px;left:0;right:0;height:${BROWSE_ROW_HEIGHT}px;">`;
             html += `${selectorHtml}<span class="dle-browse-folder-caret"><i class="fa-solid fa-chevron-right" aria-hidden="true"></i></span>`;
             html += `<span class="dle-browse-folder-name">${escapeHtml(folder)}</span>`;
-            html += `<span class="dle-browse-folder-count">${row.count}</span>`;
+            // f036: surface a unit-aware count (and the already-computed selection tally in
+            // select mode) instead of a bare floating integer. Chip is tinted to echo the
+            // checkbox tri-state when the folder is partly/fully selected.
+            let countLabel;
+            let countClass = '';
+            if (selectMode && totalInFolder > 0) {
+                countLabel = trf('dle_browse_folder_selected', selCount, totalInFolder);
+                countClass = allSelected ? ' dle-browse-folder-count-all' : (someSelected ? ' dle-browse-folder-count-partial' : '');
+            } else {
+                countLabel = trPlural('dle_popup_entry_count', row.count);
+            }
+            html += `<span class="dle-browse-folder-count${countClass}">${escapeHtml(countLabel)}</span>`;
             html += `</div>`;
             continue;
         }
@@ -925,7 +1005,9 @@ export function renderBrowseWindow() {
         if (isInjected) classes.push('dle-browse-injected');
         if (isSelected) classes.push('dle-browse-selected');
 
-        const keysStr = e.constant ? '(constant)' : (e.keys ? e.keys.slice(0, 4).join(', ') : '');
+        // Dot-join (f035) so the muted keys run reads as a distinct tier below the title
+        // rather than a comma list that visually blurs into it.
+        const keysStr = e.constant ? '(constant)' : (e.keys ? e.keys.slice(0, 4).join(' · ') : '');
         const prioLabel = e.constant ? 'CONST' : `P${e.priority ?? 50}`;
         const prioClass = e.constant ? ' dle-browse-constant' : '';
 
@@ -938,7 +1020,7 @@ export function renderBrowseWindow() {
 
         const tempKey = trk;
         const temp = tempMap.get(tempKey);
-        const tempStyle = temp && temp.hue !== 'neutral' ? `--dle-temp:${temp.tempScore.toFixed(2)};--dle-temp-hue:${temp.hue};` : '';
+        const tempStyle = temp && temp.hue !== 'neutral' ? `--dle-temp:${temp.tempScore.toFixed(2)};` : '';
         const tempClass = temp && temp.hue !== 'neutral' ? ` dle-temp-${temp.hue}` : '';
 
         const previewId = `dle-preview-${CSS.escape(trk)}`;
@@ -956,6 +1038,10 @@ export function renderBrowseWindow() {
         html += `<span class="dle-browse-keys" aria-label="Keywords: ${escapeHtml(keysStr || 'none')}">${escapeHtml(keysStr)}</span>`;
         html += `</div>`;
         html += `<div class="dle-browse-controls">`;
+        // Status indicators stay always-visible (they're readouts, not actions): why-not,
+        // injection count, priority badge. f035-kebab: the pin/block/copy ACTIONS are folded
+        // into a hover-reveal cluster fronted by a ⋮ kebab so the row is calm by default and
+        // an active pin/block still "pins open" the cluster (see CSS .dle-pin-active marker).
         const rejection = !isInjected ? rejectionMap.get(pbKey) : null;
         if (rejection) {
             html += `<span class="dle-browse-why-not" title="${escapeHtml(rejection.label)}: ${escapeHtml(rejection.reason)}" aria-label="${escapeHtml(rejection.label)}"><i class="fa-solid ${escapeHtml(rejection.icon)}" aria-hidden="true"></i></span>`;
@@ -963,9 +1049,17 @@ export function renderBrowseWindow() {
         const browseCount = chatInjectionCounts.get(trk) || 0;
         if (browseCount > 0) html += `<span class="dle-inject-count" title="Injected ${browseCount} times this chat" aria-label="Injected ${browseCount} times this chat">${browseCount}×</span>`;
         html += `<span class="dle-browse-priority${prioClass}" title="${e.constant ? 'Constant — always injected. Set via #lorebook-always tag.' : `Priority ${e.priority ?? 50} (lower = more important)`}" aria-label="${e.constant ? 'Constant entry, always injected' : `Priority ${e.priority ?? 50}`}">${prioLabel}</span>`;
+        // Persistent state (pin/block active) forces the action cluster to stay visible so the
+        // user can always see/undo it without hovering — class on the row, read by CSS.
+        const actionsPinnedOpen = isPinned || isBlocked;
+        html += `<div class="dle-browse-actions${actionsPinnedOpen ? ' dle-actions-pinned-open' : ''}">`;
+        html += `<button type="button" class="dle-browse-kebab" aria-label="Entry actions" aria-expanded="false" aria-haspopup="true" title="Entry actions"><i class="fa-solid fa-ellipsis-vertical" aria-hidden="true"></i></button>`;
+        html += `<div class="dle-browse-actions-cluster">`;
         html += `<button type="button" class="dle-browse-pin${isPinned ? ' dle-pin-active' : ''}" data-entry="${escapeHtml(e.title)}" data-vault="${escapeHtml(e.vaultSource || '')}" aria-label="${isPinned ? 'Unpin' : 'Pin'}" title="${isPinned ? 'Pinned — always inject' : 'Click to pin'}"><i class="fa-solid fa-thumbtack" aria-hidden="true"></i></button>`;
         html += `<button type="button" class="dle-browse-block${isBlocked ? ' dle-block-active' : ''}" data-entry="${escapeHtml(e.title)}" data-vault="${escapeHtml(e.vaultSource || '')}" aria-label="${isBlocked ? 'Unblock' : 'Block'}" title="${isBlocked ? 'Blocked — never inject' : 'Click to block'}"><i class="fa-solid fa-ban" aria-hidden="true"></i></button>`;
         html += `<button type="button" class="dle-browse-copy-title-btn" data-action="copy-title" data-title="${escapeHtml(e.title)}" aria-label="Copy title" title="Copy title"><i class="fa-solid fa-copy" aria-hidden="true"></i></button>`;
+        html += `</div>`;
+        html += `</div>`;
         html += `</div>`;
         html += `</div>`;
     }

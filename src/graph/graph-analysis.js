@@ -209,7 +209,8 @@ function buildCommunityMeta(gs) {
         for (const [t, c] of tagCounts) {
             if (c > bestCount) { bestTag = t; bestCount = c; }
         }
-        cm.label = bestTag || `Cluster ${cm.id + 1}`;
+        // gs._tf injected by graph.js (runtime); absent in headless tests → English fallback.
+        cm.label = bestTag || (gs._tf ? gs._tf('dle_graph_cluster_label', cm.id + 1) : `Cluster ${cm.id + 1}`);
     }
 
     return meta;

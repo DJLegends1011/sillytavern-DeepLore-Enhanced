@@ -147,7 +147,10 @@ export function initDagLayout(gs, dbg) {
         const ids = [...idSet];
         if (ids.length === 0) {
             if (typeof toastr !== 'undefined') {
-                toastr.info('No requires/cascade dependencies to lay out. Add requires:/cascade_links: to entries.', 'DeepLore');
+                const msg = gs._t
+                    ? gs._t('dle_graph_dag_no_deps', 'No requires/cascade dependencies to lay out. Add requires:/cascade_links: to entries.')
+                    : 'No requires/cascade dependencies to lay out. Add requires:/cascade_links: to entries.';
+                toastr.info(msg, 'DeepLore');
             }
             if (dbg) dbg('DAG: no requires/cascade participants — staying in force mode');
             return false;

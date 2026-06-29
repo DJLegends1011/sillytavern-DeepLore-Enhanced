@@ -13,6 +13,7 @@ import { accountStorage } from '../../../../../util/AccountStorage.js';
 import { chatEpoch } from '../state.js';
 import { buildIndex } from '../vault/vault.js';
 import { tr, trf } from '../i18n/i18n.js';
+import { notify } from '../toast-dedup.js';
 import { createSession, sendMessage, editMessage, regenerateResponse, updateGapStatus, saveSessionState, loadSessionState, clearSessionState, restoreSession, pickFlavorIntro } from './librarian-session.js';
 import { getSessionActivityLog, buildLibrarianActivityFeed } from './librarian-tools.js';
 import { abortWith } from '../diagnostics/interceptors.js';
@@ -1302,7 +1303,7 @@ async function writeToVault(session, opts = {}) {
             return false;
         }
     } catch (err) {
-        toastr.error(classifyError(err), 'DeepLore');
+        notify.error(classifyError(err), { copyable: true });
         setStatus('Write failed.', 'err');
         return false;
     }

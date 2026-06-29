@@ -9,7 +9,7 @@ import { testConnection, writeNote, writeFieldDefinitions, buildConnectionGuidan
 import { buildIndex } from '../vault/vault.js';
 import { serializeFieldDefinitions, DEFAULT_FIELD_DEFINITIONS } from '../fields.js';
 import { parseWorldInfoJson, importEntries } from '../vault/import.js';
-import { applyHtmlI18n } from '../i18n/i18n.js';
+import { applyHtmlI18n, trf, tr } from '../i18n/i18n.js';
 import { EXTENSION_REF } from '../ext-path.js';
 
 const TOTAL_PAGES = 9;
@@ -25,6 +25,54 @@ let connectionVerified = false;
 let searchMode = 'keywords';
 let importResult = null;
 let $wizard = null;
+// SKIP/RESUME: set true the moment the user reaches Finish (applyWizardSettings). Lets the
+// close handler distinguish "completed" from "dismissed via X / Esc / Finish-later" so we
+// only persist a skip sentinel in the dismissed case.
+let wizardFinished = false;
+
+const WIZARD_SKIP_LS_KEY = 'dle-wizard-skipped';
+const WIZARD_LAST_STEP_LS_KEY = 'dle-wizard-last-step';
+
+/**
+ * Persist that the user dismissed the wizard before finishing, plus the page they were on,
+ * so init() can suppress the auto-relaunch and a manual relaunch can resume in place.
+ * Mirrors the dual-write (settings + localStorage) of `_wizardCompleted` (BUG-125) so a
+ * settings-save crash can't resurrect the wizard on the next load.
+ */
+function persistWizardSkip(lastStep) {
+    try {
+        const s = getSettings();
+        s._wizardSkipped = true;
+        s._wizardLastStep = lastStep;
+        invalidateSettingsCache();
+        saveSettingsDebounced();
+    } catch { /* settings unavailable — LS sentinel below is the backup */ }
+    try {
+        localStorage.setItem(WIZARD_SKIP_LS_KEY, '1');
+        localStorage.setItem(WIZARD_LAST_STEP_LS_KEY, String(lastStep));
+    } catch { /* quota/denied — settings flag is authoritative */ }
+}
+
+/** Clear the skip sentinel once the wizard is completed (so a future re-run starts clean). */
+function clearWizardSkip() {
+    try {
+        const s = getSettings();
+        delete s._wizardSkipped;
+        delete s._wizardLastStep;
+    } catch { /* noop */ }
+    try {
+        localStorage.removeItem(WIZARD_SKIP_LS_KEY);
+        localStorage.removeItem(WIZARD_LAST_STEP_LS_KEY);
+    } catch { /* noop */ }
+}
+
+/** Resume page for a manual relaunch: last skipped step (clamped), else page 1. */
+export function getWizardResumeStep() {
+    let step = 0;
+    try { step = parseInt(getSettings()?._wizardLastStep, 10) || 0; } catch { /* noop */ }
+    if (!step) { try { step = parseInt(localStorage.getItem(WIZARD_LAST_STEP_LS_KEY) || '0', 10) || 0; } catch { /* noop */ } }
+    return Math.min(TOTAL_PAGES, Math.max(1, step || 1));
+}
 
 /** @param {number} [startPage=1] 1-indexed page to start on */
 export async function showSetupWizard(startPage = 1) {
@@ -34,6 +82,7 @@ export async function showSetupWizard(startPage = 1) {
     connectionVerified = false;
     searchMode = 'keywords';
     importResult = null;
+    wizardFinished = false;
 
     await callGenericPopup(html, POPUP_TYPE.DISPLAY, '', {
         wide: true,
@@ -49,7 +98,9 @@ export async function showSetupWizard(startPage = 1) {
 
             prefillFromSettings();
             wireNavigation();
+            wireWelcomeFork();
             wireConnectionTest();
+            wireVaultScan();
             wireDemoVault();
             wireAiSetup();
             wirePresets();
@@ -58,15 +109,28 @@ export async function showSetupWizard(startPage = 1) {
             wireImport();
             wireDoneActions();
             wireStepIndicator();
+            wireSkip();
 
             if (startPage > 1 && startPage <= TOTAL_PAGES) {
                 for (let i = 1; i < startPage; i++) markStepComplete(i);
                 goToPage(startPage);
+            } else {
+                // Initial mount on page 1: announce position for SR users but don't
+                // yank focus into a panel on first paint — the dialog already holds focus.
+                announceProgress(1);
             }
 
             updateNavButtons();
         },
     });
+
+    // SKIP/RESUME: callGenericPopup resolves once the popup closes by ANY route — Finish
+    // (which sets wizardFinished), the explicit "Finish later" button, the dialog X, or Esc.
+    // If we get here and the wizard wasn't finished, the user dismissed it; persist a skip
+    // sentinel + last page so init() won't silently re-pop it next load and a manual relaunch
+    // resumes where they left off. (The Finish-later button persists eagerly before closing,
+    // so this is the catch-all for X/Esc dismissals.)
+    if (!wizardFinished) persistWizardSkip(currentPage);
 }
 
 function prefillFromSettings() {
@@ -147,6 +211,9 @@ function wireNavigation() {
             );
             if (!proceed) { goToPage(2); return; }
         }
+        // Mark finished BEFORE the async work so the close handler (which runs after
+        // callGenericPopup resolves) doesn't misread this as a dismissal and write a skip.
+        wizardFinished = true;
         try {
             await applyWizardSettings();
         } catch (err) {
@@ -154,20 +221,7 @@ function wireNavigation() {
             toastr.warning('Setup saved but index build failed — it will retry on first generation.', 'DeepLore');
         }
         // Close popup regardless — settings are already saved before buildIndex().
-        // Wizard popup has no okButton/cancelButton so .popup_ok doesn't exist;
-        // walk up to the dialog and ask Popup util to close it.
-        const $popup = $wizard.closest('dialog.popup, .popup');
-        const popupEl = $popup.get(0);
-        const popupInstance = popupEl && Popup && typeof Popup.util?.popups !== 'undefined'
-            ? Popup.util.popups.find(p => p.dlg === popupEl)
-            : null;
-        if (popupInstance && typeof popupInstance.completeCancelled === 'function') {
-            popupInstance.completeCancelled();
-        } else if (popupEl && typeof popupEl.close === 'function') {
-            popupEl.close();
-        } else {
-            $popup.find('.popup_cross, .popup_close').trigger('click');
-        }
+        closeWizardPopup();
     });
 }
 
@@ -175,7 +229,7 @@ function goToPage(page) {
     currentPage = page;
 
     $wizard.find('.dle-wizard-page').removeClass('active');
-    $wizard.find(`[data-wizard-page="${page}"]`).addClass('active');
+    const $panel = $wizard.find(`[data-wizard-page="${page}"]`).addClass('active');
 
     $wizard.find('.dle-wizard-step').removeClass('active').attr('aria-selected', 'false').removeAttr('aria-current');
     $wizard.find(`.dle-wizard-step[data-step="${page}"]`).addClass('active').attr('aria-selected', 'true').attr('aria-current', 'step');
@@ -187,6 +241,32 @@ function goToPage(page) {
     if (page === 7) wireVaultStructurePage();
     if (page === 8) loadImportLorebooks();
     if (page === 9) buildSummary();
+
+    // a11y (FOCUS-ON-ADVANCE): move focus to the newly-active panel so keyboard/SR users
+    // land on the step content instead of being stranded on the now-hidden previous page,
+    // and announce "Step N of M: <title>" via the polite live region. Focus AFTER the
+    // per-page wiring above so the panel's first interactive control already exists.
+    announceProgress(page);
+    moveFocusToPanel($panel);
+}
+
+/** Update the screen-reader-only live region with the current step position + title. */
+function announceProgress(page) {
+    const $live = $wizard.find('#dle-wizard-progress-live');
+    if (!$live.length) return;
+    const stepLabel = $wizard.find(`.dle-wizard-step[data-step="${page}"] .dle-wizard-step-label`).text().trim();
+    // ${0}=current step, ${1}=total, ${2}=step title.
+    $live.text(trf('dle_wizard_progress_announce', page, TOTAL_PAGES, stepLabel));
+}
+
+/**
+ * Move focus to the panel container (tabindex="-1"). preventScroll keeps the popup
+ * from jumping; the panel reads its aria-labelledby step button as its accessible name.
+ */
+function moveFocusToPanel($panel) {
+    const el = $panel && $panel.get(0);
+    if (!el || typeof el.focus !== 'function') return;
+    try { el.focus({ preventScroll: false }); } catch { el.focus(); }
 }
 
 function updateNavButtons() {
@@ -234,6 +314,33 @@ function isPageValid(page) {
     switch (page) {
         case 2: return connectionVerified;
         default: return true;
+    }
+}
+
+// SKIP/RESUME: explicit "Finish later" affordance. Persists the skip sentinel BEFORE
+// closing so even if the close path throws, the relaunch-suppression state is already saved.
+function wireSkip() {
+    $wizard.find('#dle-wiz-skip').on('click', () => {
+        persistWizardSkip(currentPage);
+        wizardFinished = true; // already persisted skip; stop the close handler double-writing
+        toastr.info(tr('dle_wizard_skip_toast', 'Setup paused. Reopen it any time with /dle-wizard.'), 'DeepLore');
+        closeWizardPopup();
+    });
+}
+
+/** Close the wizard popup regardless of how it was constructed (shared with Finish). */
+function closeWizardPopup() {
+    const $popup = $wizard.closest('dialog.popup, .popup');
+    const popupEl = $popup.get(0);
+    const popupInstance = popupEl && Popup && typeof Popup.util?.popups !== 'undefined'
+        ? Popup.util.popups.find(p => p.dlg === popupEl)
+        : null;
+    if (popupInstance && typeof popupInstance.completeCancelled === 'function') {
+        popupInstance.completeCancelled();
+    } else if (popupEl && typeof popupEl.close === 'function') {
+        popupEl.close();
+    } else {
+        $popup.find('.popup_cross, .popup_close').trigger('click');
     }
 }
 
@@ -390,6 +497,84 @@ function wireDemoVault() {
         // API key is the only field the user must still enter.
         $wizard.find('#dle-wiz-api-key').val('').focus();
         toastr.info('Connection fields filled — enter your Obsidian API key and click Test', 'DeepLore');
+    });
+}
+
+// ── Page 1: Welcome decision-fork (choice cards) ──
+
+/**
+ * The Welcome choice cards surface the three lowest-friction first paths instead of
+ * burying the demo vault behind 5 clicks on Page 2. Each card advances the wizard and
+ * pre-stages the relevant page so the user lands where they intended.
+ */
+function wireWelcomeFork() {
+    $wizard.find('.dle-wizard-choice-card').on('click', function () {
+        const fork = $(this).data('fork');
+        markStepComplete(1);
+        switch (fork) {
+            case 'demo':
+                goToPage(2);
+                // Expand the demo callout and pre-fill the demo connection so the only
+                // thing left is pasting the API key (the demo's lowest-friction path).
+                if (!$wizard.find('#dle-wiz-demo-instructions').is(':visible')) {
+                    $wizard.find('#dle-wiz-demo-toggle').trigger('click');
+                }
+                $wizard.find('#dle-wiz-demo-autofill').trigger('click');
+                break;
+            case 'connect':
+                goToPage(2);
+                $wizard.find('#dle-wiz-host').trigger('focus');
+                break;
+            case 'import':
+                // Import lives on Page 8. Mark the skipped intermediate steps complete so
+                // the step-dots stay navigable and Prev walks back normally; connection is
+                // still re-gated at Finish (#16) so this can't silently enable an unverified vault.
+                for (let i = 2; i < 8; i++) markStepComplete(i);
+                goToPage(8);
+                $wizard.find('input[name="dle-wiz-import-method"][value="lorebook"]')
+                    .prop('checked', true).trigger('change');
+                break;
+        }
+    });
+}
+
+// ── Page 2: Scan for vaults ──
+
+function wireVaultScan() {
+    $wizard.find('#dle-wiz-scan-vaults').on('click', async function () {
+        const $btn = $(this);
+        if ($btn.prop('disabled')) return;
+        $btn.prop('disabled', true);
+        const orig = $btn.html();
+        $btn.html('<goo-spinner size="22" color="currentColor" aria-hidden="true"></goo-spinner> '
+            + escapeHtml(tr('dle_vaultscan_scanning', 'Scanning…')));
+        try {
+            const { openVaultScanPopup } = await import('./vault-scan-popup.js');
+            const host = $wizard.find('#dle-wiz-host').val().trim() || '127.0.0.1';
+            const apiKey = $wizard.find('#dle-wiz-api-key').val().trim();
+            const portCenter = parseInt($wizard.find('#dle-wiz-port').val(), 10) || 27124;
+            const picked = await openVaultScanPopup({ host, apiKey, portCenter, radius: 25 });
+            if (picked) {
+                // Fill the connection fields from the discovered vault; the user still
+                // tests/finishes, so connectionVerified stays false until Test Connection.
+                if (picked.vaultName) $wizard.find('#dle-wiz-vault-name').val(picked.vaultName);
+                $wizard.find('#dle-wiz-host').val(picked.host || host);
+                $wizard.find('#dle-wiz-port').val(picked.port);
+                $wizard.find('#dle-wiz-https').prop('checked', picked.scheme === 'https');
+                connectionVerified = false;
+                $wizard.find('#dle-wiz-test-conn')
+                    .html('<i class="fa-solid fa-plug"></i> Test Connection')
+                    .removeClass('dle-wizard-btn-verified');
+                $wizard.find('#dle-wiz-conn-result').hide();
+                updateNavButtons();
+                toastr.info(trf('dle_vaultscan_filled_toast', `${picked.host || host}:${picked.port}`), 'DeepLore');
+            }
+        } catch (err) {
+            console.error('[DLE] Wizard vault scan error:', err);
+            toastr.error(tr('dle_vaultscan_failed_toast', 'Vault scan didn\'t find anything. Make sure Obsidian is running.'), 'DeepLore');
+        } finally {
+            $btn.prop('disabled', false).html(orig);
+        }
     });
 }
 
@@ -982,6 +1167,9 @@ async function applyWizardSettings() {
     // crashing before flush — without it, wizard re-triggers on next load.
     settings._wizardCompleted = true;
     try { localStorage.setItem('dle-wizard-completed', '1'); } catch { /* noop */ }
+    // SKIP/RESUME: completion supersedes any prior skip — drop the skip sentinel so a
+    // re-run starts on page 1 and init() reads a clean "completed" truth.
+    clearWizardSkip();
 
     invalidateSettingsCache();
     saveSettingsDebounced();
