@@ -8,7 +8,7 @@
     "js": "index.js",
     "css": "style.css",
     "author": "pixelnull",
-    "version": "2.5.1",
+    "version": "2.6.0",
     "homePage": "https://github.com/pixelnull/sillytavern-DeepLore",
     "minimum_client_version": "1.12.14"
 }
