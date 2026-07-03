@@ -15,7 +15,14 @@ import {
     truncateToSentence, simpleHash, escapeRegex, escapeXml,
     buildScanText, buildAiChatContext, validateSettings, yamlEscape,
 } from '../core/utils.js';
-import { testEntryMatch, countKeywordOccurrences, applyGating, resolveLinks, formatAndGroup, clearScanTextCache, applySelectiveLogic } from '../core/matching.js';
+import { testEntryMatch, countKeywordOccurrences, resolveLinks, formatAndGroup, clearScanTextCache, applySelectiveLogic } from '../core/matching.js';
+// #24: applyGating was deleted (no prod callers). These tests exercise the live
+// requires/excludes fixpoint via applyRequiresExcludesGating with an empty policy
+// (no forceInject exemptions) — same gating semantics the pipeline uses.
+// (applyRequiresExcludesGating is imported from ../src/stages.js further below;
+// ES module bindings are live module-wide, so this helper can reference it.)
+const EMPTY_POLICY = { forceInject: new Set(), pins: [], blocks: [] };
+const applyGating = (entries) => applyRequiresExcludesGating(entries, EMPTY_POLICY, false).result;
 import { parseVaultFile, clearPrompts } from '../core/pipeline.js';
 import { takeIndexSnapshot, detectChanges } from '../core/sync.js';
 
@@ -2573,6 +2580,58 @@ test('updateFrontmatterFields: no-op when updates object is empty', () => {
     const result = updateFrontmatterFields(input, {});
     assertEqual(result.applied.length, 0, 'no applied');
     assertEqual(result.content, input, 'content byte-identical');
+});
+
+// --- #10 (DATA LOSS): mergePreservingExtraFrontmatter (src/helpers.js) ---
+
+import { mergePreservingExtraFrontmatter } from '../src/helpers.js';
+
+test('mergePreservingExtraFrontmatter: preserves disk-only scalar + array keys', () => {
+    const disk = '---\ntype: lore\npriority: 5\ncooldown: 3\nrequires:\n  - Castle\n  - King\nprobability: 0.5\n---\n# Old\n\nold body';
+    const next = '---\ntype: lore\nstatus: active\npriority: 50\ntags:\n  - lorebook\nkeys:\n  - dragon\nsummary: "x"\n---\n# New\n\nnew body';
+    const merged = mergePreservingExtraFrontmatter(next, disk);
+    assert(merged.includes('cooldown: 3'), 'cooldown preserved');
+    assert(merged.includes('requires:'), 'requires key preserved');
+    assert(merged.includes('- Castle'), 'requires array item preserved');
+    assert(merged.includes('probability: 0.5'), 'probability preserved');
+    assert(merged.includes('# New') && merged.includes('new body'), 'new body wins');
+    assert(!merged.includes('old body'), 'old body dropped');
+});
+
+test('mergePreservingExtraFrontmatter: new frontmatter is authoritative for shared keys', () => {
+    const disk = '---\ntype: lore\npriority: 5\n---\nbody';
+    const next = '---\ntype: lore\npriority: 99\n---\nbody';
+    const merged = mergePreservingExtraFrontmatter(next, disk);
+    assert(merged.includes('priority: 99'), 'new priority wins');
+    assert(!merged.includes('priority: 5'), 'disk priority dropped');
+    // priority appears exactly once
+    assertEqual(merged.match(/priority:/g).length, 1, 'no duplicate priority key');
+});
+
+test('mergePreservingExtraFrontmatter: preserves arbitrary non-DLE keys (aliases)', () => {
+    const disk = '---\ntype: lore\naliases:\n  - Foo\n  - Bar\ncssclass: wide\n---\nbody';
+    const next = '---\ntype: lore\nstatus: active\npriority: 50\n---\nbody';
+    const merged = mergePreservingExtraFrontmatter(next, disk);
+    assert(merged.includes('aliases:') && merged.includes('- Foo'), 'aliases preserved');
+    assert(merged.includes('cssclass: wide'), 'cssclass preserved');
+});
+
+test('mergePreservingExtraFrontmatter: no disk frontmatter → returns new unchanged', () => {
+    const next = '---\ntype: lore\n---\nbody';
+    assertEqual(mergePreservingExtraFrontmatter(next, 'just a plain file'), next, 'unchanged');
+});
+
+test('mergePreservingExtraFrontmatter: no new frontmatter → returns new unchanged', () => {
+    const next = 'plain new file, no fm';
+    assertEqual(mergePreservingExtraFrontmatter(next, '---\ncooldown: 3\n---\nx'), next, 'unchanged');
+});
+
+test('mergePreservingExtraFrontmatter: handles block scalar in preserved key', () => {
+    const disk = '---\ntype: lore\nnote: |\n  line one\n  line two\n---\nbody';
+    const next = '---\ntype: lore\npriority: 50\n---\nbody';
+    const merged = mergePreservingExtraFrontmatter(next, disk);
+    assert(merged.includes('note: |'), 'block scalar header preserved');
+    assert(merged.includes('  line one') && merged.includes('  line two'), 'block scalar body preserved');
 });
 
 // --- #15 summary feature: parseRange + buildSummaryUserMessage ---

@@ -108,7 +108,7 @@ export function runHealthCheck() {
         }
 
         // Read _originalRequires if present so dangling refs stripped at finalizeIndex still surface.
-        // Case-insensitive to match applyGating behaviour.
+        // Case-insensitive to match applyRequiresExcludesGating behaviour.
         const requiresForCheck = entry._originalRequires || entry.requires;
         for (const req of requiresForCheck) {
             if (!allTitlesLower.has(req.toLowerCase())) {

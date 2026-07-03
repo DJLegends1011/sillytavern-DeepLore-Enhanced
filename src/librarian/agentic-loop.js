@@ -304,6 +304,15 @@ export async function runAgenticLoop(options) {
                         break;
                     }
                     const searchResult = await searchLoreAction({ queries: tc.input.queries || [] });
+                    // #23: searchLoreAction refunds its own loreGapSearchCount when a
+                    // search delivered no value (index not ready / zero hits) and tells
+                    // the model the search was free. Mirror that on the loop's searchCount
+                    // so the two budgets stay aligned — otherwise the loop keeps counting
+                    // the "free" search and withdraws TOOL_SEARCH early, burning paid
+                    // iterations on lore-sparse vaults.
+                    if (searchResult && searchResult.refunded) {
+                        searchCount = Math.max(0, searchCount - 1);
+                    }
                     const resultText = typeof searchResult === 'string'
                         ? searchResult
                         : (searchResult?.text ?? '');

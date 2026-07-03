@@ -154,7 +154,12 @@ let _realChatChangedHandler = null;
 
 function _earlyChatChangedStub() {
     if (_realChatChangedHandler) {
-        try { _realChatChangedHandler(); } catch (err) { console.warn('[DLE] CHAT_CHANGED handler error:', err?.message); }
+        // #21: once the real handler is installed it is ALSO registered directly on
+        // CHAT_CHANGED (see _registerEs at the real-handler site), so it fires on its
+        // own. This stub must genuinely no-op here — invoking the handler too made
+        // every post-init CHAT_CHANGED run the handler twice (double epoch bump,
+        // double IDB hydrate, double saves). The queued-during-init event is replayed
+        // exactly once by _installRealChatChangedHandler's drain.
         return;
     }
     let id = null;
@@ -1357,7 +1362,13 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
         // Done here (not at swipe-restore time) because chat_metadata may be reassigned by ST
         // during the async AI search, which would make a swipe-restore-time clear unreliable.
         const _stripDedupStart = performance.now();
-        if (settings.stripDuplicateInjections && (_snapMatch || !trace.aiCached)) {
+        // #11: `=== false` (not `!trace.aiCached`) so the "AI cache missed" signal
+        // only fires when the AI actually RAN and missed. In keywords-only mode the
+        // AI never runs, leaving trace.aiCached === undefined; the old `!aiCached`
+        // truthiness wiped the injection log every generation BEFORE strip-dedup
+        // could read it, silently disabling this default-on feature. Now only a real
+        // swipe/regen (_snapMatch) or a genuine cache miss clears the log.
+        if (settings.stripDuplicateInjections && (_snapMatch || trace.aiCached === false)) {
             if (chat_metadata.deeplore_injection_log?.length > 0) {
                 if (settings.debugMode) console.debug('[DLE][DIAG] strip-dedup-log-clear — %s, clearing %d stale injection log entries',
                     _snapMatch ? 'swipe/regen detected' : 'AI cache missed (context changed)',
@@ -2204,8 +2215,10 @@ async function _doInit() {
         //
         // We intentionally use eventSource.on directly (not _registerEs) AND push
         // it into _dleListeners so teardown removes it. The stub remains in place
-        // until the real handler attaches; both run, but the stub becomes a no-op
-        // trampoline once _realChatChangedHandler is set.
+        // until the real handler attaches; both listeners stay registered, but the
+        // stub becomes a genuine no-op once _realChatChangedHandler is set (#21) —
+        // the real handler's own direct registration fires the event, so the stub
+        // must NOT also invoke it.
         eventSource.on(event_types.CHAT_CHANGED, _earlyChatChangedStub);
         _dleListeners.eventSource.push({
             event: event_types.CHAT_CHANGED,

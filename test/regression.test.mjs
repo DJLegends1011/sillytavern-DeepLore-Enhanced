@@ -46,7 +46,7 @@ import {
 import { evaluateOperator, DEFAULT_FIELD_DEFINITIONS } from '../src/fields.js';
 import { validateCachedEntry } from '../src/vault/cache-validate.js';
 import { simpleHash, validateSettings, parseFrontmatter, buildScanText } from '../core/utils.js';
-import { testEntryMatch, formatAndGroup, applyGating, clearScanTextCache } from '../core/matching.js';
+import { testEntryMatch, formatAndGroup, clearScanTextCache } from '../core/matching.js';
 import { parseVaultFile } from '../core/pipeline.js';
 import { normalizePinBlock, matchesPinBlock, cmrsResultToText, categorizeRejections, buildCategoryManifest, clusterEntries, hasWarmup } from '../src/helpers.js';
 import { matchEntries as matchEntriesPure } from '../src/pipeline/match.js';
@@ -3833,6 +3833,39 @@ test('H-3-6: post-pipeline policy in index.js threads bootstrapActive from trace
     // variations but require the trace.bootstrapActive read.
     const callSiteOk = /buildExemptionPolicy\(\s*vaultSnapshot\s*,\s*pins\s*,\s*blocks\s*,\s*trace\??\.?\.?bootstrapActive[^)]*\)/.test(src);
     assert(callSiteOk, 'H-3-6: index.js post-pipeline must call buildExemptionPolicy(vaultSnapshot, pins, blocks, trace?.bootstrapActive)');
+});
+
+test('#11: strip-dedup log-clear gates on trace.aiCached === false, not truthiness (static guard)', async () => {
+    // In keywords-only mode aiSearch never runs, so trace.aiCached stays undefined.
+    // The old `!trace.aiCached` cleared the injection log every generation before
+    // strip-dedup could read it, silently disabling the default-on feature. The
+    // clear must only fire on swipe/regen or a GENUINE cache miss (aiCached===false).
+    const { readFile } = await import('node:fs/promises');
+    const src = await readFile(new URL('../index.js', import.meta.url), 'utf8');
+    assert(
+        /_snapMatch\s*\|\|\s*trace\.aiCached\s*===\s*false/.test(src),
+        '#11: strip-dedup clear must use `_snapMatch || trace.aiCached === false`',
+    );
+    assert(
+        !/\(\s*_snapMatch\s*\|\|\s*!trace\.aiCached\s*\)/.test(src),
+        '#11: strip-dedup clear must NOT use `!trace.aiCached` (undefined in keywords-only)',
+    );
+});
+
+test('#21: early CHAT_CHANGED stub no-ops (does not invoke real handler) once installed (static guard)', async () => {
+    // The stub AND the real handler are both registered on CHAT_CHANGED. If the
+    // stub also calls _realChatChangedHandler(), every post-init event runs the
+    // handler twice (double epoch bump / IDB hydrate / save). The stub body must
+    // return without invoking the handler.
+    const { readFile } = await import('node:fs/promises');
+    const src = await readFile(new URL('../index.js', import.meta.url), 'utf8');
+    const start = src.indexOf('function _earlyChatChangedStub');
+    assert(start >= 0, '#21: _earlyChatChangedStub must exist');
+    const body = src.slice(start, src.indexOf('function _installRealChatChangedHandler'));
+    assert(
+        !/_realChatChangedHandler\s*\(\s*\)/.test(body),
+        '#21: _earlyChatChangedStub must NOT invoke _realChatChangedHandler() — direct registration owns the event',
+    );
 });
 
 test('PERF-P2-4: runPipeline source contains exactly one in-function buildExemptionPolicy call', async () => {

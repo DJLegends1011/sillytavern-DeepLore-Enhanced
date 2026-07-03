@@ -82,7 +82,7 @@ import {
     isForceInjected, normalizePinBlock, matchesPinBlock, fuzzyTitleMatch,
 } from '../src/helpers.js';
 
-import { formatAndGroup, testEntryMatch, countKeywordOccurrences, applyGating, resolveLinks, clearScanTextCache } from '../core/matching.js';
+import { formatAndGroup, testEntryMatch, countKeywordOccurrences, resolveLinks, clearScanTextCache } from '../core/matching.js';
 import { parseVaultFile, clearPrompts } from '../core/pipeline.js';
 import { takeIndexSnapshot, detectChanges } from '../core/sync.js';
 import { buildScanText, validateSettings, simpleHash } from '../core/utils.js';

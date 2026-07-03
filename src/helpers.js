@@ -345,6 +345,87 @@ export function updateFrontmatterFields(content, updates) {
     return { content: openDelim + newFmBody + closeDelim + body, applied, skipped };
 }
 
+// Match a top-level YAML key at column 0 (no leading whitespace, not an array
+// dash). Unicode-aware, mirroring parseFrontmatter's key class.
+const TOP_LEVEL_FM_KEY = /^([\p{L}\p{N}_][\p{L}\p{N}_.-]*)\s*:(?:\s.*)?$/u;
+
+/**
+ * #10 (DATA LOSS fix) — merge a freshly-built entry file over the on-disk
+ * original, PRESERVING any top-level frontmatter key present on disk but absent
+ * from the new file. Emma's editor only models a handful of frontmatter fields
+ * (type/status/priority/tags/keys/summary); without this merge, writing an edit
+ * to an existing entry silently drops every unmodeled key the user authored
+ * (cooldown, requires, excludes, era, position, probability, refine_keys, and
+ * any arbitrary Obsidian metadata like aliases).
+ *
+ * Contract:
+ *   - New file's frontmatter is authoritative: any key it emits wins over disk.
+ *   - Keys present ONLY on disk are re-appended verbatim (line-for-line,
+ *     including array items, block scalars, quoting) before the closing `---`.
+ *   - Body comes entirely from the new file.
+ *   - If either side lacks frontmatter, the new file is returned unchanged
+ *     (nothing to preserve, or nowhere to put it).
+ *
+ * @param {string} newFileText - the file we intend to write (frontmatter + body)
+ * @param {string} originalFileText - the current on-disk file
+ * @returns {string} merged file content
+ */
+export function mergePreservingExtraFrontmatter(newFileText, originalFileText) {
+    if (typeof newFileText !== 'string') return newFileText;
+    if (typeof originalFileText !== 'string' || !originalFileText) return newFileText;
+
+    const stripBom = s => (s.charCodeAt(0) === 0xFEFF ? s.slice(1) : s);
+    const FM_RE = /^(---\r?\n)([\s\S]*?)(\r?\n---[ \t]*\r?\n?)([\s\S]*)$/;
+
+    const newMatch = stripBom(newFileText).match(FM_RE);
+    if (!newMatch) return newFileText;
+    const origMatch = stripBom(originalFileText).match(FM_RE);
+    if (!origMatch) return newFileText;
+
+    const [, openDelim, newFmBody, closeDelim, body] = newMatch;
+    const origFmBody = origMatch[2];
+
+    // Keys the new frontmatter already emits — these win, never re-added.
+    const newKeys = new Set();
+    for (const line of newFmBody.split(/\r?\n/)) {
+        const m = line.match(TOP_LEVEL_FM_KEY);
+        if (m && !/^\s*-\s+/.test(line)) newKeys.add(m[1]);
+    }
+
+    // Walk original frontmatter, grouping each top-level key with its
+    // continuation lines (indented values, `- ` array items, block-scalar body).
+    const groups = [];
+    let current = null;
+    for (const line of origFmBody.split(/\r?\n/)) {
+        const m = line.match(TOP_LEVEL_FM_KEY);
+        const isTopKey = m && !/^\s*-\s+/.test(line);
+        if (isTopKey) {
+            current = { key: m[1], lines: [line] };
+            groups.push(current);
+        } else if (current) {
+            current.lines.push(line);
+        }
+        // Lines before the first key (stray) are dropped — malformed anyway.
+    }
+
+    const extraLines = [];
+    for (const g of groups) {
+        if (newKeys.has(g.key)) continue;
+        for (const l of g.lines) extraLines.push(l);
+    }
+    // Trim trailing blank continuation lines so the block stays tidy.
+    while (extraLines.length && extraLines[extraLines.length - 1].trim() === '') extraLines.pop();
+    if (extraLines.length === 0) return newFileText;
+
+    // Drop trailing blank lines from the new frontmatter body, then append the
+    // preserved keys. Normalize to LF within the block (extras were split on
+    // \r?\n so no stray \r survives).
+    const newLines = newFmBody.split(/\r?\n/);
+    while (newLines.length && newLines[newLines.length - 1].trim() === '') newLines.pop();
+    const mergedFmBody = [...newLines, ...extraLines].join('\n');
+    return openDelim + mergedFmBody + closeDelim + body;
+}
+
 /**
  * #16 — Reverse-priority comparator. By default lower priority number = higher
  * importance (Obsidian/WI convention). When `reversed` is true, flip so higher

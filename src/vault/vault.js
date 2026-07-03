@@ -109,7 +109,7 @@ let _parserLedgerToastShown = false;
  * `incrementalMentionWeights()`. Output is byte-equivalent to the full path —
  * pinned by test/vault.test.mjs section L (L1).
  */
-function computeDerivedIndexFields(entries, settings, previousEntries) {
+function computeDerivedIndexFields(entries, settings, previousEntries, precomputedDiff = null) {
     setBm25DebugMode(settings?.debugMode);
 
     const totalTokens = entries.reduce((sum, e) => sum + (e.tokenEstimate || 0), 0);
@@ -118,7 +118,10 @@ function computeDerivedIndexFields(entries, settings, previousEntries) {
     // mentionWeights — try incremental path when prev entries available.
     let weights = null;
     if (previousEntries && previousEntries.length > 0 && entries.length > 0) {
-        const diff = diffEntries(previousEntries, entries);
+        // #3: reuse the diff finalizeIndex already computed for this tick (same
+        // inputs feed mentionWeights, entity regexes, and BM25). Only recompute
+        // when a caller (hydrateFromCache) invoked us without previousEntries.
+        const diff = precomputedDiff || diffEntries(previousEntries, entries);
         const changed = diff.added.length + diff.removed.length + diff.modified.length;
         if (shouldUseIncremental(changed, entries.length)) {
             weights = incrementalMentionWeights(mentionWeights, previousEntries, entries, diff);
@@ -195,7 +198,15 @@ async function finalizeIndex({ entries, settings, skipCacheSave = false, previou
         }
     }
 
-    computeDerivedIndexFields(entries, settings, previousEntries);
+    // #3: the incremental paths for mentionWeights, entity regexes, and BM25 each
+    // used to recompute diffEntries(previousEntries, entries) — 3× the 2-Map +
+    // per-entry-JSON.stringify cost every poll tick. Compute once and thread it
+    // into all three consumers. Non-null exactly when the incremental guard holds.
+    const sharedDiff = (previousEntries && previousEntries.length > 0 && entries.length > 0)
+        ? diffEntries(previousEntries, entries)
+        : null;
+
+    computeDerivedIndexFields(entries, settings, previousEntries, sharedDiff);
 
     // Capture pre-rebuild state for cache-invalidation diagnostic.
     const _preRegexVersion = entityRegexVersion;
@@ -209,8 +220,8 @@ async function finalizeIndex({ entries, settings, skipCacheSave = false, previou
     // which bumps entityRegexVersion. BUG-394 / AI cache invalidation invariant
     // preserved — pinned by test L7.
     let entityIncremental = false;
-    if (previousEntries && previousEntries.length > 0 && entries.length > 0) {
-        const diff = diffEntries(previousEntries, entries);
+    if (sharedDiff) {
+        const diff = sharedDiff;
         const changed = diff.added.length + diff.removed.length + diff.modified.length;
         if (shouldUseIncremental(changed, entries.length)) {
             const { names, regexes } = incrementalEntityRegexes(entries, entityShortNameRegexes);
@@ -231,8 +242,8 @@ async function finalizeIndex({ entries, settings, skipCacheSave = false, previou
     // vault-incremental.js. Equivalence is pinned by test L4.
     if (settings.fuzzySearchEnabled || settings.librarianSearchEnabled) {
         let newBm25 = null;
-        if (previousEntries && previousEntries.length > 0 && entries.length > 0 && fuzzySearchIndex) {
-            const diff = diffEntries(previousEntries, entries);
+        if (sharedDiff && fuzzySearchIndex) {
+            const diff = sharedDiff;
             const changed = diff.added.length + diff.removed.length + diff.modified.length;
             if (shouldUseIncremental(changed, entries.length)) {
                 newBm25 = incrementalBM25Update(fuzzySearchIndex, diff);
@@ -851,6 +862,12 @@ export async function buildIndexWithReuse() {
         let newCount = 0, modifiedCount = 0, removedCount = 0;
         let _reuseTokenizerFailCount = 0;
         const allEntries = [];
+        // #1: freshly-parsed/changed entries needing a tokenizer round-trip. The
+        // per-file `await getTokenCountAsync` inside the reuse loop serialized into
+        // 50-100 sequential round-trips on a bulk-edit tick (blocking the UI). Defer
+        // it: collect here, then batch with Promise.all after the loop — mirroring
+        // buildIndex's own batch pass.
+        const _needTokenize = [];
         // Reuse-path parser ledger. Only re-parsed files contribute new warnings/skips;
         // unchanged reused entries roll forward their existing `_parserWarnings`.
         const buildReport = {
@@ -1019,12 +1036,8 @@ export async function buildIndexWithReuse() {
                         if (entry) {
                             entry.vaultSource = vault.name;
                             entry._contentHash = fileHash;
-                            try {
-                                entry.tokenEstimate = await getTokenCountAsync(entry.content);
-                            } catch {
-                                entry.tokenEstimate = Math.ceil(entry.content.length / 4.0);
-                                _reuseTokenizerFailCount++;
-                            }
+                            // #1: defer tokenization — batched after the loop.
+                            _needTokenize.push(entry);
                             if (entry._parserWarnings && entry._parserWarnings.length > 0) {
                                 buildReport.warnCount++;
                                 buildReport.entriesWithWarnings.push({
@@ -1067,9 +1080,6 @@ export async function buildIndexWithReuse() {
         }
 
         setLastVaultFailureCount(vaultFailCount);
-        if (_reuseTokenizerFailCount > 0) {
-            console.warn(`[DLE] Tokenizer failed for ${_reuseTokenizerFailCount} re-parsed entries — using character-based estimates (budget accuracy degraded)`);
-        }
 
         // M-12: merge mode + a vault failed → mirror buildIndex's P2-7 fix. The
         // per-vault carry-forward branches above filter indexSnapshot by
@@ -1119,6 +1129,25 @@ export async function buildIndexWithReuse() {
             }
             _reuseResult = true;
             return;
+        }
+
+        // #1: batch-tokenize all changed/new entries in parallel (was one serial
+        // `await getTokenCountAsync` per file inside the loop). Placed after the
+        // no-change and merge-carry-forward early returns so we never tokenize
+        // entries that get discarded. Mirrors buildIndex's :561 batch pass.
+        if (_needTokenize.length > 0) {
+            await Promise.all(_needTokenize.map(async (entry) => {
+                try {
+                    entry.tokenEstimate = await getTokenCountAsync(entry.content);
+                } catch {
+                    entry.tokenEstimate = Math.ceil(entry.content.length / 4.0);
+                    _reuseTokenizerFailCount++;
+                }
+            }));
+            if (isZombie()) { _reuseResult = false; return; }
+        }
+        if (_reuseTokenizerFailCount > 0) {
+            console.warn(`[DLE] Tokenizer failed for ${_reuseTokenizerFailCount} re-parsed entries — using character-based estimates (budget accuracy degraded)`);
         }
 
         if (settings.debugMode) {
