@@ -1198,7 +1198,7 @@ export function wireGatingTab($drawer) {
 
     $drawer.on('click', '[data-action="goto-ai-connections"]', function (e) {
         e.stopPropagation();
-        announceToScreenReader('Open Settings, then Connection, then AI Connections subtab.');
+        announceToScreenReader('Open Settings, then Setup, then AI Connections.');
         toastr.info(tr('dle_toast_goto_ai_connections'), 'DeepLore', { timeOut: 4000 });
     });
     $drawer.on('keydown', '[data-action="goto-ai-connections"]', function (e) {

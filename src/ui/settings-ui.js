@@ -432,10 +432,7 @@ function updatePopupModeVisibility($container, settings) {
         .attr('inert', !aiEnabled ? '' : null)
         .attr('aria-hidden', !aiEnabled ? 'true' : null);
     $aiPanel.find('.dle-ai-content-wrap input, .dle-ai-content-wrap select, .dle-ai-content-wrap textarea, .dle-ai-content-wrap .menu_button').prop('disabled', !aiEnabled);
-    // Mirror dropdown sits above the blurred wrap — keep it functional.
-    $container.find('#dle-sp-ai-search-mode-mirror').prop('disabled', false);
     const modeVal = !aiEnabled ? 'keywords-only' : (settings.aiSearchMode === 'ai-only' ? 'ai-only' : 'two-stage');
-    $container.find('#dle-sp-ai-search-mode-mirror').val(modeVal);
     $container.find('#dle-sp-search-mode').val(modeVal);
 }
 
@@ -913,14 +910,8 @@ function bindAccordionEvents($container) {
         saveSettingsDebounced();
     });
 
-    // BUG-320: switch to Connection tab BEFORE the sub-tab so the sub-tab's parent is visible.
-    $container.on('click', '.dle-goto-ai-connections', function (e) {
-        e.preventDefault();
-        const $connTab = $container.find('[data-settings-tab="connection"]');
-        if ($connTab.length) switchSettingsTab($connTab);
-        const $subtab = $container.find('.dle-connection-subtab[data-connection-subtab="ai-connections"]');
-        if ($subtab.length) switchConnectionSubtab($subtab);
-    });
+    // BUG-320 note: the `.dle-goto-ai-connections` click handler lives inside
+    // openSettingsPopup now (it needs the popup-scoped switchSettingsTab closure).
 }
 
 function updatePopupInjectionModeVisibility($container, settings) {
@@ -954,23 +945,70 @@ export async function openSettingsPopup(navigateTo = null) {
     const $container = $(html);
     applyHtmlI18n($container[0]); // markup-bearing locale strings (data-i18n-html) — ST's data-i18n is textContent-only
 
+    // ── Sidebar accordion groups (collapse state persists via accountStorage) ──
+    const NAV_GROUPS_KEY = 'dle-settings-nav-groups';
+    function readGroupState() {
+        try { return JSON.parse(accountStorage.getItem(NAV_GROUPS_KEY) || '{}') || {}; }
+        catch { return {}; }
+    }
+    function setGroupCollapsed($group, collapsed, persist = true) {
+        $group.toggleClass('collapsed', collapsed);
+        $group.find('.dle-nav-group-header').attr('aria-expanded', String(!collapsed));
+        if (persist) {
+            const state = readGroupState();
+            state[$group.data('nav-group')] = collapsed;
+            accountStorage.setItem(NAV_GROUPS_KEY, JSON.stringify(state));
+        }
+    }
+
+    // Old two-tier tab tokens → flat nav tokens. Persisted last-tab values and
+    // external deep links (openSettingsPopup navigateTo, data-goto-tab) may
+    // still carry pre-overhaul tokens; alias them permanently (cheap, load-bearing).
+    // Old SUBTAB tokens are the new tab tokens 1:1 (obsidian, ai-connections,
+    // author-notebook, ai-notebook, session-scribe, auto-lorebook, graph, librarian).
+    const TAB_ALIAS = {
+        matching: 'search',
+        ai: 'search',
+        connection: 'obsidian',
+        features: 'author-notebook',
+    };
+    function resolveTabToken(tab, subtab = null) {
+        if (subtab && $container.find(`.dle-settings-tab[data-settings-tab="${subtab}"]`).length) {
+            return subtab;
+        }
+        return TAB_ALIAS[tab] || tab;
+    }
+
     function switchSettingsTab($tab) {
         const tab = $tab.data('settings-tab');
-        $container.find('.dle-settings-tab').removeClass('active')
-            .attr('aria-selected', 'false').attr('tabindex', '-1');
-        $tab.addClass('active').attr('aria-selected', 'true').attr('tabindex', '0');
+        $container.find('.dle-settings-tab').removeClass('active').removeAttr('aria-current');
+        $tab.addClass('active').attr('aria-current', 'page');
         $container.find('.dle-settings-panel').removeClass('active').attr('hidden', '');
+        // NOTE: the merged Search tab spans TWO panel blocks that share
+        // data-settings-panel="search" — the attribute selector activates both.
         $container.find(`[data-settings-panel="${tab}"]`).addClass('active').removeAttr('hidden');
-        // Clear subtab highlighting when leaving their parent tab.
-        if (tab !== 'features') {
-            $container.find('.dle-features-subtab').removeClass('active');
-        }
-        if (tab !== 'connection') {
-            $container.find('.dle-connection-subtab').removeClass('active');
-        }
+        // Reveal the group that owns the newly active tab.
+        const $group = $tab.closest('.dle-nav-group');
+        if ($group.length && $group.hasClass('collapsed')) setGroupCollapsed($group, false, false);
         // BUG-042: accountStorage for cross-browser sync.
         accountStorage.setItem('dle-last-settings-tab', tab);
+        $container.find('.dle-settings-content').scrollTop(0);
     }
+
+    // Restore saved collapse state. First run (no saved state): all collapsed —
+    // pinned About is the landing panel and groups teach the IA on demand.
+    {
+        const rawGroupState = accountStorage.getItem(NAV_GROUPS_KEY);
+        const groupState = readGroupState();
+        $container.find('.dle-nav-group').each(function () {
+            const collapsed = rawGroupState == null ? true : !!groupState[$(this).data('nav-group')];
+            if (collapsed) setGroupCollapsed($(this), true, false);
+        });
+    }
+    $container.on('click', '.dle-nav-group-header', function () {
+        const $group = $(this).closest('.dle-nav-group');
+        setGroupCollapsed($group, !$group.hasClass('collapsed'));
+    });
 
     // BUG-042: one-shot migration from legacy localStorage to accountStorage.
     let lastTab = accountStorage.getItem('dle-last-settings-tab');
@@ -982,6 +1020,15 @@ export async function openSettingsPopup(navigateTo = null) {
             lastTab = legacy;
         }
     }
+    // Overhaul migration: 'connection'/'features' resolve through their old
+    // last-subtab keys (consumed once here; no longer written anywhere).
+    if (lastTab === 'connection' || lastTab === 'features') {
+        const subKey = lastTab === 'connection' ? 'dle-last-connection-subtab' : 'dle-last-features-subtab';
+        const sub = accountStorage.getItem(subKey) || localStorage.getItem(subKey);
+        lastTab = resolveTabToken(lastTab, sub);
+    } else if (lastTab) {
+        lastTab = resolveTabToken(lastTab);
+    }
     if (lastTab) {
         const $lastTab = $container.find(`.dle-settings-tab[data-settings-tab="${lastTab}"]`);
         if ($lastTab.length) switchSettingsTab($lastTab);
@@ -989,18 +1036,14 @@ export async function openSettingsPopup(navigateTo = null) {
 
     // navigateTo: callers pre-position the popup. Runs AFTER lastTab restore so it wins.
     // Scroll + pulse is deferred to onOpen so it runs after the dialog is mounted.
+    // Accepts old tokens ({ tab: 'connection', subtab: 'ai-connections' }) via the alias map.
     function applyNavigateTo() {
         if (!navigateTo) return;
         try {
-            if (navigateTo.tab) {
-                const $t = $container.find(`.dle-settings-tab[data-settings-tab="${navigateTo.tab}"]`);
+            const token = resolveTabToken(navigateTo.tab, navigateTo.subtab);
+            if (token) {
+                const $t = $container.find(`.dle-settings-tab[data-settings-tab="${token}"]`);
                 if ($t.length) switchSettingsTab($t);
-            }
-            if (navigateTo.subtab) {
-                const $cs = $container.find(`.dle-connection-subtab[data-connection-subtab="${navigateTo.subtab}"]`);
-                if ($cs.length) switchConnectionSubtab($cs);
-                const $fs = $container.find(`.dle-features-subtab[data-features-subtab="${navigateTo.subtab}"]`);
-                if ($fs.length) switchFeaturesSubtab($fs);
             }
             if (navigateTo.toolKey) {
                 const $accordion = $container.find(`.dle-conn-accordion[data-tool="${navigateTo.toolKey}"]`);
@@ -1013,65 +1056,22 @@ export async function openSettingsPopup(navigateTo = null) {
         } catch (e) { console.warn('[DLE] applyNavigateTo failed:', e); }
     }
 
-    const $featuresTab = $container.find('#dle-sp-tab-features');
-    const $featuresChildren = $container.find('.dle-features-children');
+    // Nav API bridge for handlers wired in bindPopupEvents (different function
+    // scope). Pre-overhaul code there referenced switchSettingsTab & friends as
+    // free variables, which threw ReferenceError at click time — retrieve via
+    // $container.data('dleNav') instead.
+    $container.data('dleNav', { switchSettingsTab, resolveTabToken });
 
-    // Features children always visible — no collapse toggle.
-    $featuresChildren.removeAttr('hidden');
-    $featuresTab.attr('aria-expanded', 'true');
-
-    function switchFeaturesSubtab($subtab) {
-        const subtab = $subtab.data('features-subtab');
-        $container.find('.dle-features-subtab').removeClass('active').attr('aria-selected', 'false');
-        $subtab.addClass('active').attr('aria-selected', 'true');
-        $container.find('.dle-features-subpanel').removeClass('active').attr('hidden', '');
-        $container.find(`[data-features-subpanel="${subtab}"]`).addClass('active').removeAttr('hidden');
-        accountStorage.setItem('dle-last-features-subtab', subtab);
-        if (!$featuresTab.hasClass('active')) {
-            switchSettingsTab($featuresTab);
-        }
-    }
-
-    const $connectionTab = $container.find('#dle-sp-tab-connection');
-    const $connectionChildren = $container.find('.dle-connection-children');
-
-    $connectionChildren.removeAttr('hidden');
-    $connectionTab.attr('aria-expanded', 'true');
-
-    function switchConnectionSubtab($subtab) {
-        const subtab = $subtab.data('connection-subtab');
-        $container.find('.dle-connection-subtab').removeClass('active').attr('aria-selected', 'false');
-        $subtab.addClass('active').attr('aria-selected', 'true');
-        $container.find('.dle-connection-subpanel').removeClass('active').attr('hidden', '');
-        $container.find(`[data-connection-subpanel="${subtab}"]`).addClass('active').removeAttr('hidden');
-        accountStorage.setItem('dle-last-connection-subtab', subtab);
-        if (!$connectionTab.hasClass('active')) {
-            switchSettingsTab($connectionTab);
-        }
-    }
-
-    // BUG-225: headers aren't interactive — remove from tab order.
-    // role="presentation" (in HTML) keeps them out of the accessibility tree as a "tab",
-    // while subtab children carry role="tab"/aria-selected/aria-controls themselves.
-    $container.find('.dle-settings-tab--header').attr('tabindex', '-1');
-
-    $container.on('click', '.dle-settings-tab:not(.dle-settings-tab--header)', function () {
+    $container.on('click', '.dle-settings-tab', function () {
         switchSettingsTab($(this));
     });
 
-    // Direct bind — delegation didn't fire for an unidentified reason.
-    $container.find('.dle-connection-subtab').on('click', function (e) {
-        e.stopPropagation();
-        switchConnectionSubtab($(this));
-    });
-
-    $container.on('click', '.dle-features-subtab', function () {
-        switchFeaturesSubtab($(this));
-    });
-
-    $container.on('keydown', '.dle-settings-tab:not(.dle-settings-tab--header)', function (e) {
-        const $tabs = $container.find('.dle-settings-tab:not(.dle-settings-tab--header)');
+    // Plain-nav arrow keys move focus between VISIBLE tabs (filtered/collapsed
+    // rows are skipped); Enter/Space activate natively (they're <button>s).
+    $container.on('keydown', '.dle-settings-tab', function (e) {
+        const $tabs = $container.find('.dle-settings-tab:visible');
         const idx = $tabs.index(this);
+        if (idx === -1) return;
         let newIdx = idx;
         switch (e.key) {
             case 'ArrowDown': newIdx = (idx + 1) % $tabs.length; break;
@@ -1081,89 +1081,121 @@ export async function openSettingsPopup(navigateTo = null) {
             default: return;
         }
         e.preventDefault();
-        const $newTab = $tabs.eq(newIdx);
-        switchSettingsTab($newTab);
-        $newTab.trigger('focus');
+        $tabs.eq(newIdx).trigger('focus');
     });
 
-    $container.on('keydown', '.dle-features-subtab', function (e) {
-        const $subtabs = $container.find('.dle-features-subtab');
-        const idx = $subtabs.index(this);
-        let newIdx = idx;
-        switch (e.key) {
-            case 'ArrowDown': newIdx = (idx + 1) % $subtabs.length; break;
-            case 'ArrowUp': newIdx = (idx - 1 + $subtabs.length) % $subtabs.length; break;
-            case 'Home': newIdx = 0; break;
-            case 'End': newIdx = $subtabs.length - 1; break;
-            default: return;
-        }
-        e.preventDefault();
-        const $newSubtab = $subtabs.eq(newIdx);
-        switchFeaturesSubtab($newSubtab);
-        $newSubtab.trigger('focus');
-    });
-
-    $container.on('keydown', '.dle-connection-subtab', function (e) {
-        const $subtabs = $container.find('.dle-connection-subtab');
-        const idx = $subtabs.index(this);
-        let newIdx = idx;
-        switch (e.key) {
-            case 'ArrowDown': newIdx = (idx + 1) % $subtabs.length; break;
-            case 'ArrowUp': newIdx = (idx - 1 + $subtabs.length) % $subtabs.length; break;
-            case 'Home': newIdx = 0; break;
-            case 'End': newIdx = $subtabs.length - 1; break;
-            default: return;
-        }
-        e.preventDefault();
-        const $newSubtab = $subtabs.eq(newIdx);
-        switchConnectionSubtab($newSubtab);
-        $newSubtab.trigger('focus');
-    });
-
-    $container.find('.dle-settings-tab').attr('tabindex', '-1');
-    $container.find('.dle-settings-tab.active').attr('tabindex', '0');
     $container.find('.dle-settings-panel').not('.active').attr('hidden', '');
-    $container.find('.dle-features-subpanel').not('.active').attr('hidden', '');
-    $container.find('.dle-connection-subpanel').not('.active').attr('hidden', '');
 
-    // BUG-042: legacy localStorage migration.
-    let lastSubtab = accountStorage.getItem('dle-last-features-subtab');
-    if (!lastSubtab) {
-        const legacy = localStorage.getItem('dle-last-features-subtab');
-        if (legacy) {
-            accountStorage.setItem('dle-last-features-subtab', legacy);
-            localStorage.removeItem('dle-last-features-subtab');
-            lastSubtab = legacy;
-        }
-    }
-    if (lastSubtab && lastTab === 'features') {
-        const $lastSubtab = $container.find(`.dle-features-subtab[data-features-subtab="${lastSubtab}"]`);
-        if ($lastSubtab.length) switchFeaturesSubtab($lastSubtab);
-    }
+    // BUG-320: cross-panel "AI Connections" links (goto handler needs this closure).
+    $container.on('click', '.dle-goto-ai-connections', function (e) {
+        e.preventDefault();
+        const $tab = $container.find('.dle-settings-tab[data-settings-tab="ai-connections"]');
+        if ($tab.length) switchSettingsTab($tab);
+    });
 
-    // BUG-042: legacy localStorage migration.
-    let lastConnSubtab = accountStorage.getItem('dle-last-connection-subtab');
-    if (!lastConnSubtab) {
-        const legacy = localStorage.getItem('dle-last-connection-subtab');
-        if (legacy) {
-            accountStorage.setItem('dle-last-connection-subtab', legacy);
-            localStorage.removeItem('dle-last-connection-subtab');
-            lastConnSubtab = legacy;
-        }
-    }
-    if (lastConnSubtab && lastTab === 'connection') {
-        const $lastConnSubtab = $container.find(`.dle-connection-subtab[data-connection-subtab="${lastConnSubtab}"]`);
-        if ($lastConnSubtab.length) switchConnectionSubtab($lastConnSubtab);
-    }
-
+    // Merged panel: the "AI search disabled" notice link now targets the mode
+    // select on the SAME panel — just make sure Search is active and pulse it.
     $container.on('click', '#dle-sp-goto-matching', function (e) {
         e.preventDefault();
-        const $matchingTab = $container.find('[data-settings-tab="matching"]');
-        switchSettingsTab($matchingTab);
+        const $searchTab = $container.find('.dle-settings-tab[data-settings-tab="search"]');
+        if (!$searchTab.hasClass('active')) switchSettingsTab($searchTab);
         const $modeSelect = $container.find('#dle-sp-search-mode');
+        $modeSelect[0]?.scrollIntoView({ block: 'center', behavior: 'smooth' });
         $modeSelect.addClass('dle-pulse');
         setTimeout(() => $modeSelect.removeClass('dle-pulse'), 2000);
     });
+
+    // ── Settings search: DOM-walk label index → filter tabs → jump-highlight.
+    // The index is built lazily from the rendered (already localized) DOM, so
+    // it localizes for free and never drifts from the actual controls. ──
+    function buildSearchIndex() {
+        const index = [];
+        $container.find('.dle-settings-panel').each(function () {
+            const token = this.getAttribute('data-settings-panel');
+            $(this).find('h4, h5, label').each(function () {
+                const text = (this.textContent || '').trim().toLowerCase();
+                if (text.length > 1) index.push({ text, token });
+            });
+        });
+        return index;
+    }
+    {
+        const $searchInput = $container.find('#dle-sp-nav-search');
+        const $noResults = $container.find('#dle-sp-nav-noresults');
+        const $navTabs = $container.find('.dle-settings-tab');
+        const $navGroups = $container.find('.dle-nav-group');
+        let searchIndex = null;
+        let savedGroupCollapse = null;
+        const clearNavFilter = () => {
+            $container.find('.dle-search-badge').remove();
+            $navTabs.removeClass('dle-filtered-out');
+            $navGroups.removeClass('dle-filtered-out');
+            if (savedGroupCollapse) {
+                $navGroups.each(function () {
+                    const was = savedGroupCollapse.get(this);
+                    if (was != null) setGroupCollapsed($(this), was, false);
+                });
+                savedGroupCollapse = null;
+            }
+            $noResults.removeClass('dle-visible');
+        };
+        $searchInput.on('keydown', function (e) {
+            if (e.key === 'Escape') {
+                e.stopPropagation();
+                $searchInput.val('');
+                clearNavFilter();
+            }
+        });
+        $searchInput.on('input', function () {
+            const q = String($searchInput.val() || '').trim().toLowerCase();
+            $container.find('.dle-search-badge').remove();
+            if (!q) { clearNavFilter(); return; }
+            if (!searchIndex) searchIndex = buildSearchIndex();
+            if (!savedGroupCollapse) {
+                savedGroupCollapse = new Map();
+                $navGroups.each(function () { savedGroupCollapse.set(this, $(this).hasClass('collapsed')); });
+            }
+            const perToken = {};
+            for (const entry of searchIndex) {
+                if (entry.text.includes(q)) perToken[entry.token] = (perToken[entry.token] || 0) + 1;
+            }
+            let anyVisible = false;
+            $navTabs.each(function () {
+                const token = this.getAttribute('data-settings-tab');
+                const n = perToken[token] || 0;
+                const selfMatch = (this.textContent || '').toLowerCase().includes(q);
+                const out = !n && !selfMatch;
+                $(this).toggleClass('dle-filtered-out', out);
+                if (!out) anyVisible = true;
+                if (n) $('<span class="dle-search-badge"></span>').text(n).appendTo(this);
+            });
+            $navGroups.each(function () {
+                const visible = $(this).find('.dle-settings-tab:not(.dle-filtered-out)').length > 0;
+                $(this).toggleClass('dle-filtered-out', !visible);
+                if (visible) setGroupCollapsed($(this), false, false);
+            });
+            $noResults.toggleClass('dle-visible', !anyVisible);
+        });
+        // Jump + highlight: clicking a tab while a query is live flashes the
+        // matching labels in the target panel and scrolls the first into view.
+        $container.on('click', '.dle-settings-tab', function () {
+            const q = String($searchInput.val() || '').trim().toLowerCase();
+            if (!q) return;
+            requestAnimationFrame(() => {
+                let first = null;
+                // .active can span two blocks (merged Search panel) — walk them all.
+                $container.find('.dle-settings-panel.active').find('h4, h5, label').each(function () {
+                    if ((this.textContent || '').toLowerCase().includes(q)) {
+                        if (!first) first = this;
+                        this.classList.remove('dle-search-hit');
+                        void this.offsetWidth;
+                        this.classList.add('dle-search-hit');
+                    }
+                });
+                if (first) first.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            });
+        });
+    }
 
     $container.on('keydown', '[role="button"][tabindex="0"]', function (e) {
         if (e.key === 'Enter' || e.key === ' ') {
@@ -1296,7 +1328,6 @@ function loadPopupSettings($container) {
     const searchMode = !settings.aiSearchEnabled ? 'keywords-only'
         : (settings.aiSearchMode === 'ai-only' ? 'ai-only' : 'two-stage');
     $c('#dle-sp-search-mode').val(searchMode);
-    $c('#dle-sp-ai-search-mode-mirror').val(searchMode);
     $c('#dle-sp-scan-depth').val(settings.scanDepth);
     $c('#dle-sp-char-context-scan').prop('checked', settings.characterContextScan);
     $c('#dle-sp-fuzzy-search').prop('checked', settings.fuzzySearchEnabled);
@@ -1755,9 +1786,16 @@ function bindPopupEvents($container) {
     });
 
     // Load icon.svg as inline SVG so currentColor works with themes.
+    // Fills BOTH the About mascot and the header-strip brand mark.
     fetch(new URL('../../icon.svg', import.meta.url).href)
         .then(r => r.ok ? r.text() : '')
-        .then(svg => { const el = $c('#dle-sp-mascot')[0]; if (el && svg) el.innerHTML = svg; })
+        .then(svg => {
+            if (!svg) return;
+            const mascot = $c('#dle-sp-mascot')[0];
+            if (mascot) mascot.innerHTML = svg;
+            const brand = $c('#dle-sp-brand-logo')[0];
+            if (brand) brand.innerHTML = svg;
+        })
         .catch(() => {});
 
     // Easter egg — companion character cards.
@@ -1863,18 +1901,6 @@ function bindPopupEvents($container) {
         const mode = $(this).val();
         settings.aiSearchEnabled = mode !== 'keywords-only';
         settings.aiSearchMode = mode === 'ai-only' ? 'ai-only' : 'two-stage';
-        $c('#dle-sp-ai-search-mode-mirror').val(mode);
-        saveSettingsDebounced();
-        updatePopupModeVisibility($container, settings);
-        _syncingSearchMode = false;
-    });
-    $c('#dle-sp-ai-search-mode-mirror').on('change', function () {
-        if (_syncingSearchMode) return;
-        _syncingSearchMode = true;
-        const mode = $(this).val();
-        settings.aiSearchEnabled = mode !== 'keywords-only';
-        settings.aiSearchMode = mode === 'ai-only' ? 'ai-only' : 'two-stage';
-        $c('#dle-sp-search-mode').val(mode);
         saveSettingsDebounced();
         updatePopupModeVisibility($container, settings);
         _syncingSearchMode = false;
@@ -1944,22 +1970,18 @@ function bindPopupEvents($container) {
     $c('#dle-sp-template').on('input', function () { settings.injectionTemplate = String($(this).val()); saveSettingsDebounced(); });
     $c('#dle-sp-allow-wi-scan').on('change', function () { settings.allowWIScan = $(this).prop('checked'); saveSettingsDebounced(); });
 
-    // BUG-320: cross-tab links with optional sub-tab switch + target scroll/highlight.
+    // BUG-320: cross-tab links with target scroll/highlight. Old two-tier
+    // data-goto-tab/data-goto-subtab pairs resolve through the alias map.
+    // Nav fns come from the dleNav bridge — this runs in bindPopupEvents scope.
     $container.on('click', '.dle-goto-tab-link', function (e) {
         e.preventDefault();
-        const targetTab = $(this).data('goto-tab');
-        const targetSubtab = $(this).data('goto-subtab');
+        const nav = $container.data('dleNav');
+        if (!nav) return;
+        const token = nav.resolveTabToken($(this).data('goto-tab'), $(this).data('goto-subtab'));
         const targetId = $(this).data('goto-target');
 
-        const $targetTab = $container.find(`[data-settings-tab="${targetTab}"]`);
-        if ($targetTab.length) switchSettingsTab($targetTab);
-
-        if (targetSubtab) {
-            const $featuresSub = $container.find(`.dle-features-subtab[data-features-subtab="${targetSubtab}"]`);
-            if ($featuresSub.length) switchFeaturesSubtab($featuresSub);
-            const $connSub = $container.find(`.dle-connection-subtab[data-connection-subtab="${targetSubtab}"]`);
-            if ($connSub.length) switchConnectionSubtab($connSub);
-        }
+        const $targetTab = $container.find(`.dle-settings-tab[data-settings-tab="${token}"]`);
+        if ($targetTab.length) nav.switchSettingsTab($targetTab);
 
         if (targetId) {
             requestAnimationFrame(() => {
@@ -2031,10 +2053,9 @@ function bindPopupEvents($container) {
             if (config.mode === 'profile' && !config.profileId) {
                 toastr.warning('Librarian needs an AI connection profile. Opening settings...', 'DeepLore', { timeOut: 6000 });
                 requestAnimationFrame(() => {
-                    const $tab = $container.find('[data-settings-tab="connection"]');
-                    if ($tab.length) switchSettingsTab($tab);
-                    const $sub = $container.find('.dle-connection-subtab[data-connection-subtab="ai-connections"]');
-                    if ($sub.length) switchConnectionSubtab($sub);
+                    const nav = $container.data('dleNav');
+                    const $tab = $container.find('.dle-settings-tab[data-settings-tab="ai-connections"]');
+                    if ($tab.length && nav) nav.switchSettingsTab($tab);
                     requestAnimationFrame(() => {
                         const el = $container.find('[data-tool-key="librarian"]')[0];
                         if (el) {

@@ -805,7 +805,8 @@ async function _maybeShowProxyDeprecationNotice() {
             const { openSettingsPopup } = await import('./src/ui/settings-ui.js');
             const toolKey = PROXY_MIG_TOOL_KEY[firstKey];
             // openSettingsPopup honors { tab, subtab, toolKey } — see settings-ui.js applyNavigateTo.
-            await openSettingsPopup({ tab: 'connection', subtab: 'ai-connections', toolKey });
+            // (Old two-tier tokens still resolve via the TAB_ALIAS map there.)
+            await openSettingsPopup({ tab: 'ai-connections', toolKey });
 
             // Pulse-glow the first migrated feature's accordion. Defer so the
             // popup's DOM has time to mount, then schedule removal so we never

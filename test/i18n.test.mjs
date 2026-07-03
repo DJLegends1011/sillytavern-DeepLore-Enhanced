@@ -444,7 +444,9 @@ for (const loc of TRANSLATION_LOCALES) {
         assert(data.__meta.canonical === false, 'meta canonical=false (translated)');
         assert(data.__meta.machine_translated === true, 'meta machine_translated=true');
         const keys = Object.keys(data).filter(k => k !== '__meta');
-        assertEqual(keys.length, 2574, `${loc} key count matches canonical (2574)`);
+        // 2592 = 2574 (v2.6) + 18 settings-overhaul shell keys (nav groups,
+        // search box, panel subtitles, header strip).
+        assertEqual(keys.length, 2592, `${loc} key count matches canonical (2592)`);
     });
 }
 
