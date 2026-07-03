@@ -10,97 +10,34 @@ All notable changes to DeepLore are documented here. This file follows
 
 ## [2.6.0] - Unreleased
 
-> A focused interface release: a deep UI/UX polish pass on every surface, a round of bug-fixes for the regressions that polish introduced, and a structural rework of the graph legend, setup wizard, Librarian Flags list, Browse rows, import recovery, and the pipeline toast. No pipeline-behavior changes — this is about making what DLE already does legible, accessible, and calm. The broader settings-popup redesign (information architecture, Reference tab, design-system) was intentionally held back for a dedicated settings overhaul.
+> An interface release: a deep UI/UX polish pass across every surface, Issue #39 fixed (clearable vault cache + overlay drawer on phones), and a batch of long-standing bug fixes from a release-readiness audit. No pipeline-behavior changes. The broader settings-popup redesign is held for a dedicated overhaul.
 
 ### Added
 
-#### Graph view
-
-- **Single docked legend panel** — the two former graph legends (edge-type toggles and the node color key) are merged into ONE panel anchored top-left over the canvas. The color key used to live in the bottom node-info bar and got overwritten the moment you hovered a node; it now stays put while you explore, refreshing only when you change color mode. The whole graph view is localized across all 7 locales (the ST-free pure render/analysis/dag/health modules localize through runtime helper functions injected by `graph.js` rather than importing the i18n layer, so the Node test suites still run).
-
-#### Setup Wizard
-
-- **Welcome is now a decision-fork** — instead of a wall of prose, the first page offers three choice cards for the three lowest-friction first paths: load the demo vault, connect Obsidian, or import a lorebook. Picking one routes you straight to the relevant step.
-- **Vault scanner wired in and localized** — the connection-scan helper is now reachable from the wizard and fully translated.
-- **Skip / resume** — closing the wizard before finishing now persists a skip sentinel and stops it auto-relaunching every load; an explicit "Finish later" affordance pauses it on purpose, and a manual relaunch resumes on the step you left. Completing it clears the sentinel so a future re-run starts clean.
-- **Accessibility** — advancing a step moves keyboard focus to the now-active step and announces "Step N of M: <title>" through a polite live region for screen-reader users.
-
-#### Librarian (drawer)
-
-- **Contextual bulk-action bar** — the Flags list's selection controls (the bare ×/Invert buttons plus the separate, usually-disabled action row) collapse into one bar that reveals Open / Done / Remove alongside Invert / Clear only when something is selected. The legacy action row is retired (force-hidden) but kept in the DOM for back-compat, and the `d` / `Delete` keyboard shortcuts are now scoped to the visible bar so they can't double-fire against the hidden buttons.
-- **Gap rows gain an expand chevron and a one-line "Reason" teaser** — a preview of why the gap was flagged shows collapsed; the full reason and meta still render on expand.
-
-#### Import
-
-- **Recovery table for failed/skipped entries** — the flat error list after a World-Info import is replaced by a per-entry reconciliation table that classifies each failure (transient / capacity / convert / vault / unknown), shows whether a retry is worth attempting, and offers per-entry Retry plus Retry-all.
-
-#### Vault cache (Issue #39)
-
-- **`/dle-clear` and a Clear Cache button that actually clears** — clearing the vault cache is now wipe-and-stop: it empties the IndexedDB cache AND the live in-memory index (Browse visibly empties, derived search/graph state resets) without re-fetching, so an intentionally emptied Obsidian vault finally stays empty. The old button only cleared IndexedDB — the live index survived and the next rebuild quietly resurrected and re-cached every entry. The transient-blip safety net (a vault that momentarily returns 0 files still keeps its prior entries) is unchanged; clearing is the deliberate override for it. Run `/dle-refresh` afterwards to re-index. While an index build is running the clear refuses with a "wait for it to finish" toast. If the browser blocks the database wipe, the clear reports it honestly — error toast with retry guidance, the live index stays cleared — instead of toasting success; and a clear can no longer be silently undone by an in-flight cache save or boot hydration racing it. Also scrubbed the phantom `/dle-force-refresh` and `/dle-rebuild` commands from error toasts and settings copy — only `/dle-refresh` was ever registered.
-
-#### Pipeline status
-
-- **Elapsed-time heartbeat and Cancel on the "Consulting vault…" toast** — during the indeterminate AI phases (selection, Librarian search/flag) the toast now ticks a `(Ns)` elapsed counter and shows a Cancel button that aborts the in-flight generation through the canonical Stop path (`GENERATION_STOPPED`), so a slow model run never feels stuck. Determinate fast runs stay uncluttered.
-
-#### Toasts
-
-- **Unified `notify` toast facade** — `src/toast-dedup.js` now exports `notify` (with `notify.info/success/warning/error` helpers) that standardizes severity routing, shares the legacy 10s dedup window, and supports click-to-copy error bodies and action buttons. Adoption is partial by design: the first tranche routed the high-value `classifyError` and vault/import/AI failure sites through it; transient info/success toasts stay raw. See `docs/gotchas.md` #92.
-
-#### Onboarding & empty states
-
-- **Decision-aware Browse / Injection empty states** — pre-setup empty states show a full connect/keyword/setup guide with "Open Setup Wizard" and "Import from World Info" buttons (the slash command is demoted to a hint); a vault that's connected-but-idle gets a calm one-liner with a jump-to-Browse link instead of being told to "connect a vault."
-- **Expand-all / collapse-all toggle** for Browse folder grouping, and unit-aware folder count chips ("N entries" / "X / Y selected") that echo the tri-state checkbox.
+- **`/dle-clear`** — clearing the vault cache now wipes the IndexedDB cache AND the live index (wipe-and-stop; run `/dle-refresh` to re-index), so an intentionally emptied vault finally stays empty. The Clear Cache button does the same; failures report honestly instead of toasting success. Phantom `/dle-force-refresh` / `/dle-rebuild` references replaced with real commands. (Issue #39)
+- **Graph** — the two legends merged into one docked panel that survives node hover; the whole view localized.
+- **Setup wizard** — welcome page is a three-card decision fork (demo vault / connect Obsidian / import lorebook); skip/resume without auto-relaunch nagging; keyboard focus + screen-reader announcements on step change; vault scanner wired in.
+- **Librarian** — contextual bulk-action bar for the Flags list; gap rows get an expand chevron and a one-line "Reason" teaser.
+- **Import** — per-entry recovery table for failed/skipped entries with classified failure types and Retry / Retry-all.
+- **Pipeline toast** — elapsed-time counter and a Cancel button during the AI phases.
+- **Toasts** — unified `notify` facade (severity routing, dedup, click-to-copy errors) on the high-value error sites.
+- **Onboarding** — decision-aware Browse/Injection empty states; expand/collapse-all for Browse folder grouping with count chips.
 
 ### Changed
 
-- **Footer health icons reframed as a clickable "diagnostics dock"** — the five icons (vault / connection / pipeline / cache / AI) are now a labeled dock; framing only, the click handlers are unchanged.
-- **Browse per-row actions fold into a hover-reveal kebab** — pin / block / copy now live behind a `⋮` menu so rows read calm by default; status readouts stay visible and pin/block-active rows force the cluster open. The kebab toggles a class on the live DOM node only and never mutates the render-derived row model (gotcha #13).
-- **Drawer overlay/full-width mode is now a dual trigger** — it engages on a genuinely narrow viewport (`window.innerWidth`) in addition to the existing wide-chat-width trigger, so phones finally get the overlay drawer. This is the drawer-overlay half of Issue #39; the settings-popup mobile-scroll half is deferred. See `docs/gotchas.md` #93.
-- **Cartographer "Why?" (injected-sources) modal fully localized** — strings, rejection-group labels, and the AI-notes section now translate; remaining inline styles moved to theme tokens.
-- **Reference tab and `/dle` command palette localized** — every command description and section header now carries a translatable key (with the English text as the byte-identical fallback), and the stale static Reference grid was deleted in favor of the single `DLE_COMMANDS` render path.
-- **`/dle-lint` popup, index-build warning toast, and lint fix-it hints localized and styled** — lint codes route through their locale keys, the build-summary toast surfaces skipped/warning counts with a click-through to `/dle-lint`, and fix-it hints render real inline-code instead of literal backticks.
-
-#### Interface, motion & accessibility
-
-- **The whole interface moved onto DLE's motion + type tokens** — ~55 transitions migrated from raw durations to the fast/base/slow duration tokens with the signature easing curves (previously defined but unused), half-finished hover transitions (color snapping while opacity glided) completed, and the chat-injected Librarian widget's parallel `mainFontSize` type scale folded into the shared em scale. A deliberate monospace contract (`--dle-font-mono`) now governs every code/command/token surface.
-- **Reduced-motion is now honored properly, not faked** — empty states animate in and out via `@starting-style` instead of snapping; infinite "attention" animations are fully DISABLED under `prefers-reduced-motion` (they were previously clamped to near-zero, which flashed); and where an element genuinely needs to signal "still working," a consistent slow stepped opacity pulse stands in for the motion that can't run. The goo-spinner itself stops its physics loop and freezes to a settled gel under reduced motion, and live-updates when you toggle the OS preference.
-- **Touch and pointer hardening** — `(pointer: coarse)` lifts tap targets to the 44px minimum, modal min-heights clamp to the viewport so footers stay reachable on short/landscape phones, the drawer contains over-scroll instead of chaining into the chat behind it, and the tab bar becomes a single-row horizontal scroller on narrow widths.
-- **Theming and contrast** — a unified high-contrast `--dle-focus` ring token, contrast-safe `-fg` foreground variants split from fill colors, a shared `--dle-cat-*` category palette so graph tooltip badges stay distinct, theme-relative temperature (COLD/HOT) tints that adapt to light themes, accent-themed range sliders and checkboxes, and an end to double-dimmed muted text.
-- **Number inputs clamp to their min/max on commit** — typed out-of-range values are corrected on blur (with a brief flash) instead of persisting silently; bounded numeric fields no longer stretch full-width, and gated controls dim their whole row, not just the box.
-- **Iconography unified** — one canonical refresh glyph (`fa-arrows-rotate`, `fa-sync` retired), `fa-diagram-project` reserved for Graph only, every decorative icon hidden from screen readers, and the three retired Wave-I mascot SVGs moved out of the shipped `assets/`.
-- **Pipeline status toast rebalanced** — trimmed back from its oversized Wave-I styling, separated from the chat background in light themes (was always lightening), given a branded accent bar, and the health badges promoted from tiny corner glyphs to legible status chips.
-- **Drawer status row decoupled** — long localized phase strings now ellipsize instead of shoving the stats around mid-generation; idle vs. active reads from a stopped/desaturated dot and muted label rather than a barely-perceptible spinner-speed difference; and cold-start stats show content-shaped skeletons instead of a dim "…".
+- Footer health icons became a clickable diagnostics dock; Browse per-row actions fold into a hover-reveal `⋮` kebab.
+- Drawer overlay mode now also triggers on narrow viewports, so phones get the overlay drawer (the other half of Issue #39; the settings popup itself stays desktop-first for now).
+- Localized: Cartographer "Why?" modal, Reference tab + `/dle` palette, `/dle-lint` popup and the index-build warning toast (which now links to `/dle-lint`).
+- Interface, motion & accessibility: the whole UI moved onto DLE's motion/type tokens; reduced-motion honored properly (infinite animations disabled, spinner freezes); 44px touch targets and over-scroll containment; unified focus ring and contrast-safe colors; number inputs clamp on commit; iconography unified; pipeline toast and drawer status row rebalanced.
 
 ### Fixed
 
-This release's polish pass introduced a handful of regressions, all caught by a follow-up adversarial bug-hunt (25 confirmed findings, 3 refuted) and fixed before merge:
-
-- **Pipeline toast could be yanked away mid-generation** (TOAST-1, high) — the immediate-removal path armed an unconditional 500ms fallback `remove()` with no stored handle; if a new generation resurrected the same toast node inside that window, the stale timer removed the now-live toast. The fallback timer is now stored and cleared on resurrection (and a leaked `animationend` listener on the same path was closed).
-- **Circuit-breaker "back online" toast lost on 6 of 7 recovery paths** (STATE-R1-01 / SYNC-AI-1) — only the AI-search site announced recovery, but any background feature (scribe, summarize, auto-suggest, Librarian, commands) could win the half-open probe and silently consume the surfaced flag. Recovery now announces from a caller-agnostic circuit-state observer, so it fires once per degrade→recover cycle regardless of which feature recovered.
-- **Graph gravity setting silently corrupted on edit** (SUI-1) — the new number-clamp snapped typed values to a `min`-based step grid, rewriting the documented default `11.0` to `11.1` on blur. Step-snapping was removed from the clamp entirely; it now only clamps to min/max (the browser spinner already honors `step`).
-- **Rule Builder clobbered a divergent context key on the first name keystroke** (RB-MANUAL-DESYNC-1) — a custom field whose context key was deliberately unlinked from its name re-opened looking linked, so editing the name overwrote the saved gating key. The link state is now computed from `contextKey === name` on load and the "manual" flag is initialized for divergent rows.
-- **Two CSS regressions on real themes** — the Browse "cold" temperature tint scaled backwards (coldest entries got the faintest cue; now scaled by coldness with a visible floor), and the Librarian count badge forced white text on a raw theme-color fill that could be unreadable on light themes.
-- **goo-spinner stopped responding to live OS reduced-motion toggles after re-parenting** (GOO-1) — `disconnectedCallback` removed the `matchMedia` listener but left the handler reference truthy, so the reconnect guard never re-registered against the fresh media-query object. The handler reference is now nulled on disconnect.
-- **Capture-phase graph Escape handler swallowed context-menu Escape in focus mode** (graph-esc-1) — pressing Esc to dismiss an open node context menu also destroyed the entire focus tree; the handler now bails when the menu is open.
-- **Smaller R1-introduced fixes** — first pipeline phase label flashed English under non-English locales (one-time), idle goo-spinner divided by zero on its ring rotation and kept a perpetual rAF loop running, the cold-waiting status label left a stale aria-label, `/dle-analytics` showed raw `vaultSource:title` tracker keys in the Entry column, the surfaced flag could be set when a trip toast was suppressed, and several pieces of dead code (orphan `data-stat="tokens"` write, unreachable `gap-search` activity branches, `.dle-skeleton-mode` / `--dle-temp-hue` dead CSS) were cleaned up.
-- **Drawer phase progression now announced to screen readers** (html-1) — removing the nested live regions left phase changes silent; the renderer announces each phase transition through the dedicated polite live region, matching what its own comment promised.
-- **Multi-vault collision in the Browse expand handler** — the click-to-expand path resolved entries by bare title, colliding across vaults; it now uses the same `trackerKey = vaultSource:title` resolver as the renderer (gotcha #50).
-
-A release-readiness audit also fixed a batch of long-standing bugs:
-
-- **The shareable diagnostics report no longer leaks private lore** — health-check issues (entry titles, keywords, vault names, Librarian queries), probability-skipped entries, and vault names/hosts from settings are now pseudonymized with the same `<title-N>`/`<vault-N>` aliases as the pipeline trace — and Librarian session stats are no longer over-redacted into a fabricated "0 searches, 0 flags".
-- **Lore entries skipped by a probability roll during fuzzy (BM25) matching are now visible in `/dle-why`** and the Why? tab instead of vanishing silently; recursion-matched entries blocked by warmup are reported too. All four match paths now share one runtime-gate helper, so the diagnostics can't drift apart again.
-- **Entries restored from a corrupted cache no longer outrank freshly parsed entries** — the cache backfill now uses the same priority default (100) as the parser.
-- **A single corrupt value inside a cached entry's keys/tags/links no longer silently disables vault cache hydration for the whole vault** — bad elements are repaired or dropped during validation.
-- **Drawer tabs (Why?, Browse) and the footer activity feed no longer render blank** after the drawer is torn down and re-created (e.g. extension reload).
-- **The status spinner now fully stops when idle** — the outer ring kept animating invisibly in the background, wasting CPU/GPU while parked.
-- **A literal `</entry>` inside an entry summary or title can no longer break out of the AI selection manifest** and inject instructions into the lore-selection prompt (applies to both the AI search manifest and the Librarian's related-entries listing).
-- **Multi-vault conflict resolution (`first`/`last`/`merge`) no longer silently deletes same-titled entries that live in the *same* vault** — resolution now applies across vaults only.
-- **The import recovery table no longer guesses why an entry failed** — each failed entry now carries its real failure type straight from the importer (connection, name clash, bad data, write failed) instead of keyword-matching the error text, so a network hiccup whose message happened to contain words like "attempts exceeded" can no longer show up as a "name clash" with the wrong retry advice. Retry also re-imports the original entries directly, so it works even for rows whose filenames couldn't be reconstructed.
+- All 25 confirmed regressions from the polish pass, caught by an adversarial bug-hunt before merge — highlights: undismissable/yanked pipeline toasts, the circuit-breaker "back online" toast lost on most recovery paths, graph-gravity values corrupted on edit, Rule Builder clobbering divergent context keys, the frozen drawer activity spinner, missing screen-reader phase announcements, and a multi-vault collision in Browse expand.
+- From the release-readiness audit: the shareable diagnostics report no longer leaks private lore (titles, keywords, vault names, hosts — all pseudonymized) or fabricates "0 searches, 0 flags"; probability-skipped BM25 entries show up in `/dle-why`; corrupt-cache entries can no longer outrank fresh parses or silently disable cache hydration; drawer tabs no longer render blank after a teardown; the idle spinner fully stops; a literal `</entry>` in a summary can't break out of the AI selection manifest; same-vault duplicate titles survive multi-vault conflict resolution; and import failures carry their real failure type instead of a keyword-sniffed guess.
 
 ### i18n
 
-- **191 new UI strings** added across the polish and structural passes, and **all 7 locales brought to full key parity** (the machine-translated locales were re-synced from the canonical English; `__meta.total_keys` corrected from its stale value). Several orphan locale keys removed uniformly across all 7 files to preserve key-set parity. Final count for this release: **2,574 keys × 7 locales** (the `/dle-clear` additions included).
+- ~190 new UI strings; all 7 locales at full key parity — **2,574 keys × 7 locales**.
 
 ---
 
