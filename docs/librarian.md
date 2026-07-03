@@ -377,6 +377,22 @@ After migration, if `librarianEnabled && librarianShowToolCalls`, iterates all m
 
 ---
 
+## 8. Drawer Librarian-tab UI (Flags list, v2.6)
+
+**File:** `src/drawer/drawer-render-librarian.js`, `src/drawer/drawer-events.js`, `drawer.html`.
+
+### Contextual bulk-action bar
+
+The Flags-list selection model now lives in ONE contextual bulk-action bar: `.dle-librarian-select-all-bar`, which gains `dle-has-selection` while any row is selected (toggled by the renderer: `$selectAllBar.toggleClass('dle-has-selection', hasSelection)`). The bulk actions — Open / Done / Remove plus Invert / Clear — are static markup inside it (`.dle-librarian-bulk-actions`). The standalone `.dle-librarian-action-row` is **retired** (force-`hidden` by render) but kept in the DOM for back-compat; its handlers still delegate so old call sites don't break.
+
+**Keyboard shortcuts are scoped to the visible bulk bar (f041).** The `d` (mark done) and `Delete`/`Backspace` (remove) shortcuts in `drawer-events.js` target `.dle-librarian-bulk-actions .dle-librarian-action[data-librarian-action="…"]` specifically — NOT the hidden legacy `.dle-librarian-action-row` buttons. Without this scoping both the bulk button and the hidden legacy button fire, which double-triggers the two-click remove confirm (the second click lands on the already-confirming legacy button and silently cancels or skips the guard). Both shortcuts also gate on `_isSafeShortcutTarget(document.activeElement)` so they don't fire while typing in an input.
+
+### Gap rows: chevron + Reason teaser
+
+Gap rows gained a chevron column (`.dle-gap-chevron`) and a one-line "Reason" teaser (`.dle-gap-reason-teaser`) shown collapsed. The FULL reason (plus meta) still renders in `.dle-gap-detail` on expand — the teaser is a preview that doesn't force an expand.
+
+---
+
 ## Cross-Cutting Concerns
 
 ### Gap persistence: `persistGaps(updatedGaps)`

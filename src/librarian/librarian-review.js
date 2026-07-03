@@ -5,14 +5,15 @@
 import { callGenericPopup, POPUP_TYPE, POPUP_RESULT } from '../../../../../popup.js';
 import { escapeHtml } from '../../../../../utils.js';
 import { yamlEscape, classifyError } from '../../core/utils.js';
-import { stripObsidianSyntax, sanitizeFilename } from '../helpers.js';
-import { writeNote } from '../vault/obsidian-api.js';
+import { stripObsidianSyntax, sanitizeFilename, mergePreservingExtraFrontmatter } from '../helpers.js';
+import { writeNote, readNote } from '../vault/obsidian-api.js';
 import { getSettings, resolveWriteVault } from '../../settings.js';
 import { getContext } from '../../../../../extensions.js';
 import { accountStorage } from '../../../../../util/AccountStorage.js';
 import { chatEpoch } from '../state.js';
 import { buildIndex } from '../vault/vault.js';
 import { tr, trf } from '../i18n/i18n.js';
+import { notify } from '../toast-dedup.js';
 import { createSession, sendMessage, editMessage, regenerateResponse, updateGapStatus, saveSessionState, loadSessionState, clearSessionState, restoreSession, pickFlavorIntro } from './librarian-session.js';
 import { getSessionActivityLog, buildLibrarianActivityFeed } from './librarian-tools.js';
 import { abortWith } from '../diagnostics/interceptors.js';
@@ -1224,7 +1225,21 @@ async function writeToVault(session, opts = {}) {
         const fileClassLine = typeStr !== 'story' ? `fileClass: ${yamlEscape(typeStr)}\n` : '';
         frontmatterBlock = `---\n${fileClassLine}type: ${yamlEscape(typeStr)}\nstatus: active\npriority: ${draft.priority ?? 50}\ntags:\n${tagsYaml}\nkeys:\n${keysYaml}\nsummary: "${(draft.summary || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n')}"\n---`;
     }
-    const fileContent = `${frontmatterBlock}\n# ${draft.title}\n\n${safeContent}`;
+    let fileContent = `${frontmatterBlock}\n# ${draft.title}\n\n${safeContent}`;
+
+    // #10 (DATA LOSS): when overwriting an existing entry, preserve any
+    // frontmatter the editor doesn't model (cooldown/requires/excludes/era/
+    // position/probability/refine_keys + arbitrary Obsidian metadata). Emma
+    // seeds the draft with only ~6 fields via get_full_content, so a plain
+    // write would silently strip everything else off disk. Read the current
+    // file and re-append its extra top-level keys verbatim. A 404 (new entry)
+    // or any read failure falls through to the plain write — never blocks.
+    try {
+        const existing = await readNote(vault.host, vault.port, vault.apiKey, filename, !!vault.https);
+        if (existing.ok && typeof existing.content === 'string') {
+            fileContent = mergePreservingExtraFrontmatter(fileContent, existing.content);
+        }
+    } catch { /* read failure → write draft as-is */ }
 
     // Confirm preview — nested dialog stacked over the Librarian popup.
     const lineCount = fileContent.split('\n').length;
@@ -1302,7 +1317,7 @@ async function writeToVault(session, opts = {}) {
             return false;
         }
     } catch (err) {
-        toastr.error(classifyError(err), 'DeepLore');
+        notify.error(classifyError(err), { copyable: true });
         setStatus('Write failed.', 'err');
         return false;
     }

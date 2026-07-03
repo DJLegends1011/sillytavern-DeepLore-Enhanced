@@ -23,6 +23,7 @@ import { extractAiResponseClient, buildObsidianURI, STAGE_COLORS, normalizePinBl
 import { diagnoseEntry } from './diagnostics.js';
 import { computeEntryTemperatures } from '../drawer/drawer-state.js';
 import { tr, trf } from '../i18n/i18n.js';
+import { notify } from '../toast-dedup.js';
 
 /**
  * Serialize a value for YAML frontmatter.
@@ -798,7 +799,7 @@ export async function showOptimizePopup(entry, result) {
                 toastr.error(tr('dle_toast_keywords_save_failed'), 'DeepLore');
             }
         } catch (err) {
-            toastr.error(classifyError(err), 'DeepLore');
+            notify.error(classifyError(err), { copyable: true });
         }
     }
 }

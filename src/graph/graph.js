@@ -9,7 +9,7 @@ import { vaultIndex, chatInjectionCounts, trackerKey, mentionWeights, fieldDefin
 import { DEFAULT_FIELD_DEFINITIONS } from '../fields.js';
 import { ensureIndexFresh } from '../vault/vault.js';
 import { saveSettingsDebounced } from '../../../../../../script.js';
-import { trf } from '../i18n/i18n.js';
+import { tr, trf, trPlural } from '../i18n/i18n.js';
 
 import { initPhysics } from './graph-physics.js';
 import { initRender } from './graph-render.js';
@@ -217,198 +217,208 @@ export async function showGraphPopup() {
     const topConnected = [...edgeCountByNode.entries()]
         .sort((a, b) => b[1] - a[1])
         .slice(0, 5)
-        .map(([idx, count]) => `${escapeHtml(nodes[idx].title)} (${count} connections)`);
+        .map(([idx, count]) => `${escapeHtml(nodes[idx].title)} ${escapeHtml(trf('dle_graph_sr_connections_count', count))}`);
 
     const circularNames = circularPairs.map(key => {
         const [a, b] = key.split(',').map(Number);
         return `${escapeHtml(nodes[a].title)} &lt;-&gt; ${escapeHtml(nodes[b].title)}`;
     });
 
-    let summaryHtml = `<p><strong>Totals:</strong> ${nodes.length} nodes, ${edges.length} edges</p>`;
-    summaryHtml += `<p><strong>By type:</strong> ${typeCounts.regular} regular, ${typeCounts.constant} constant, ${typeCounts.seed} seed, ${typeCounts.bootstrap} bootstrap</p>`;
+    let summaryHtml = `<p><strong>${escapeHtml(tr('dle_graph_sr_totals'))}</strong> ${escapeHtml(trf('dle_graph_sr_totals_value', nodes.length, edges.length))}</p>`;
+    summaryHtml += `<p><strong>${escapeHtml(tr('dle_graph_sr_by_type'))}</strong> ${escapeHtml(trf('dle_graph_sr_by_type_value', typeCounts.regular, typeCounts.constant, typeCounts.seed, typeCounts.bootstrap))}</p>`;
     if (topConnected.length > 0) {
-        summaryHtml += `<p><strong>Most connected:</strong></p><ul>${topConnected.map(t => `<li>${t}</li>`).join('')}</ul>`;
+        summaryHtml += `<p><strong>${escapeHtml(tr('dle_graph_sr_most_connected'))}</strong></p><ul>${topConnected.map(t => `<li>${t}</li>`).join('')}</ul>`;
     }
     if (circularNames.length > 0) {
-        summaryHtml += `<p><strong>Circular requires:</strong></p><ul>${circularNames.map(t => `<li>${t}</li>`).join('')}</ul>`;
+        summaryHtml += `<p><strong>${escapeHtml(tr('dle_graph_sr_circular'))}</strong></p><ul>${circularNames.map(t => `<li>${t}</li>`).join('')}</ul>`;
     } else {
-        summaryHtml += `<p>No circular requires detected.</p>`;
+        summaryHtml += `<p>${escapeHtml(tr('dle_graph_sr_no_circular'))}</p>`;
     }
 
     // ─── Popup DOM ───
     const container = document.createElement('div');
     container.classList.add('dle-popup', 'dle-graph-popup');
     const circularWarning = circularPairs.length > 0
-        ? `<p class="dle-error dle-text-sm">⚠ ${circularPairs.length} circular require pair(s) detected</p>`
+        ? `<p class="dle-error dle-text-sm">${escapeHtml(trf('dle_graph_warning_circular', circularPairs.length))}</p>`
         : '';
 
     const tagOptions = tagList.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)} (${tagCounts.get(t) || 0})</option>`).join('');
 
     container.innerHTML = `
-        <h3 class="dle-graph-title">Entry Relationship Graph (${nodes.length} nodes, ${edges.length} edges)</h3>
+        <h3 class="dle-graph-title">${escapeHtml(trf('dle_graph_title', nodes.length, edges.length))}</h3>
         ${circularWarning}
         <div class="dle-graph-toolbar">
             <div class="dle-graph-search-wrap">
-                <input type="text" id="dle-graph-search" class="text_pole dle-graph-toolbar-input" placeholder="Search entries..." />
-                <button type="button" id="dle-graph-search-clear" class="dle-graph-search-clear" title="Clear search" style="display:none;"><i class="fa-solid fa-xmark"></i></button>
+                <input type="text" id="dle-graph-search" class="text_pole dle-graph-toolbar-input" placeholder="Search entries..." data-i18n="[placeholder]dle_graph_placeholder_search" />
+                <button type="button" id="dle-graph-search-clear" class="dle-graph-search-clear" title="Clear search" data-i18n="[title]dle_graph_search_clear_title" style="display:none;"><i class="fa-solid fa-xmark"></i></button>
             </div>
             <select id="dle-graph-type-filter" class="text_pole dle-graph-toolbar-select">
-                <option value="">All Types</option>
-                <option value="regular">Regular</option>
-                <option value="constant">Constant</option>
-                <option value="seed">Seed</option>
-                <option value="bootstrap">Bootstrap</option>
+                <option value="" data-i18n="dle_graph_filter_all_types">All Types</option>
+                <option value="regular" data-i18n="dle_graph_filter_type_regular">Regular</option>
+                <option value="constant" data-i18n="dle_graph_filter_type_constant">Constant</option>
+                <option value="seed" data-i18n="dle_graph_filter_type_seed">Seed</option>
+                <option value="bootstrap" data-i18n="dle_graph_filter_type_bootstrap">Bootstrap</option>
             </select>
             <select id="dle-graph-tag-filter" class="text_pole dle-graph-toolbar-select">
-                <option value="">All Tags</option>
+                <option value="" data-i18n="dle_graph_filter_all_tags">All Tags</option>
                 ${tagOptions}
             </select>
             <span class="dle-graph-toolbar-sep"></span>
-            <select id="dle-graph-layout-mode" class="text_pole dle-graph-toolbar-select" title="Layout mode — Force (physics) or Layered DAG (requires/cascade dependency tree)">
-                <option value="force">Layout: Force</option>
-                <option value="dag">Layout: Layered DAG</option>
+            <select id="dle-graph-layout-mode" class="text_pole dle-graph-toolbar-select" title="Layout mode — Force (physics) or Layered DAG (requires/cascade dependency tree)" data-i18n="[title]dle_graph_layout_mode_title">
+                <option value="force" data-i18n="dle_graph_layout_mode_force">Layout: Force</option>
+                <option value="dag" data-i18n="dle_graph_layout_mode_dag">Layout: Layered DAG</option>
             </select>
             <span class="dle-graph-toolbar-sep"></span>
-            <select id="dle-graph-color-mode" class="text_pole dle-graph-toolbar-select" title="Node color mode">
-                <option value="type">Color: Type</option>
-                <option value="priority">Color: Priority</option>
-                <option value="centrality">Color: Connections</option>
-                <option value="frequency">Color: Frequency</option>
-                <option value="community">Color: Community</option>
+            <select id="dle-graph-color-mode" class="text_pole dle-graph-toolbar-select" title="Node color mode" data-i18n="[title]dle_graph_color_mode_tooltip">
+                <option value="type" data-i18n="dle_graph_color_mode_type_label">Color: Type</option>
+                <option value="priority" data-i18n="dle_graph_color_mode_priority_label">Color: Priority</option>
+                <option value="centrality" data-i18n="dle_graph_color_mode_centrality_label">Color: Connections</option>
+                <option value="frequency" data-i18n="dle_graph_color_mode_frequency_label">Color: Frequency</option>
+                <option value="community" data-i18n="dle_graph_color_mode_community_label">Color: Community</option>
                 ${(() => {
                     const fds = (fieldDefinitions.length > 0 ? fieldDefinitions : DEFAULT_FIELD_DEFINITIONS).filter(fd => fd.gating?.enabled);
                     if (fds.length === 0) return '';
-                    return `<optgroup label="Custom Fields">${fds.map(fd => `<option value="field:${fd.name}">${fd.label}</option>`).join('')}</optgroup>`;
+                    return `<optgroup label="${escapeHtml(tr('dle_graph_color_custom_fields'))}">${fds.map(fd => `<option value="field:${escapeHtml(fd.name)}">${escapeHtml(fd.label)}</option>`).join('')}</optgroup>`;
                 })()}
             </select>
             <span class="dle-graph-toolbar-sep"></span>
-            <button type="button" id="dle-graph-settings-btn" class="menu_button dle-graph-toolbar-btn" title="Graph settings"><i class="fa-solid fa-gear"></i></button>
+            <button type="button" id="dle-graph-settings-btn" class="menu_button dle-graph-toolbar-btn" title="Graph settings" data-i18n="[title]dle_graph_settings_title"><i class="fa-solid fa-gear"></i></button>
         </div>
         <div class="dle-graph-toolbar dle-gap-1 dle-graph-toolbar--secondary">
-            <button type="button" id="dle-graph-back" class="menu_button dle-graph-toolbar-btn-wide dle-hidden dle-graph-back-btn" title="Exit Focus Tree (Esc)">← Back</button>
-            <button type="button" id="dle-graph-hop-minus" class="menu_button dle-graph-toolbar-btn-wide dle-hidden dle-graph-hop-btn" title="Decrease hop depth">−</button>
+            <button type="button" id="dle-graph-back" class="menu_button dle-graph-toolbar-btn-wide dle-hidden dle-graph-back-btn dle-graph-back-btn--accent" title="Exit Focus Tree (Esc or e)" data-i18n="[title]dle_graph_button_exit_focus_title"><span class="dle-graph-back-label" data-i18n="dle_graph_button_back">← Back</span> <span class="dle-graph-back-caption" data-i18n="dle_graph_back_caption">Esc or e</span></button>
+            <button type="button" id="dle-graph-hop-minus" class="menu_button dle-graph-toolbar-btn-wide dle-hidden dle-graph-hop-btn" title="Decrease hop depth" data-i18n="[title]dle_graph_button_hop_decrease">−</button>
             <span id="dle-graph-depth-display" class="dle-graph-depth-display dle-hidden"></span>
-            <button type="button" id="dle-graph-hop-plus" class="menu_button dle-graph-toolbar-btn-wide dle-hidden dle-graph-hop-btn" title="Increase hop depth">+</button>
-            <button type="button" id="dle-graph-fit" class="menu_button dle-graph-toolbar-btn" title="Fit to view (0)">Fit</button>
-            <button type="button" id="dle-graph-unpin-all" class="menu_button dle-graph-toolbar-btn-wide" title="Unpin all nodes">Unpin All</button>
-            <button type="button" id="dle-graph-reset" class="menu_button dle-graph-toolbar-btn" title="Reset simulation — re-randomize positions and restart physics">Reset</button>
+            <button type="button" id="dle-graph-hop-plus" class="menu_button dle-graph-toolbar-btn-wide dle-hidden dle-graph-hop-btn" title="Increase hop depth" data-i18n="[title]dle_graph_button_hop_increase">+</button>
+            <button type="button" id="dle-graph-fit" class="menu_button dle-graph-toolbar-btn" title="Fit to view (0)" data-i18n="[title]dle_graph_button_fit_title;dle_graph_button_fit">Fit</button>
+            <button type="button" id="dle-graph-unpin-all" class="menu_button dle-graph-toolbar-btn-wide" title="Unpin all nodes" data-i18n="[title]dle_graph_button_unpin_all_title;dle_graph_button_unpin_all">Unpin All</button>
+            <button type="button" id="dle-graph-reset" class="menu_button dle-graph-toolbar-btn" title="Reset simulation — re-randomize positions and restart physics" data-i18n="[title]dle_graph_button_reset_title;dle_graph_button_reset">Reset</button>
             <span class="dle-graph-toolbar-sep"></span>
-            <button type="button" id="dle-graph-export-png" class="menu_button dle-graph-toolbar-btn" title="Export as PNG">PNG</button>
-            <button type="button" id="dle-graph-export-json" class="menu_button dle-graph-toolbar-btn" title="Export as JSON">JSON</button>
+            <button type="button" id="dle-graph-export-png" class="menu_button dle-graph-toolbar-btn" title="Export as PNG" data-i18n="[title]dle_graph_button_png_title;dle_graph_button_png">PNG</button>
+            <button type="button" id="dle-graph-export-json" class="menu_button dle-graph-toolbar-btn" title="Export as JSON" data-i18n="[title]dle_graph_button_json_title;dle_graph_button_json">JSON</button>
             <span class="dle-graph-toolbar-sep"></span>
-            <button type="button" id="dle-graph-analyze" class="menu_button dle-graph-toolbar-btn" title="Find gaps in your vault — highlights orphans, weak bridges, and missing connections"><i class="fa-solid fa-magnifying-glass-chart"></i> Find Gaps</button>
-            <button type="button" id="dle-graph-health" class="menu_button dle-graph-toolbar-btn" title="Vault Health — surface broken refs, orphans, contradictory gating, and budget hogs"><i class="fa-solid fa-stethoscope"></i> Health</button>
-        </div>
-        <div class="dle-graph-legend" id="dle-graph-legend">
-            <span class="dle-graph-legend-item" data-edge-type="link" role="button" tabindex="0" aria-label="Toggle link edges"><span style="color: #aac8ff;">—</span> Link</span>
-            <span class="dle-graph-legend-item" data-edge-type="requires" role="button" tabindex="0" aria-label="Toggle requires edges"><span class="dle-success">—</span> Requires</span>
-            <span class="dle-graph-legend-item" data-edge-type="excludes" role="button" tabindex="0" aria-label="Toggle excludes edges"><span class="dle-error">—</span> Excludes</span>
-            <span class="dle-graph-legend-item" data-edge-type="cascade" role="button" tabindex="0" aria-label="Toggle cascade edges"><span class="dle-warning">—</span> Cascade</span>
+            <button type="button" id="dle-graph-analyze" class="menu_button dle-graph-toolbar-btn" title="Find gaps in your vault — highlights orphans, weak bridges, and missing connections" data-i18n="[title]dle_graph_button_analyze_title"><i class="fa-solid fa-magnifying-glass-chart"></i> <span data-i18n="dle_graph_button_analyze">Find Gaps</span></button>
+            <button type="button" id="dle-graph-health" class="menu_button dle-graph-toolbar-btn" title="Vault Health — surface broken refs, orphans, contradictory gating, and budget hogs" data-i18n="[title]dle_graph_button_health_title"><i class="fa-solid fa-stethoscope"></i> <span data-i18n="dle_graph_button_health">Health</span></button>
         </div>
         <div class="dle-graph-canvas-wrap">
-            <canvas id="dle-graph-canvas" class="dle-graph-canvas" tabindex="-1" width="900" height="550" aria-label="Force-directed graph showing ${nodes.length} vault entries and ${edges.length} relationships between them."></canvas>
+            <canvas id="dle-graph-canvas" class="dle-graph-canvas" tabindex="-1" width="900" height="550" aria-label="${escapeHtml(trf('dle_graph_aria_label', nodes.length, edges.length))}"></canvas>
+            <div class="dle-graph-legend-panel" id="dle-graph-legend" role="group" aria-label="${escapeHtml(tr('dle_graph_legend_panel_aria'))}">
+                <div class="dle-graph-legend-panel-heading" data-i18n="dle_graph_legend_panel_heading">Legend</div>
+                <div class="dle-graph-legend-section dle-graph-legend-section--edges">
+                    <div class="dle-graph-legend-section-label" data-i18n="dle_graph_legend_section_edges">Edge types (click to toggle)</div>
+                    <div class="dle-graph-legend-edges">
+                        <span class="dle-graph-legend-item" data-edge-type="link" role="button" tabindex="0" aria-label="Toggle link edges" data-i18n="[aria-label]dle_graph_legend_toggle_link_aria"><span class="dle-graph-legend-dash" style="color: #aac8ff;">—</span> <span data-i18n="dle_graph_legend_link">Link</span></span>
+                        <span class="dle-graph-legend-item" data-edge-type="requires" role="button" tabindex="0" aria-label="Toggle requires edges" data-i18n="[aria-label]dle_graph_legend_toggle_requires_aria"><span class="dle-graph-legend-dash dle-success">—</span> <span data-i18n="dle_graph_legend_requires">Requires</span></span>
+                        <span class="dle-graph-legend-item" data-edge-type="excludes" role="button" tabindex="0" aria-label="Toggle excludes edges" data-i18n="[aria-label]dle_graph_legend_toggle_excludes_aria"><span class="dle-graph-legend-dash dle-error">—</span> <span data-i18n="dle_graph_legend_excludes">Excludes</span></span>
+                        <span class="dle-graph-legend-item" data-edge-type="cascade" role="button" tabindex="0" aria-label="Toggle cascade edges" data-i18n="[aria-label]dle_graph_legend_toggle_cascade_aria"><span class="dle-graph-legend-dash dle-warning">—</span> <span data-i18n="dle_graph_legend_cascade">Cascade</span></span>
+                    </div>
+                </div>
+                <div class="dle-graph-legend-section dle-graph-legend-section--color">
+                    <div class="dle-graph-legend-section-label" data-i18n="dle_graph_legend_section_color">Node color key</div>
+                    <div class="dle-graph-legend-color" id="dle-graph-color-legend"></div>
+                </div>
+            </div>
             <div id="dle-graph-tooltip" class="dle-graph-tooltip"></div>
             <div id="dle-graph-context-menu" class="dle-graph-context-menu dle-hidden"></div>
             <div class="dle-graph-detail-panel" style="display:none;"></div>
             <div id="dle-graph-settings-panel" class="dle-graph-settings-panel dle-hidden">
                 <div class="dle-graph-settings-titlebar" id="dle-graph-settings-titlebar">
-                    <span><i class="fa-solid fa-gear"></i> Graph Settings</span>
-                    <span class="dle-graph-settings-close" id="dle-graph-settings-panel-close" role="button" tabindex="0" aria-label="Close graph settings">&times;</span>
+                    <span><i class="fa-solid fa-gear"></i> <span data-i18n="dle_graph_settings_header">Graph Settings</span></span>
+                    <span class="dle-graph-settings-close" id="dle-graph-settings-panel-close" role="button" tabindex="0" aria-label="Close graph settings" data-i18n="[aria-label]dle_graph_settings_close_aria">&times;</span>
                 </div>
                 <div class="dle-graph-settings-body">
                     <div class="dle-graph-settings-row dle-gap-1">
-                        <button type="button" class="menu_button dle-gs-preset" data-preset="compact" title="Dense cluster — high damping, tight repulsion. Good for 200+ entry vaults.">Compact</button>
-                        <button type="button" class="menu_button dle-gs-preset" data-preset="balanced" title="General-purpose layout for most vaults.">Balanced</button>
-                        <button type="button" class="menu_button dle-gs-preset" data-preset="spacious" title="Loose spread — easier to read individual nodes.">Spacious</button>
-                        <button type="button" class="menu_button dle-gs-preset" data-preset="ginormous" title="Maximum spread — best for very large displays.">Ginormous</button>
+                        <button type="button" class="menu_button dle-gs-preset" data-preset="compact" title="Dense cluster — high damping, tight repulsion. Good for 200+ entry vaults." data-i18n="[title]dle_graph_preset_compact_title;dle_graph_preset_compact">Compact</button>
+                        <button type="button" class="menu_button dle-gs-preset" data-preset="balanced" title="General-purpose layout for most vaults." data-i18n="[title]dle_graph_preset_balanced_title;dle_graph_preset_balanced">Balanced</button>
+                        <button type="button" class="menu_button dle-gs-preset" data-preset="spacious" title="Loose spread — easier to read individual nodes." data-i18n="[title]dle_graph_preset_spacious_title;dle_graph_preset_spacious">Spacious</button>
+                        <button type="button" class="menu_button dle-gs-preset" data-preset="ginormous" title="Maximum spread — best for very large displays." data-i18n="[title]dle_graph_preset_ginormous_title;dle_graph_preset_ginormous">Ginormous</button>
                     </div>
                     <div class="dle-graph-settings-sep"></div>
-                    <div class="dle-graph-settings-section-label">Display</div>
+                    <div class="dle-graph-settings-section-label" data-i18n="dle_graph_settings_section_display">Display</div>
                     <div class="dle-graph-settings-row">
-                        <label>Color By</label>
+                        <label data-i18n="dle_graph_settings_color_by">Color By</label>
                         <select id="dle-gs-color-mode" class="text_pole dle-gs-compact-select">
-                            <option value="type">Type</option>
-                            <option value="priority">Priority</option>
-                            <option value="centrality">Connections</option>
-                            <option value="frequency">Frequency</option>
-                            <option value="community">Community</option>
+                            <option value="type" data-i18n="dle_graph_color_mode_type">Type</option>
+                            <option value="priority" data-i18n="dle_graph_color_mode_priority">Priority</option>
+                            <option value="centrality" data-i18n="dle_graph_color_mode_connections">Connections</option>
+                            <option value="frequency" data-i18n="dle_graph_color_mode_frequency">Frequency</option>
+                            <option value="community" data-i18n="dle_graph_color_mode_community">Community</option>
                             ${(() => {
                                 const fds = (fieldDefinitions.length > 0 ? fieldDefinitions : DEFAULT_FIELD_DEFINITIONS).filter(fd => fd.gating?.enabled);
                                 if (fds.length === 0) return '';
-                                return `<optgroup label="Fields">${fds.map(fd => `<option value="field:${fd.name}">${fd.label}</option>`).join('')}</optgroup>`;
+                                return `<optgroup label="${escapeHtml(tr('dle_graph_settings_fields_group'))}">${fds.map(fd => `<option value="field:${escapeHtml(fd.name)}">${escapeHtml(fd.label)}</option>`).join('')}</optgroup>`;
                             })()}
                         </select>
                     </div>
                     <div class="dle-graph-settings-row">
-                        <label title="How node radius is computed">Node Size</label>
+                        <label title="How node radius is computed" data-i18n="[title]dle_graph_settings_node_size_title;dle_graph_settings_node_size">Node Size</label>
                         <select id="dle-gs-node-size-mode" class="text_pole dle-gs-compact-select">
-                            <option value="centrality">Centrality</option>
-                            <option value="priority">Priority</option>
-                            <option value="uniform">Uniform</option>
+                            <option value="centrality" data-i18n="dle_graph_node_size_centrality">Centrality</option>
+                            <option value="priority" data-i18n="dle_graph_node_size_priority">Priority</option>
+                            <option value="uniform" data-i18n="dle_graph_node_size_uniform">Uniform</option>
                         </select>
                     </div>
                     <div class="dle-graph-settings-row">
-                        <label>Show Labels</label>
+                        <label data-i18n="dle_graph_settings_show_labels">Show Labels</label>
                         <input type="checkbox" id="dle-gs-labels" />
                     </div>
                     <div class="dle-graph-settings-sep"></div>
-                    <div class="dle-graph-settings-section-label">Hover</div>
+                    <div class="dle-graph-settings-section-label" data-i18n="dle_graph_settings_section_hover">Hover</div>
                     <div class="dle-graph-settings-row">
-                        <label title="How many connection hops from the hovered node remain visible">Reach</label>
+                        <span class="dle-gs-label-stack"><label title="How many connection hops from the hovered node remain visible" data-i18n="[title]dle_graph_settings_reach_title;dle_graph_settings_reach">Reach</label><small class="dle-gs-caption" data-i18n="dle_graph_settings_reach_caption">hops lit on hover</small></span>
                         <input type="range" id="dle-gs-hover-dim" min="-100" max="100" step="1" />
                         <span class="dle-gs-value" id="dle-gs-hover-dim-val"></span>
                     </div>
                     <div class="dle-graph-settings-row">
-                        <label title="Exponential alpha falloff per hop — higher = sharper drop">Falloff</label>
+                        <span class="dle-gs-label-stack"><label title="Exponential alpha falloff per hop — higher = sharper drop" data-i18n="[title]dle_graph_settings_falloff_title;dle_graph_settings_falloff">Falloff</label><small class="dle-gs-caption" data-i18n="dle_graph_settings_falloff_caption">fade speed per hop</small></span>
                         <input type="range" id="dle-gs-hover-falloff" min="-100" max="100" step="1" />
                         <span class="dle-gs-value" id="dle-gs-hover-falloff-val"></span>
                     </div>
                     <div class="dle-graph-settings-sep"></div>
-                    <div class="dle-graph-settings-section-label">Focus Mode</div>
+                    <div class="dle-graph-settings-section-label" data-i18n="dle_graph_settings_section_focus">Focus Mode</div>
                     <div class="dle-graph-settings-row">
-                        <label title="Hops shown in Focus Tree mode — also adjustable with +/− while in focus mode">Tree Depth</label>
+                        <span class="dle-gs-label-stack"><label title="Hops shown in Focus Tree mode — also adjustable with +/− while in focus mode" data-i18n="[title]dle_graph_settings_tree_depth_title;dle_graph_settings_tree_depth">Tree Depth</label><small class="dle-gs-caption" data-i18n="dle_graph_settings_tree_depth_caption">hops shown in focus</small></span>
                         <input type="range" id="dle-gs-tree-depth" min="-100" max="100" step="1" />
                         <span class="dle-gs-value" id="dle-gs-tree-depth-val"></span>
                     </div>
                     <div class="dle-graph-settings-sep"></div>
-                    <div class="dle-graph-settings-section-label">Edge Filtering</div>
+                    <div class="dle-graph-settings-section-label" data-i18n="dle_graph_settings_section_edges">Edge Filtering</div>
                     <div class="dle-graph-settings-row">
-                        <label title="Statistical significance threshold — lower hides weak connections">Pruning</label>
+                        <span class="dle-gs-label-stack"><label title="Statistical significance threshold — lower hides weak connections" data-i18n="[title]dle_graph_settings_pruning_title;dle_graph_settings_pruning">Pruning</label><small class="dle-gs-caption" data-i18n="dle_graph_settings_pruning_caption">hide weak links</small></span>
                         <input type="range" id="dle-gs-edge-filter" min="-100" max="100" step="1" />
                         <span class="dle-gs-value" id="dle-gs-edge-filter-val"></span>
                         <small id="dle-gs-edge-count" class="dle-dimmed dle-gs-edge-count"></small>
                     </div>
                     <div class="dle-graph-settings-sep"></div>
                     <details class="dle-graph-settings-advanced">
-                        <summary>Advanced Physics</summary>
+                        <summary data-i18n="dle_graph_settings_advanced">Advanced Physics</summary>
                         <div class="dle-graph-settings-row">
-                            <label title="Push force between unconnected nodes">Repulsion</label>
+                            <label title="Push force between unconnected nodes" data-i18n="[title]dle_graph_settings_repulsion_title;dle_graph_settings_repulsion">Repulsion</label>
                             <input type="range" id="dle-gs-repulsion" min="-100" max="100" step="1" />
                             <span class="dle-gs-value" id="dle-gs-repulsion-val"></span>
                         </div>
                         <div class="dle-graph-settings-row">
-                            <label title="Pull toward canvas center">Gravity</label>
+                            <label title="Pull toward canvas center" data-i18n="[title]dle_graph_settings_gravity_title;dle_graph_settings_gravity">Gravity</label>
                             <input type="range" id="dle-gs-gravity" min="-100" max="100" step="1" />
                             <span class="dle-gs-value" id="dle-gs-gravity-val"></span>
                         </div>
                         <div class="dle-graph-settings-row">
-                            <label title="Friction — higher = settle faster">Damping</label>
+                            <label title="Friction — higher = settle faster" data-i18n="[title]dle_graph_settings_damping_title;dle_graph_settings_damping">Damping</label>
                             <input type="range" id="dle-gs-damping" min="-100" max="100" step="1" />
                             <span class="dle-gs-value" id="dle-gs-damping-val"></span>
                         </div>
                     </details>
                     <div class="dle-graph-settings-sep"></div>
                     <div class="dle-graph-settings-row dle-gap-1">
-                        <button type="button" id="dle-gs-redraw" class="menu_button dle-gs-compact-btn" title="Clear saved positions and replay the BFS rollout animation">Redraw</button>
-                        <button type="button" id="dle-gs-reset" class="menu_button dle-gs-compact-btn">Reset to Defaults</button>
+                        <button type="button" id="dle-gs-redraw" class="menu_button dle-gs-compact-btn" title="Clear saved positions and replay the BFS rollout animation" data-i18n="[title]dle_graph_button_redraw_title;dle_graph_button_redraw">Redraw</button>
+                        <button type="button" id="dle-gs-reset" class="menu_button dle-gs-compact-btn" data-i18n="dle_graph_button_reset_defaults">Reset to Defaults</button>
                     </div>
                 </div>
             </div>
         </div>
         <div class="dle-graph-footer">
-            <small id="dle-graph-hints" class="dle-dimmed">Drag to move · Right-click for menu · Scroll to zoom · Click+drag to pan · Double-click to focus · 0 to fit · E to exit focus · Backspace to close</small>
+            <small id="dle-graph-hints" class="dle-dimmed" data-i18n="dle_graph_hints_normal">Drag to move · Right-click for menu · Scroll to zoom · Click+drag to pan · Double-click to focus · 0 to fit</small>
             <details class="dle-text-sm dle-graph-sr-details">
-                <summary class="dle-graph-sr-summary">Screen reader summary</summary>
+                <summary class="dle-graph-sr-summary" data-i18n="dle_graph_sr_summary">Screen reader summary</summary>
                 <div class="dle-graph-sr-content">${summaryHtml}</div>
             </details>
         </div>
@@ -761,7 +771,7 @@ export async function showGraphPopup() {
         releaseStabilizeFrames: 0, // G6: extra damping frames post drag-release
         layoutSaved: restoredLayout,
         restoredLayout,
-        layoutNotice: restoredLayout ? '' : 'Laying out entries\u2026',
+        layoutNotice: restoredLayout ? '' : tr('dle_graph_layout_laying_out'),
         simulationStartTime: restoredLayout ? 0 : Date.now(), // for 90s hard clamp
         onSettleComplete: null,
         // BUG-352: restored layouts start at alpha=0 / hasSpringEnergy=false so physics doesn't
@@ -802,6 +812,13 @@ export async function showGraphPopup() {
         gapAnalysis: null,
         gapAnalysisActive: false,
         healthActive: false, healthFlagged: null,
+        // Runtime localizers injected so the ST-free pure modules (graph-health/dag/analysis,
+        // which tests import directly) can localize their UI strings WITHOUT importing i18n.js
+        // (that would pull ST's script.js into the headless test import chain). Each falls back to
+        // the English literal the caller passes when running headless (gs._t absent in tests).
+        _t: (key, fallback) => tr(key, fallback),
+        _tf: (key, ...args) => trf(key, ...args),
+        _tp: (key, count, ...args) => trPlural(key, count, ...args),
     };
 
     // gs.buildAdjacency wraps the closure so degree-derived state stays consistent on every rebuild.
@@ -892,7 +909,7 @@ export async function showGraphPopup() {
         gs.layoutSaved = false;
         gs.panX = gs.W / 2; gs.panY = gs.H / 2; gs.zoom = 1;
         gs.needsDraw = true;
-        gs.layoutNotice = 'Laying out entries\u2026';
+        gs.layoutNotice = tr('dle_graph_layout_laying_out');
         if (gs.updateTooltip) gs.updateTooltip();
         if (layoutTimerInterval) { clearInterval(layoutTimerInterval); layoutTimerInterval = null; }
         if (!layoutOverlay && canvas.parentNode) {
@@ -900,7 +917,7 @@ export async function showGraphPopup() {
             layoutOverlay.className = 'dle-graph-layout-overlay';
             layoutOverlay.innerHTML = `<div class="dle-graph-layout-overlay-text">
                 <goo-spinner size="52" color="currentColor" aria-hidden="true"></goo-spinner>
-                <span class="dle-graph-layout-overlay-msg">Laying out entries\u2026 0s</span>
+                <span class="dle-graph-layout-overlay-msg">${escapeHtml(trf('dle_graph_layout_laying_out_elapsed', 0))}</span>
             </div>`;
             canvas.parentNode.appendChild(layoutOverlay);
         }
@@ -909,7 +926,7 @@ export async function showGraphPopup() {
             const msgEl = layoutOverlay?.querySelector('.dle-graph-layout-overlay-msg');
             if (msgEl) {
                 const elapsed = Math.round((Date.now() - replayStart) / 1000);
-                msgEl.textContent = `Laying out entries\u2026 ${elapsed}s`;
+                msgEl.textContent = trf('dle_graph_layout_laying_out_elapsed', elapsed);
             }
         }, 1000);
         // Auto-fit at 1s/2s/6s after replay starts so the user doesn't wait through full settle.
@@ -1010,7 +1027,7 @@ export async function showGraphPopup() {
         layoutOverlay.className = 'dle-graph-layout-overlay';
         layoutOverlay.innerHTML = `<div class="dle-graph-layout-overlay-text">
             <goo-spinner size="52" color="currentColor" aria-hidden="true"></goo-spinner>
-            <span class="dle-graph-layout-overlay-msg">Laying out entries\u2026 0s</span>
+            <span class="dle-graph-layout-overlay-msg">${escapeHtml(trf('dle_graph_layout_laying_out_elapsed', 0))}</span>
         </div>`;
         canvas.parentNode.style.position = 'relative'; // anchor for absolutely-positioned overlay.
         canvas.parentNode.appendChild(layoutOverlay);
@@ -1020,7 +1037,7 @@ export async function showGraphPopup() {
             const msgEl = layoutOverlay?.querySelector('.dle-graph-layout-overlay-msg');
             if (msgEl) {
                 const elapsed = Math.round((Date.now() - layoutStart) / 1000);
-                msgEl.textContent = `Laying out entries\u2026 ${elapsed}s`;
+                msgEl.textContent = trf('dle_graph_layout_laying_out_elapsed', elapsed);
             }
         }, 1000);
     }
@@ -1033,7 +1050,10 @@ export async function showGraphPopup() {
             layoutOverlay = null;
         }
         gs.settlingUntil = 0;
-        gs.layoutNotice = '\u2713 Layout saved';
+        // Localized display text; a stable boolean (_layoutNoticeSaved) drives the equality
+        // check below so the 4s auto-clear doesn't break when the notice text is translated.
+        gs.layoutNotice = tr('dle_graph_layout_saved');
+        gs._layoutNoticeSaved = true;
         if (gs.updateTooltip) gs.updateTooltip();
         requestAnimationFrame(() => {
             const el = gs.tooltipEl?.querySelector('.dle-graph-layout-notice');
@@ -1044,8 +1064,9 @@ export async function showGraphPopup() {
         if (!gs._fitTimers) gs._fitTimers = [];
         gs._fitTimers.push(setTimeout(() => {
             if (!gs.isRunning) return;
-            if (gs.layoutNotice === '\u2713 Layout saved') {
+            if (gs._layoutNoticeSaved) {
                 gs.layoutNotice = '';
+                gs._layoutNoticeSaved = false;
                 if (gs.updateTooltip) gs.updateTooltip();
             }
         }, 4000));

@@ -1,5 +1,6 @@
 import { invalidateSettingsCache } from '../../settings.js';
 import { saveSettingsDebounced } from '../../../../../../script.js';
+import { trf } from '../i18n/i18n.js';
 
 /**
  * Settings panel wiring + normalized slider mapping (-100..+100 → setting-specific range).
@@ -72,7 +73,7 @@ export function initGraphSettings(gs, dbg) {
     function updateEdgeCount() {
         const el = document.getElementById('dle-gs-edge-count');
         if (el && gs._backboneCount != null) {
-            el.textContent = `Backbone: ${gs._backboneCount} / ${gs.edges.length} edges`;
+            el.textContent = trf('dle_graph_settings_backbone_count', gs._backboneCount, gs.edges.length);
         }
     }
 
@@ -144,8 +145,17 @@ export function initGraphSettings(gs, dbg) {
             document.addEventListener('mousemove', (e) => {
                 if (!dragPanelActive) return;
                 const dx = e.clientX - dpStartX, dy = e.clientY - dpStartY;
-                settingsPanel.style.left = `${dpOriginX + dx}px`;
-                settingsPanel.style.top = `${dpOriginY + dy}px`;
+                // Clamp so the titlebar stays within the canvas-wrap rect — the panel can never
+                // be dragged fully off-canvas into an unrecoverable state (f056).
+                const parentRect = settingsPanel.parentElement.getBoundingClientRect();
+                const panelW = settingsPanel.offsetWidth, panelH = settingsPanel.offsetHeight;
+                const minVisible = 48; // keep at least this much of the panel reachable on each axis
+                const maxLeft = parentRect.width - minVisible;
+                const maxTop = parentRect.height - minVisible;
+                const newLeft = Math.min(maxLeft, Math.max(minVisible - panelW, dpOriginX + dx));
+                const newTop = Math.min(maxTop, Math.max(0, dpOriginY + dy));
+                settingsPanel.style.left = `${newLeft}px`;
+                settingsPanel.style.top = `${newTop}px`;
                 settingsPanel.style.right = 'auto';
             }, lOpt);
             document.addEventListener('mouseup', () => { dragPanelActive = false; }, lOpt);
@@ -158,6 +168,7 @@ export function initGraphSettings(gs, dbg) {
                 updateSetting('graphDefaultColorMode', gs.colorMode);
                 if (colorModeEl) colorModeEl.value = gs.colorMode;
                 gs.updateTooltip();
+                if (gs.updateColorLegend) gs.updateColorLegend();
             }, lOpt);
         }
 
@@ -235,6 +246,7 @@ export function initGraphSettings(gs, dbg) {
                 gs.alpha = Math.max(gs.alpha, 0.5);
                 if (gs.recomputeBackbone) gs.recomputeBackbone(0.05);
                 syncSettingsPanel();
+                if (gs.updateColorLegend) gs.updateColorLegend();
                 dbg('Settings reset to defaults');
             }, lOpt);
         }

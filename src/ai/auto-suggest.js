@@ -19,6 +19,7 @@ import { getWriterVisibleEntries, chatEpoch, tryAcquireHalfOpenProbe, recordAiSu
 import { ensureIndexFresh, buildIndex } from '../vault/vault.js';
 import { pushEvent } from '../diagnostics/interceptors.js';
 import { tr, trf } from '../i18n/i18n.js';
+import { notify } from '../toast-dedup.js';
 import { resolvePromptOrOverride } from '../prompts/prompt-store.js';
 
 // Auto-Suggest default prompt moved to src/i18n/prompts/en.js as
@@ -380,7 +381,7 @@ ${safeContent}`;
                             toastr.error(tr('dle_suggest_toast_write_fail_single'), 'DeepLore');
                         }
                     } catch (err) {
-                        toastr.error(classifyError(err), 'DeepLore');
+                        notify.error(classifyError(err), { copyable: true });
                         this.disabled = false;
                     }
                 });

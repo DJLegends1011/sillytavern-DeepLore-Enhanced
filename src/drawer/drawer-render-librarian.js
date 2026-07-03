@@ -9,6 +9,7 @@ import { loreGaps } from '../state.js';
 import { getSettings } from '../../settings.js';
 import { getHiddenGapIds, getDismissedGapIds, buildLibrarianActivityFeed } from '../librarian/librarian-tools.js';
 import { ds, isDrawerVisible } from './drawer-state.js';
+import { tr, trPlural } from '../i18n/i18n.js';
 
 // ════════════════════════════════════════════════════════════════════════════
 // Helpers
@@ -99,7 +100,7 @@ export function renderLibrarianTab() {
         if (feed.length === 0) {
             $list.empty();
             const $text = $empty.find('.dle-librarian-empty-text');
-            $text.text('No tool activity recorded yet. Activity appears when Librarian searches the vault or flags gaps during a reply. Requires tool-calling model.');
+            $text.text(tr('dle_librarian_empty_activity'));
             $empty.find('.dle-librarian-empty-actions').css('display', '');
             $empty.addClass('dle-visible');
             $toolbarBottom.css('display', 'none');
@@ -111,24 +112,22 @@ export function renderLibrarianTab() {
 
         let html = '';
         for (const item of feed) {
-            const icon = item.kind === 'tool-search' || item.kind === 'gap-search'
+            const icon = item.kind === 'tool-search'
                 ? '<i class="fa-solid fa-magnifying-glass" aria-hidden="true" title="Search"></i>'
                 : '<i class="fa-solid fa-flag" aria-hidden="true" title="Flag"></i>';
             const isSearch = item.type === 'search';
             const hasResults = isSearch && (item.resultTitles && item.resultTitles.length > 0);
-            const metaText = item.kind === 'gap-search'
-                ? 'no results'
-                : item.kind === 'gap-flag'
-                    ? `${item.urgency || 'medium'}${item.frequency > 1 ? `, flagged ${item.frequency} times` : item.frequency === 1 ? ', flagged once' : ''}`
-                    : isSearch
-                        ? `${item.resultCount} result${item.resultCount !== 1 ? 's' : ''}`
-                        : (item.urgency || '');
+            const metaText = item.kind === 'gap-flag'
+                ? `${item.urgency || 'medium'}${item.frequency > 1 ? `, flagged ${item.frequency} times` : item.frequency === 1 ? ', flagged once' : ''}`
+                : isSearch
+                    ? `${item.resultCount} result${item.resultCount !== 1 ? 's' : ''}`
+                    : (item.urgency || '');
             const metaHtml = hasResults
                 ? `<button type="button" class="dle-activity-meta dle-activity-results-link dle-text-xs" data-results="${escapeHtml(JSON.stringify(item.resultTitles))}" data-query="${escapeHtml(item.query)}" title="Show context returned to writing AI">${escapeHtml(metaText)}</button>`
                 : `<span class="dle-activity-meta dle-text-xs dle-muted">${escapeHtml(metaText)}</span>`;
             html += `<div class="dle-librarian-activity-row" role="listitem">`
                 + `<span class="dle-activity-icon">${icon}</span>`
-                + `<span class="dle-activity-query">${escapeHtml(item.query)}</span>`
+                + `<span class="dle-activity-query" title="${escapeHtml(item.query)}">${escapeHtml(item.query)}</span>`
                 + metaHtml
                 + `<span class="dle-activity-time dle-text-xs dle-muted">${relativeTime(item.ts)}</span>`
                 + `</div>`;
@@ -164,10 +163,10 @@ export function renderLibrarianTab() {
         const $text = $empty.find('.dle-librarian-empty-text');
         const $emptyActions = $empty.find('.dle-librarian-empty-actions');
         if (!enabled) {
-            $text.text('Librarian is disabled. Enable it in Settings \u2192 Features \u2192 Librarian.');
+            $text.text(tr('dle_librarian_disabled_text'));
             $emptyActions.css('display', 'none');
         } else {
-            $text.text('No flagged issues yet. The AI will flag missing or stale lore during replies. Requires a tool-calling capable model.');
+            $text.text(tr('dle_librarian_empty_flags'));
             $emptyActions.css('display', '');
         }
         // Defensive: drop stale hint paragraphs from earlier renders (pre-fix duplication bug).
@@ -180,7 +179,8 @@ export function renderLibrarianTab() {
     $empty.removeClass('dle-visible');
     $toolbarBottom.css('display', '');
     $selectAllBar.show();
-    $actionRow.show();
+    // f041: legacy standalone action row retired — actions moved into the bulk bar.
+    $actionRow.hide();
 
     let html = '';
     for (const gap of gaps) {
@@ -195,23 +195,41 @@ export function renderLibrarianTab() {
         const time = relativeTime(gap.timestamp);
         const isSelected = ds.librarianSelected.has(gap.id);
         const selClass = isSelected ? 'dle-gap-selected' : '';
+        // f042: a one-line reason teaser so the row carries WHY it was flagged without
+        // forcing an expand. Full reason (+ meta) still lives in the expanded .dle-gap-detail.
+        const reasonRaw = (gap.reason || '').trim();
+        const reasonTeaser = reasonRaw ? escapeHtml(reasonRaw.replace(/\s+/g, ' ')) : '';
 
         html += `<div class="dle-librarian-entry ${tintClass} ${subtypeClass} ${selClass}" style="--dle-gap:${score.toFixed(2)}" `
             + `data-gap-id="${escapeHtml(gap.id)}" data-subtype="${escapeHtml(gap.subtype || 'gap')}" ${entryTitleAttr} `
             + `data-urgency="${escapeHtml(gap.urgency || 'medium')}" role="listitem" `
             + `aria-expanded="false" aria-label="${title}, ${statusInfo.label}" tabindex="0">`;
-        html += `<input type="checkbox" class="dle-gap-check" ${isSelected ? 'checked' : ''} aria-label="Select ${title}" tabindex="-1">`;
+        html += `<input type="checkbox" class="dle-gap-check" ${isSelected ? 'checked' : ''} aria-label="${escapeHtml(tr('dle_select_all_aria'))}: ${title}" tabindex="-1">`;
         // Update-type flags use a pen icon; plain gaps use the status icon.
         if (isUpdate) {
-            html += `<span class="dle-gap-status dle-gap-update-icon" title="Entry needs updating" aria-label="Update needed"><i class="fa-solid fa-pen-to-square" aria-hidden="true"></i></span>`;
+            html += `<span class="dle-gap-status dle-gap-update-icon" title="${escapeHtml(tr('dle_gap_update_needed'))}" aria-label="${escapeHtml(tr('dle_gap_update_needed'))}"><i class="fa-solid fa-pen-to-square" aria-hidden="true"></i></span>`;
         } else {
             html += `<span class="dle-gap-status ${statusInfo.cls}" title="${statusInfo.label}" aria-label="${statusInfo.label}">${statusInfo.icon}</span>`;
         }
+        // f042: title + update-target chip + inline reason teaser all stack in the main column
+        // so the gap is self-describing at a glance. Single grid column → the grid stays a
+        // simple 5-column single-row layout (check/status · main · time · chevron).
+        html += `<span class="dle-gap-main">`;
+        html += `<span class="dle-gap-title-row">`;
         html += `<span class="dle-gap-title">${title}</span>`;
         if (isUpdate && gap.entryTitle) {
             html += `<span class="dle-gap-entry-title dle-text-xs dle-muted">${escapeHtml(gap.entryTitle)}</span>`;
         }
+        html += `</span>`;
+        if (reasonTeaser) {
+            html += `<span class="dle-gap-reason-teaser dle-text-xs dle-muted">${reasonTeaser}</span>`;
+        }
+        html += `</span>`;
         html += `<span class="dle-gap-time dle-text-xs dle-muted">${time}</span>`;
+        // f042: explicit chevron affordance — the row was already click-to-expand, but the
+        // gesture was undiscoverable. The chevron rotates via the row's aria-expanded state
+        // (CSS), and is aria-hidden because the row itself owns the expand semantics.
+        html += `<span class="dle-gap-chevron" aria-hidden="true"><i class="fa-solid fa-chevron-right"></i></span>`;
         html += `</div>`;
     }
 
@@ -229,18 +247,27 @@ export function renderLibrarianTab() {
 
     const selCount = ds.librarianSelected.size;
     const allSelected = selCount > 0 && gaps.every(g => ds.librarianSelected.has(g.id));
-    $selectAllBar.find('.dle-librarian-select-all').prop('checked', allSelected);
-    $selectAllBar.find('.dle-librarian-select-count').text(selCount > 0 ? `${selCount} item${selCount === 1 ? '' : 's'} selected` : '');
-    if (!$selectAllBar.find('.dle-librarian-clear-btn').length) {
-        $selectAllBar.append('<button class="dle-librarian-clear-btn" type="button" aria-label="Clear selection">×</button><button class="dle-librarian-invert-btn" type="button" aria-label="Invert selection">Invert</button>');
-    }
-
-    // Action buttons act on the selection only; disabled when empty.
     const hasSelection = selCount > 0;
     const hasSingleSelection = selCount === 1;
-    $actionRow.find('[data-librarian-action="open"]').prop('disabled', !hasSingleSelection).attr('aria-disabled', !hasSingleSelection ? 'true' : null);
-    $actionRow.find('[data-librarian-action="done"]').prop('disabled', !hasSelection);
-    $actionRow.find('[data-librarian-action="remove"]').prop('disabled', !hasSelection);
+
+    // f041: the bar is the single contextual bulk-action surface. The select-all
+    // checkbox + count are always present; the count switches from a passive hint to
+    // a live "N selected" readout and the action cluster (Open/Done/Remove + Clear/Invert)
+    // toggles in only when rows are picked. The static action row below the list is
+    // retired (kept hidden in markup for back-compat) — actions live in the bar now.
+    $selectAllBar.find('.dle-librarian-select-all').prop('checked', allSelected);
+    $selectAllBar.toggleClass('dle-has-selection', hasSelection);
+    const $count = $selectAllBar.find('.dle-librarian-select-count');
+    $count.text(hasSelection ? trPlural('dle_librarian_n_selected', selCount) : tr('dle_librarian_select_hint'));
+
+    // Action buttons live inside the bar's contextual cluster; disabled when empty.
+    // Handlers are delegated (drawer-events.js), so position is immaterial.
+    $selectAllBar.find('[data-librarian-action="open"]').prop('disabled', !hasSingleSelection).attr('aria-disabled', !hasSingleSelection ? 'true' : null);
+    $selectAllBar.find('[data-librarian-action="done"]').prop('disabled', !hasSelection);
+    $selectAllBar.find('[data-librarian-action="remove"]').prop('disabled', !hasSelection);
+
+    // Legacy standalone action row is fully superseded — keep it hidden regardless.
+    $actionRow.hide();
 
     updateLibrarianBadge();
 }

@@ -1267,6 +1267,13 @@ function loadPopupSettings($container) {
     const settings = getSettings();
     const $c = (sel) => $container.find(sel);
 
+    // f020: disable a gated number field at the row level so its label/help text fade with the input
+    // (not just the box). Toggles .dle-control-disabled on the field's .flex1 wrapper; the input keeps
+    // its own disabled attribute for interaction blocking.
+    const setRowDisabled = ($input, disabled) => {
+        $input.prop('disabled', disabled).closest('.flex1').toggleClass('dle-control-disabled', !!disabled);
+    };
+
     // ── Connection ──
     $c('#dle-sp-enabled').prop('checked', settings.enabled);
     renderVaultList(settings, $c('#dle-sp-vault-list')[0]);
@@ -1298,19 +1305,19 @@ function loadPopupSettings($container) {
     $c('#dle-sp-fuzzy-min-score-row').toggle(settings.fuzzySearchEnabled);
     if (settings.fuzzySearchEnabled) runFuzzyPreview();
     $c('#dle-sp-unlimited-entries').prop('checked', settings.unlimitedEntries);
-    $c('#dle-sp-max-entries').val(settings.maxEntries).prop('disabled', settings.unlimitedEntries);
+    setRowDisabled($c('#dle-sp-max-entries').val(settings.maxEntries), settings.unlimitedEntries);
     $c('#dle-sp-unlimited-entries-warn').toggle(!!settings.unlimitedEntries);
     $c('#dle-sp-unlimited-budget').prop('checked', settings.unlimitedBudget);
-    $c('#dle-sp-token-budget').val(settings.maxTokensBudget).prop('disabled', settings.unlimitedBudget);
+    setRowDisabled($c('#dle-sp-token-budget').val(settings.maxTokensBudget), settings.unlimitedBudget);
     $c('#dle-sp-unlimited-budget-warn').toggle(!!settings.unlimitedBudget);
     $c('#dle-sp-optimize-keys-mode').val(settings.optimizeKeysMode);
     $c('#dle-sp-case-sensitive').prop('checked', settings.caseSensitive);
     $c('#dle-sp-match-whole-words').prop('checked', settings.matchWholeWords);
     $c('#dle-sp-recursive-scan').prop('checked', settings.recursiveScan);
-    $c('#dle-sp-max-recursion').val(settings.maxRecursionSteps).prop('disabled', !settings.recursiveScan);
+    setRowDisabled($c('#dle-sp-max-recursion').val(settings.maxRecursionSteps), !settings.recursiveScan);
     $c('#dle-sp-reinjection-cooldown').val(settings.reinjectionCooldown);
     $c('#dle-sp-strip-dedup').prop('checked', settings.stripDuplicateInjections);
-    $c('#dle-sp-strip-lookback').val(settings.stripLookbackDepth).prop('disabled', !settings.stripDuplicateInjections);
+    setRowDisabled($c('#dle-sp-strip-lookback').val(settings.stripLookbackDepth), !settings.stripDuplicateInjections);
     $c('#dle-sp-keyword-occurrence-weighting').prop('checked', settings.keywordOccurrenceWeighting);
     $c('#dle-sp-priority-reversed').prop('checked', settings.priorityReversed);
     $c('#dle-sp-import-compress-default').prop('checked', settings.importCompressByDefault);
@@ -1524,6 +1531,29 @@ function numVal(raw, fallback) {
 }
 
 /**
+ * Clamp a number input's value to its own min/max (f021).
+ * The HTML min/max attrs only constrain the spinner arrows, not keyboard entry —
+ * a user can type 9999 into a max=100 field and it would otherwise persist silently.
+ * Reads the element's min/max and returns the clamped number; an in-range typed
+ * value is left unchanged. NaN → fallback (preserves 0 as valid via numVal).
+ * Step is intentionally NOT snapped here: the browser spinner arrows already honor
+ * the step attribute, and snapping to a min-based grid would corrupt valid typed
+ * values whose default/grid misalign (e.g. graphGravity min 0.1, step 0.5, default
+ * 11.0 → grid lacks 11.0, so 11 would be rewritten to 11.1). See gotchas (SUI-1).
+ * Returns the same numeric value numVal would for in-range input, so callers that
+ * already store numVal($el.val(), fb) get identical results when nothing was out of range.
+ */
+function clampInput(el, fallback) {
+    const n = numVal(el?.value, fallback);
+    let v = n;
+    const min = el?.min !== '' && el?.min != null ? Number(el.min) : null;
+    const max = el?.max !== '' && el?.max != null ? Number(el.max) : null;
+    if (min != null && Number.isFinite(min)) v = Math.max(min, v);
+    if (max != null && Number.isFinite(max)) v = Math.min(max, v);
+    return v;
+}
+
+/**
  * Toy demo for the fuzzy strictness slider — no vault connection needed.
  * Uses real BM25 (same k1/b/tokenizer as bm25.js) against a hardcoded
  * mini-corpus so users can see how the threshold controls which entries pass.
@@ -1609,10 +1639,33 @@ function bindPopupEvents($container) {
     const settings = getSettings();
     const $c = (sel) => $container.find(sel);
 
+    // f020: row-level disable (label + input fade together). Mirrors the helper in loadPopupSettings.
+    const setRowDisabled = ($input, disabled) => {
+        $input.prop('disabled', disabled).closest('.flex1').toggleClass('dle-control-disabled', !!disabled);
+    };
+
     // BUG-120: _rebuildTimer module-scoped so new popup cancels stale timer.
     const debouncedRebuild = () => { clearTimeout(_rebuildTimer); _rebuildTimer = setTimeout(() => buildIndexWithReuse(), 500); };
 
     $container.on('change input', 'input, select, textarea', () => invalidateSettingsCache());
+
+    // f021: clamp typed-in number values to the input's own min/max/step. The HTML
+    // attrs only constrain the spinner arrows, so a user can keyboard 9999 into a
+    // max=100 field and it would persist silently. On commit (change = blur/Enter),
+    // correct the displayed value and re-dispatch `input` so the field's own handler
+    // stores the clamped number. Flash so the auto-correction is visible, not silent.
+    $container.on('change', 'input[type="number"]', function () {
+        const el = this;
+        if (el.value === '') return; // empty handled by each field's fallback
+        const clamped = clampInput(el, numVal(el.value, 0));
+        if (clamped === numVal(el.value, NaN)) return; // already in range — no-op
+        el.value = String(clamped);
+        // Re-run the field's own input handler so settings pick up the clamped value.
+        $(el).trigger('input');
+        const $el = $(el);
+        $el.addClass('dle-input-clamped');
+        setTimeout(() => $el.removeClass('dle-input-clamped'), 500);
+    });
 
     // ── Connection ──
     $c('#dle-sp-enabled').on('change', function () {
@@ -1836,17 +1889,17 @@ function bindPopupEvents($container) {
         saveSettingsDebounced();
         runFuzzyPreview();
     });
-    $c('#dle-sp-unlimited-entries').on('change', function () { settings.unlimitedEntries = $(this).prop('checked'); $c('#dle-sp-max-entries').prop('disabled', settings.unlimitedEntries); $c('#dle-sp-unlimited-entries-warn').toggle(settings.unlimitedEntries); saveSettingsDebounced(); });
+    $c('#dle-sp-unlimited-entries').on('change', function () { settings.unlimitedEntries = $(this).prop('checked'); setRowDisabled($c('#dle-sp-max-entries'), settings.unlimitedEntries); $c('#dle-sp-unlimited-entries-warn').toggle(settings.unlimitedEntries); saveSettingsDebounced(); });
     $c('#dle-sp-max-entries').on('input', function () { settings.maxEntries = numVal($(this).val(), 10); saveSettingsDebounced(); });
-    $c('#dle-sp-unlimited-budget').on('change', function () { settings.unlimitedBudget = $(this).prop('checked'); $c('#dle-sp-token-budget').prop('disabled', settings.unlimitedBudget); $c('#dle-sp-unlimited-budget-warn').toggle(settings.unlimitedBudget); saveSettingsDebounced(); });
+    $c('#dle-sp-unlimited-budget').on('change', function () { settings.unlimitedBudget = $(this).prop('checked'); setRowDisabled($c('#dle-sp-token-budget'), settings.unlimitedBudget); $c('#dle-sp-unlimited-budget-warn').toggle(settings.unlimitedBudget); saveSettingsDebounced(); });
     $c('#dle-sp-token-budget').on('input', function () { settings.maxTokensBudget = numVal($(this).val(), 3072); saveSettingsDebounced(); });
     $c('#dle-sp-optimize-keys-mode').on('change', function () { settings.optimizeKeysMode = String($(this).val()); saveSettingsDebounced(); });
     $c('#dle-sp-case-sensitive').on('change', function () { settings.caseSensitive = $(this).prop('checked'); saveSettingsDebounced(); });
     $c('#dle-sp-match-whole-words').on('change', function () { settings.matchWholeWords = $(this).prop('checked'); saveSettingsDebounced(); });
-    $c('#dle-sp-recursive-scan').on('change', function () { settings.recursiveScan = $(this).prop('checked'); $c('#dle-sp-max-recursion').prop('disabled', !settings.recursiveScan); saveSettingsDebounced(); });
+    $c('#dle-sp-recursive-scan').on('change', function () { settings.recursiveScan = $(this).prop('checked'); setRowDisabled($c('#dle-sp-max-recursion'), !settings.recursiveScan); saveSettingsDebounced(); });
     $c('#dle-sp-max-recursion').on('input', function () { settings.maxRecursionSteps = numVal($(this).val(), 3); saveSettingsDebounced(); });
     $c('#dle-sp-reinjection-cooldown').on('input', function () { settings.reinjectionCooldown = numVal($(this).val(), 0); saveSettingsDebounced(); });
-    $c('#dle-sp-strip-dedup').on('change', function () { settings.stripDuplicateInjections = $(this).prop('checked'); $c('#dle-sp-strip-lookback').prop('disabled', !settings.stripDuplicateInjections); saveSettingsDebounced(); });
+    $c('#dle-sp-strip-dedup').on('change', function () { settings.stripDuplicateInjections = $(this).prop('checked'); setRowDisabled($c('#dle-sp-strip-lookback'), !settings.stripDuplicateInjections); saveSettingsDebounced(); });
     $c('#dle-sp-strip-lookback').on('input', function () { settings.stripLookbackDepth = numVal($(this).val(), 2); saveSettingsDebounced(); });
     $c('#dle-sp-keyword-occurrence-weighting').on('change', function () { settings.keywordOccurrenceWeighting = $(this).prop('checked'); saveSettingsDebounced(); });
     $c('#dle-sp-priority-reversed').on('change', function () { settings.priorityReversed = $(this).prop('checked'); saveSettingsDebounced(); });
@@ -2026,7 +2079,7 @@ function bindPopupEvents($container) {
                 // Surface so the user knows they must refresh.
                 try {
                     toastr.warning(
-                        `Librarian search enabled, but fuzzy-index rebuild failed: ${err?.message || 'unknown error'}. Run /dle-force-refresh.`,
+                        `Librarian search enabled, but fuzzy-index rebuild failed: ${err?.message || 'unknown error'}. Run /dle-refresh.`,
                         'DeepLore',
                         { timeOut: 10000 },
                     );
@@ -2405,25 +2458,29 @@ function renderReferenceTab($container) {
     if (!$grid.length) return;
 
     // Partition DLE_COMMANDS into columns by `sep` markers. First section gets a
-    // generic label; the rest pick up the sep's `label` field.
+    // generic label; the rest pick up the sep's `label`/`i18nKey` fields.
     const cols = [];
-    let cur = { label: 'All Commands', items: [] };
+    let cur = { label: 'All Commands', i18nKey: 'dle_cmd_section_all', items: [] };
     for (const c of DLE_COMMANDS) {
         if (c.sep) {
             if (cur.items.length) cols.push(cur);
-            cur = { label: c.label || 'Commands', items: [] };
+            cur = { label: c.label || 'Commands', i18nKey: c.i18nKey || '', items: [] };
         } else {
             cur.items.push(c);
         }
     }
     if (cur.items.length) cols.push(cur);
 
+    // Each row/header carries data-i18n so ST's locale MutationObserver translates
+    // it on DOM insert; the English `label`/`desc` is the in-place fallback.
     let html = '';
     for (const col of cols) {
         html += '<div class="dle-cmd-grid-col">';
-        html += `<span class="dle-cmd-grid-header">${escapeHtml(col.label)}</span>`;
+        const headerI18n = col.i18nKey ? ` data-i18n="${escapeHtml(col.i18nKey)}"` : '';
+        html += `<span class="dle-cmd-grid-header"${headerI18n}>${escapeHtml(col.label)}</span>`;
         for (const c of col.items) {
-            html += `<div class="dle-cmd-row dle-cmd-row-copyable" data-cmd="${escapeHtml(c.cmd)}" tabindex="0" role="button" title="Click to copy ${escapeHtml(c.cmd)}"><code>${escapeHtml(c.cmd)}</code><span>${escapeHtml(c.desc)}</span></div>`;
+            const descI18n = c.i18nKey ? ` data-i18n="${escapeHtml(c.i18nKey)}"` : '';
+            html += `<div class="dle-cmd-row dle-cmd-row-copyable" data-cmd="${escapeHtml(c.cmd)}" tabindex="0" role="button" title="Click to copy ${escapeHtml(c.cmd)}"><code>${escapeHtml(c.cmd)}</code><span${descI18n}>${escapeHtml(c.desc)}</span></div>`;
         }
         html += '</div>';
     }

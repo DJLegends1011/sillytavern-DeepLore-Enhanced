@@ -190,6 +190,8 @@ Custom Canvas-based force-directed graph visualization (no external library).
 
 **Node colors:** Default mode is type-based (constant = orange `#ff9800`, seed = blue, bootstrap = purple, regular = green). Also supports priority, centrality, frequency, community, and custom-field color modes.
 
+**Docked legend panel (v2.6):** the two former legends (edge-type toggles + node color key) are now ONE docked panel anchored top-left over the canvas: `.dle-graph-legend-panel` / `#dle-graph-legend` (built in `graph.js`), with a heading and two labeled sections — **Edges** (click-to-toggle, unchanged handler) and **Node color key** (`#dle-graph-color-legend`). The color key NO LONGER lives in the bottom node-info/tooltip bar and is NOT cleared on node hover (it was previously overwritten by node info on hover — `graph-render.js` f055); it refreshes only on color-mode change via `gs.updateColorLegend()`, painted once on init. The whole Graph view is localized (`dle_graph_*` keys). The ST-free pure modules (`graph-render` / `graph-analysis` / `graph-dag` / `graph-health`) localize via runtime `gs._t` / `gs._tf` / `gs._tp` helpers injected by `graph.js` with English fallbacks — they intentionally do NOT import `i18n.js`, which would break the Node tests in `test/unit.mjs` / health / dag suites that import them.
+
 **Physics:** ForceAtlas2-like repulsion model with configurable parameters.
 
 **Layout modes (`gs.layoutMode`, v2.5):** Toolbar "Layout" select switches `force` (default — physics) ↔ `dag` (Layered DAG). `gs.layoutMode ∈ {force, focus, dag}` is the single discriminant — `graph-physics.js` `simulate()` early-returns unless `layoutMode === 'force'`, freezing the sim for every non-force layout. Non-force layouts stage deterministic positions on `_targetX/_targetY` and lerp in via `lerpEgoPositions` (the focus-tree rig). **Layered DAG** (`graph-dag.js`) uses only `requires`+`cascade` edges: hand-rolled Sugiyama-lite (DFS cycle-break → longest-path layering → deterministic ordering), top→down with directional arrowheads, non-participants hidden. Enter/exit snapshot then restore positions, `edgeVisibility`, `cachedVisibleCount`, and the hidden/reveal formula exactly (mirrors `enterFocusTree`/`exitFocusTree`). Deterministic layouts are NEVER persisted to `graphSavedLayout`. See gotcha #71.
@@ -207,6 +209,14 @@ Custom Canvas-based force-directed graph visualization (no external library).
 **`graph: false` frontmatter field:** Excludes entry from graph entirely.
 
 **Note:** Graph was declared "complete" at v0.2.0, but **v2.5 reopened it** for view modes (Layout selector, Layered DAG, Vault Health) — see `audit/v2.5-graph-views/PLAN.md` and gotcha #71. The old "do not refactor" note (`project_graph_complete.md` in memory) is superseded for v2.5 view-mode work.
+
+---
+
+## 6b. Drawer Browse actions & footer diagnostics dock (v2.6, affordance-only)
+
+**Browse entry actions kebab:** the per-row pin/block/copy actions in the Browse tab are now a hover-reveal cluster behind a `⋮` kebab (`.dle-browse-kebab` inside `.dle-browse-actions`, built in `drawer-render-tabs.js`). Status readouts stay visible; the kebab folds away the action buttons so the row reads calm by default. Pin/block-active rows force the cluster open via `dle-actions-pinned-open` (computed at render). The kebab handler (`drawer-events.js`) toggles `dle-actions-open` on the LIVE DOM node only (and closes any other open cluster first) — it never mutates `ds.browseRowModel`, preserving gotcha #13 (the row model is render-derived, never mutated from event handlers).
+
+**Footer diagnostics dock:** the five footer health icons (vault / connection / pipeline / cache / ai) are now framed as a labeled "diagnostics dock" (`.dle-diag-dock` with a `.dle-diag-dock-label` in `drawer.html`). This is framing/affordance only — the click handlers were already wired in `wireHealthIcons` (`drawer-events.js`) and are unchanged.
 
 ---
 

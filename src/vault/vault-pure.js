@@ -177,62 +177,115 @@ export function conflictModeMessage(mode) {
 // can land an invalid value. Without this guard the invalid mode falls through
 // every branch and silently behaves like 'first'. Unknown → 'all' (preserve).
 const VALID_DEDUPE_MODES = new Set(['all', 'first', 'last', 'merge']);
-export function deduplicateMultiVault(entries, mode) {
-    if (!mode || !VALID_DEDUPE_MODES.has(mode) || mode === 'all') return entries;
-    const titleMap = new Map();
-    for (const entry of entries) {
-        const key = entry.title.toLowerCase();
-        if (titleMap.has(key)) {
-            if (mode === 'first') continue;
-            if (mode === 'last') {
-                titleMap.set(key, entry);
-            } else if (mode === 'merge') {
-                // BUG-378: clone first entry and PRESERVE its `_contentHash`. The previous
-                // in-place mutation clobbered the hash with one of the merged content,
-                // which never matched any real on-disk file — so reuse-sync flagged the
-                // entry as modified every poll, triggering infinite re-parse/re-tokenize.
-                const firstEntry = titleMap.get(key);
-                const existing = { ...firstEntry };
-                if (firstEntry.customFields) existing.customFields = { ...firstEntry.customFields };
-                titleMap.set(key, existing);
-                // H18: union all relevant array fields, not just keys.
-                // P2-8: cascadeLinks + refineKeys were dropped on merge — a merged
-                // entry lost the non-first members' explicit cascade pulls and
-                // secondary refine-gate keys, silently changing match/gating behavior.
-                for (const field of ['keys', 'tags', 'links', 'resolvedLinks', 'requires', 'excludes', 'cascadeLinks', 'refineKeys']) {
-                    if (Array.isArray(entry[field]) && entry[field].length > 0) {
-                        existing[field] = [...new Set([...(existing[field] || []), ...entry[field]])];
-                    }
-                }
-                if (entry.content && entry.content.trim()) {
-                    existing.content = (existing.content || '') + '\n\n---\n\n' + entry.content;
-                    // Sum tokenizer-accurate member estimates (computed before dedup at the
-                    // vault.js tokenize pass) instead of char/4, which diverged from the tokenizer
-                    // units used for every non-merged entry and skewed budget math for merged entries.
-                    existing.tokenEstimate = (existing.tokenEstimate || 0) + (entry.tokenEstimate || 0);
-                    // BUG-378: do NOT recompute `_contentHash` — must equal the hash of the
-                    // ORIGINAL first entry's file content for reuse-sync to skip re-parse.
-                }
-                // H-05: OR-merge boolean flags — true if ANY copy is true.
-                for (const flag of ['constant', 'seed', 'bootstrap', 'guide']) {
-                    if (entry[flag]) existing[flag] = true;
-                }
-                if (!existing.summary && entry.summary) existing.summary = entry.summary;
-                // customFields: union arrays, first-non-empty for scalars.
-                if (entry.customFields) {
-                    if (!existing.customFields) existing.customFields = {};
-                    for (const [k, val] of Object.entries(entry.customFields)) {
-                        if (Array.isArray(val) && val.length > 0) {
-                            existing.customFields[k] = [...new Set([...(existing.customFields[k] || []), ...val])];
-                        } else if (existing.customFields[k] == null && val != null) {
-                            existing.customFields[k] = val;
-                        }
-                    }
+
+/**
+ * #22 merge worker — fold one representative entry per vault into a single
+ * merged entry. `reps` is ordered by vault first-appearance; reps[0] is the base.
+ */
+function mergeVaultRepresentatives(reps) {
+    // BUG-378: clone first entry and PRESERVE its `_contentHash`. The previous
+    // in-place mutation clobbered the hash with one of the merged content,
+    // which never matched any real on-disk file — so reuse-sync flagged the
+    // entry as modified every poll, triggering infinite re-parse/re-tokenize.
+    const firstEntry = reps[0];
+    const existing = { ...firstEntry };
+    if (firstEntry.customFields) existing.customFields = { ...firstEntry.customFields };
+    for (let i = 1; i < reps.length; i++) {
+        const entry = reps[i];
+        // H18: union all relevant array fields, not just keys.
+        // P2-8: cascadeLinks + refineKeys were dropped on merge — a merged
+        // entry lost the non-first members' explicit cascade pulls and
+        // secondary refine-gate keys, silently changing match/gating behavior.
+        for (const field of ['keys', 'tags', 'links', 'resolvedLinks', 'requires', 'excludes', 'cascadeLinks', 'refineKeys']) {
+            if (Array.isArray(entry[field]) && entry[field].length > 0) {
+                existing[field] = [...new Set([...(existing[field] || []), ...entry[field]])];
+            }
+        }
+        if (entry.content && entry.content.trim()) {
+            existing.content = (existing.content || '') + '\n\n---\n\n' + entry.content;
+            // Sum tokenizer-accurate member estimates (computed before dedup at the
+            // vault.js tokenize pass) instead of char/4, which diverged from the tokenizer
+            // units used for every non-merged entry and skewed budget math for merged entries.
+            existing.tokenEstimate = (existing.tokenEstimate || 0) + (entry.tokenEstimate || 0);
+            // BUG-378: do NOT recompute `_contentHash` — must equal the hash of the
+            // ORIGINAL first entry's file content for reuse-sync to skip re-parse.
+        }
+        // H-05: OR-merge boolean flags — true if ANY copy is true.
+        for (const flag of ['constant', 'seed', 'bootstrap', 'guide']) {
+            if (entry[flag]) existing[flag] = true;
+        }
+        if (!existing.summary && entry.summary) existing.summary = entry.summary;
+        // customFields: union arrays, first-non-empty for scalars.
+        if (entry.customFields) {
+            if (!existing.customFields) existing.customFields = {};
+            for (const [k, val] of Object.entries(entry.customFields)) {
+                if (Array.isArray(val) && val.length > 0) {
+                    existing.customFields[k] = [...new Set([...(existing.customFields[k] || []), ...val])];
+                } else if (existing.customFields[k] == null && val != null) {
+                    existing.customFields[k] = val;
                 }
             }
-        } else {
-            titleMap.set(key, entry);
         }
     }
-    return [...titleMap.values()];
+    return existing;
+}
+
+export function deduplicateMultiVault(entries, mode) {
+    if (!mode || !VALID_DEDUPE_MODES.has(mode) || mode === 'all') return entries;
+
+    // #22: conflict resolution applies ACROSS vaults only. The old implementation
+    // keyed on bare title.toLowerCase(), so two same-titled entries in the SAME
+    // vault were silently collapsed under first/last/merge — but same-vault
+    // duplicates are not a cross-vault conflict (they're legal under 'all', see
+    // CLAUDE.md L11) and the setting is documented as *multi-vault* resolution.
+    // Contract: the unit of conflict is the vault-level copy. Resolution operates
+    // on ONE representative per vault (that vault's first same-titled entry);
+    // same-vault same-title duplicates pass through untouched in every mode.
+    //
+    // Pass 1 — group by lowercased title, tracking vault first-appearance order.
+    const groups = new Map(); // titleLower → { vaultOrder, byVault, lastVault }
+    for (const entry of entries) {
+        const key = entry.title.toLowerCase();
+        const vault = entry.vaultSource || '';
+        let g = groups.get(key);
+        if (!g) { g = { vaultOrder: [], byVault: new Map(), lastVault: vault }; groups.set(key, g); }
+        if (!g.byVault.has(vault)) { g.vaultOrder.push(vault); g.byVault.set(vault, []); }
+        g.byVault.get(vault).push(entry);
+        g.lastVault = vault; // vault of the group's last entry ('last' mode winner)
+    }
+
+    // Pass 2 — walk entries in original order and emit per the mode decision.
+    // Both merge output AND the 'last' winner land at the position of the
+    // group's FIRST entry, matching the old (titleMap insertion-order) output
+    // ordering — 'last' emitting at the winner's own slot would reorder
+    // vaultIndex vs pre-#22 builds and shift priority tie-breaks / Browse order.
+    const out = [];
+    const mergeEmitted = new Set(); // titleLower — merge output already emitted
+    const lastEmitted = new Set();  // titleLower — 'last' winner already emitted
+    for (const entry of entries) {
+        const key = entry.title.toLowerCase();
+        const g = groups.get(key);
+        // Single-vault group (unique titles AND same-vault duplicates): untouched.
+        if (g.vaultOrder.length <= 1) { out.push(entry); continue; }
+        const vault = entry.vaultSource || '';
+        if (mode === 'first') {
+            if (vault === g.vaultOrder[0]) out.push(entry);
+            continue;
+        }
+        if (mode === 'last') {
+            // Emit ALL of the winning (last) vault's copies at the group-first
+            // slot, preserving their original relative order.
+            if (lastEmitted.has(key)) continue;
+            lastEmitted.add(key);
+            for (const e of g.byVault.get(g.lastVault)) out.push(e);
+            continue;
+        }
+        // merge: each vault's FIRST entry is that vault's representative and is
+        // consumed by the merge; any later same-vault duplicate passes through.
+        if (entry !== g.byVault.get(vault)[0]) { out.push(entry); continue; }
+        if (mergeEmitted.has(key)) continue;
+        mergeEmitted.add(key);
+        out.push(mergeVaultRepresentatives(g.vaultOrder.map(v => g.byVault.get(v)[0])));
+    }
+    return out;
 }

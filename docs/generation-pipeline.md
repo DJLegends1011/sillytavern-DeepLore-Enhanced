@@ -16,6 +16,11 @@ The generation pipeline is DLE's core — most regressions originate here. This 
 
 **Pipeline status element:** `_updatePipelineStatus` prepends to `#form_sheld` (not `#chat`). `_removePipelineStatus` uses a slide-down animation (`dle-toast-out` class + `animationend` listener). Phase labels come from the canonical `state.PIPELINE_PHASE_LABELS` map (one source for the toast AND the drawer label — see gotcha #74). Progression: `choosing` "Choosing lore…" → (`prefilter` "Narrowing categories…" when `hierarchicalPreFilter` is enabled) → `consulting` "Consulting vault…" → `generating` "Generating…" → (Librarian: `searching`/`writing`/`flagging`). **v2.5 Wave 2:** `runPipeline`'s `onStatus` callback receives a phase KEY (e.g. `'consulting'`), not display text — `index.js` sets `pipelinePhase` deterministically and derives the label via `pipelineLabelFor()`. The old `text.includes('Consulting')` sniff is gone.
 
+**LP1 elapsed heartbeat + Cancel (v2.6):** the toast now carries two inert children built once alongside the spinner + text span — an elapsed-seconds readout (`.dle-pipeline-elapsed`) and a Cancel button (`.dle-pipeline-cancel`). Both `_updatePipelineStatus(text, phaseKey)` and `_renderPipelineToast(text, phaseKey)` take a phaseKey 2nd arg now; the one-time structure build still respects gotcha #74 (only `.dle-pipeline-status-text` is swapped on phase change — the spinner, elapsed span, and cancel button are built once so the spinner physics and the cancel listener survive phase swaps).
+
+- **Heartbeat:** `_startPipelineElapsed(phaseKey, span)` runs a single 1/sec `setInterval` that ticks a "(Ns)" suffix, gated to `_PIPELINE_ELAPSED_PHASES = {consulting, generating, searching, writing, flagging}` (the indeterminate AI round-trips; `choosing`/`prefilter` are sub-second so they show no counter). It is idempotent for the same phase (doesn't reset mid-wait) and re-zeros on phase change so each AI wait reads its OWN elapsed time. `_stopPipelineElapsed()` clears the interval and is called at the TOP of EVERY `_removePipelineStatus` path (deferred-show cancel, dwell-deferred slide-out, immediate) — so no interval can ever leak across generations.
+- **Cancel:** `_pipelineCancel()` stops the heartbeat then calls ST's `stopGeneration()` — the EXACT function the Stop button invokes. The module-scoped toast helpers can't reach the per-generation `pipelineAbort` AbortController (local to `onGenerate`), so cancel routes through the canonical Stop path instead: `stopGeneration()` aborts ST's controller and emits `GENERATION_STOPPED`, which reaches BOTH `onGenerate`'s `onStop` listener (`abortWith(pipelineAbort, …)` aborts DLE's live AI request) AND the init-block `GENERATION_STOPPED` handler (bumps `generationLockEpoch`, releases the lock, clears stale prompts, sets phase idle, removes the toast). The agentic dispatch's `AbortError` unwinds through its try/finally, restoring the send button. Because this is literally the Stop-button path, send-button + lock + epoch teardown all match the battle-tested behavior — nothing bespoke to keep in sync. If `stopGeneration()` throws, it falls back to emitting `GENERATION_STOPPED` directly + removing the toast so the user isn't stranded. See gotcha #74 / #38.
+
 ---
 
 ## Phase 1: Early Guards (in `onGenerate()`)
@@ -125,7 +130,7 @@ try {
   → Check abort signal
 ```
 
-`runPipeline()` is in `src/pipeline/pipeline.js`. It runs the core matching logic based on mode:
+`runPipeline()` is in `src/pipeline/pipeline.js`. It shallow-snapshots settings once at entry and **threads that snapshot into every stage call** (`matchEntries`, `hierarchicalPreFilter`, `buildCandidateManifest`, `aiSearch`) so a mid-generation settings edit can't split the run across two views — see gotcha #94. It runs the core matching logic based on mode:
 
 | Mode | Flow |
 |---|---|
@@ -197,7 +202,7 @@ Applies token budget (`maxTokensBudget`), entry limit (`maxEntries`), groups by 
 
 **genId** is a 6-char random identifier created at the top of `onGenerate()` via `Math.random().toString(36).slice(2, 8)`. It is passed to `runPipeline()` through the options object and stamped on the returned `trace` object. Used to correlate log lines and diagnostics across a single generation.
 
-**Per-stage timing:** 10 `*Ms` fields are recorded on `trace`, one per stage call in `onGenerate()`. Each uses `performance.now()` bookends around the stage call, assigned to trace after the stage completes:
+**Per-stage timing:** 10 `*Ms` fields are recorded on `trace`, one per stage call in `onGenerate()`. Stages 1–9 route through the local `timeStage(field, fn)` helper (defined in `onGenerate()` right after the post-`runPipeline` epoch guard), which runs `fn`, stamps `trace[field]` with the rounded elapsed ms, and returns `fn`'s result. The sibling `diffRemoved(before, after, reason)` helper computes the trace removal arrays (`contextualGatingRemoved`, `cooldownRemoved`, `stripDedupRemoved`) keyed by `trackerKey` — never re-inline the `${vaultSource}:${title}` template (gotcha #50):
 
 `ensureIndexFreshMs`, `pinBlockMs`, `contextualGatingMs`, `reinjectionCooldownMs`, `requiresExcludesMs`, `stripDedupMs`, `formatGroupMs`, `trackGenerationMs`, `recordAnalyticsMs`, `perChatCountsMs`
 
@@ -227,7 +232,7 @@ Enriches `trace` with gating/budget/dedup details. **Epoch-guarded** (in `onGene
     → writeVerdict({trace, injectedSources: [], ...}) so consumers see "nothing this turn"
 ```
 
-**Two epoch checks** before committing (in `onGenerate()`). Both must pass.
+**One epoch check** guards the whole commit phase (in `onGenerate()`), immediately before the `groups.length` branch — there is no await between it and either `clearPrompts` site, so it covers both the commit branch and the no-groups else branch. (A second, byte-identical check used to sit inside the `groups.length > 0` branch; it was dead — no await separated them — and was removed in the v2.6 thermo hot-path pass.)
 
 **clearPrompts placement**: Two sites — inside the `if (groups.length > 0)` block (clear-before-replace), and in the `else` branch (clear stale prompts when no groups survived). Earlier empty-check branches also call clearPrompts with their own epoch guards.
 
@@ -368,10 +373,10 @@ onGenerate(chatMessages, contextSize, abort, type)             [index.js]
   ├─ getWriterVisibleEntries()                                 [in onGenerate()]
   ├─ (swipe rollback from lastGenerationTrackerSnapshot)       [in onGenerate()]
   ├─ runPipeline(chatMessages, vaultSnapshot, ctx, opts)        [in onGenerate()]
-  │   ├─ matchEntries(chatMessages, snapshot)                   [src/pipeline/pipeline.js]
-  │   ├─ hierarchicalPreFilter(entries, chatMessages, signal)   [optional, ai-only + two-stage modes]
-  │   ├─ buildCandidateManifest(entries)                       [src/ai/ai.js → manifest.js]
-  │   └─ aiSearch(chat, manifest, header, snapshot, cands, signal) [src/ai/ai.js]
+  │   ├─ matchEntries(chatMessages, snapshot, { settings })     [src/pipeline/pipeline.js — settings threaded, gotcha #94]
+  │   ├─ hierarchicalPreFilter(entries, chatMessages, signal, settings) [optional, ai-only + two-stage modes]
+  │   ├─ buildCandidateManifest(entries, bootstrap, settings)   [src/ai/ai.js → manifest.js]
+  │   └─ aiSearch(chat, manifest, header, snapshot, cands, signal, settings) [src/ai/ai.js]
   ├─ buildExemptionPolicy(vaultSnapshot, pins, blocks, bootstrapActive) [src/stages.js — gen-scoped bootstrap, gotcha #60]
   ├─ applyPinBlock(entries, vaultSnapshot, policy, matchedKeys)[src/stages.js]
   ├─ applyContextualGating(entries, ctx, policy, ...)          [src/stages.js]

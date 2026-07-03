@@ -5,6 +5,7 @@
 import { getCurrentChatId } from '../../../../../../script.js';
 import { getContext, saveMetadataDebounced } from '../../../../../extensions.js';
 import { truncateToSentence, escapeXml } from '../../core/utils.js';
+import { neutralizeClosingTag } from '../helpers.js';
 import { queryBM25, tokenize } from '../vault/bm25.js';
 import { getSettings } from '../../settings.js';
 import {
@@ -284,11 +285,16 @@ function incrementStats(field, extraTokens = 0) {
  * Defined here (not inline) so every return path in `searchLoreAction` uses
  * the same shape — no chance of a no-result branch returning a bare string.
  */
-function _searchResult(text, titles = []) {
+function _searchResult(text, titles = [], opts = {}) {
     const t = typeof text === 'string' ? text : '';
     return {
         text: t,
         titles: Array.isArray(titles) ? titles : [],
+        // #23: true when searchLoreAction refunded loreGapSearchCount (search
+        // delivered no value). The agentic loop mirrors the refund on its OWN
+        // searchCount so the two budgets can't diverge — otherwise the loop
+        // withdraws TOOL_SEARCH early while the model was told the search was free.
+        refunded: !!opts.refunded,
         toString() { return t; },
         [Symbol.toPrimitive]() { return t; },
     };
@@ -306,7 +312,10 @@ function formatLinkedManifest(entries, summaryLen = 400) {
         const links = entry.resolvedLinks?.length > 0
             ? ` → ${entry.resolvedLinks.join(', ')}` : '';
         const safeName = escapeXml(entry.title);
-        return `<entry name="${safeName}">\n${entry.title} (${entry.tokenEstimate}tok)${links}\n${summary}\n</entry>`;
+        // #20: same fence hole as buildCandidateManifest — a literal </entry> in an
+        // author summary broke out of the fence. Shared sanitizer from helpers.js.
+        const fenceSafeBody = neutralizeClosingTag(`${entry.title} (${entry.tokenEstimate}tok)${links}\n${summary}`, 'entry');
+        return `<entry name="${safeName}">\n${fenceSafeBody}\n</entry>`;
     }).join('\n');
 }
 
@@ -432,7 +441,7 @@ export async function searchLoreAction(args) {
         // is still the race guard for concurrent search_lore calls; decrement-on-fail
         // keeps the counter aligned with searches that actually returned value.
         setLoreGapSearchCount(Math.max(0, loreGapSearchCount - 1));
-        return _searchResult('Lore vault index is still loading. This search did not count against your limit; vault should be ready on next message.');
+        return _searchResult('Lore vault index is still loading. This search did not count against your limit; vault should be ready on next message.', [], { refunded: true });
     }
 
     // BUG-AUDIT v2.5: dedup keyed by trackerKey (vaultSource:title.toLowerCase()) so
@@ -569,7 +578,7 @@ export async function searchLoreAction(args) {
         // refund the counter so the AI can keep working without the no-result hit
         // eating its budget. Race guard preserved by the increment-first pattern above.
         setLoreGapSearchCount(Math.max(0, loreGapSearchCount - 1));
-        return _searchResult(`No entries found for ${queries.map(q => `"${q}"`).join(', ')}. This search did not count against your limit. If this information is important to the scene, use flag_lore to record the gap.`);
+        return _searchResult(`No entries found for ${queries.map(q => `"${q}"`).join(', ')}. This search did not count against your limit. If this information is important to the scene, use flag_lore to record the gap.`, [], { refunded: true });
     }
     // CRIT-LIB-2: caller (agentic-loop) consumes `titles` directly. NEVER regex
     // `text` for `### ...` headings — vault content has its own subheadings.

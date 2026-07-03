@@ -295,9 +295,50 @@ export const PIPELINE_PHASE_LABELS = {
     writing: 'Writing…',
 };
 
-/** Canonical label for a pipeline phase. Unknown phase → its raw key (defensive). */
+/**
+ * Canonical phase → i18n key map. `pipelineLabelFor` resolves the localized label
+ * through `tr()` against these keys, falling back to the English PIPELINE_PHASE_LABELS
+ * dictionary above. Keep one entry per PIPELINE_PHASE_LABELS key — the i18n regression
+ * guard asserts every phase has a locale key in all dicts.
+ */
+export const PIPELINE_PHASE_I18N_KEYS = {
+    idle: 'dle_status_idle',
+    indexing: 'dle_status_indexing',
+    choosing: 'dle_status_choosing_lore',
+    prefilter: 'dle_status_prefilter',
+    consulting: 'dle_status_consulting_vault',
+    generating: 'dle_status_generating',
+    searching: 'dle_status_searching',
+    flagging: 'dle_status_flagging',
+    writing: 'dle_status_writing',
+};
+
+// Late-bound tr() — avoids a static import of the i18n module (which pulls in
+// settings.js → state.js) and the circular eval that would create. Lazily hydrated
+// on first call; until then pipelineLabelFor returns the English fallback.
+let _trRef = null;
+// STATE-R1-02: eagerly warm _trRef at module init (fire-and-forget) so the first
+// pipelineLabelFor() call under a non-EN locale doesn't flash the English fallback
+// while the lazy import resolves. Best-effort — if i18n fails to load, trSafe's
+// per-call lazy import + English fallback still stands.
+import('./i18n/i18n.js')
+    .then(m => { _trRef = m.tr; })
+    .catch(() => { /* i18n is best-effort; English fallback stands */ });
+function trSafe(key, fallback) {
+    if (!_trRef) {
+        import('./i18n/i18n.js')
+            .then(m => { _trRef = m.tr; })
+            .catch(() => { /* i18n is best-effort; English fallback stands */ });
+        return fallback;
+    }
+    return _trRef(key, fallback);
+}
+
+/** Canonical localized label for a pipeline phase. Unknown phase → its raw key (defensive). */
 export function pipelineLabelFor(phase) {
-    return PIPELINE_PHASE_LABELS[phase] || phase || PIPELINE_PHASE_LABELS.idle;
+    const fallback = PIPELINE_PHASE_LABELS[phase] || phase || PIPELINE_PHASE_LABELS.idle;
+    const key = PIPELINE_PHASE_I18N_KEYS[phase];
+    return key ? trSafe(key, fallback) : fallback;
 }
 
 /** Pre-computed entity name Set for AI cache sliding window check */
@@ -315,6 +356,54 @@ export function setEntityShortNameRegexes(v) { entityShortNameRegexes = v; entit
 /** BM25 fuzzy search index: { idf: Map<term, number>, docs: Map<title, {tf: Map<term, number>, len: number}>, avgDl: number } */
 export let fuzzySearchIndex = null;
 export function setFuzzySearchIndex(v) { fuzzySearchIndex = v; }
+
+/**
+ * Issue #39 (v2.6): compound setter behind the wipe-and-stop cache clear
+ * (vault.js: clearVaultIndexAndCache). Resets every piece of in-memory
+ * vault-index state to the "never indexed" baseline so nothing derived can
+ * serve stale entries after the live index empties:
+ *   - vaultIndex → [], indexTimestamp → 0 (next generation's ensureIndexFresh
+ *     rebuilds from Obsidian — the empty index alone already forces that)
+ *   - previousIndexSnapshot → null (next build is treated as a cold start; no
+ *     bogus "N entries removed" change toast)
+ *   - indexBuildReport → empty ledger (/dle-lint stops showing warnings for
+ *     entries that no longer exist)
+ *   - derived structures: mentionWeights, folderList, vaultAvgTokens,
+ *     entityNameSet, entityShortNameRegexes (via the setter, so
+ *     entityRegexVersion bumps and BUG-394 staleness stamps invalidate),
+ *     fuzzySearchIndex, aiSearchCache
+ *   - buildEpoch (bumped): the epoch fence for async producers of index/cache
+ *     state that are in flight when the wipe runs. finalizeIndex's un-awaited
+ *     saveIndexToCache and boot hydration's loadIndexFromCache both capture
+ *     buildEpoch before their first await and bail on change — without the
+ *     bump they would repopulate the just-wiped IDB store / live index.
+ *     Bumping is safe by construction: in-flight builds already treat an
+ *     epoch change as "discard" (BUG-015 zombie guard), which is exactly the
+ *     semantic a clear wants, and a build started AFTER this wipe captures
+ *     the new epoch so its (legitimately fresh) save passes the fence.
+ * Synchronous ON PURPOSE: the caller guards `indexing` first, and with no
+ * await between that guard and these writes an index build can't interleave.
+ * Fires notifyIndexUpdated() so the drawer Browse tab and settings stats
+ * re-render from the empty index. Does NOT touch IndexedDB, indexEverLoaded,
+ * per-chat trackers, analytics, lastHealthResult (safe-stale: health
+ * re-evaluates on the next check), or fieldDefinitions (reloaded by the next
+ * build).
+ */
+export function resetVaultIndexState() {
+    vaultIndex = [];
+    indexTimestamp = 0;
+    previousIndexSnapshot = null;
+    indexBuildReport = { okCount: 0, warnCount: 0, skipCount: 0, skipped: [], entriesWithWarnings: [] };
+    vaultAvgTokens = 0;
+    mentionWeights = new Map();
+    folderList = [];
+    entityNameSet = new Set();
+    setEntityShortNameRegexes(new Map());
+    fuzzySearchIndex = null;
+    resetAiSearchCache();
+    setBuildEpoch(buildEpoch + 1); // epoch fence — see doc comment above (gotcha #95)
+    notifyIndexUpdated();
+}
 
 // ── Librarian: tool-assisted lore retrieval + gap detection ──
 
@@ -380,6 +469,17 @@ const AI_CIRCUIT_THRESHOLD = 2;      // consecutive failures to trip
 const AI_CIRCUIT_COOLDOWN = 30_000;  // ms before half-open probe
 export function setAiCircuitOpenedAt(v) { aiCircuitOpenedAt = v; }
 
+/**
+ * Whether the user was actually shown the "AI search is resting" trip toast
+ * since the last recovery. Set by ai.js when it surfaces the trip; consumed on
+ * the open→closed transition so the matching "back online" toast only fires for
+ * a degradation the user knew about. Session-scoped (mirrors the trip toast,
+ * which itself dedups per session), intentionally NOT reset on CHAT_CHANGED.
+ */
+let aiCircuitTripSurfaced = false;
+export function markAiCircuitTripSurfaced() { aiCircuitTripSurfaced = true; }
+export function wasAiCircuitTripSurfaced() { return aiCircuitTripSurfaced; }
+
 export function recordAiFailure() {
     const wasClosed = !aiCircuitOpen;
     if (aiCircuitHalfOpenProbe) {
@@ -398,6 +498,15 @@ export function recordAiFailure() {
         notifyCircuitStateChanged();
     }
 }
+/**
+ * Record a successful AI call. Closes the breaker if it was open.
+ * @returns {{ recovered: boolean, announce: boolean }}
+ *   recovered — the breaker transitioned open→closed on this call.
+ *   announce  — recovered AND the trip had been surfaced to the user, so the
+ *               caller should show the matching "back online" toast. The
+ *               surfaced flag is consumed here so the toast fires at most once
+ *               per degrade→recover cycle, from whichever call site recovers.
+ */
 export function recordAiSuccess() {
     const wasOpen = aiCircuitOpen;
     aiCircuitHalfOpenProbe = false;
@@ -405,11 +514,19 @@ export function recordAiSuccess() {
     aiCircuitFailures = 0;
     aiCircuitOpen = false;
     aiCircuitOpenedAt = 0;
+    let announce = false;
     // Notify observers if state changed (open → closed)
     if (wasOpen) {
+        announce = aiCircuitTripSurfaced;
+        aiCircuitTripSurfaced = false;
         pushEventSafe('ai_circuit', { from: 'open', to: 'closed' });
-        notifyCircuitStateChanged();
+        // Forward `announce` through the observer so the "back online" toast fires
+        // from a caller-agnostic surface (the circuit observer in ai.js) exactly
+        // once per degrade→recover cycle, regardless of which of the 7 call sites
+        // recorded the success. STATE-R1-01 / SYNC-AI-1.
+        notifyCircuitStateChanged({ from: 'open', to: 'closed', announce });
     }
+    return { recovered: wasOpen, announce };
 }
 /** Release the half-open probe without recording success or failure.
  *  Used by hierarchicalPreFilter: its outcome shouldn't affect the circuit breaker
@@ -448,6 +565,9 @@ export function resetAiCircuitBreaker() {
     aiCircuitFailures = 0;
     aiCircuitOpen = false;
     aiCircuitOpenedAt = 0;
+    // Manual reset shows its own success toast — consume the surfaced flag so a
+    // subsequent organic probe-success doesn't double-announce recovery.
+    aiCircuitTripSurfaced = false;
     if (wasOpen) {
         pushEventSafe('ai_circuit', { from: 'open', to: 'closed', manualReset: true });
         notifyCircuitStateChanged();
@@ -566,9 +686,9 @@ export function onCircuitStateChanged(callback) {
     return () => circuitStateCallbacks.delete(callback);
 }
 
-export function notifyCircuitStateChanged() {
+export function notifyCircuitStateChanged(detail = null) {
     for (const cb of [...circuitStateCallbacks]) {
-        try { cb(); } catch (err) { console.warn('[DLE] Circuit state callback error:', err.message); }
+        try { cb(detail); } catch (err) { console.warn('[DLE] Circuit state callback error:', err.message); }
     }
 }
 

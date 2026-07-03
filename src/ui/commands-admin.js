@@ -14,57 +14,67 @@ import {
     vaultIndex, aiSearchStats, indexTimestamp, trackerKey,
     fieldDefinitions, notifyDebugModeChanged,
 } from '../state.js';
-import { loadIndexFromCache, clearIndexCache } from '../vault/cache.js';
+import { loadIndexFromCache } from '../vault/cache.js';
+import { clearVaultIndexAndCache } from '../vault/vault.js';
 import { ensureFreshOrToast } from './commands-shared.js';
 import { runHealthCheck } from './diagnostics.js';
 import { showNotebookPopup, showAiNotepadPopup, buildCopyButton, attachCopyHandler } from './popups.js';
 import { consoleBuffer } from '../diagnostics/interceptors.js';
 import { tr, trf } from '../i18n/i18n.js';
+import { notify } from '../toast-dedup.js';
 
-/** Entry shapes: { cmd, desc } for commands, { sep, label } for section headers. */
+/**
+ * Entry shapes: { cmd, desc, i18nKey } for commands, { sep, label, i18nKey } for
+ * section headers. `desc`/`label` are the canonical English fallback; `i18nKey`
+ * lets the Reference tab and command palette emit `data-i18n` so ST's locale
+ * MutationObserver translates them (the previous render hardcoded English and
+ * silently overwrote the translated static HTML grid). Keep `desc`/`label` in
+ * sync with the matching `locales/dle.en.json` value.
+ */
 export const DLE_COMMANDS = [
-    { cmd: '/dle-browse', desc: 'Search and preview vault entries (alias: /dle-b)' },
-    { cmd: '/dle-why', desc: 'Show why entries would/wouldn\'t inject (alias: /dle-context)' },
-    { cmd: '/dle-inspect', desc: 'Inspect what happened in the last message (alias: /dle-i)' },
-    { cmd: '/dle-health', desc: 'Run vault health check (alias: /dle-h)' },
-    { cmd: '/dle-lint', desc: 'Show parser warnings and skipped entries from last index build (alias: /dle-l)' },
-    { cmd: '/dle-refresh', desc: 'Rebuild vault index from Obsidian (alias: /dle-r)' },
-    { cmd: '/dle-status', desc: 'Show extension status and stats' },
-    { cmd: '/dle-simulate', desc: 'Replay chat showing entry activation timeline' },
-    { cmd: '/dle-graph', desc: 'Visualize entry relationships as a graph (alias: /dle-g)' },
-    { cmd: '/dle-analytics', desc: 'View entry match/injection analytics' },
-    { cmd: '/dle-cache-info', desc: 'View vault cache status, size, and clear cache' },
-    { cmd: '/dle-notebook', desc: 'Edit the Notebook for this chat' },
-    { cmd: '/dle-ai-notepad', desc: 'View or clear AI-written session notes' },
-    { cmd: '/dle-scribe', desc: 'Run Session Scribe now' },
-    { cmd: '/dle-scribe-history', desc: 'View past Scribe notes' },
-    { cmd: '/dle-newlore', desc: 'AI suggests new lorebook entries from chat' },
-    { cmd: '/dle-optimize-keys', desc: 'AI keyword suggestions for an entry' },
-    { cmd: '/dle-summarize', desc: 'AI-generate summary fields for all entries missing one' },
-    { cmd: '/dle-review', desc: 'Send entire vault to AI for review and feedback' },
-    { cmd: '/dle-librarian', desc: 'Open Librarian AI session (new entry, gap review, or vault review)' },
-    { cmd: '/dle-import', desc: 'Import SillyTavern World Info into Obsidian vault' },
-    { cmd: '/dle-setup', desc: 'Run guided setup wizard' },
-    { sep: true, label: 'Per-Chat Overrides' },
-    { cmd: '/dle-pin', desc: 'Pin an entry (always inject in this chat)' },
-    { cmd: '/dle-unpin', desc: 'Remove a pin' },
-    { cmd: '/dle-block', desc: 'Block an entry (never inject in this chat)' },
-    { cmd: '/dle-unblock', desc: 'Remove a block' },
-    { cmd: '/dle-pins', desc: 'Show all pins and blocks for this chat' },
-    { sep: true, label: 'Contextual Gating' },
-    { cmd: '/dle-set-field', desc: 'Set a custom gating field' },
-    { cmd: '/dle-clear-field', desc: 'Clear a custom gating field' },
-    { cmd: '/dle-clear-all-context', desc: 'Clear all gating filters at once (alias: /dle-reset-context)' },
-    { cmd: '/dle-set-era', desc: 'Set era filter (alias: /dle-era)' },
-    { cmd: '/dle-set-location', desc: 'Set location filter (alias: /dle-loc)' },
-    { cmd: '/dle-set-scene', desc: 'Set scene type filter' },
-    { cmd: '/dle-set-characters', desc: 'Set present characters' },
-    { cmd: '/dle-set-folder', desc: 'Filter by Obsidian folder path' },
-    { cmd: '/dle-context-state', desc: 'Show current gating state (alias: /dle-ctx)' },
-    { sep: true, label: 'Diagnostics' },
-    { cmd: '/dle-diagnostics', desc: 'Export a diagnostics markdown report' },
-    { cmd: '/dle-debug', desc: 'Toggle debug mode on or off' },
-    { cmd: '/dle-logs', desc: 'Show recent DLE console log entries' },
+    { cmd: '/dle-browse', desc: 'Search and preview vault entries (alias: /dle-b)', i18nKey: 'dle_cmd_desc_browse' },
+    { cmd: '/dle-why', desc: 'Show why entries would/wouldn\'t inject (alias: /dle-context)', i18nKey: 'dle_cmd_desc_why' },
+    { cmd: '/dle-inspect', desc: 'Inspect what happened in the last message (alias: /dle-i)', i18nKey: 'dle_cmd_desc_inspect' },
+    { cmd: '/dle-health', desc: 'Run vault health check (alias: /dle-h)', i18nKey: 'dle_cmd_desc_health' },
+    { cmd: '/dle-lint', desc: 'Show parser warnings and skipped entries from last index build (alias: /dle-l)', i18nKey: 'dle_cmd_desc_lint' },
+    { cmd: '/dle-refresh', desc: 'Rebuild vault index from Obsidian (alias: /dle-r)', i18nKey: 'dle_cmd_desc_refresh' },
+    { cmd: '/dle-status', desc: 'Show extension status and stats', i18nKey: 'dle_cmd_desc_status' },
+    { cmd: '/dle-simulate', desc: 'Replay chat showing entry activation timeline', i18nKey: 'dle_cmd_desc_simulate' },
+    { cmd: '/dle-graph', desc: 'Visualize entry relationships as a graph (alias: /dle-g)', i18nKey: 'dle_cmd_desc_graph' },
+    { cmd: '/dle-analytics', desc: 'View entry match/injection analytics', i18nKey: 'dle_cmd_desc_analytics' },
+    { cmd: '/dle-cache-info', desc: 'View vault cache status, size, and clear cache', i18nKey: 'dle_cmd_desc_cache_info' },
+    { cmd: '/dle-clear', desc: 'Clear vault cache and live index without re-fetching', i18nKey: 'dle_cmd_desc_clear' },
+    { cmd: '/dle-notebook', desc: 'Edit the Notebook for this chat', i18nKey: 'dle_cmd_desc_notebook' },
+    { cmd: '/dle-ai-notepad', desc: 'View or clear AI-written session notes', i18nKey: 'dle_cmd_desc_ai_notepad' },
+    { cmd: '/dle-scribe', desc: 'Run Session Scribe now', i18nKey: 'dle_cmd_desc_scribe' },
+    { cmd: '/dle-scribe-history', desc: 'View past Scribe notes', i18nKey: 'dle_cmd_desc_scribe_history' },
+    { cmd: '/dle-newlore', desc: 'AI suggests new lorebook entries from chat', i18nKey: 'dle_cmd_desc_newlore' },
+    { cmd: '/dle-optimize-keys', desc: 'AI keyword suggestions for an entry', i18nKey: 'dle_cmd_desc_optimize_keys' },
+    { cmd: '/dle-summarize', desc: 'AI-generate summary fields for all entries missing one', i18nKey: 'dle_cmd_desc_summarize' },
+    { cmd: '/dle-review', desc: 'Send entire vault to AI for review and feedback', i18nKey: 'dle_cmd_desc_review' },
+    { cmd: '/dle-librarian', desc: 'Open Librarian AI session (new entry, gap review, or vault review)', i18nKey: 'dle_cmd_desc_librarian' },
+    { cmd: '/dle-import', desc: 'Import SillyTavern World Info into Obsidian vault', i18nKey: 'dle_cmd_desc_import' },
+    { cmd: '/dle-setup', desc: 'Run guided setup wizard', i18nKey: 'dle_cmd_desc_setup' },
+    { sep: true, label: 'Per-Chat Overrides', i18nKey: 'dle_cmd_section_overrides' },
+    { cmd: '/dle-pin', desc: 'Pin an entry (always inject in this chat)', i18nKey: 'dle_cmd_desc_pin' },
+    { cmd: '/dle-unpin', desc: 'Remove a pin', i18nKey: 'dle_cmd_desc_unpin' },
+    { cmd: '/dle-block', desc: 'Block an entry (never inject in this chat)', i18nKey: 'dle_cmd_desc_block' },
+    { cmd: '/dle-unblock', desc: 'Remove a block', i18nKey: 'dle_cmd_desc_unblock' },
+    { cmd: '/dle-pins', desc: 'Show all pins and blocks for this chat', i18nKey: 'dle_cmd_desc_pins' },
+    { sep: true, label: 'Contextual Gating', i18nKey: 'dle_cmd_section_gating' },
+    { cmd: '/dle-set-field', desc: 'Set a custom gating field', i18nKey: 'dle_cmd_desc_set_field' },
+    { cmd: '/dle-clear-field', desc: 'Clear a custom gating field', i18nKey: 'dle_cmd_desc_clear_field' },
+    { cmd: '/dle-clear-all-context', desc: 'Clear all gating filters at once (alias: /dle-reset-context)', i18nKey: 'dle_cmd_desc_clear_all_context' },
+    { cmd: '/dle-set-era', desc: 'Set era filter (alias: /dle-era)', i18nKey: 'dle_cmd_desc_set_era' },
+    { cmd: '/dle-set-location', desc: 'Set location filter (alias: /dle-loc)', i18nKey: 'dle_cmd_desc_set_location' },
+    { cmd: '/dle-set-scene', desc: 'Set scene type filter', i18nKey: 'dle_cmd_desc_set_scene' },
+    { cmd: '/dle-set-characters', desc: 'Set present characters', i18nKey: 'dle_cmd_desc_set_characters' },
+    { cmd: '/dle-set-folder', desc: 'Filter by Obsidian folder path', i18nKey: 'dle_cmd_desc_set_folder' },
+    { cmd: '/dle-context-state', desc: 'Show current gating state (alias: /dle-ctx)', i18nKey: 'dle_cmd_desc_context_state' },
+    { sep: true, label: 'Diagnostics', i18nKey: 'dle_cmd_section_diagnostics' },
+    { cmd: '/dle-diagnostics', desc: 'Export a diagnostics markdown report', i18nKey: 'dle_cmd_desc_diagnostics' },
+    { cmd: '/dle-debug', desc: 'Toggle debug mode on or off', i18nKey: 'dle_cmd_desc_debug' },
+    { cmd: '/dle-logs', desc: 'Show recent DLE console log entries', i18nKey: 'dle_cmd_desc_logs' },
 ];
 
 export function registerAdminCommands() {
@@ -239,7 +249,7 @@ export function registerAdminCommands() {
                 await callGenericPopup(container, POPUP_TYPE.TEXT, '', { wide: true, large: true, allowVerticalScrolling: true });
             } catch (err) {
                 console.error('[DLE] Scribe history error:', err);
-                toastr.error(classifyError(err), 'DeepLore');
+                notify.error(classifyError(err), { copyable: true });
             }
             return '';
         },
@@ -258,11 +268,18 @@ export function registerAdminCommands() {
                 .filter(k => !k.startsWith('_'))
                 .sort((a, b) => (analytics[b].injected || 0) - (analytics[a].injected || 0));
 
+            // Keys are trackerKeys (vaultSource:title). Display the bare title
+            // (split on FIRST ':') so the table matches the Never-Injected list;
+            // the stored Object.keys(analytics) trackerKey is untouched.
+            const displayTitle = (key) => {
+                const idx = key.indexOf(':');
+                return idx === -1 ? key : key.slice(idx + 1);
+            };
             const plainLines = ['Entry Analytics', '', 'Entry\tMatched\tInjected\tLast Used'];
             for (const title of titles) {
                 const d = analytics[title];
                 const lastUsed = d.lastTriggered ? new Date(d.lastTriggered).toLocaleString() : 'Never';
-                plainLines.push(`${title}\t${d.matched || 0}\t${d.injected || 0}\t${lastUsed}`);
+                plainLines.push(`${displayTitle(title)}\t${d.matched || 0}\t${d.injected || 0}\t${lastUsed}`);
             }
             const neverInjected = vaultIndex.filter(e => !analytics[trackerKey(e)] || (analytics[trackerKey(e)].injected || 0) === 0);
             if (neverInjected.length > 0) {
@@ -281,7 +298,7 @@ export function registerAdminCommands() {
             for (const title of titles) {
                 const d = analytics[title];
                 const lastUsed = d.lastTriggered ? new Date(d.lastTriggered).toLocaleString() : 'Never';
-                html += `<tr><td>${escapeHtml(title)}</td><td class="dle-text-center">${d.matched || 0}</td><td class="dle-text-center">${d.injected || 0}</td><td class="dle-text-center">${lastUsed}</td></tr>`;
+                html += `<tr><td>${escapeHtml(displayTitle(title))}</td><td class="dle-text-center">${d.matched || 0}</td><td class="dle-text-center">${d.injected || 0}</td><td class="dle-text-center">${lastUsed}</td></tr>`;
             }
             html += '</table>';
 
@@ -331,7 +348,7 @@ export function registerAdminCommands() {
                 await triggerDiagnosticDownload();
                 toastr.success(tr('dle_cmd_diagnostics_downloaded_toast'), 'DeepLore', { timeOut: 8000 });
             } catch (err) {
-                toastr.error(`Diagnostic export failed: ${classifyError(err)}`, 'DeepLore');
+                notify.error(`Diagnostic export failed: ${classifyError(err)}`, { copyable: true });
                 console.error('[DLE] /dle-diagnostics failed:', err);
             }
             return '';
@@ -485,8 +502,21 @@ export function registerAdminCommands() {
                 wide: false,
                 onOpen: () => {
                     document.querySelector('.dle-cache-clear-btn')?.addEventListener('click', async () => {
-                        await clearIndexCache();
-                        toastr.success(tr('dle_cmd_cacheinfo_cleared_toast'), 'DeepLore');
+                        // Issue #39: wipe-and-stop — clears IDB cache AND the live in-memory
+                        // index (clearIndexCache alone left vaultIndex populated, so Browse
+                        // still showed entries and the next rebuild re-preserved them).
+                        const result = await clearVaultIndexAndCache();
+                        if (!result.ok) {
+                            if (result.reason === 'idb') {
+                                // Memory wipe happened; only the IDB wipe failed — error, not
+                                // success, and keep the popup open so the user can retry (gotcha #95).
+                                notify.error(tr('dle_cmd_clear_idb_failed_toast'), { category: 'cache_clear_idb' });
+                            } else {
+                                notify.warning(tr('dle_cmd_clear_busy_toast'), { category: 'cache_clear_busy' });
+                            }
+                            return;
+                        }
+                        notify.success(tr('dle_cmd_cacheinfo_cleared_toast'));
                         document.querySelector('.dle-cache-clear-btn')?.closest('.popup')?.querySelector('.popup-button-ok')?.click();
                     });
                 },
@@ -500,8 +530,10 @@ export function registerAdminCommands() {
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'dle-setup',
         callback: async () => {
-            const { showSetupWizard } = await import('./setup-wizard.js');
-            await showSetupWizard();
+            const { showSetupWizard, getWizardResumeStep } = await import('./setup-wizard.js');
+            // Resume where a "Finish later" skip left off (getWizardResumeStep returns 1
+            // for a fresh/completed run, since completion clears the skip sentinel).
+            await showSetupWizard(getWizardResumeStep());
             return '';
         },
         helpString: 'Open the setup wizard: connect vault, configure tags, matching, AI, and more.',
@@ -603,7 +635,10 @@ export function registerAdminCommands() {
                     const activeClass = visibleCount === 0 ? ' dle-palette-active' : '';
                     html += `<div class="dle-palette-item menu_button${activeClass}" data-cmd="${escapeHtml(c.cmd)}" data-idx="${visibleCount}">`;
                     html += `<code class="dle-palette-cmd">${escapeHtml(c.cmd)}</code>`;
-                    html += `<span class="dle-palette-desc">${escapeHtml(c.desc)}</span>`;
+                    // data-i18n lets ST's locale observer translate the desc on insert; the
+                    // English `desc` stays as the fallback text node.
+                    const i18nAttr = c.i18nKey ? ` data-i18n="${escapeHtml(c.i18nKey)}"` : '';
+                    html += `<span class="dle-palette-desc"${i18nAttr}>${escapeHtml(c.desc)}</span>`;
                     html += `</div>`;
                     visibleCount++;
                 }

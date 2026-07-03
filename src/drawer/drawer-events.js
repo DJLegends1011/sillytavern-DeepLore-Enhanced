@@ -35,8 +35,9 @@ import {
 } from './drawer-state.js';
 import { renderInjectionTab, renderBrowseTab, renderBrowseWindow, renderStatusZone } from './drawer-render.js';
 import { renderLibrarianTab } from './drawer-render-librarian.js';
+import { resolveNavTarget, listTopFolders } from './drawer-browse-pure.js';
 import { hideGap, dismissGap, getHiddenGapIds, persistGaps } from '../librarian/librarian-tools.js';
-import { dedupError, dedupWarning } from '../toast-dedup.js';
+import { dedupError, dedupWarning, notify } from '../toast-dedup.js';
 import { tr, trf, trPlural } from '../i18n/i18n.js';
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -254,6 +255,11 @@ export function wireStatusActions($drawer) {
             case 'scribe': {
                 if (generationLock) { toastr.warning(tr('dle_toast_generation_running'), 'DeepLore', { timeOut: 2000 }); return; }
                 const $scribeBtn = $(this);
+                // Wave I carve-out (NOT an oversight): scribe deliberately keeps fa-spin on its OWN
+                // feather glyph rather than the hide-icon + goo-spinner pattern the refresh button
+                // uses above. /dle-scribe is fire-and-forget (executeCommand swallows the promise and
+                // its resolution doesn't map to scribe completion), so the only re-enable signal is the
+                // 15s timeout below — converting to a goo would risk an orphaned spinner. See gotcha #87.
                 $scribeBtn.prop('disabled', true).find('i').addClass('fa-spin');
                 setTimeout(() => {
                     if ($scribeBtn.prop('disabled')) {
@@ -350,8 +356,9 @@ export function wireStatusActions($drawer) {
 
     $drawer.on('click', '.dle-setup-banner-btn', async () => {
         try {
-            const { showSetupWizard } = await import('../ui/setup-wizard.js');
-            showSetupWizard();
+            const { showSetupWizard, getWizardResumeStep } = await import('../ui/setup-wizard.js');
+            // Resume where a "Finish later" skip left off (returns 1 for fresh/completed).
+            showSetupWizard(getWizardResumeStep());
         } catch (err) {
             console.error('[DLE] Setup wizard error:', err);
             toastr.error('Failed to open setup wizard.', 'DeepLore');
@@ -369,8 +376,10 @@ export function wireStatusActions($drawer) {
 export function wireInjectionTab($drawer) {
     $drawer.on('click', '.dle-why-filter-btn', function () {
         ds.whyTabFilter = $(this).data('filter') || 'both';
-        $drawer.find('.dle-why-filter-btn').attr('aria-checked', 'false');
-        $(this).attr('aria-checked', 'true');
+        // Flip aria-checked AND the roving tabindex together so the checked radio and the
+        // single tab stop never diverge between this click and the deferred render (f104).
+        $drawer.find('.dle-why-filter-btn').attr('aria-checked', 'false').attr('tabindex', '-1');
+        $(this).attr('aria-checked', 'true').attr('tabindex', '0');
         try { accountStorage.setItem('dle-why-filter', ds.whyTabFilter); } catch { /* noop */ }
         scheduleRender(renderInjectionTab);
     });
@@ -622,6 +631,37 @@ export function wireBrowseTab($drawer) {
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $(this).trigger('click'); }
     });
 
+    // f035-kebab: toggle the per-row action cluster open (for touch + keyboard — CSS handles
+    // hover-reveal for pointers). Toggles a class on the LIVE row DOM node only, never the
+    // virtual-scroll row model (gotcha #13). Closes any other open row's cluster first so only
+    // one is open at a time. A pin/block-active row stays open via dle-actions-pinned-open and
+    // is unaffected by this toggle.
+    $drawer.find('.dle-browse-list').on('click', '.dle-browse-kebab', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const $actions = $(this).closest('.dle-browse-actions');
+        const willOpen = !$actions.hasClass('dle-actions-open');
+        $drawer.find('.dle-browse-actions.dle-actions-open').removeClass('dle-actions-open')
+            .find('.dle-browse-kebab').attr('aria-expanded', 'false');
+        if (willOpen) {
+            $actions.addClass('dle-actions-open');
+            $(this).attr('aria-expanded', 'true');
+        }
+    });
+    $drawer.find('.dle-browse-list').on('keydown', '.dle-browse-kebab', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            $(this).trigger('click');
+        } else if (e.key === 'Escape') {
+            const $actions = $(this).closest('.dle-browse-actions');
+            if ($actions.hasClass('dle-actions-open')) {
+                e.preventDefault();
+                $actions.removeClass('dle-actions-open');
+                $(this).attr('aria-expanded', 'false').focus();
+            }
+        }
+    });
+
     $drawer.find('.dle-browse-list').on('click keydown', '.dle-browse-info', function (e) {
         if (e.type === 'keydown' && e.key === 'Escape' && $(this).attr('aria-expanded') === 'true') {
             e.preventDefault();
@@ -633,6 +673,9 @@ export function wireBrowseTab($drawer) {
         const $entry = $(this).closest('.dle-browse-entry');
         const title = $entry.data('title');
         if (!title) return;
+        // P3-9 (gotcha #50): the row carries data-vault; resolve by (title, vaultSource)
+        // so a cross-vault same-title entry opens the RIGHT vault's content.
+        const vault = $entry.data('vault') ?? null;
 
         const $list = $drawer.find('.dle-browse-list');
         const $existing = $entry.find('.dle-browse-preview');
@@ -642,6 +685,7 @@ export function wireBrowseTab($drawer) {
             $entry.css('height', BROWSE_ROW_HEIGHT + 'px');
             $(this).attr('aria-expanded', 'false');
             ds.browseExpandedEntry = null;
+            ds.browseExpandedVault = null;
             ds.browseExpandedIdx = null;
             ds.browseExpandedExtraHeight = 0;
             const totalHeight = (ds.browseRowModel?.length || ds.browseFilteredEntries.length) * BROWSE_ROW_HEIGHT;
@@ -653,7 +697,16 @@ export function wireBrowseTab($drawer) {
         }
 
         if (ds.browseExpandedEntry) {
-            const $prev = $list.find(`.dle-browse-entry[data-title="${CSS.escape(ds.browseExpandedEntry)}"]`);
+            // Scope the collapse-prev selector to the stored vault so a cross-vault
+            // same-title row isn't collapsed by mistake (mirrors the renderer at
+            // drawer-render-tabs.js). null vault → title-only (back-compat).
+            const prevVault = ds.browseExpandedVault;
+            const prevTitleSel = `.dle-browse-entry[data-title="${CSS.escape(ds.browseExpandedEntry)}"]`;
+            const $prev = prevVault != null
+                ? ($list.find(`${prevTitleSel}[data-vault="${CSS.escape(prevVault)}"]`).first().length
+                    ? $list.find(`${prevTitleSel}[data-vault="${CSS.escape(prevVault)}"]`).first()
+                    : $list.find(prevTitleSel).first())
+                : $list.find(prevTitleSel).first();
             if ($prev.length) {
                 $prev.find('.dle-browse-preview').remove();
                 $prev.css('height', BROWSE_ROW_HEIGHT + 'px');
@@ -661,11 +714,12 @@ export function wireBrowseTab($drawer) {
             }
         }
 
-        const entry = ds.browseFilteredEntries.find(e => e.title === title);
+        const entry = resolveNavTarget(ds.browseFilteredEntries, title, vault);
         if (!entry) return;
 
         const entryIdx = parseInt($entry.data('idx'), 10);
         ds.browseExpandedEntry = title;
+        ds.browseExpandedVault = vault;
         $(this).attr('aria-expanded', 'true');
 
         const preview = entry.summary || (entry.content ? entry.content.substring(0, 200) + (entry.content.length > 200 ? '...' : '') : 'No content');
@@ -728,10 +782,28 @@ export function wireBrowseTab($drawer) {
         }
         // Expansion of a single entry is folder-scoped — collapsing/regrouping invalidates it.
         ds.browseExpandedEntry = null;
+        ds.browseExpandedVault = null;
         ds.browseExpandedIdx = null;
         ds.browseExpandedExtraHeight = 0;
         scheduleRender(renderBrowseTab);
         announceToScreenReader(ds.browseFolderGrouping ? 'Grouping by folder' : 'Flat list');
+    });
+
+    // ─── expand all / collapse all folders ───
+    $drawer.find('.dle-browse-expand-all-toggle').on('click', function () {
+        if (!ds.browseFolderGrouping) return;
+        const topFolders = listTopFolders(ds.browseFilteredEntries);
+        const expandedSet = ds.browseExpandedFolders instanceof Set ? ds.browseExpandedFolders : new Set();
+        const allExpanded = topFolders.length > 0 && topFolders.every(f => expandedSet.has(f));
+        // If everything is already open, collapse all; otherwise expand all.
+        ds.browseExpandedFolders = allExpanded ? new Set() : new Set(topFolders);
+        // Single-entry expansion is folder-scoped — bulk collapse/expand invalidates it.
+        ds.browseExpandedEntry = null;
+        ds.browseExpandedVault = null;
+        ds.browseExpandedIdx = null;
+        ds.browseExpandedExtraHeight = 0;
+        scheduleRender(renderBrowseTab);
+        announceToScreenReader(allExpanded ? 'All folders collapsed' : 'All folders expanded');
     });
 
     // ─── #13 — folder header expand/collapse ───
@@ -751,6 +823,7 @@ export function wireBrowseTab($drawer) {
         }
         // Collapsing a folder that contains the expanded preview invalidates it.
         ds.browseExpandedEntry = null;
+        ds.browseExpandedVault = null;
         ds.browseExpandedIdx = null;
         ds.browseExpandedExtraHeight = 0;
         scheduleRender(renderBrowseTab);
@@ -843,7 +916,7 @@ export function wireBrowseTab($drawer) {
             scheduleRender(renderBrowseTab);
         } catch (err) {
             console.error('[DLE] runBatchOptimize failed:', err);
-            toastr.error(trf('dle_toast_batch_optimize_failed', err?.message || err), 'DeepLore');
+            notify.error(trf('dle_toast_batch_optimize_failed', err?.message || err), { copyable: true });
         } finally {
             ds._batchOptimizeInflight = false;
             $btn.prop('disabled', false);
@@ -1034,6 +1107,36 @@ export function wireGatingTab($drawer) {
             e.preventDefault();
             switchTab($drawer, 'gating');
         }
+    });
+
+    // Post-setup-idle Injection empty state links to Browse (f077) — the user is
+    // configured, just hasn't triggered a keyword this turn.
+    $drawer.on('click', '.dle-empty-browse-link', function (e) {
+        e.preventDefault();
+        switchTab($drawer, 'browse');
+    });
+
+    // f082: button-first CTAs in the pre-setup Injection/Browse empty guides. These live
+    // outside #dle-panel-tools, so they need their own dispatch — same TOOL_ACTIONS map +
+    // generation/index/master gates as wireToolsTab().
+    $drawer.on('click', '.dle-empty-cta-btn[data-empty-action]', function () {
+        const action = $(this).data('empty-action');
+        const cmd = TOOL_ACTIONS[action];
+        if (!cmd) return;
+        const settings = getSettings();
+        if (!settings.enabled) {
+            toastr.warning(tr('dle_toast_disabled'), 'DeepLore', { timeOut: 2500 });
+            return;
+        }
+        if (generationLock) {
+            toastr.warning(tr('dle_toast_gen_in_progress'), 'DeepLore', { timeOut: 2500 });
+            return;
+        }
+        if (indexing) {
+            toastr.warning(tr('dle_toast_indexing'), 'DeepLore', { timeOut: 2500 });
+            return;
+        }
+        executeCommand(cmd);
     });
 
     // Inline chip clears in the active-filters strip.
@@ -1245,12 +1348,16 @@ export function wireLibrarianTab($drawer) {
         } else if (e.key === 'd' && _isSafeShortcutTarget(document.activeElement)) {
             if (ds.librarianSelected.size > 0) {
                 e.preventDefault();
-                $drawer.find('.dle-librarian-action[data-librarian-action="done"]').trigger('click');
+                // f041: scope to the visible bulk bar — the legacy hidden action row also
+                // carries .dle-librarian-action, and triggering both double-fires the handler.
+                $drawer.find('.dle-librarian-bulk-actions .dle-librarian-action[data-librarian-action="done"]').first().trigger('click');
             }
         } else if ((e.key === 'Delete' || e.key === 'Backspace') && _isSafeShortcutTarget(document.activeElement)) {
             if (ds.librarianSelected.size > 0) {
                 e.preventDefault();
-                $drawer.find('.dle-librarian-action[data-librarian-action="remove"]').trigger('click');
+                // f041: scope to the visible bulk bar (two-click confirm breaks if both the
+                // bulk button and the hidden legacy button fire).
+                $drawer.find('.dle-librarian-bulk-actions .dle-librarian-action[data-librarian-action="remove"]').first().trigger('click');
             }
         }
     });

@@ -26,6 +26,11 @@ const AI_CIRCUIT_COOLDOWN_MS = 30_000; // mirror state.js — drawer doesn't imp
 // prompt-ready tick), but activityLog only mutates once per completed generation (pushActivity).
 // Mirrors the _lastInjectionRenderHash pattern in drawer-render-tabs.js.
 let _lastActivityFeedHash = null;
+// #17: live feed-element identity folded into the guard (same rationale as _footerCache
+// below). The module-level hash survives destroyDrawerPanel(); after destroy+reinit the
+// hash still matches but the new feed element is empty — the guard would skip the rebuild
+// and leave the feed blank until activityLog next mutates.
+let _lastActivityFeedRoot = null;
 
 // ════════════════════════════════════════════════════════════════════════════
 // Footer Zone — Health Icons + AI Stats + Context Bar
@@ -187,8 +192,10 @@ export function renderFooter() {
         const _feedHash = activityLog
             .map(a => `${a.ts}|${a.outcome ?? a.mode ?? ''}|${a.injected}|${a.tokens}|${a.folderFilter?.length || 0}`)
             .join(';');
-        if (_feedHash !== _lastActivityFeedHash) {
+        // #17: root identity check — see the guard-variable comment block above.
+        if (_feedHash !== _lastActivityFeedHash || $activityFeed[0] !== _lastActivityFeedRoot) {
             _lastActivityFeedHash = _feedHash;
+            _lastActivityFeedRoot = $activityFeed[0];
             let feedHtml = '';
             for (const a of activityLog) {
                 const time = new Date(a.ts);
