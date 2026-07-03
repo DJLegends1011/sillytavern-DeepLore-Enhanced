@@ -231,11 +231,11 @@ If you had the older standalone `sillytavern-DeepLore` extension, uninstall it f
 
 ## Star History
 
-<a href="https://star-history.com/#pixelnull/sillytavern-DeepLore&Date">
+<a href="https://www.star-history.com/?type=date&repos=pixelnull%2Fsillytavern-deeplore">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=pixelnull/sillytavern-deeplore&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=pixelnull/sillytavern-deeplore&type=Date" />
-    <img alt="Star history chart for pixelnull/sillytavern-DeepLore" src="https://api.star-history.com/svg?repos=pixelnull/sillytavern-deeplore&type=Date" width="600" />
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=pixelnull/sillytavern-deeplore&type=date&theme=dark&legend=top-left" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=pixelnull/sillytavern-deeplore&type=date&legend=top-left" />
+    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=pixelnull/sillytavern-deeplore&type=date&legend=top-left" />
   </picture>
 </a>
 
