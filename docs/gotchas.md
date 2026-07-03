@@ -1434,7 +1434,11 @@ Extends gotcha #79 (per-tick footer/gating perf) to the whole drawer.
 
 **Accent color via `currentColor`.** Every instance passes `color="currentColor"`; the component fills with it; one global rule `goo-spinner { color: var(--dle-accent, …) }` (style.css) makes them all take the DLE accent and adapt dark/light. Don't pass a literal `color=` (defaults to a hardcoded blue if you omit it AND skip the global rule).
 
-**Size ONLY via the `size` attribute, never CSS width/height.** The internal blob-orbit physics read `this._size` from the attribute; a CSS width/height override resizes the box but not the orbit → desync. `size` (px) and `speed` are read live each tick (NOT in `observedAttributes`), so changing them does NOT rebuild the element — used by the status dot to vary speed without restarting physics. `count`/`core`/`blob`/`color` ARE observed (changing them rebuilds).
+**Size ONLY via the `size` attribute, never CSS width/height.** The internal blob-orbit physics read `this._size` from the attribute; a CSS width/height override resizes the box but not the orbit → desync. `size` (px) is read live each tick (NOT in `observedAttributes`), so changing it does NOT rebuild the element. `count`/`core`/`blob`/`color` ARE observed (changing them rebuilds).
+
+**`speed` IS observed since v2.6 — but its `attributeChangedCallback` case is `_applyMotion()`-ONLY (no `_build()`).** The v2.6 P1-2 fix added `'speed'` to `observedAttributes` so a gel parked by `speed<=0` can wake when speed goes positive (previously the park was one-way — the drawer status dot froze forever after its first idle render). Never route the speed case through `_build()`: rebuilding the shadow DOM restarts the spin animation and physics, breaking the "vary speed without restarting physics" contract the status dot depends on.
+
+**The `speed<=0` park also pauses the CSS `.ring` rotation (v2.6 thermo #18b).** `_setRingPlayState('paused')` writes `animationPlayState` on the shadow `.ring`; the running tick path resumes it (idempotent, memo-guarded — no per-frame style churn). Play-state ONLY — the ring resumes from its paused angle, no rebuild. Before this, a parked spinner kept the ring animating invisibly forever (idle GPU burn). Reduced-motion stays owned by the stylesheet — don't fight it from JS. Guards: `SPN-1`/`SPN-2` in `test/unit.mjs`.
 
 **User-corrected scope (don't re-break):**
 - **The drawer toggle / open-drawer icon STAYS the DeepLore book (`icon.svg`, FA `fa-book-open` fallback) — do NOT replace it with a goo-spinner.** "All the old head icon svgs" meant the *status-zone* brand glyph (`STATUS_SVG_IDLE`, now removed), not the top toggle button. I swapped the toggle first; reverted on feedback.
@@ -1558,5 +1562,84 @@ Both constants live in `src/drawer/drawer-state.js`. **Why the viewport source w
 **Also in this fix:** the per-generation `analyticsData: { ...rawSettings.analyticsData }` copy was deleted — it had zero readers inside `runPipeline` (index.js's Stage 8 `recordAnalytics` uses its own live `settings.analyticsData`, which is the same object `getSettings()` returns and mutations must persist through).
 
 **Where:** `src/pipeline/pipeline.js: runPipeline()` (snapshot + all four threaded call sites), `src/ai/ai.js: aiSearch()/hierarchicalPreFilter()/buildCandidateManifest()` (the `settingsIn` params).
+
+---
+
+## 95. Clearing (`/dle-clear` / Clear Cache button) is the intentional override for the BUG-367 empty-preserve guard — do NOT add a force flag to refresh (Issue #39, v2.6)
+
+The BUG-367 guard (zero-files branch in `buildIndex()`, mirrored on the reuse path) carries a vault's prior entries forward when Obsidian returns 0 files but the in-memory index still has entries for that vault. That protects against transient fetch blips — but it also means a user who *intentionally emptied* their vault could never flush the old entries: every rebuild re-preserved them and re-saved the cache, and the old Clear Cache button only called `clearIndexCache()` (IDB-only), so the live `vaultIndex` survived and re-seeded the next save. The button looked broken.
+
+**The fix is wipe-and-stop, NOT a guard bypass.** `clearVaultIndexAndCache()` (`src/vault/vault.js`) empties IDB **and** the live index + all derived state via `resetVaultIndexState()` (`src/state.js`), with no re-fetch. After a clear, `priorIndexSnapshot = [...vaultIndex]` is empty, the guard has nothing to preserve, and the next `/dle-refresh` against an emptied vault commits `[]`. Both the `/dle-cache-info` popup button and `/dle-clear` route through this one function.
+
+**Invariants:**
+- **Do NOT weaken the BUG-367 guard or add a `--force` / skip-guard flag to `/dle-refresh`.** The guard's default MUST stay preserve-on-empty (transient blips vastly outnumber intentional vault emptying); clearing is the documented escape hatch. A force flag would reintroduce the silent-wipe-on-blip failure mode the guard exists to prevent.
+- **The in-memory wipe is synchronous under the `indexing` guard.** `clearVaultIndexAndCache` refuses (`{ok:false, reason:'indexing'}`) while a build is in flight, and there is no `await` between that check and the state writes — so a build can't interleave and commit over the wipe. Keep it that way: any await inserted before `resetVaultIndexState()` reopens the race.
+- **Epoch fence: `resetVaultIndexState()` bumps `buildEpoch`; any async producer of index/cache state MUST capture `buildEpoch` before its first await and bail on change.** The `indexing` guard alone does NOT cover producers that outlive the flag: `finalizeIndex`'s **un-awaited** `saveIndexToCache` (fired before the build's finally clears `indexing`; its IDB txn may not exist yet when the clear passes the guard) and **boot hydration**'s `loadIndexFromCache` await both do this. Without the fence, a clear landing in those windows is silently undone (the save commits pre-clear entries after the wipe; hydration `setVaultIndex`s them back). The save fence is checked inside `saveIndexToCache` AFTER `openDB()` resolves, synchronously with txn creation — a bump landing after that check is still safe because the clear's own txn is then created later, and IDB commits same-store readwrite txns in creation order. Bumping is safe by construction: in-flight builds already treat an epoch change as "discard" (BUG-015 zombie guard, exactly the semantic a clear wants), and a build started after the clear captures the new epoch, so its legitimately fresh save passes the fence. `index.js`'s auto-connect also re-checks the epoch before its fallback `buildIndex` so a bailed hydration doesn't turn into a full re-fetch (wipe-and-stop means stop). Guarded by CLEAR-7..CLEAR-10.
+- **`resetVaultIndexState()` must go through `setEntityShortNameRegexes()`** (bumps `entityRegexVersion` → BUG-394 AI-cache staleness stamps invalidate) and must fire `notifyIndexUpdated()` (drawer Browse / settings stats visibly empty). It intentionally leaves `indexEverLoaded`, vault failure counters, per-chat trackers, and analytics alone — and also **`lastHealthResult` and `fieldDefinitions` (intentionally NOT reset, safe-stale):** health re-evaluates on the next check, field definitions reload on the next build.
+- **`clearIndexCache()` (cache.js) is IDB-only — never wire UI to it directly.** Route through `clearVaultIndexAndCache`. It returns a boolean; `false` (DB open/txn failure, error swallowed+logged) means IDB still holds every cached entry. `clearVaultIndexAndCache` surfaces that as `{ok:false, reason:'idb'}` — the in-memory wipe already happened and stays done (that part is real and correct) — and callers MUST show the error toast (`dle_cmd_clear_idb_failed_toast`, "retry /dle-clear"), never a success toast: a false success hides the exact Issue-#39 entries-return-after-reload symptom.
+- **Sync polling WILL re-index after a clear.** The next poll tick sees `vaultIndex.length === 0`, `buildIndexWithReuse` declines, and the full `buildIndex` runs. That is a *fresh Obsidian fetch*, not a cache resurrect — against an intentionally emptied vault it commits `[]` (the guard has nothing to preserve). The "run /dle-refresh" copy in the cleared toast is simply the manual path for users without polling.
+- Phantom commands `/dle-force-refresh` and `/dle-rebuild` were never registered; all user-facing copy now says `/dle-refresh` (or `/dle-clear`). Don't reintroduce them — guarded by CLEAR-* tests in `test/regression.test.mjs`.
+
+**Where:** `src/vault/vault.js: clearVaultIndexAndCache()`, `src/state.js: resetVaultIndexState()`, callers in `src/ui/commands-admin.js` (popup button) + `src/ui/commands-vault.js` (`/dle-clear`). Fences: `src/vault/cache.js: saveIndexToCache(entries, isStale)`, `src/vault/vault.js: finalizeIndex()` (threads `buildEpochAtStart`) + `hydrateFromCache()`, `index.js` auto-connect. Docs: `docs/vault-and-indexing.md` §6.
+
+---
+
+## 96. Diagnostics export privacy — the shareable report's pseudonymization invariants (thermo #13, 2026-07-03)
+
+Users paste the diagnostics export into GitHub issues. Anything raw that survives the scrubber leaks their private lore vault. Four invariants keep it sealed:
+
+1. **`TRACE_ENTRY_ARRAY_KEYS` (`src/diagnostics/pseudonymize-trace.js`) is the ONLY enumeration of trace entry-array keys in the diagnostics subsystem.** `flight-recorder.js` stage counts and `export.js`'s AI_INSTRUCTIONS schema bullets are generated from it. A new pipeline trace stage array MUST be added there or its raw titles/vaultSources bypass pseudonymization (`probabilitySkipped` leaked exactly this way). Drift guard: `test/diagnostics.test.mjs` section H source-scans the `pipeline.js` trace factory.
+2. **`snap.health` is pseudonymized via `pseudonymizeHealth()` with the same per-snapshot ctx as the trace** — the same title maps to the same `<title-N>` across sections. `detail` parsing is **format-anchored first**: every `runHealthCheck()` detail format that quotes a user value has an anchored rule in `HEALTH_QUOTED_DETAIL_RULES` (`pseudonymize-trace.js`) whose greedy `(.*)` capture spans embedded quotes — the old generic `"([^"]*)"` pair regex split `Keyword "dra"gon"` at the embedded quote and leaked the trailing fragment raw. Unknown formats fall back to `replaceKnownAliases` → balanced-quote pair minting, and on an ODD quote count the WHOLE remainder from the first quote is minted as one alias (over-scrub beats leak). A new detail format that quotes a user value MUST get an anchored rule (drift guard: `test/diagnostics.test.mjs` I14 source-scans `runHealthCheck()` for `"${...}"` details and requires a 1:1 rule match); a format embedding user values **unquoted** still needs its own rule (cf. `Unresolved wiki-links:`). `'Add Vault'` stays whitelisted. **Short-mint rule:** reals shorter than 3 chars (short keywords minted from quoted lints, or genuinely short titles) are substring-replaced by `replaceKnownAliases` only at word boundaries — blind replacement of a minted keyword `"a"` rewrote every later detail (`v<title-2>ault`). Standalone short titles still alias in free text; occurrences embedded inside longer words stay raw by design (a 1–2 char fragment inside another word isn't identifying); exact/quoted contexts always alias via map lookup.
+3. **Never assign raw `getSettings()` output into the snapshot.** `vaults[].name` is sanitized via `pseudonymizeVaultSource` (the name IS `entry.vaultSource`, so aliases match trace/health), `host`/`url` via `maskString` — bare hostnames never hit the scrubber's `https?://` pattern.
+4. **The scrubber's `session` key match is anchored** (`\bsession\b` + `session`+id/token/key/secret/cookie compounds). Bare-substring matching wholesale-redacted `sessionStats` / `librarianSessionStats` and the report summary fabricated "0 searches, 0 flags" from the `<redacted>` placeholder. Survive-tests in `test/diagnostics.test.mjs` section K pin both directions.
+
+---
+
+## 97. `passesRuntimeGates` is THE runtime-gate predicate for all 4 match paths (thermo #12, 2026-07-03)
+
+`passesRuntimeGates(entry, collectors, settings, getWarmupText)` in `src/pipeline/match.js` centralizes the cooldown/warmup/probability gate block that was copy-pasted (and had drifted) across the primary-keyword, cascade, recursion, and BM25 match paths. Any future match path MUST call it — never re-inline the gate block (the drift made BM25 probability drops invisible to `/dle-why` for a full release).
+
+- **Gate order: cooldown → warmup → probability.** Deterministic gates first, random roll last — a cooldown-blocked entry never burns/records a probability roll.
+- **Cooldown pre-check is the guarded variant** (`entry.cooldown !== null`): a stale `cooldownTracker` row for an entry whose frontmatter `cooldown` was removed does NOT block it ("null = none" contract). This was an intentional unification — the primary path used to honor stale tracker rows.
+- **Warmup pins `hasWarmup` from `src/helpers.js`** (see #65); `getWarmupText === null` skips warmup entirely (cascade path, BUG-035).
+- **All collector records carry `vaultSource`** (see #50).
+- Match-time cooldown drops remain unrecorded on all 4 paths (pre-existing; recording them needs a new trace field — deliberate non-goal here).
+
+Guards: `RG-1`–`RG-10` in `test/unit.mjs`; `M-6-4`/`M-6-4b` in `test/regression.test.mjs`.
+
+---
+
+## 98. Cache-validate hardening: `DEFAULT_PRIORITY` is shared, array elements are sanitized (thermo #15/#16, 2026-07-03)
+
+- **`DEFAULT_PRIORITY` (100) is exported from `core/pipeline.js` and shared by the parser and `src/vault/cache-validate.js`.** Never hardcode a priority default at either site: the old 50/100 split made a corrupt-cache entry outrank a freshly parsed one (lower = higher priority). Known adjacent wart for a future pass: `comparePriority` in `src/helpers.js` still carries its own `?? 50` fallback (unreachable for parsed/validated entries, but it's a third default in the wild).
+- **`validateCachedEntry` sanitizes string-array elements** (`keys`/`links`/`resolvedLinks`/`tags`/`requires`/`excludes`): strings kept as-is, finite numbers `String()`-coerced (bare YAML numbers like `keys: [42]` round-trip as numbers), everything else dropped. Rationale: one non-string element used to throw later inside `computeEntityDerivedState` under the blanket hydration try/catch → whole-vault cache hydration silently disabled. Clean all-string arrays are not rewritten (same reference). Guards: `A39`–`A44` in `test/contracts.test.mjs`.
+
+---
+
+## 99. Drawer render-hash guards MUST fold live container identity into the skip check (thermo #17, 2026-07-03)
+
+Module-level render-hash memos in `src/drawer/drawer-render-tabs.js` (injection + browse) and `drawer-render-footer.js` (activity feed) survive `destroyDrawerPanel()`. An identity-blind hash guard early-returns into the freshly re-created (empty) DOM after a destroy+reinit → permanently blank tabs. Every such guard must compare the live container element (`$drawer[0]` / `$activityFeed[0]`) against a module-level root memo — the `_footerCache` pattern — so the first render against a new element always paints. Self-healing, no destroy-ordering dependency. When adding a new render-hash cache to any drawer renderer, copy this pattern. Guards: `DRH-1`/`DRH-2` in `test/unit.mjs`.
+
+---
+
+## 100. `neutralizeClosingTag` is the ONE fence sanitizer for `<entry>` bodies in AI manifests (thermo #20, 2026-07-03)
+
+`neutralizeClosingTag(text, tagName)` in `src/helpers.js` (ZWSP inserted after `</`, case-insensitive, whitespace-tolerant — mirror of ai.js's `sanitizeWrapped`) neutralizes fence breakouts in AI-facing manifests. Both `buildCandidateManifest` (`src/ai/manifest.js`) and `formatLinkedManifest` (`src/librarian/librarian-tools.js`) sanitize the **entire inner body** (title line + summary — the title inside the body line was the same hole; only the `name=""` attribute was escaped before). A literal `</entry>` in a summary used to break the XML fence and inject text into the lore-selection prompt / Emma's context. Any new XML-fenced surface that interpolates untrusted vault content MUST import this helper — don't duplicate it, don't hand-roll a regex. This sanitizer applies to AI-SELECTION manifests only — injected prose for the writing prompt is NOT altered. Guards: `FEN-1`–`FEN-4` in `test/unit.mjs`.
+
+---
+
+## 101. `deduplicateMultiVault` resolves conflicts across DIFFERENT vaults only (thermo #22, 2026-07-03)
+
+`multiVaultConflictResolution` (`first`/`last`/`merge`) in `src/vault/vault-pure.js` applies across **different `vaultSource`s only** — same-vault same-title duplicates pass through untouched (same object references) in every mode. It used to key on bare `title.toLowerCase()`, silently dropping same-vault duplicates (a supported configuration) under `first`/`last`/`merge` with no warning. Semantics now: the unit of conflict is the *vault-level copy* — `first` keeps ALL of the first-seen vault's copies, `last` keeps all copies from the vault owning the group's last entry, `merge` merges one representative per vault (each vault's first same-titled entry, vault first-appearance order; merge body preserved from the old implementation — BUG-378/H18/P2-8/H-05 semantics intact). Single-vault groups are always untouched. **Output ordering:** both the merged entry AND the `last` winner (all its copies, original relative order) emit at the position of the group's FIRST entry — pre-#22 (`titleMap` insertion-order) parity; emitting the `last` winner at its own slot reorders `vaultIndex` vs older builds and shifts stable-sort priority tie-breaks / Browse default order (adversarial-review catch). Never key this dedup on bare title again (see #50). Guards: `B-SV1`–`B-SV12` in `test/vault.test.mjs`.
+
+---
+
+## 102. WI import failures are categorized at the source — never re-sniffed from strings (thermo #14, 2026-07-03)
+
+`importEntries` (`src/vault/import.js`) pushes structured `{filename, title, reason, category, retryable, entry}` records into `result.failures[]` via `makeImportFailure` (`src/vault/import-pure.js`; site→category map: `dedup-transient`/`exist-check` → `transient`, `dedup-cap` → `collision`, `write` → `write`, `convert` → `convert`, `unexpected` → `unknown`). The legacy flat `errors[]` strings are still pushed 1:1 for back-compat — a test pins the pair count.
+
+`buildImportReport` (`src/ui/wi-import-report-pure.js`) prefers `failures[]` and preserves the `entry` ref for the retry hook; `classifyFailure` is the LEGACY FALLBACK ONLY (for old result shapes without `failures[]`). Routing new producer code through the keyword-sniffer regresses the exact bug this fixed: a network error whose message contained "attempts exceeded" classified as a name clash and shipped wrong retry advice in the v2.6 recovery table.
+
+The `/dle-import` retry hook (`src/ui/commands-vault.js`) re-imports `row.entry` by identity (no `byFilename`/`convertWiEntry` reconstruction) and re-keys still-failed rows by row name so convert failures (`Entry: …` strings) can't false-positive as success; dedup-renamed retries still count as success. Category vocabulary must stay aligned across `IMPORT_FAILURE_SITE_CATEGORY` / `FAILURE_RETRYABLE` / `CATEGORY_LABEL_KEY` (guarded in `test/wi-import.test.mjs` #14 section).
 
 ---

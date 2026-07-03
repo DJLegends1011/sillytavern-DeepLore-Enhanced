@@ -24,13 +24,14 @@ import {
     fieldDefinitions, setFieldDefinitions,
     setIndexBuildReport,
     entityRegexVersion,
+    resetVaultIndexState,
 } from '../state.js';
 import { DEFAULT_FIELD_DEFINITIONS, parseFieldDefinitionYaml } from '../fields.js';
 import { resolveLinks } from '../../core/matching.js';
 import { parseVaultFile } from '../../core/pipeline.js';
 import { takeIndexSnapshot, detectChanges, snapshotKey } from '../../core/sync.js';
 import { showChangesToast } from './sync.js';
-import { saveIndexToCache, loadIndexFromCache, pruneOrphanedCacheKeys } from './cache.js';
+import { saveIndexToCache, loadIndexFromCache, pruneOrphanedCacheKeys, clearIndexCache } from './cache.js';
 import { dedupError, dedupWarning } from '../toast-dedup.js';
 import { pushEvent } from '../diagnostics/interceptors.js';
 import { buildBM25Index, setDebugMode as setBm25DebugMode } from './bm25.js';
@@ -164,7 +165,7 @@ function computeDerivedIndexFields(entries, settings, previousEntries, precomput
     }
 }
 
-async function finalizeIndex({ entries, settings, skipCacheSave = false, previousEntries = null }) {
+async function finalizeIndex({ entries, settings, skipCacheSave = false, previousEntries = null, buildEpochAtStart = null }) {
     resolveLinks(vaultIndex);
 
     // Strip dangling requires/excludes/cascade_links so the pipeline doesn't trip on them
@@ -316,7 +317,15 @@ async function finalizeIndex({ entries, settings, skipCacheSave = false, previou
     // Prune sequenced AFTER save success: a failed save racing concurrent prune used to
     // delete the prior good cache key and leave nothing for the next hydration.
     if (!skipCacheSave) {
-        saveIndexToCache(entries)
+        // Epoch fence (gotcha #95): this save is fire-and-forget — the build's finally
+        // clears `indexing` before the save's IDB transaction exists, so /dle-clear can
+        // pass its indexing guard and wipe IDB while this save is still opening the DB;
+        // the save would then commit the pre-clear entries AFTER the wipe. Threading the
+        // build's captured epoch lets saveIndexToCache bail at write time if
+        // resetVaultIndexState (or a force-release) bumped buildEpoch since the build
+        // started. buildEpochAtStart === null (external callers) keeps the old behavior.
+        const isStale = buildEpochAtStart === null ? null : () => buildEpoch !== buildEpochAtStart;
+        saveIndexToCache(entries, isStale)
             .then(() => pruneOrphanedCacheKeys())
             .catch(err => console.warn('[DLE] Cache save/prune failed:', err?.message));
     }
@@ -564,7 +573,7 @@ export async function buildIndex() {
             console.warn('[DLE] Merge mode + vault fetch failure — preserving the whole prior index (merged provenance can\'t be split per-vault).');
             if (isZombie()) return;
             setIndexBuildReport(buildReport);
-            await finalizeIndex({ entries, settings, skipCacheSave: true });
+            await finalizeIndex({ entries, settings, skipCacheSave: true, buildEpochAtStart: capturedEpoch });
             return;
         }
 
@@ -613,7 +622,7 @@ export async function buildIndex() {
         if (isZombie()) return;
         // Publish ledger BEFORE finalizeIndex so observers (stats, health) see it.
         setIndexBuildReport(buildReport);
-        await finalizeIndex({ entries, settings, skipCacheSave: vaultFetchFailed });
+        await finalizeIndex({ entries, settings, skipCacheSave: vaultFetchFailed, buildEpochAtStart: capturedEpoch });
 
         // Once-per-page-load: subsequent rebuilds stay silent.
         if (!_parserLedgerToastShown && (buildReport.warnCount > 0 || buildReport.skipCount > 0)) {
@@ -691,13 +700,70 @@ export function getMaxResponseTokens() {
 }
 
 /**
+ * Issue #39 (v2.6): wipe-and-stop cache clear. Empties the IndexedDB vault cache
+ * AND the live in-memory index (plus all derived state, via
+ * state.js:resetVaultIndexState) WITHOUT re-fetching from Obsidian. Callers:
+ * the /dle-cache-info "Clear Cache" button and the /dle-clear slash command.
+ *
+ * This is the intentional user override for the BUG-367 empty-preserve guard
+ * (see the zero-files branch in buildIndex above): the guard carries prior
+ * entries forward when a vault returns 0 files, so a user who emptied their
+ * Obsidian vault could never get rid of the cached entries — every rebuild
+ * re-preserved and re-saved them. After a clear the prior index is empty, the
+ * guard has nothing to preserve, and a subsequent /dle-refresh against an
+ * emptied vault commits []. Do NOT weaken the guard itself; clearing is the
+ * escape hatch (docs/gotchas.md #95).
+ *
+ * Refuses to run while an index build is in flight — the build would commit
+ * over the wipe (and re-save the cache) moments later, making the clear look
+ * broken. The in-memory wipe happens synchronously under that guard (no await
+ * between the check and the state writes, so a build can't interleave); the
+ * IndexedDB clear follows. resetVaultIndexState also bumps buildEpoch (the
+ * epoch fence, gotcha #95) so any still-in-flight async producer — a prior
+ * build's un-awaited finalizeIndex cache save, boot hydration's IDB read —
+ * bails instead of repopulating what was just wiped. Nothing per-chat is
+ * touched and no state is written after the await.
+ *
+ * @returns {Promise<{ok: boolean, reason?: 'indexing'|'idb'}>}
+ *          reason:'indexing' — a build is in flight; NOTHING was touched
+ *          (caller should toast "wait for the build to finish" and abort).
+ *          reason:'idb' — the in-memory wipe HAPPENED and stays done (Browse,
+ *          stats, and matching all see an empty index — that part is real and
+ *          correct), but the IndexedDB wipe failed, so cached entries may
+ *          hydrate back on the next reload. Callers MUST surface this as an
+ *          error ("retry /dle-clear"), never a success toast.
+ */
+export async function clearVaultIndexAndCache() {
+    if (indexing) {
+        return { ok: false, reason: 'indexing' };
+    }
+    resetVaultIndexState();
+    const idbCleared = await clearIndexCache();
+    if (!idbCleared) {
+        pushEvent('cache_clear', { scope: 'index-only', manual: true, idbFailed: true });
+        return { ok: false, reason: 'idb' };
+    }
+    pushEvent('cache_clear', { scope: 'index+idb', manual: true });
+    return { ok: true };
+}
+
+/**
  * Hydrate the vault index from IndexedDB cache for instant startup.
  * After hydration, triggers a background rebuild to validate against Obsidian.
  * @returns {Promise<boolean>} True if cache was loaded
  */
 export async function hydrateFromCache() {
     try {
+        // Epoch fence (gotcha #95): a /dle-clear completing while the IDB read below
+        // is in flight bumps buildEpoch (resetVaultIndexState); without this check the
+        // setVaultIndex below would overwrite the wipe with the pre-clear entries.
+        // Bailing before setVaultIndex also skips the background buildIndex trigger
+        // further down (wipe-and-stop means STOP — no auto re-fetch). The auto-connect
+        // caller in index.js re-checks the same epoch before its fallback buildIndex
+        // so a bailed hydration doesn't turn into a full rebuild either.
+        const hydrateBuildEpoch = buildEpoch;
         const cached = await loadIndexFromCache();
+        if (buildEpoch !== hydrateBuildEpoch) return false;
         if (!cached || cached.entries.length === 0) return false;
 
         setVaultIndex(cached.entries);
@@ -1108,6 +1174,7 @@ export async function buildIndexWithReuse() {
                 settings,
                 skipCacheSave: true,
                 previousEntries: indexSnapshot,
+                buildEpochAtStart: capturedBuildEpoch,
             });
             _reuseResult = true;
             return;
@@ -1207,6 +1274,7 @@ export async function buildIndexWithReuse() {
             settings,
             skipCacheSave: anyVaultFailed,
             previousEntries: indexSnapshot,
+            buildEpochAtStart: capturedBuildEpoch,
         });
 
         if (!_parserLedgerToastShown && (buildReport.warnCount > 0 || buildReport.skipCount > 0)) {

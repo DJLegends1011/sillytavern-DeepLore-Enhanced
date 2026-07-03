@@ -34,6 +34,10 @@ All notable changes to DeepLore are documented here. This file follows
 
 - **Recovery table for failed/skipped entries** — the flat error list after a World-Info import is replaced by a per-entry reconciliation table that classifies each failure (transient / capacity / convert / vault / unknown), shows whether a retry is worth attempting, and offers per-entry Retry plus Retry-all.
 
+#### Vault cache (Issue #39)
+
+- **`/dle-clear` and a Clear Cache button that actually clears** — clearing the vault cache is now wipe-and-stop: it empties the IndexedDB cache AND the live in-memory index (Browse visibly empties, derived search/graph state resets) without re-fetching, so an intentionally emptied Obsidian vault finally stays empty. The old button only cleared IndexedDB — the live index survived and the next rebuild quietly resurrected and re-cached every entry. The transient-blip safety net (a vault that momentarily returns 0 files still keeps its prior entries) is unchanged; clearing is the deliberate override for it. Run `/dle-refresh` afterwards to re-index. While an index build is running the clear refuses with a "wait for it to finish" toast. If the browser blocks the database wipe, the clear reports it honestly — error toast with retry guidance, the live index stays cleared — instead of toasting success; and a clear can no longer be silently undone by an in-flight cache save or boot hydration racing it. Also scrubbed the phantom `/dle-force-refresh` and `/dle-rebuild` commands from error toasts and settings copy — only `/dle-refresh` was ever registered.
+
 #### Pipeline status
 
 - **Elapsed-time heartbeat and Cancel on the "Consulting vault…" toast** — during the indeterminate AI phases (selection, Librarian search/flag) the toast now ticks a `(Ns)` elapsed counter and shows a Cancel button that aborts the in-flight generation through the canonical Stop path (`GENERATION_STOPPED`), so a slow model run never feels stuck. Determinate fast runs stay uncluttered.
@@ -82,9 +86,21 @@ This release's polish pass introduced a handful of regressions, all caught by a 
 - **Drawer phase progression now announced to screen readers** (html-1) — removing the nested live regions left phase changes silent; the renderer announces each phase transition through the dedicated polite live region, matching what its own comment promised.
 - **Multi-vault collision in the Browse expand handler** — the click-to-expand path resolved entries by bare title, colliding across vaults; it now uses the same `trackerKey = vaultSource:title` resolver as the renderer (gotcha #50).
 
+A release-readiness audit also fixed a batch of long-standing bugs:
+
+- **The shareable diagnostics report no longer leaks private lore** — health-check issues (entry titles, keywords, vault names, Librarian queries), probability-skipped entries, and vault names/hosts from settings are now pseudonymized with the same `<title-N>`/`<vault-N>` aliases as the pipeline trace — and Librarian session stats are no longer over-redacted into a fabricated "0 searches, 0 flags".
+- **Lore entries skipped by a probability roll during fuzzy (BM25) matching are now visible in `/dle-why`** and the Why? tab instead of vanishing silently; recursion-matched entries blocked by warmup are reported too. All four match paths now share one runtime-gate helper, so the diagnostics can't drift apart again.
+- **Entries restored from a corrupted cache no longer outrank freshly parsed entries** — the cache backfill now uses the same priority default (100) as the parser.
+- **A single corrupt value inside a cached entry's keys/tags/links no longer silently disables vault cache hydration for the whole vault** — bad elements are repaired or dropped during validation.
+- **Drawer tabs (Why?, Browse) and the footer activity feed no longer render blank** after the drawer is torn down and re-created (e.g. extension reload).
+- **The status spinner now fully stops when idle** — the outer ring kept animating invisibly in the background, wasting CPU/GPU while parked.
+- **A literal `</entry>` inside an entry summary or title can no longer break out of the AI selection manifest** and inject instructions into the lore-selection prompt (applies to both the AI search manifest and the Librarian's related-entries listing).
+- **Multi-vault conflict resolution (`first`/`last`/`merge`) no longer silently deletes same-titled entries that live in the *same* vault** — resolution now applies across vaults only.
+- **The import recovery table no longer guesses why an entry failed** — each failed entry now carries its real failure type straight from the importer (connection, name clash, bad data, write failed) instead of keyword-matching the error text, so a network hiccup whose message happened to contain words like "attempts exceeded" can no longer show up as a "name clash" with the wrong retry advice. Retry also re-imports the original entries directly, so it works even for rows whose filenames couldn't be reconstructed.
+
 ### i18n
 
-- **191 new UI strings** added across the polish and structural passes, and **all 7 locales brought to full 2571-key parity** (the machine-translated locales were re-synced from the canonical English; `__meta.total_keys` corrected from its stale value). Several orphan locale keys removed uniformly across all 7 files to preserve key-set parity.
+- **191 new UI strings** added across the polish and structural passes, and **all 7 locales brought to full key parity** (the machine-translated locales were re-synced from the canonical English; `__meta.total_keys` corrected from its stale value). Several orphan locale keys removed uniformly across all 7 files to preserve key-set parity. Final count for this release: **2,574 keys × 7 locales** (the `/dle-clear` additions included).
 
 ---
 

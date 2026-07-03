@@ -42,16 +42,17 @@ function escHtml(s) {
 const FAILURE_RETRYABLE = new Set(['transient', 'collision', 'write', 'unknown', 'convert']);
 
 /**
- * Classify a flat error string emitted by importEntries into a structured
- * failure row. importEntries currently returns `errors: string[]` shaped
- * `"${filename}: ${reason}"` (or `"Entry: ${message}"` for converter throws),
- * with no back-reference to the source WI entry. We parse the filename back out
- * so the reconciliation table can show a per-entry row and the retry hook can
- * re-match the original entry by filename. Pure — no DOM.
+ * LEGACY FALLBACK (#14): classify a flat error string into a structured
+ * failure row by keyword-sniffing the reason text. importEntries now supplies
+ * `result.failures[]` records with the category assigned at the failure site,
+ * and `buildImportReport` prefers those — this parser only runs for legacy
+ * result shapes (`errors: string[]` shaped `"${filename}: ${reason}"`, or
+ * `"Entry: ${message}"` for converter throws) that lack `failures[]`.
  *
- * If a future importEntries supplies a richer `result.failures` array of
- * `{ filename, title, reason, category }` objects, `buildImportReport` prefers
- * those verbatim and skips this parser (see the `failures` branch below).
+ * Substring sniffing is inherently collision-prone — e.g. a network error
+ * whose message contains "attempts exceeded" lands in 'collision' — which is
+ * exactly why the live path carries the category on the record instead. Do
+ * NOT route new producer code through here. Pure — no DOM.
  *
  * @param {string} raw - one entry from result.errors
  * @returns {{ name: string, reason: string, category: string, retryable: boolean }}
@@ -96,10 +97,10 @@ export function buildImportReport(result, source, folder) {
     const roundTripped = r.roundTripped || {};
     const skipped = r.skipped || {};
 
-    // Prefer a structured `failures` array if importEntries supplies one
-    // (forward-compat hook — see import.js DOC-NOTE). Otherwise derive rows by
-    // parsing the flat `errors` strings so the reconciliation table works today
-    // without any import.js change.
+    // Prefer the structured `failures` array — importEntries supplies it as of
+    // #14, with the category assigned at the failure site (import-pure.js
+    // makeImportFailure). Only legacy result shapes fall back to keyword-
+    // parsing the flat `errors` strings via classifyFailure.
     const rawFailures = Array.isArray(result && result.failures) ? result.failures : null;
     const failures = rawFailures
         ? rawFailures.map((f) => ({
@@ -107,6 +108,9 @@ export function buildImportReport(result, source, folder) {
             reason: String(f.reason || f.error || ''),
             category: f.category || classifyFailure(`${f.filename || ''}: ${f.reason || f.error || ''}`).category,
             retryable: f.retryable != null ? !!f.retryable : FAILURE_RETRYABLE.has(f.category || 'unknown'),
+            // #14: keep the source WI entry on the row so the retry hook can
+            // re-run importEntries directly (no filename→entry reconstruction).
+            entry: f.entry || null,
         }))
         : (Array.isArray(result && result.errors) ? result.errors : []).map(classifyFailure);
 

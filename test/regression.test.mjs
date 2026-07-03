@@ -1240,7 +1240,9 @@ test('validateCachedEntry: valid entry accepted', () => {
 test('validateCachedEntry: missing optional fields backfilled', () => {
     const entry = { title: 'Test', keys: ['a'], content: 'Content', tokenEstimate: 50 };
     validateCachedEntry(entry);
-    assertEqual(entry.priority, 50, 'missing priority should default to 50');
+    // Thermo #15: backfill must match the parser default (DEFAULT_PRIORITY = 100),
+    // not 50 — a corrupt-cache entry must never outrank a fresh parse.
+    assertEqual(entry.priority, 100, 'missing priority should default to 100 (parser DEFAULT_PRIORITY)');
     assertEqual(entry.constant, false, 'missing constant should default to false');
     assert(Array.isArray(entry.links), 'missing links should be backfilled to empty array');
     assert(Array.isArray(entry.tags), 'missing tags should be backfilled to empty array');
@@ -5878,8 +5880,13 @@ test('M-6-4: all three match paths import hasWarmup from helpers.js', async () =
     assertMatch(matchSrc, /import\s*\{[^}]*\bhasWarmup\b[^}]*\}\s*from\s*['"]\.\.\/helpers\.js['"]/,
         'M-6-4: match.js must import hasWarmup from helpers');
     // Confirm the three call sites exist (one per path)
+    // Thermo #12: the gate block is now centralized in passesRuntimeGates — hasWarmup is
+    // called once inside it, and all 4 match paths (primary/cascade/recursion/BM25) route
+    // through the helper. The M-6 invariant (one canonical warmup predicate) is preserved.
     const callCount = (matchSrc.match(/hasWarmup\s*\(/g) || []).length;
-    assert(callCount >= 3, `M-6-4: match.js should call hasWarmup at least 3 times (primary/recursion/BM25), found ${callCount}`);
+    assert(callCount >= 1, `M-6-4: match.js should call hasWarmup inside passesRuntimeGates, found ${callCount}`);
+    const gateCalls = (matchSrc.match(/passesRuntimeGates\s*\(/g) || []).length;
+    assert(gateCalls >= 5, `M-6-4b: match.js should define + call passesRuntimeGates at all 4 match paths (expected >=5 occurrences incl. definition), found ${gateCalls}`);
     // No path should retain the old ad-hoc shape checks.
     assert(!/entry\.warmup\s*&&\s*entry\.warmup\s*>=\s*1/.test(matchSrc),
         'M-6-4: match.js must NOT contain the legacy BM25 shape `entry.warmup && entry.warmup >= 1`');
@@ -8058,6 +8065,287 @@ test('RENAME-3: locale + icon fetches resolve relative to import.meta.url (locat
     const drawer = readFileSync(winPath('../src/drawer/drawer.js'), 'utf8');
     assert(drawer.includes("new URL('../../icon.svg', import.meta.url)"),
         'RENAME-3: drawer icon fetch must use new URL(..., import.meta.url)');
+});
+
+section('CLEAR — Issue #39 wipe-and-stop cache clear (gotcha #95)');
+
+test('CLEAR-1: resetVaultIndexState wipes index + all derived state, bumps entityRegexVersion, notifies', async () => {
+    const S = await import('../src/state.js');
+    // Snapshot prior state so this test doesn't bleed into later tests.
+    const prior = {
+        vaultIndex: S.vaultIndex,
+        indexTimestamp: S.indexTimestamp,
+        previousIndexSnapshot: S.previousIndexSnapshot,
+        report: S.getIndexBuildReport(),
+        vaultAvgTokens: S.vaultAvgTokens,
+        mentionWeights: S.mentionWeights,
+        folderList: S.folderList,
+        entityNameSet: S.entityNameSet,
+        entityShortNameRegexes: S.entityShortNameRegexes,
+        fuzzySearchIndex: S.fuzzySearchIndex,
+        aiSearchCache: S.aiSearchCache,
+    };
+    // Paint a fully "loaded index" picture.
+    S.setVaultIndex([makeEntry('Castle', { vaultSource: 'v1' })]);
+    S.setIndexTimestamp(Date.now());
+    S.setPreviousIndexSnapshot({ contentHashes: new Map([['v1:Castle.md', 'h']]), titleMap: new Map(), keyMap: new Map(), timestamp: 1 });
+    S.setIndexBuildReport({ okCount: 1, warnCount: 2, skipCount: 3, skipped: [{ filename: 'x.md', reason: 'r' }], entriesWithWarnings: [{ filename: 'x.md' }] });
+    S.setVaultAvgTokens(123);
+    S.setMentionWeights(new Map([['a\0b', 2]]));
+    S.setFolderList([{ path: 'A', entryCount: 1 }]);
+    S.setEntityNameSet(new Set(['castle']));
+    S.setEntityShortNameRegexes(new Map([['castle', /castle/i]]));
+    S.setFuzzySearchIndex({ idf: new Map(), docs: new Map(), avgDl: 0 });
+    S.setAiSearchCache({ hash: 'h', manifestHash: 'm', chatLineCount: 3, results: [{ title: 'Castle' }], matchedEntrySet: new Set(['v1:Castle']) });
+
+    const versionBefore = S.entityRegexVersion;
+    let notified = 0;
+    const unsub = S.onIndexUpdated(() => { notified++; });
+
+    S.resetVaultIndexState();
+
+    assertEqual(S.vaultIndex, [], 'CLEAR-1: vaultIndex emptied');
+    assertEqual(S.indexTimestamp, 0, 'CLEAR-1: indexTimestamp reset to 0');
+    assertNull(S.previousIndexSnapshot, 'CLEAR-1: previousIndexSnapshot nulled (next build = cold start, no bogus change toast)');
+    const report = S.getIndexBuildReport();
+    assertEqual(report.warnCount, 0, 'CLEAR-1: indexBuildReport warnCount reset (stale /dle-lint warnings gone)');
+    assertEqual(report.skipped.length, 0, 'CLEAR-1: indexBuildReport skipped[] reset');
+    assertEqual(S.vaultAvgTokens, 0, 'CLEAR-1: vaultAvgTokens reset');
+    assertEqual(S.mentionWeights.size, 0, 'CLEAR-1: mentionWeights emptied');
+    assertEqual(S.folderList, [], 'CLEAR-1: folderList emptied');
+    assertEqual(S.entityNameSet.size, 0, 'CLEAR-1: entityNameSet emptied');
+    assertEqual(S.entityShortNameRegexes.size, 0, 'CLEAR-1: entityShortNameRegexes emptied');
+    assertNull(S.fuzzySearchIndex, 'CLEAR-1: fuzzySearchIndex nulled');
+    assertEqual(S.aiSearchCache.hash, '', 'CLEAR-1: aiSearchCache hash cleared');
+    assertEqual(S.aiSearchCache.results.length, 0, 'CLEAR-1: aiSearchCache results cleared');
+    assertNull(S.aiSearchCache.matchedEntrySet, 'CLEAR-1: aiSearchCache canonical empty shape (matchedEntrySet null)');
+    assertGreaterThan(S.entityRegexVersion, versionBefore, 'CLEAR-1: entityRegexVersion bumped (BUG-394 staleness stamps invalidate)');
+    assertEqual(notified, 1, 'CLEAR-1: notifyIndexUpdated fired exactly once (drawer/settings re-render empty)');
+
+    unsub();
+    // Restore prior state.
+    S.setVaultIndex(prior.vaultIndex);
+    S.setIndexTimestamp(prior.indexTimestamp);
+    S.setPreviousIndexSnapshot(prior.previousIndexSnapshot);
+    S.setIndexBuildReport(prior.report);
+    S.setVaultAvgTokens(prior.vaultAvgTokens);
+    S.setMentionWeights(prior.mentionWeights);
+    S.setFolderList(prior.folderList);
+    S.setEntityNameSet(prior.entityNameSet);
+    S.setEntityShortNameRegexes(prior.entityShortNameRegexes);
+    S.setFuzzySearchIndex(prior.fuzzySearchIndex);
+    S.setAiSearchCache(prior.aiSearchCache);
+});
+
+test('CLEAR-2: clearVaultIndexAndCache — indexing guard, sync wipe before IDB await, no re-fetch (source guard)', () => {
+    const winPath = (rel) => fileURLToPath(new URL(rel, import.meta.url));
+    const src = readFileSync(winPath('../src/vault/vault.js'), 'utf8');
+    assert(/export async function clearVaultIndexAndCache\s*\(/.test(src),
+        'CLEAR-2: clearVaultIndexAndCache exported from vault.js');
+    const start = src.indexOf('export async function clearVaultIndexAndCache');
+    const body = src.slice(start, src.indexOf('\n}', start) + 2);
+    const guardIdx = body.indexOf('if (indexing)');
+    const wipeIdx = body.indexOf('resetVaultIndexState()');
+    const idbIdx = body.indexOf('await clearIndexCache()');
+    assert(guardIdx !== -1, 'CLEAR-2: refuses while an index build is in flight');
+    assert(wipeIdx !== -1, 'CLEAR-2: routes the in-memory wipe through state.js resetVaultIndexState');
+    assert(idbIdx !== -1, 'CLEAR-2: clears the IndexedDB cache');
+    assert(guardIdx < wipeIdx && wipeIdx < idbIdx,
+        'CLEAR-2: order is indexing-guard → sync in-memory wipe → IDB await');
+    assert(!/await/.test(body.slice(guardIdx, wipeIdx)),
+        'CLEAR-2: no await between the indexing guard and the wipe — a build cannot interleave (gotcha #95)');
+    assert(!/buildIndex\s*\(/.test(body),
+        'CLEAR-2: wipe-and-stop — the clear routine must NOT trigger a re-fetch/rebuild');
+});
+
+test('CLEAR-3: BUG-367 empty-preserve guard intact — transient 0-file fetch still preserves prior entries (source guard)', () => {
+    // The wipe-and-stop clear is the intentional OVERRIDE for this guard; the guard
+    // itself must keep its preserve-on-empty default (gotcha #95 — no force flag).
+    const winPath = (rel) => fileURLToPath(new URL(rel, import.meta.url));
+    const src = readFileSync(winPath('../src/vault/vault.js'), 'utf8');
+    assert(src.includes('const priorIndexSnapshot = [...vaultIndex]'),
+        'CLEAR-3: guard baseline snapshots the LIVE in-memory index');
+    const zeroIdx = src.indexOf('data.files.length === 0');
+    assert(zeroIdx !== -1, 'CLEAR-3: zero-files branch present in buildIndex');
+    const branch = src.slice(zeroIdx, zeroIdx + 1200);
+    assert(branch.includes('priorIndexSnapshot.filter(e => e.vaultSource === vault.name)'),
+        'CLEAR-3: preserve filters the prior snapshot per-vault');
+    assert(branch.includes("'vault_empty_preserve'"),
+        'CLEAR-3: preserve warning keyed vault_empty_preserve');
+    assert(/vaultFetchFailed = true/.test(branch),
+        'CLEAR-3: preserve marks the fetch failed (skipCacheSave downstream — cache keeps prior entries)');
+});
+
+test('CLEAR-4: after clear the BUG-367 guard has nothing to preserve — 0-file fetch commits empty', async () => {
+    // Largest headless slice of scenario (c): vault.js itself imports ST modules and
+    // cannot load in plain Node, so this drives the REAL state transition
+    // (resetVaultIndexState) through the guard's EXACT baseline expressions
+    // (`[...vaultIndex]` + per-vault filter, both source-pinned by CLEAR-3).
+    const S = await import('../src/state.js');
+    const prior = S.vaultIndex;
+    S.setVaultIndex([makeEntry('Ghost', { vaultSource: 'Primary' })]);
+    // Pre-clear: a 0-file fetch WOULD preserve (BUG-367 behavior — scenario (b)).
+    let priorForThisVault = [...S.vaultIndex].filter(e => e.vaultSource === 'Primary');
+    assertEqual(priorForThisVault.length, 1,
+        'CLEAR-4: pre-clear, the guard baseline holds the prior entry (transient blip → preserve)');
+    S.resetVaultIndexState();
+    // Post-clear: the same baseline is empty → the preserve branch cannot fire and
+    // a subsequent 0-file refresh commits [] (no phantom resurrection).
+    priorForThisVault = [...S.vaultIndex].filter(e => e.vaultSource === 'Primary');
+    assertEqual(priorForThisVault.length, 0,
+        'CLEAR-4: post-clear, the guard baseline is empty — refresh against an emptied vault commits []');
+    S.setVaultIndex(prior);
+});
+
+test('CLEAR-5: /dle-clear registered + Clear Cache button routes through the shared routine', () => {
+    const winPath = (rel) => fileURLToPath(new URL(rel, import.meta.url));
+    const cv = readFileSync(winPath('../src/ui/commands-vault.js'), 'utf8');
+    assert(/name: 'dle-clear'/.test(cv), 'CLEAR-5: /dle-clear slash command registered');
+    assert(cv.includes('clearVaultIndexAndCache'), 'CLEAR-5: /dle-clear calls the shared wipe-and-stop routine');
+    assert(!/name: 'dle-force-refresh'/.test(cv) && !/name: 'dle-rebuild'/.test(cv),
+        'CLEAR-5: phantom commands stay unregistered (locked decision — /dle-clear only)');
+    const ca = readFileSync(winPath('../src/ui/commands-admin.js'), 'utf8');
+    assert(ca.includes('clearVaultIndexAndCache'), 'CLEAR-5: Clear Cache button uses the shared routine');
+    assert(!/import\s*{[^}]*clearIndexCache[^}]*}\s*from/.test(ca),
+        'CLEAR-5: IDB-only clearIndexCache no longer imported by the button file (gotcha #95)');
+    assert(ca.includes("cmd: '/dle-clear'"), 'CLEAR-5: /dle-clear listed in DLE_COMMANDS (palette + Reference tab)');
+});
+
+test('CLEAR-6: no user-facing copy references unregistered /dle-force-refresh or /dle-rebuild', () => {
+    // Issue #39 root cause 3: error toasts and settings copy pointed users at
+    // commands that were never registered. Scan all runtime copy surfaces.
+    const winPath = (rel) => fileURLToPath(new URL(rel, import.meta.url));
+    const walk = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((d) => {
+        const p = join(dir, d.name);
+        return d.isDirectory() ? walk(p) : (d.name.endsWith('.js') ? [p] : []);
+    });
+    const files = [
+        ...walk(winPath('../src')),
+        winPath('../index.js'),
+        winPath('../settings-popup.html'),
+        winPath('../drawer.html'),
+        winPath('../setup-wizard.html'),
+        winPath('../settings.html'),
+        ...['en', 'de-de', 'es-es', 'fr-fr', 'ja-jp', 'ru-ru', 'zh-cn'].map(l => winPath(`../locales/dle.${l}.json`)),
+    ];
+    const violations = [];
+    for (const f of files) {
+        let content;
+        try { content = readFileSync(f, 'utf8'); } catch { continue; }
+        if (content.includes('/dle-force-refresh')) violations.push(`${f}: /dle-force-refresh`);
+        if (content.includes('/dle-rebuild')) violations.push(`${f}: /dle-rebuild`);
+    }
+    assertEqual(violations.length, 0,
+        `CLEAR-6: phantom command references in runtime copy:\n  ${violations.join('\n  ')}`);
+});
+
+test('CLEAR-7: resetVaultIndexState bumps buildEpoch — the epoch fence for in-flight async producers', async () => {
+    // Hardening fix (2026-07-03): finalizeIndex's fire-and-forget cache save and boot
+    // hydration's IDB read both capture buildEpoch before their first await and bail
+    // on change. Without this bump, a save/hydration still in flight when /dle-clear
+    // runs would repopulate the just-wiped IDB store / live index (Issue #39 redux).
+    // Bumping is safe: in-flight builds already treat an epoch change as "discard"
+    // (BUG-015 zombie guard), and a build started after the clear captures the new
+    // epoch so its legitimately fresh save passes the fence.
+    const S = await import('../src/state.js');
+    const prior = S.vaultIndex;
+    const epochBefore = S.buildEpoch;
+    S.resetVaultIndexState();
+    assertEqual(S.buildEpoch, epochBefore + 1, 'CLEAR-7: buildEpoch bumped exactly once per wipe');
+    S.setVaultIndex(prior);
+});
+
+test("CLEAR-8: clearIndexCache reports failure — clearVaultIndexAndCache routes it to {ok:false, reason:'idb'} (source guard)", () => {
+    const winPath = (rel) => fileURLToPath(new URL(rel, import.meta.url));
+    // cache.js: the IDB wipe must report success/failure instead of swallowing into a
+    // void resolve — a swallowed failure meant IDB still held every entry (next reload
+    // hydrated them back, the exact Issue #39 symptom) behind a success toast.
+    const cache = readFileSync(winPath('../src/vault/cache.js'), 'utf8');
+    const clearStart = cache.indexOf('export async function clearIndexCache');
+    assert(clearStart > 0, 'CLEAR-8: clearIndexCache present');
+    const rest = cache.slice(clearStart);
+    const nextExport = rest.indexOf('\nexport ', 1);
+    const clearBody = nextExport > 0 ? rest.slice(0, nextExport) : rest;
+    assert(/return true;/.test(clearBody), 'CLEAR-8: clearIndexCache returns true on committed wipe');
+    assert(/return false;/.test(clearBody), 'CLEAR-8: clearIndexCache returns false on failure (error still swallowed+logged)');
+    // vault.js: memory wipe stays done; only the IDB failure is surfaced as reason:'idb'.
+    const vault = readFileSync(winPath('../src/vault/vault.js'), 'utf8');
+    const start = vault.indexOf('export async function clearVaultIndexAndCache');
+    const body = vault.slice(start, vault.indexOf('\n}', start) + 2);
+    const wipeIdx = body.indexOf('resetVaultIndexState()');
+    const idbResultIdx = body.indexOf('await clearIndexCache()');
+    const idbReasonIdx = body.indexOf("reason: 'idb'");
+    assert(idbReasonIdx !== -1, "CLEAR-8: routes IDB failure to {ok:false, reason:'idb'}");
+    assert(wipeIdx !== -1 && wipeIdx < idbResultIdx && idbResultIdx < idbReasonIdx,
+        "CLEAR-8: memory wipe happens BEFORE the IDB attempt — reason:'idb' means \"index cleared, cache not\"");
+    // Both caller surfaces branch on reason:'idb' with the dedicated ERROR toast —
+    // never the success toast, never the busy warning.
+    const cv = readFileSync(winPath('../src/ui/commands-vault.js'), 'utf8');
+    assert(/reason === 'idb'/.test(cv) && cv.includes('dle_cmd_clear_idb_failed_toast'),
+        "CLEAR-8: /dle-clear error-toasts on reason:'idb'");
+    const ca = readFileSync(winPath('../src/ui/commands-admin.js'), 'utf8');
+    assert(/reason === 'idb'/.test(ca) && ca.includes('dle_cmd_clear_idb_failed_toast'),
+        "CLEAR-8: Clear Cache button error-toasts on reason:'idb'");
+    // Locale key exists in canonical EN (all-locale key-set parity is pinned by i18n.test.mjs).
+    const en = JSON.parse(readFileSync(winPath('../locales/dle.en.json'), 'utf8'));
+    assert(typeof en.dle_cmd_clear_idb_failed_toast === 'string' && en.dle_cmd_clear_idb_failed_toast.includes('/dle-clear'),
+        'CLEAR-8: dle_cmd_clear_idb_failed_toast present in EN locale and points at retrying /dle-clear');
+});
+
+test('CLEAR-9: finalizeIndex cache save is epoch-fenced — un-awaited save cannot repopulate IDB after a clear (source guard)', () => {
+    const winPath = (rel) => fileURLToPath(new URL(rel, import.meta.url));
+    const vault = readFileSync(winPath('../src/vault/vault.js'), 'utf8');
+    // finalizeIndex accepts the build's start-of-build captured epoch and derives a
+    // staleness predicate over the LIVE buildEpoch for the fire-and-forget save.
+    assert(/async function finalizeIndex\(\{[^}]*buildEpochAtStart = null[^}]*\}\)/.test(vault),
+        'CLEAR-9: finalizeIndex takes buildEpochAtStart');
+    assert(/const isStale = buildEpochAtStart === null \? null : \(\) => buildEpoch !== buildEpochAtStart;/.test(vault),
+        'CLEAR-9: staleness predicate compares live buildEpoch to the captured value');
+    assert(/saveIndexToCache\(entries, isStale\)/.test(vault),
+        'CLEAR-9: the un-awaited save receives the fence predicate');
+    // Both build paths thread their own zombie-guard epoch capture.
+    assert(/buildEpochAtStart: capturedEpoch/.test(vault),
+        'CLEAR-9: buildIndex threads its capturedEpoch into finalizeIndex');
+    assert(/buildEpochAtStart: capturedBuildEpoch/.test(vault),
+        'CLEAR-9: buildIndexWithReuse threads its capturedBuildEpoch into finalizeIndex');
+    // cache.js: the fence must run AFTER the openDB await and BEFORE the write txn is
+    // created — the only ordering that closes the race. (A bump landing after the
+    // check is still safe: the clear's own txn is then created after the save's, and
+    // IDB serializes readwrite txns on the store in creation order, so the clear()
+    // commits last either way.)
+    const cache = readFileSync(winPath('../src/vault/cache.js'), 'utf8');
+    const saveStart = cache.indexOf('export async function saveIndexToCache');
+    const saveRest = cache.slice(saveStart);
+    const saveBody = saveRest.slice(0, saveRest.indexOf('\nexport ', 1));
+    const openIdx = saveBody.indexOf('await openDB()');
+    const fenceIdx = saveBody.indexOf('isStale()');
+    const txIdx = saveBody.indexOf('db.transaction(');
+    assert(openIdx !== -1 && fenceIdx !== -1 && txIdx !== -1,
+        'CLEAR-9: openDB, fence check, and write txn all present in saveIndexToCache');
+    assert(openIdx < fenceIdx && fenceIdx < txIdx,
+        'CLEAR-9: fence checked after openDB resolves and before the write txn is created');
+});
+
+test('CLEAR-10: boot hydration is epoch-fenced — a mid-hydration clear is not overwritten (source guard)', () => {
+    const winPath = (rel) => fileURLToPath(new URL(rel, import.meta.url));
+    const vault = readFileSync(winPath('../src/vault/vault.js'), 'utf8');
+    const start = vault.indexOf('export async function hydrateFromCache');
+    const body = vault.slice(start, vault.indexOf('\n}', start) + 2);
+    const captureIdx = body.indexOf('const hydrateBuildEpoch = buildEpoch;');
+    const loadIdx = body.indexOf('await loadIndexFromCache()');
+    const recheckIdx = body.indexOf('buildEpoch !== hydrateBuildEpoch');
+    const commitIdx = body.indexOf('setVaultIndex(');
+    assert(captureIdx !== -1 && loadIdx !== -1 && recheckIdx !== -1 && commitIdx !== -1,
+        'CLEAR-10: capture, await, re-check, commit all present in hydrateFromCache');
+    assert(captureIdx < loadIdx && loadIdx < recheckIdx && recheckIdx < commitIdx,
+        'CLEAR-10: epoch captured BEFORE the IDB await, re-checked before setVaultIndex (bail skips commit AND the background rebuild trigger)');
+    // index.js auto-connect: a bailed hydration must NOT fall through to the full
+    // rebuild — that re-fetch would overwrite the clear (wipe-and-stop means STOP).
+    const idx = readFileSync(winPath('../index.js'), 'utf8');
+    assert(/const bootBuildEpoch = buildEpoch;/.test(idx),
+        'CLEAR-10: auto-connect captures buildEpoch before hydrateFromCache');
+    assert(/if \(!hydrated && buildEpoch === bootBuildEpoch\)/.test(idx),
+        'CLEAR-10: fallback buildIndex gated on unchanged buildEpoch');
 });
 
 await summary('Regression Tests');

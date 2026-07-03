@@ -384,7 +384,7 @@ export async function openRuleBuilder() {
                 console.warn('[DLE] Index rebuild after field save failed:', err?.message);
                 try {
                     toastr.error(
-                        `Fields saved, but index rebuild failed: ${err?.message || 'unknown error'}. Run /dle-force-refresh or rebuild from the drawer.`,
+                        `Fields saved, but index rebuild failed: ${err?.message || 'unknown error'}. Run /dle-refresh or rebuild from the drawer.`,
                         'Reindex Failed',
                         { timeOut: 12000 },
                     );

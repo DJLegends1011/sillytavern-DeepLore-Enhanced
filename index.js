@@ -44,7 +44,7 @@ import { clearPrompts } from './core/pipeline.js';
 import { getSettings, PROMPT_TAG_PREFIX, PROMPT_TAG, invalidateSettingsCache, resolveConnectionConfig, PROXY_DEPRECATION_MODE_KEYS } from './settings.js';
 import { resolvePromptOrOverride, loadPromptsForBoot } from './src/prompts/prompt-store.js';
 import {
-    vaultIndex, getWriterVisibleEntries, indexEverLoaded, indexing,
+    vaultIndex, getWriterVisibleEntries, indexEverLoaded, indexing, buildEpoch,
     lastScribeChatLength, scribeInProgress,
     cooldownTracker, generationCount, injectionHistory, consecutiveInjections,
     chatInjectionCounts, setChatInjectionCounts, trackerKey,
@@ -2382,8 +2382,14 @@ async function _doInit() {
                 // Skip if a build was already triggered by early user generation.
                 if (indexEverLoaded || indexing) return;
                 try {
+                    // Epoch fence (gotcha #95): if a /dle-clear lands while hydrateFromCache
+                    // awaits its IDB read, hydration bails and returns false — but falling
+                    // through to buildIndex here would re-fetch from Obsidian and overwrite
+                    // the clear (wipe-and-stop means STOP). Only auto-build when no
+                    // clear/force-release bumped buildEpoch during hydration.
+                    const bootBuildEpoch = buildEpoch;
                     const hydrated = await hydrateFromCache();
-                    if (!hydrated) {
+                    if (!hydrated && buildEpoch === bootBuildEpoch) {
                         await buildIndex();
                     }
                     // hydrateFromCache (when it succeeds) triggers a background buildIndex itself.

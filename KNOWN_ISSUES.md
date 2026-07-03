@@ -6,7 +6,7 @@ These are documented limitations, not actionable vulnerabilities for typical sin
 Obsidian API keys are stored as plaintext in SillyTavern's extension_settings JSON. This is a platform limitation — ST does not yet provide a secrets API. Any extension on the same origin can read these keys, granting full read/write access to the connected Obsidian vault. **Mitigation:** Use a dedicated Obsidian vault for lorebook content, not your personal vault.
 
 ## AI Search Prompt Injection via Summaries
-Entry summaries are included in the AI search manifest. In multi-author vaults, a malicious summary could attempt to influence the AI's selection behavior. This is inherent to any AI retrieval system. **Mitigation:** The manifest uses XML structural delimiters and entity escaping to limit injection surface. Review summaries from untrusted authors.
+Entry summaries are included in the AI search manifest. In multi-author vaults, a malicious summary could attempt to influence the AI's selection behavior. This is inherent to any AI retrieval system. **Mitigation:** The manifest uses XML structural delimiters with closing-tag neutralization on the entry body (a literal `</entry>` cannot break the fence, as of v2.6) and attribute escaping on the entry name. This blocks fence breakout, not persuasion — a summary can still *say* misleading things to the selection model. Review summaries from untrusted authors.
 
 ## No AI Call Quota / Budget Cap
 DLE enforces a 500 ms minimum interval between AI calls (a throttle floor in `src/ai/ai.js`), but there is no per-minute quota or spending cap. Rapid generation or auto-features could still run many calls in a short window. Adding a hard cap would add latency and surprise stalls, so it is deliberately omitted. **Mitigation:** Each feature has configurable intervals and timeouts, and an AI circuit breaker trips after consecutive failures.
@@ -24,7 +24,7 @@ Internal data structures key on `vaultSource:title`, so same-titled entries in d
 - **`last`** — keep the last vault's copy.
 - **`merge`** — union keys/tags/links, concatenate content, OR-merge flags into one entry.
 
-A diagnostic still warns about cross-vault title duplicates so you can decide intentionally. Pick `first`/`last`/`merge` if you want collapse behavior; leave it on `all` to keep duplicates.
+A diagnostic still warns about cross-vault title duplicates so you can decide intentionally. Pick `first`/`last`/`merge` if you want collapse behavior; leave it on `all` to keep duplicates. Same-vault duplicate titles are never collapsed — conflict resolution applies across vaults only (as of v2.6).
 
 ## CMRS Timeout Enforcement
 SillyTavern's Connection Manager Request Service (CMRS) may not respect `AbortSignal` in all cases. DLE works around this with a `Promise.race` backup timer, but in rare cases an AI request may hang longer than the configured timeout before the backup fires. **Mitigation:** The backup timer fires 500ms after the configured timeout as a safety net.

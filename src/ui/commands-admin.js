@@ -14,7 +14,8 @@ import {
     vaultIndex, aiSearchStats, indexTimestamp, trackerKey,
     fieldDefinitions, notifyDebugModeChanged,
 } from '../state.js';
-import { loadIndexFromCache, clearIndexCache } from '../vault/cache.js';
+import { loadIndexFromCache } from '../vault/cache.js';
+import { clearVaultIndexAndCache } from '../vault/vault.js';
 import { ensureFreshOrToast } from './commands-shared.js';
 import { runHealthCheck } from './diagnostics.js';
 import { showNotebookPopup, showAiNotepadPopup, buildCopyButton, attachCopyHandler } from './popups.js';
@@ -42,6 +43,7 @@ export const DLE_COMMANDS = [
     { cmd: '/dle-graph', desc: 'Visualize entry relationships as a graph (alias: /dle-g)', i18nKey: 'dle_cmd_desc_graph' },
     { cmd: '/dle-analytics', desc: 'View entry match/injection analytics', i18nKey: 'dle_cmd_desc_analytics' },
     { cmd: '/dle-cache-info', desc: 'View vault cache status, size, and clear cache', i18nKey: 'dle_cmd_desc_cache_info' },
+    { cmd: '/dle-clear', desc: 'Clear vault cache and live index without re-fetching', i18nKey: 'dle_cmd_desc_clear' },
     { cmd: '/dle-notebook', desc: 'Edit the Notebook for this chat', i18nKey: 'dle_cmd_desc_notebook' },
     { cmd: '/dle-ai-notepad', desc: 'View or clear AI-written session notes', i18nKey: 'dle_cmd_desc_ai_notepad' },
     { cmd: '/dle-scribe', desc: 'Run Session Scribe now', i18nKey: 'dle_cmd_desc_scribe' },
@@ -500,8 +502,21 @@ export function registerAdminCommands() {
                 wide: false,
                 onOpen: () => {
                     document.querySelector('.dle-cache-clear-btn')?.addEventListener('click', async () => {
-                        await clearIndexCache();
-                        toastr.success(tr('dle_cmd_cacheinfo_cleared_toast'), 'DeepLore');
+                        // Issue #39: wipe-and-stop — clears IDB cache AND the live in-memory
+                        // index (clearIndexCache alone left vaultIndex populated, so Browse
+                        // still showed entries and the next rebuild re-preserved them).
+                        const result = await clearVaultIndexAndCache();
+                        if (!result.ok) {
+                            if (result.reason === 'idb') {
+                                // Memory wipe happened; only the IDB wipe failed — error, not
+                                // success, and keep the popup open so the user can retry (gotcha #95).
+                                notify.error(tr('dle_cmd_clear_idb_failed_toast'), { category: 'cache_clear_idb' });
+                            } else {
+                                notify.warning(tr('dle_cmd_clear_busy_toast'), { category: 'cache_clear_busy' });
+                            }
+                            return;
+                        }
+                        notify.success(tr('dle_cmd_cacheinfo_cleared_toast'));
                         document.querySelector('.dle-cache-clear-btn')?.closest('.popup')?.querySelector('.popup-button-ok')?.click();
                     });
                 },

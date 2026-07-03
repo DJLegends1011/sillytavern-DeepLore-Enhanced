@@ -34,7 +34,7 @@ No getter functions exist — other modules `import { vaultIndex } from './state
 | `entityRegexVersion` | `number` (monotonic) | Session | setEntityShortNameRegexes | AI cache staleness check |
 | `fuzzySearchIndex` | `object\|null` | Session (rebuilt) | vault.js | BM25 matching |
 | `mentionWeights` | `Map` | Session (rebuilt) | vault.js | graph edges |
-| `buildEpoch` | `number` (counter) | Session | vault.js | zombie build guard |
+| `buildEpoch` | `number` (counter) | Session | vault.js, sync.js, state.js (`resetVaultIndexState` — the clear-path epoch fence, gotcha #95) | zombie build guard + clear fence |
 | `syncIntervalId` | `number\|null` | Session | vault/sync.js | sync dedup, teardown |
 
 ### AI Search State

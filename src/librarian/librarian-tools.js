@@ -5,6 +5,7 @@
 import { getCurrentChatId } from '../../../../../../script.js';
 import { getContext, saveMetadataDebounced } from '../../../../../extensions.js';
 import { truncateToSentence, escapeXml } from '../../core/utils.js';
+import { neutralizeClosingTag } from '../helpers.js';
 import { queryBM25, tokenize } from '../vault/bm25.js';
 import { getSettings } from '../../settings.js';
 import {
@@ -311,7 +312,10 @@ function formatLinkedManifest(entries, summaryLen = 400) {
         const links = entry.resolvedLinks?.length > 0
             ? ` → ${entry.resolvedLinks.join(', ')}` : '';
         const safeName = escapeXml(entry.title);
-        return `<entry name="${safeName}">\n${entry.title} (${entry.tokenEstimate}tok)${links}\n${summary}\n</entry>`;
+        // #20: same fence hole as buildCandidateManifest — a literal </entry> in an
+        // author summary broke out of the fence. Shared sanitizer from helpers.js.
+        const fenceSafeBody = neutralizeClosingTag(`${entry.title} (${entry.tokenEstimate}tok)${links}\n${summary}`, 'entry');
+        return `<entry name="${safeName}">\n${fenceSafeBody}\n</entry>`;
     }).join('\n');
 }
 

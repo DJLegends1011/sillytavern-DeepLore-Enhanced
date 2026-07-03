@@ -2079,7 +2079,7 @@ function bindPopupEvents($container) {
                 // Surface so the user knows they must refresh.
                 try {
                     toastr.warning(
-                        `Librarian search enabled, but fuzzy-index rebuild failed: ${err?.message || 'unknown error'}. Run /dle-force-refresh.`,
+                        `Librarian search enabled, but fuzzy-index rebuild failed: ${err?.message || 'unknown error'}. Run /dle-refresh.`,
                         'DeepLore',
                         { timeOut: 10000 },
                     );

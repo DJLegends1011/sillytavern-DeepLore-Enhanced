@@ -370,7 +370,33 @@ Module-level: `null` (no save attempted), `true` (last save succeeded), `false` 
 
 ### `clearIndexCache()` (cache.js:clearIndexCache())
 
-Clears ALL keys in the `vaultCache` store (not just the current fingerprint). Called by manual cache clear in settings/danger zone.
+Clears ALL keys in the `vaultCache` store (not just the current fingerprint). IDB-only — does NOT touch the in-memory `vaultIndex` or any derived state. Its only production caller is `clearVaultIndexAndCache()` below; do not wire UI directly to it (that was the Issue #39 bug — the popup button cleared IDB, the live index survived, Browse still showed entries, and the next rebuild re-preserved + re-saved them).
+
+**Returns `Promise<boolean>`** — `true` when the wipe transaction committed, `false` when the DB open or transaction failed (error swallowed + `console.warn`, matching the file's sibling ops). `false` means IDB still holds every cached entry and the next reload will hydrate them back — the caller must surface it as a failure, never a success (see `reason:'idb'` below).
+
+### `clearVaultIndexAndCache()` (vault.js:clearVaultIndexAndCache()) — wipe-and-stop (Issue #39, v2.6)
+
+The canonical "Clear Cache" routine. Callers: the `/dle-cache-info` popup's Clear Cache button (`src/ui/commands-admin.js`) and the `/dle-clear` slash command (`src/ui/commands-vault.js`).
+
+**Semantics: wipe-and-stop.** Clears the IndexedDB cache AND the live in-memory index (plus every derived structure) but does NOT re-fetch from Obsidian. The next generation (`ensureIndexFresh` sees an empty index) or a manual `/dle-refresh` re-indexes normally.
+
+Flow:
+1. If `indexing` is true → return `{ok: false, reason: 'indexing'}` without touching anything. Callers toast "wait for the build to finish". An in-flight build would commit over the wipe moments later, making the clear look broken.
+2. `resetVaultIndexState()` (state.js) — synchronous compound setter: `vaultIndex → []`, `indexTimestamp → 0`, `previousIndexSnapshot → null` (next build treated as cold start — no bogus "removed" change toast), `indexBuildReport → empty` (stale `/dle-lint` warnings gone), `mentionWeights`/`folderList`/`vaultAvgTokens`/`entityNameSet` emptied, `entityShortNameRegexes → new Map()` via its setter (bumps `entityRegexVersion` so BUG-394 staleness stamps invalidate), `fuzzySearchIndex → null`, `resetAiSearchCache()`, **`buildEpoch` bumped (epoch fence — see below)**, then `notifyIndexUpdated()` (drawer Browse + settings stats re-render empty). Because there is no `await` between the `indexing` guard and these writes, a build cannot interleave; nothing epoch-sensitive is written after the subsequent await, and no per-chat state is touched.
+3. `const idbCleared = await clearIndexCache()` — the IDB wipe. On `false` → return `{ok: false, reason: 'idb'}`: the in-memory wipe already happened and STAYS done (Browse/stats/matching correctly see an empty index), but IDB still holds the cached entries, so they may hydrate back on the next reload. Callers show the `dle_cmd_clear_idb_failed_toast` error ("Live index cleared, but the cache database could not be cleared… Retry /dle-clear") — never the success toast; a false success would hide the exact Issue-#39 symptom.
+4. `pushEvent('cache_clear', {scope: 'index+idb', manual: true})` for the diagnostics timeline (`scope: 'index-only', idbFailed: true` on the `reason:'idb'` path).
+
+**Epoch fence (gotcha #95):** `resetVaultIndexState()` bumps `buildEpoch`; any async producer of index/cache state MUST capture `buildEpoch` before its first await and bail on change. Two producers outlive the `indexing` guard and do exactly this:
+- `finalizeIndex`'s **un-awaited** `saveIndexToCache(entries, isStale)` — the save is fired-and-forgotten before the build's finally clears `indexing`, so `/dle-clear` can pass its guard while the save's IDB transaction doesn't exist yet; without the fence the save would commit the pre-clear entries AFTER the wipe. Both build paths thread their zombie-guard epoch capture as `buildEpochAtStart`; `saveIndexToCache` checks the `isStale` predicate AFTER `openDB()` resolves, synchronously with txn creation (a bump landing after the check is still safe — the clear's txn is then created later, and IDB commits same-store readwrite txns in creation order). A stale-epoch skip sets `_lastSaveSucceeded = false`, so the follow-up orphan prune is guarded too.
+- **Boot hydration** — `hydrateFromCache()` captures `buildEpoch` before `await loadIndexFromCache()` and re-checks after: on change it returns false BEFORE `setVaultIndex` (which also skips its background `buildIndex` trigger). `index.js`'s auto-connect re-checks the same epoch before its fallback `buildIndex`, so a bailed hydration doesn't turn into a full re-fetch (wipe-and-stop means stop).
+
+Bumping is safe by construction: in-flight builds already treat an epoch change as "discard" (BUG-015 zombie guard — exactly the semantic a clear wants), and a build started after the clear captures the new epoch, so its legitimately fresh save passes the fence. Guarded by CLEAR-7..CLEAR-10 in `test/regression.test.mjs`.
+
+**Interplay with the BUG-367 empty-preserve guard:** the guard (zero-files branch in `buildIndex()` / reuse mirror) intentionally carries prior entries forward when a vault returns 0 files — protecting against transient Obsidian blips. That same guard made an *intentionally emptied* vault impossible to flush: every rebuild re-preserved and re-saved the old entries. Wipe-and-stop is the escape hatch: after a clear the prior index is empty, `priorIndexSnapshot` has nothing to preserve, and a subsequent `/dle-refresh` against an emptied vault commits `[]`. Do NOT weaken the guard and do NOT add a force/skip-guard flag to refresh — see `docs/gotchas.md` #95.
+
+**Sync polling re-indexes after a clear:** with polling enabled, the next tick sees `vaultIndex.length === 0`, `buildIndexWithReuse` declines, and the full `buildIndex` runs — a *fresh Obsidian fetch*, not a cache resurrect (an emptied vault commits `[]`, per the guard interplay above). The "run /dle-refresh" copy in the cleared toast is simply the manual path for users without polling.
+
+**NOT reset by design:** `indexEverLoaded` (describes this session's Obsidian reachability, not the index contents), `lastVaultFailureCount`/`lastVaultAttemptCount` (describe the last build attempt), per-chat trackers, analytics, **`lastHealthResult`** (safe-stale: health re-evaluates on the next check), **`fieldDefinitions`** (safe-stale: reloaded by the next build).
 
 ### IndexedDB blocked handling (cache.js:openDB())
 

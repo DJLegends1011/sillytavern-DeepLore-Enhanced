@@ -39,6 +39,13 @@ let _lastInjectionRenderHash = null;
 // rebuild when unchanged. Completeness rests on chatInjectionCountsVersion (covers ×N
 // badges / temperature tints / count-dependent sorts) + the verdict signature + indexTimestamp.
 let _lastBrowseRenderHash = null;
+// #17: live container identity folded into both hash guards (mirrors _footerCache in
+// drawer-render-footer.js). These module-level hashes survive destroyDrawerPanel();
+// after a destroy+reinit the hash still matches but the drawer DOM is brand-new and
+// empty — the early return would leave the tab permanently blank. Comparing the
+// drawer root element identity makes the guard self-healing (destroy/recreate, HMR).
+let _lastInjectionRenderRoot = null;
+let _lastBrowseRenderRoot = null;
 
 // Wave C: render-site pipeline-stage ranking for the "Filtered Out" groups. The shared
 // categorizeRejections() contract is consumed by the cartographer + browse popups too, so we
@@ -121,8 +128,10 @@ export function renderInjectionTab() {
         trace ? `${trace.injected?.length ?? 0}:${trace.keywordMatched?.length ?? 0}:${trace.aiSelected?.length ?? 0}:${trace.budgetCut?.length ?? 0}` : 'null',
     ];
     const _hash = _hashParts.join('#');
-    if (_hash === _lastInjectionRenderHash) return;
+    // #17: root identity check — see the guard-variable comment block above.
+    if (_hash === _lastInjectionRenderHash && $drawer[0] === _lastInjectionRenderRoot) return;
     _lastInjectionRenderHash = _hash;
+    _lastInjectionRenderRoot = $drawer[0];
     const $list = $drawer.find('.dle-why-list');
     const $empty = $drawer.find('#dle-panel-injection .dle-empty-state');
     const $diff = $drawer.find('.dle-section-diff');
@@ -426,8 +435,10 @@ export function renderBrowseTab() {
         `${_bVerdict?.epoch ?? ''}.${_bVerdict?.msgIdx ?? ''}.${_bVerdict?.ts ?? ''}`,
         `${_bPrev?.epoch ?? ''}.${_bPrev?.msgIdx ?? ''}`,
     ].join('#');
-    if (!ds.browseNavigateTarget && _browseHash === _lastBrowseRenderHash) return;
+    // #17: root identity check — see the guard-variable comment block above.
+    if (!ds.browseNavigateTarget && _browseHash === _lastBrowseRenderHash && $drawer[0] === _lastBrowseRenderRoot) return;
     _lastBrowseRenderHash = _browseHash;
+    _lastBrowseRenderRoot = $drawer[0];
 
     // Invalidate virtual scroll cache so stale entry references are never rendered.
     ds.browseLastRangeStart = -1;

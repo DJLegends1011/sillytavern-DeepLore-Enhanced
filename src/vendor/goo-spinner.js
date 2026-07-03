@@ -117,6 +117,20 @@
       this.setAttribute('data-motion-state', s);
     }
 
+    // #18b: pause/resume the shadow-DOM .ring CSS rotation alongside the gel park.
+    // The speed<=0 park stops the rAF physics, but the ring's `gs-rot` animation
+    // used to keep compositing forever — idle CPU/GPU burn while "parked". This is
+    // a play-state toggle ONLY: it never rebuilds the shadow DOM and never restarts
+    // the animation (resuming continues from the paused rotation angle), so the
+    // "physics never restart across phase swaps" invariant holds. Reduced-motion is
+    // untouched — the stylesheet's prefers-reduced-motion rule still owns that case.
+    // Idempotent like _setMotionState.
+    _setRingPlayState(s) {
+      if (!this._ring || this._ringPlayState === s) return;
+      this._ringPlayState = s;
+      this._ring.style.animationPlayState = s;
+    }
+
     // Paint the blobs once at the settled rest state (x = mid, no squash) — a calm,
     // perfectly still ring of gel that still reads as a spinner without any oscillation.
     _renderRest() {
@@ -163,6 +177,9 @@
         '<div class="wrap"><span class="core"></span><div class="ring">' + sats + '</div></div>';
 
       this._ring = this.shadowRoot.querySelector('.ring');
+      // #18b: fresh ring element has no inline play-state (i.e. running) — reset the
+      // memo so a post-rebuild park actually writes 'paused' to the new node.
+      this._ringPlayState = null;
       this._blobs = Array.prototype.slice.call(this.shadowRoot.querySelectorAll('.s'));
       this._blobs.forEach(function (el, i) { el._rot = 360 / n * i; });
       this._x = null; this._v = 0;
@@ -184,12 +201,18 @@
         this._running = false;
         if (this._raf) { cancelAnimationFrame(this._raf); this._raf = 0; }
         this._setMotionState('paused');
+        // #18b: park the ring rotation too — the gel freeze alone left the CSS
+        // animation compositing forever while idle.
+        this._setRingPlayState('paused');
         this._renderRest();
         return;
       }
 
       // Floor the ring-rotation rate so calc(3.4s / var(--gs-spd)) never divides by zero.
       if (this._ring) this._ring.style.setProperty('--gs-spd', Math.max(speed, 0.001));
+      // #18b: unpark the ring on wake (speed flipped back >0 → _applyMotion restarted
+      // the loop → first tick lands here). Idempotent — no-op while already running.
+      this._setRingPlayState('running');
 
       // physics in fractions of `size`, then scaled — so motion is size-independent
       const lo = 0.12, hi = 0.27, mid = (lo + hi) / 2, amp = (hi - lo) / 2;

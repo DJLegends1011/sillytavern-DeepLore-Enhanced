@@ -16,6 +16,68 @@ import { queryBM25 } from '../vault/bm25.js';
 const MAX_RECURSION_TEXT = 50000;
 
 /**
+ * #12 — THE runtime-gate predicate, shared by all 4 match paths (primary
+ * keyword, cascade, recursion, BM25 fuzzy). The gate block used to be
+ * copy-pasted per path and drifted: BM25 probability skips were never recorded
+ * (invisible to /dle-why), recursion warmup drops were never recorded, and the
+ * cooldown pre-check existed in two variants. One helper, one behavior.
+ *
+ * Gate order (deterministic first, random roll last):
+ *   1. cooldown — guarded on `entry.cooldown !== null` (frontmatter contract:
+ *      null = no cooldown). A stale cooldownTracker row left behind after an
+ *      author removes `cooldown:` from frontmatter mid-cooldown no longer
+ *      blocks the entry. Silent skip — match-time cooldown drops are not a
+ *      trace collector (applyReinjectionCooldown owns cooldownRemoved).
+ *   2. warmup — canonical `hasWarmup` predicate from helpers.js (gotcha #65
+ *      M-6; do NOT re-inline shape checks). Skipped entirely when
+ *      `getWarmupText` is null: cascade is an explicit author relationship,
+ *      not a keyword trigger, so warmup doesn't apply (BUG-035). Drops are
+ *      recorded in `warmupFailed`.
+ *   3. probability — 0 = never fires (distinct from null = always); (0,1)
+ *      rolls Math.random. Drops are recorded in `probabilitySkipped`. Rolling
+ *      LAST means a deterministically-blocked entry never burns (or falsely
+ *      reports) a probability roll.
+ *
+ * All collector records carry `vaultSource` per-entry (trackerKey invariant,
+ * gotcha #50).
+ *
+ * @param {object} entry - VaultEntry
+ * @param {{probabilitySkipped: Array, warmupFailed: Array}} collectors - trace arrays, mutated
+ * @param {object} settings
+ * @param {(() => string)|null} getWarmupText - lazy scan text for the warmup
+ *   occurrence count, or null to skip the warmup gate (cascade path)
+ * @returns {boolean} true if the entry passes all runtime gates
+ */
+export function passesRuntimeGates(entry, { probabilitySkipped, warmupFailed }, settings, getWarmupText = null) {
+    if (entry.cooldown !== null) {
+        const remaining = cooldownTracker.get(trackerKey(entry));
+        if (remaining !== undefined && remaining > 0) return false;
+    }
+
+    if (getWarmupText !== null && hasWarmup(entry)) {
+        const occurrences = countKeywordOccurrences(entry, getWarmupText(), settings);
+        if (occurrences < entry.warmup) {
+            warmupFailed.push({ title: entry.title, vaultSource: entry.vaultSource || '', needed: entry.warmup, found: occurrences });
+            return false;
+        }
+    }
+
+    if (entry.probability === 0) {
+        probabilitySkipped.push({ title: entry.title, vaultSource: entry.vaultSource || '', probability: 0, roll: 0 });
+        return false;
+    }
+    if (entry.probability !== null && entry.probability < 1.0) {
+        const roll = Math.random();
+        if (roll > entry.probability) {
+            probabilitySkipped.push({ title: entry.title, vaultSource: entry.vaultSource || '', probability: entry.probability, roll });
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/**
  * @param {object[]|null} [snapshot] - Defaults to vaultIndex.
  * @returns {{ matched: VaultEntry[], matchedKeys: Map<string, string>, probabilitySkipped: Array, warmupFailed: Array, fuzzyStats: object, refineKeyBlocked: Array }}
  */
@@ -92,32 +154,8 @@ export function matchEntries(chat, snapshot = null, { settings, characterName } 
                 }
             }
             if (key) {
-                // M-6: hasWarmup unifies the three match paths (primary, recursion, BM25).
-                if (hasWarmup(entry)) {
-                    const occurrences = countKeywordOccurrences(entry, scanText, settings);
-                    if (occurrences < entry.warmup) {
-                        warmupFailed.push({ title: entry.title, vaultSource: entry.vaultSource || '', needed: entry.warmup, found: occurrences });
-                        continue;
-                    }
-                }
-
-                // probability=0 = never fires (distinct from null = always).
-                if (entry.probability === 0) {
-                    probabilitySkipped.push({ title: entry.title, vaultSource: entry.vaultSource || '', probability: 0, roll: 0 });
-                    continue;
-                }
-                if (entry.probability !== null && entry.probability < 1.0) {
-                    const roll = Math.random();
-                    if (roll > entry.probability) {
-                        probabilitySkipped.push({ title: entry.title, vaultSource: entry.vaultSource || '', probability: entry.probability, roll });
-                        continue;
-                    }
-                }
-
-                const remaining = cooldownTracker.get(trackerKey(entry));
-                if (remaining !== undefined && remaining > 0) {
-                    continue;
-                }
+                // #12: unified runtime gates (cooldown → warmup → probability).
+                if (!passesRuntimeGates(entry, { probabilitySkipped, warmupFailed }, settings, () => scanText)) continue;
 
                 matchedSet.add(entry);
                 matchedKeys.set(trackerKey(entry), key);
@@ -181,25 +219,12 @@ export function matchEntries(chat, snapshot = null, { settings, characterName } 
                 const linkedCandidates = getTitleMap().get(linkTitle.toLowerCase()) || [];
                 for (const linked of linkedCandidates) {
                     if (matchedSet.has(linked)) continue;
-                    if (linked.cooldown !== null) {
-                        const remaining = cooldownTracker.get(trackerKey(linked));
-                        if (remaining !== undefined && remaining > 0) continue;
-                    }
-                    // L-12: record probability skips so /dle-why can explain why a
-                    // cascade-pulled entry didn't inject (was silently dropped before).
-                    if (linked.probability === 0) {
-                        probabilitySkipped.push({ title: linked.title, vaultSource: linked.vaultSource || '', probability: 0, roll: 0 });
-                        continue;
-                    }
-                    if (linked.probability !== null && linked.probability < 1.0) {
-                        const roll = Math.random();
-                        if (roll > linked.probability) {
-                            probabilitySkipped.push({ title: linked.title, vaultSource: linked.vaultSource || '', probability: linked.probability, roll });
-                            continue;
-                        }
-                    }
-                    // BUG-035: cascade is an explicit author relationship, not a keyword
-                    // trigger — warmup doesn't apply.
+                    // #12: unified runtime gates. getWarmupText=null skips the warmup
+                    // gate — BUG-035: cascade is an explicit author relationship, not a
+                    // keyword trigger, so warmup doesn't apply. L-12: probability skips
+                    // are recorded so /dle-why can explain a cascade-pulled entry that
+                    // didn't inject.
+                    if (!passesRuntimeGates(linked, { probabilitySkipped, warmupFailed }, settings, null)) continue;
                     // L-11: cascade ALSO intentionally bypasses the refine_keys/selectiveLogic
                     // gate (unlike the recursion path, which routes through testEntryMatch).
                     // This asymmetry is by design: a cascade_link is the author explicitly
@@ -245,28 +270,13 @@ export function matchEntries(chat, snapshot = null, { settings, characterName } 
 
                     const key = testEntryMatch(entry, recursionText, settings);
                     if (key) {
-                        if (entry.cooldown !== null) {
-                            const remaining = cooldownTracker.get(trackerKey(entry));
-                            if (remaining !== undefined && remaining > 0) continue;
-                        }
-                        // L-12: record probability skips so /dle-why can explain a
-                        // recursion-matched entry that didn't inject.
-                        if (entry.probability === 0) {
-                            probabilitySkipped.push({ title: entry.title, vaultSource: entry.vaultSource || '', probability: 0, roll: 0 });
-                            continue;
-                        }
-                        if (entry.probability !== null && entry.probability < 1.0) {
-                            const roll = Math.random();
-                            if (roll > entry.probability) {
-                                probabilitySkipped.push({ title: entry.title, vaultSource: entry.vaultSource || '', probability: entry.probability, roll });
-                                continue;
-                            }
-                        }
-                        // M-6: hasWarmup unifies the three match paths (primary, recursion, BM25).
-                        if (hasWarmup(entry)) {
-                            const occurrences = countKeywordOccurrences(entry, recursionText, settings);
-                            if (occurrences < entry.warmup) continue;
-                        }
+                        // #12: unified runtime gates. Warmup occurrences are counted
+                        // against the recursion text (the text that triggered the match).
+                        // Recursion warmup drops are now recorded in warmupFailed (they
+                        // were silently dropped before), same L-12 rationale as the
+                        // probability recording.
+                        const recText = recursionText;
+                        if (!passesRuntimeGates(entry, { probabilitySkipped, warmupFailed }, settings, () => recText)) continue;
                         matchedSet.add(entry);
                         newlyMatched.add(entry);
                         matchedKeys.set(trackerKey(entry), `${key} (recursion step ${step})`);
@@ -290,27 +300,15 @@ export function matchEntries(chat, snapshot = null, { settings, characterName } 
             if (matchedSet.has(entry)) continue;
             if (entry.constant) continue;
 
-            const remaining = cooldownTracker.get(trackerKey(entry));
-            if (remaining !== undefined && remaining > 0) continue;
-
-            // BUG-AUDIT-8: BM25 fuzzy matches must also honor warmup.
-            // M-6: hasWarmup unifies the three match paths (primary, recursion, BM25).
-            if (hasWarmup(entry)) {
-                // Use `||` not `??`: a per-entry scanDepth of 0 ("AI-only, don't keyword-scan")
-                // would otherwise yield empty scan text → 0 occurrences → a fuzzy-matched entry
-                // is silently dropped on warmup. Fall back to the global depth so warmup can
-                // actually be evaluated for entries that matched via BM25.
-                const scanText = getScanText(entry.scanDepth || settings.scanDepth);
-                const occurrences = countKeywordOccurrences(entry, scanText, settings);
-                if (occurrences < entry.warmup) {
-                    // Mirror the primary keyword path so a BM25 warmup drop is diagnosable in /dle-why.
-                    warmupFailed.push({ title: entry.title, vaultSource: entry.vaultSource || '', needed: entry.warmup, found: occurrences });
-                    continue;
-                }
-            }
-
-            if (entry.probability === 0) continue;
-            if (entry.probability !== null && entry.probability < 1.0 && Math.random() > entry.probability) continue;
+            // #12: unified runtime gates. BM25 probability skips are now recorded in
+            // probabilitySkipped (they were invisible to /dle-why before — the
+            // original L-12 fix missed this path). BUG-AUDIT-8: BM25 fuzzy matches
+            // must also honor warmup. Warmup scan text uses `||` not `??`: a
+            // per-entry scanDepth of 0 ("AI-only, don't keyword-scan") would
+            // otherwise yield empty scan text → 0 occurrences → a fuzzy-matched
+            // entry is silently dropped on warmup. Fall back to the global depth so
+            // warmup can actually be evaluated for entries that matched via BM25.
+            if (!passesRuntimeGates(entry, { probabilitySkipped, warmupFailed }, settings, () => getScanText(entry.scanDepth || settings.scanDepth))) continue;
 
             matchedSet.add(entry);
             matchedKeys.set(trackerKey(entry), `(fuzzy, score: ${result.score.toFixed(1)})`);

@@ -463,6 +463,31 @@ export function sanitizeFilename(title) {
 }
 
 /**
+ * #20 — Neutralize closing-tag sequences inside XML-fenced untrusted text.
+ * Mirrors `sanitizeWrapped` in src/ai/ai.js (the established mechanism for the
+ * outer <available_lore_entries>/<recent_chat_transcript> fences): inserts a
+ * zero-width space after `</` so a literal `</entry>` inside an entry's summary
+ * or content can't close the fence and inject instructions into the
+ * lore-selection prompt. NOT XML escaping — the text stays human-readable for
+ * the model; only the fence-breaking sequence is defused. Shared by
+ * `src/ai/manifest.js` (buildCandidateManifest) and
+ * `src/librarian/librarian-tools.js` (formatLinkedManifest) — import it, don't
+ * re-inline the regex.
+ * @param {string} text - Untrusted text about to be wrapped in <tagName>...</tagName>
+ * @param {string} tagName - The fence tag to defuse (literal, e.g. 'entry')
+ * @returns {string}
+ */
+export function neutralizeClosingTag(text, tagName) {
+    // $2 preserves the original tag casing \u2014 the ZWSP alone defuses the fence;
+    // substituting the literal tagName would rewrite `</ENTRY>` to lowercase,
+    // mutating summary content beyond the insertion.
+    return String(text ?? '').replace(
+        new RegExp(`</(\\s*)(${tagName})`, 'gi'),
+        '</\u200B$1$2',
+    );
+}
+
+/**
  * Strip Obsidian-interpretable syntax from AI-generated content before writing
  * to the vault. Prevents Templater / Dataview / CustomJS / button blocks and
  * obsidian:// links from executing when the note is opened.

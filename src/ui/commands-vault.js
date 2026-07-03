@@ -8,11 +8,10 @@ import { classifyError } from '../../core/utils.js';
 import { getSettings } from '../../settings.js';
 import { saveSettingsDebounced } from '../../../../../../script.js';
 import { vaultIndex, setIndexTimestamp } from '../state.js';
-import { buildIndex } from '../vault/vault.js';
+import { buildIndex, clearVaultIndexAndCache } from '../vault/vault.js';
 // graph.js (~3140 LOC) is lazy-loaded inline below — only paid for when /dle-graph runs.
 import { showBrowsePopup } from './popups.js';
 import { parseWorldInfoJson, importEntries } from '../vault/import.js';
-import { convertWiEntry } from '../helpers.js';
 import { world_names, loadWorldInfo } from '../../../../../world-info.js';
 import { dedupWarning, notify } from '../toast-dedup.js';
 import { tr, trf } from '../i18n/i18n.js';
@@ -60,6 +59,33 @@ export function registerVaultCommands() {
             }
         },
         helpString: 'Rebuild the vault index by re-fetching all entries from Obsidian.',
+        returns: ARGUMENT_TYPE.STRING,
+    }));
+
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'dle-clear',
+        callback: async () => {
+            // Issue #39: wipe-and-stop. Clears the IndexedDB cache AND the live
+            // in-memory index without re-fetching — the intentional override for
+            // the BUG-367 empty-preserve guard (emptied vault → /dle-clear →
+            // /dle-refresh commits []). See docs/gotchas.md #95.
+            const result = await clearVaultIndexAndCache();
+            if (!result.ok) {
+                if (result.reason === 'idb') {
+                    // The in-memory wipe already happened (and stays done — that part is
+                    // correct); only the IDB wipe failed, so entries may hydrate back on
+                    // the next reload. Never toast success here (gotcha #95).
+                    notify.error(tr('dle_cmd_clear_idb_failed_toast'), { category: 'cache_clear_idb' });
+                } else {
+                    notify.warning(tr('dle_cmd_clear_busy_toast'), { category: 'cache_clear_busy' });
+                }
+                return '';
+            }
+            const msg = tr('dle_cmd_cacheinfo_cleared_toast');
+            toastr.success(msg, 'DeepLore');
+            return msg;
+        },
+        helpString: 'Clear the vault cache AND the live index without re-fetching (wipe-and-stop). Run /dle-refresh to re-index from Obsidian.',
         returns: ARGUMENT_TYPE.STRING,
     }));
 
@@ -212,31 +238,40 @@ export function registerVaultCommands() {
                 // button that flips settings.wiImportEmHandling.
                 if (result.failed > 0) console.warn('[DLE] Import errors:', result.errors);
                 const { showImportReport } = await import('./wi-import-report.js');
-                // v2.6: map each failure row back to its source WI entry so the recovery
-                // table's per-row Retry can re-run importEntries for just that entry. The report
-                // keys failures by the entry's filename (`${safeTitle}.md`); convertWiEntry
-                // derives that filename from comment/key/uid ONLY (option-independent), so
-                // building the lookup with bare `{}` options reproduces the same key importEntries
-                // used. See wi-import-report.js HOOK + import.js (errors are `${filename}: reason`).
-                const byFilename = new Map();
-                const lorebookTag = getSettings().lorebookTag;
-                for (const e of entries) {
-                    try {
-                        const { filename } = convertWiEntry(e, lorebookTag, {});
-                        if (filename) byFilename.set(filename, e);
-                    } catch { /* convert-fail rows can't be matched here; they stay failed */ }
-                }
+                // v2.6 #14: each failure row carries its source WI entry directly —
+                // import.js pushes { …, entry } into result.failures and
+                // buildImportReport preserves it — so the retry hook re-runs
+                // importEntries on those entries. The old path reconstructed a
+                // filename→entry map by re-running convertWiEntry and re-parsed
+                // the flat error strings; both are gone.
                 await showImportReport(result, source, folder, {
                     getSettings,
                     saveSettings: saveSettingsDebounced,
                     onRetry: async (failures) => {
-                        const retryEntries = failures.map(f => byFilename.get(f.name)).filter(Boolean);
-                        if (retryEntries.length === 0) {
-                            // Nothing matched (e.g. convert-fail rows) — report all as still-failed
-                            // in the importEntries-shaped result the report consumes.
+                        const rows = failures.filter(f => f && f.entry);
+                        const unmatched = failures.filter(f => !f || !f.entry);
+                        if (rows.length === 0) {
+                            // No source entries on the rows (legacy result shape) —
+                            // report all as still-failed in the importEntries-shaped
+                            // result the report consumes.
                             return { imported: 0, failed: failures.length, errors: failures.map(f => `${f.name}: not found`) };
                         }
-                        return importEntries(retryEntries, folder, null);
+                        const res = await importEntries(rows.map(f => f.entry), folder, null);
+                        // The popup marks a row "Imported" when its name no longer
+                        // appears in the returned errors[] — dedup-renamed retries
+                        // produce no error row, so they still count as success.
+                        // Re-key still-failed rows by the popup's own row name
+                        // (matched by entry identity) so convert failures — whose
+                        // flat string is "Entry: …", not "<name>: …" — can't
+                        // false-positive as success.
+                        const stillFailed = new Map((res.failures || [])
+                            .filter(f => f.entry)
+                            .map(f => [f.entry, f.reason || 'failed again']));
+                        const errors = [
+                            ...rows.filter(f => stillFailed.has(f.entry)).map(f => `${f.name}: ${stillFailed.get(f.entry)}`),
+                            ...unmatched.map(f => `${f.name}: not found`),
+                        ];
+                        return { ...res, failed: res.failed + unmatched.length, errors };
                     },
                 });
 

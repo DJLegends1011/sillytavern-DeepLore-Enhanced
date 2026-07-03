@@ -357,6 +357,54 @@ export function setEntityShortNameRegexes(v) { entityShortNameRegexes = v; entit
 export let fuzzySearchIndex = null;
 export function setFuzzySearchIndex(v) { fuzzySearchIndex = v; }
 
+/**
+ * Issue #39 (v2.6): compound setter behind the wipe-and-stop cache clear
+ * (vault.js: clearVaultIndexAndCache). Resets every piece of in-memory
+ * vault-index state to the "never indexed" baseline so nothing derived can
+ * serve stale entries after the live index empties:
+ *   - vaultIndex → [], indexTimestamp → 0 (next generation's ensureIndexFresh
+ *     rebuilds from Obsidian — the empty index alone already forces that)
+ *   - previousIndexSnapshot → null (next build is treated as a cold start; no
+ *     bogus "N entries removed" change toast)
+ *   - indexBuildReport → empty ledger (/dle-lint stops showing warnings for
+ *     entries that no longer exist)
+ *   - derived structures: mentionWeights, folderList, vaultAvgTokens,
+ *     entityNameSet, entityShortNameRegexes (via the setter, so
+ *     entityRegexVersion bumps and BUG-394 staleness stamps invalidate),
+ *     fuzzySearchIndex, aiSearchCache
+ *   - buildEpoch (bumped): the epoch fence for async producers of index/cache
+ *     state that are in flight when the wipe runs. finalizeIndex's un-awaited
+ *     saveIndexToCache and boot hydration's loadIndexFromCache both capture
+ *     buildEpoch before their first await and bail on change — without the
+ *     bump they would repopulate the just-wiped IDB store / live index.
+ *     Bumping is safe by construction: in-flight builds already treat an
+ *     epoch change as "discard" (BUG-015 zombie guard), which is exactly the
+ *     semantic a clear wants, and a build started AFTER this wipe captures
+ *     the new epoch so its (legitimately fresh) save passes the fence.
+ * Synchronous ON PURPOSE: the caller guards `indexing` first, and with no
+ * await between that guard and these writes an index build can't interleave.
+ * Fires notifyIndexUpdated() so the drawer Browse tab and settings stats
+ * re-render from the empty index. Does NOT touch IndexedDB, indexEverLoaded,
+ * per-chat trackers, analytics, lastHealthResult (safe-stale: health
+ * re-evaluates on the next check), or fieldDefinitions (reloaded by the next
+ * build).
+ */
+export function resetVaultIndexState() {
+    vaultIndex = [];
+    indexTimestamp = 0;
+    previousIndexSnapshot = null;
+    indexBuildReport = { okCount: 0, warnCount: 0, skipCount: 0, skipped: [], entriesWithWarnings: [] };
+    vaultAvgTokens = 0;
+    mentionWeights = new Map();
+    folderList = [];
+    entityNameSet = new Set();
+    setEntityShortNameRegexes(new Map());
+    fuzzySearchIndex = null;
+    resetAiSearchCache();
+    setBuildEpoch(buildEpoch + 1); // epoch fence — see doc comment above (gotcha #95)
+    notifyIndexUpdated();
+}
+
 // ── Librarian: tool-assisted lore retrieval + gap detection ──
 
 /** Librarian: gap records for current chat (hydrated from chat_metadata.deeplore_lore_gaps) */
