@@ -2547,7 +2547,7 @@
   "dle_wizard_show_template": "Mostrar plantilla",
   "dle_wizard_skip_btn": "Terminar más tarde",
   "dle_wizard_skip_step_button": "Omitir este paso",
-  "dle_wizard_skip_toast": "Configuración en pausa. Reábrela cuando quieras con /dle-wizard.",
+  "dle_wizard_skip_toast": "Configuración en pausa. Reábrela cuando quieras con /dle-setup.",
   "dle_wizard_status_connected": "Conectado correctamente a la bóveda de Obsidian",
   "dle_wizard_step_1_welcome": "Bienvenida",
   "dle_wizard_step_2_connection": "Conexión",

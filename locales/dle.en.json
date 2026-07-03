@@ -2546,7 +2546,7 @@
   "dle_wizard_show_template": "Show template",
   "dle_wizard_skip_btn": "Finish later",
   "dle_wizard_skip_step_button": "Skip this step",
-  "dle_wizard_skip_toast": "Setup paused. Reopen it any time with /dle-wizard.",
+  "dle_wizard_skip_toast": "Setup paused. Reopen it any time with /dle-setup.",
   "dle_wizard_status_connected": "Connected to Obsidian vault successfully",
   "dle_wizard_step_1_welcome": "Welcome",
   "dle_wizard_step_2_connection": "Connection",

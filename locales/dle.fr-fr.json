@@ -2470,7 +2470,7 @@
   "dle_wizard_show_template": "Afficher le template",
   "dle_wizard_skip_btn": "Terminer plus tard",
   "dle_wizard_skip_step_button": "Sauter cette étape",
-  "dle_wizard_skip_toast": "Configuration mise en pause. Rouvre-la à tout moment avec /dle-wizard.",
+  "dle_wizard_skip_toast": "Configuration mise en pause. Rouvre-la à tout moment avec /dle-setup.",
   "dle_wizard_status_connected": "Connecté au coffre Obsidian avec succès",
   "dle_wizard_step_1_welcome": "Bienvenue",
   "dle_wizard_step_2_connection": "Connexion",

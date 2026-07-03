@@ -2547,7 +2547,7 @@
   "dle_wizard_show_template": "テンプレートを表示",
   "dle_wizard_skip_btn": "後で完了する",
   "dle_wizard_skip_step_button": "このステップをスキップ",
-  "dle_wizard_skip_toast": "セットアップを一時停止しました。/dle-wizard でいつでも再開できます。",
+  "dle_wizard_skip_toast": "セットアップを一時停止しました。/dle-setup でいつでも再開できます。",
   "dle_wizard_status_connected": "Obsidianヴォルトに正常に接続しました",
   "dle_wizard_step_1_welcome": "ようこそ",
   "dle_wizard_step_2_connection": "接続",

@@ -57,12 +57,18 @@ export function showChangesToast(changes) {
         parts.push(`<span class="dle-sync-toast-lint">⚠ ${escapeHtml(segs.join(' · '))} — ${cta}</span>`);
     }
 
+    // escapeHtml:false — this toast intentionally renders markup (<br> joins + the
+    // clickable lint CTA span). toastr 2.1.3 has NO `enableHtml` option (that's
+    // angular-toastr); the real toggle is `escapeHtml`, and ST's global sets it
+    // true, so we must override it here or the markup renders as literal text and
+    // the CTA click handler never binds. All dynamic content above is already
+    // escaped piecewise (truncList + escapeHtml), so this is safe.
     const $toast = toastr.info(parts.join('<br>'), 'DeepLore', {
         timeOut: SYNC_TOAST_TIMEOUT,
         extendedTimeOut: SYNC_EXTENDED_TIMEOUT,
         progressBar: true,
         closeButton: true,
-        enableHtml: true,
+        escapeHtml: false,
     });
 
     // Open the lint popup when the pointer is clicked. Scoped to the lint link so

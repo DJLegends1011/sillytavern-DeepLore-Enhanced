@@ -356,8 +356,9 @@ export function wireStatusActions($drawer) {
 
     $drawer.on('click', '.dle-setup-banner-btn', async () => {
         try {
-            const { showSetupWizard } = await import('../ui/setup-wizard.js');
-            showSetupWizard();
+            const { showSetupWizard, getWizardResumeStep } = await import('../ui/setup-wizard.js');
+            // Resume where a "Finish later" skip left off (returns 1 for fresh/completed).
+            showSetupWizard(getWizardResumeStep());
         } catch (err) {
             console.error('[DLE] Setup wizard error:', err);
             toastr.error('Failed to open setup wizard.', 'DeepLore');

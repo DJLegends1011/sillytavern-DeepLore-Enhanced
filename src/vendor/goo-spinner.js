@@ -34,7 +34,11 @@
   if (customElements.get('goo-spinner')) return;
 
   class GooSpinner extends HTMLElement {
-    static get observedAttributes() { return ['size', 'color', 'count', 'core', 'blob', 'motion']; }
+    // `speed` IS observed (unlike the geometry attrs) so a consumer's
+    // setAttribute('speed', …) is heard — critical for the drawer dot, which parks
+    // via speed<=0 when idle and must WAKE when speed flips back to >0. It's handled
+    // specially in attributeChangedCallback (no _build, just re-evaluate park state).
+    static get observedAttributes() { return ['size', 'color', 'count', 'core', 'blob', 'motion', 'speed']; }
 
     connectedCallback() {
       if (!this.shadowRoot) this.attachShadow({ mode: 'open' });
@@ -58,8 +62,16 @@
       this._mqHandler = null;
       this._mq = null;
     }
-    attributeChangedCallback() {
-      if (this.shadowRoot && this.isConnected) { this._build(); this._applyMotion(); }
+    attributeChangedCallback(name) {
+      if (!this.shadowRoot || !this.isConnected) return;
+      // `speed` is a live physics knob, not geometry — NEVER _build() for it (that
+      // rebuilds the shadow DOM and restarts the spin animation, breaking the
+      // "physics never restart across phase swaps" invariant). Just re-evaluate the
+      // park/unpark state so speed>0 wakes a gel that a prior speed<=0 parked (the
+      // park itself happens in _tick; the unpark needs this observer to fire).
+      if (name === 'speed') { this._applyMotion(); return; }
+      this._build();
+      this._applyMotion();
     }
 
     _num(a, d) { const v = parseFloat(this.getAttribute(a)); return isFinite(v) ? v : d; }

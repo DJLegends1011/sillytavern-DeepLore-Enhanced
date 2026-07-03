@@ -515,8 +515,10 @@ export function registerAdminCommands() {
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'dle-setup',
         callback: async () => {
-            const { showSetupWizard } = await import('./setup-wizard.js');
-            await showSetupWizard();
+            const { showSetupWizard, getWizardResumeStep } = await import('./setup-wizard.js');
+            // Resume where a "Finish later" skip left off (getWizardResumeStep returns 1
+            // for a fresh/completed run, since completion clears the skip sentinel).
+            await showSetupWizard(getWizardResumeStep());
             return '';
         },
         helpString: 'Open the setup wizard: connect vault, configure tags, matching, AI, and more.',

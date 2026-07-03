@@ -323,7 +323,7 @@ function wireSkip() {
     $wizard.find('#dle-wiz-skip').on('click', () => {
         persistWizardSkip(currentPage);
         wizardFinished = true; // already persisted skip; stop the close handler double-writing
-        toastr.info(tr('dle_wizard_skip_toast', 'Setup paused. Reopen it any time with /dle-wizard.'), 'DeepLore');
+        toastr.info(tr('dle_wizard_skip_toast', 'Setup paused. Reopen it any time with /dle-setup.'), 'DeepLore');
         closeWizardPopup();
     });
 }

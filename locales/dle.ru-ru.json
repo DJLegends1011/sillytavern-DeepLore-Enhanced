@@ -2579,5 +2579,5 @@
   "dle_wizard_fork_import_title": "Импортировать книгу знаний",
   "dle_wizard_progress_announce": "Шаг ${0} из ${1}: ${2}",
   "dle_wizard_skip_btn": "Завершить позже",
-  "dle_wizard_skip_toast": "Настройка приостановлена. Откройте её снова в любой момент командой /dle-wizard."
+  "dle_wizard_skip_toast": "Настройка приостановлена. Откройте её снова в любой момент командой /dle-setup."
 }

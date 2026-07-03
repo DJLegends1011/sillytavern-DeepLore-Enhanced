@@ -2547,7 +2547,7 @@
   "dle_wizard_show_template": "Vorlage anzeigen",
   "dle_wizard_skip_btn": "Später abschließen",
   "dle_wizard_skip_step_button": "Diesen Schritt überspringen",
-  "dle_wizard_skip_toast": "Einrichtung pausiert. Öffne sie jederzeit wieder mit /dle-wizard.",
+  "dle_wizard_skip_toast": "Einrichtung pausiert. Öffne sie jederzeit wieder mit /dle-setup.",
   "dle_wizard_status_connected": "Erfolgreich mit Obsidian-Vault verbunden",
   "dle_wizard_step_1_welcome": "Willkommen",
   "dle_wizard_step_2_connection": "Verbindung",

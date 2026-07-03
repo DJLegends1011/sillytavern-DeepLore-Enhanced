@@ -2470,7 +2470,7 @@
   "dle_wizard_show_template": "显示模板",
   "dle_wizard_skip_btn": "稍后完成",
   "dle_wizard_skip_step_button": "跳过此步",
-  "dle_wizard_skip_toast": "安装已暂停。随时可用 /dle-wizard 重新打开。",
+  "dle_wizard_skip_toast": "安装已暂停。随时可用 /dle-setup 重新打开。",
   "dle_wizard_status_connected": "已成功连接到 Obsidian 仓库",
   "dle_wizard_step_1_welcome": "欢迎",
   "dle_wizard_step_2_connection": "连接",

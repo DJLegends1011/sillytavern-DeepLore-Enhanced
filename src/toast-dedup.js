@@ -78,9 +78,13 @@ function _emit(cfg) {
 
     // Copy/action affordances need the toast element to stick around long enough
     // to click. Bump the timeout and disable on-hover auto-hide unless the caller
-    // already pinned their own values.
+    // already pinned their own values. closeButton is FORCED on: ST's global
+    // toastr.options sets closeButton:false and tapToDismiss is off here, so
+    // without an explicit × these zero-timeout toasts would be undismissable (stuck
+    // until reload). toastr renders its own × with class .toast-close-button, which
+    // _attachCopy already excludes from the click-to-copy handler.
     const interactionDefaults = wantsInteraction
-        ? { timeOut: 0, extendedTimeOut: 0, tapToDismiss: false }
+        ? { timeOut: 0, extendedTimeOut: 0, tapToDismiss: false, closeButton: true }
         : {};
 
     try {
