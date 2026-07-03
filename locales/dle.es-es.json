@@ -24,7 +24,7 @@
   "dle_about_token_estimation_note": "Los recuentos de tokens que se muestran en DLE (barras de presupuesto, tamaños de entrada, totales de inyección) son estimaciones basadas en ~4 caracteres por token. Es preciso para texto típico en inglés pero puede infraestimar para escrituras no latinas, bloques de código o contenido muy puntuado. Para recuentos exactos, consulta el tokenizador de tu proveedor de API.",
   "dle_about_troubleshooting_h4": "Solución de problemas",
   "dle_about_troubleshooting_note": "Vuelve a ejecutar el asistente guiado de configuración, o restablece los ajustes a los valores por defecto. Las conexiones de bóveda y los perfiles de conexión de IA se conservan en ambos casos.",
-  "dle_about_version_text": "v2.5.1",
+  "dle_about_version_text": "v2.6.0",
   "dle_about_wiki_link": "Wiki",
   "dle_activity_detail_one": "${0} entrada, ${1} tok",
   "dle_activity_detail_other": "${0} entradas, ${1} tok",

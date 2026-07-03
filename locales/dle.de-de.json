@@ -24,7 +24,7 @@
   "dle_about_token_estimation_note": "Die in DLE angezeigten Token-Zahlen (Budget-Balken, Eintragsgrößen, Injektionssummen) sind Schätzungen basierend auf ~4 Zeichen pro Token. Das ist für typischen englischen Text genau, kann aber bei nicht-lateinischen Schriften, Codeblöcken oder stark interpunktierten Inhalten ungenau sein. Für genaue Werte konsultiere den Tokenizer deines API-Anbieters.",
   "dle_about_troubleshooting_h4": "Fehlerbehebung",
   "dle_about_troubleshooting_note": "Führe den geführten Einrichtungsassistenten erneut aus oder setze die Einstellungen auf Standardwerte zurück. Vault-Verbindungen und KI-Verbindungsprofile bleiben in beiden Fällen erhalten.",
-  "dle_about_version_text": "v2.5.1",
+  "dle_about_version_text": "v2.6.0",
   "dle_about_wiki_link": "Wiki",
   "dle_activity_detail_one": "${0} Eintrag, ${1} Tok",
   "dle_activity_detail_other": "${0} Einträge, ${1} Tok",

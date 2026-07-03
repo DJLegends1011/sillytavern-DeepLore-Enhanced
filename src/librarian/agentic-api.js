@@ -431,7 +431,7 @@ export async function callWithTools(messages, tools, toolChoice, maxTokens, sign
         // v2.5 dead-head: Custom Proxy removed. `callWithToolsViaProxy` is kept
         // for rollback safety but unreachable from runtime dispatch — throw the
         // same clear error as callAI so users get a consistent migration message.
-        throw new Error('Custom Proxy mode was removed in v2.5. Pick a Connection Profile in DLE Settings → Connection → AI Connections.');
+        throw new Error('Custom Proxy mode was removed in v2.5. Pick a Connection Profile in DLE Settings → Setup → AI Connections.');
     }
 
     // #27 sym 2: Librarian must use its own configured profile, not ST's globally-active one.

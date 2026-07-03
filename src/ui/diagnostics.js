@@ -47,7 +47,7 @@ export function runHealthCheck() {
     // — the old "no proxy URL set" warning is moot since users can no longer
     // pick proxy mode in the UI; the actionable signal is "switch to a profile".
     if (settings.aiSearchEnabled && settings.aiSearchConnectionMode === 'proxy') {
-        issues.push({ type: 'Settings', severity: 'error', entry: '—', detail: 'AI search is set to Custom Proxy mode, which was removed in v2.5. Pick a Connection Profile in DLE Settings → Connection → AI Connections.' });
+        issues.push({ type: 'Settings', severity: 'error', entry: '—', detail: 'AI search is set to Custom Proxy mode, which was removed in v2.5. Pick a Connection Profile in DLE Settings → Setup → AI Connections.' });
     }
 
     if (settings.scribeEnabled && settings.scribeConnectionMode === 'profile' && !settings.scribeProfileId) {
@@ -55,7 +55,7 @@ export function runHealthCheck() {
     }
 
     if (settings.scribeEnabled && settings.scribeConnectionMode === 'proxy') {
-        issues.push({ type: 'Settings', severity: 'error', entry: '—', detail: 'Scribe is set to Custom Proxy mode, which was removed in v2.5. Pick a Connection Profile in DLE Settings → Connection → AI Connections.' });
+        issues.push({ type: 'Settings', severity: 'error', entry: '—', detail: 'Scribe is set to Custom Proxy mode, which was removed in v2.5. Pick a Connection Profile in DLE Settings → Setup → AI Connections.' });
     }
 
     if (!settings.unlimitedBudget && settings.maxTokensBudget < 200) {

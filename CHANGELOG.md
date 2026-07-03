@@ -10,7 +10,7 @@ All notable changes to DeepLore are documented here. This file follows
 
 ## [2.6.0] - Unreleased
 
-> An interface release: a deep UI/UX polish pass across every surface, Issue #39 fixed (clearable vault cache + overlay drawer on phones), and a batch of long-standing bug fixes from a release-readiness audit. No pipeline-behavior changes. The broader settings-popup redesign is held for a dedicated overhaul.
+> An interface release: a full settings-popup overhaul, a deep UI/UX polish pass across every surface, Issue #39 fixed (clearable vault cache + overlay drawer on phones), and a batch of long-standing bug fixes from a release-readiness audit. No pipeline-behavior changes.
 
 ### Added
 
@@ -25,6 +25,7 @@ All notable changes to DeepLore are documented here. This file follows
 
 ### Changed
 
+- **Settings popup overhaul** — the old Connection/Features header rows and both subtab tiers are gone, replaced by a header strip (brand, master on/off switch, version chip, wiki help link) over a flat sidebar: a settings search box, a pinned **About** landing panel, and four accordion groups (Setup / Lore pipeline / Assistants / Tools). The former **Matching** and **AI Search** tabs are merged into one **Search** tab. Pre-overhaul tab tokens (persisted "last tab", deep links) resolve through a permanent alias so nothing breaks. Type sizing re-anchored to ST's font-scale slider. (See `docs/gotchas.md` #103.)
 - Footer health icons became a clickable diagnostics dock; Browse per-row actions fold into a hover-reveal `⋮` kebab.
 - Drawer overlay mode now also triggers on narrow viewports, so phones get the overlay drawer (the other half of Issue #39; the settings popup itself stays desktop-first for now).
 - Localized: Cartographer "Why?" modal, Reference tab + `/dle` palette, `/dle-lint` popup and the index-build warning toast (which now links to `/dle-lint`).
@@ -37,7 +38,7 @@ All notable changes to DeepLore are documented here. This file follows
 
 ### i18n
 
-- ~190 new UI strings; all 7 locales at full key parity — **2,574 keys × 7 locales**.
+- ~210 new UI strings (including the settings-overhaul nav/search/header labels); all 7 locales at full key parity — **~2,600 keys × 7 locales**.
 
 ---
 

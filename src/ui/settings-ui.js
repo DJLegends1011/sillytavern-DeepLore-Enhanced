@@ -1131,9 +1131,14 @@ export async function openSettingsPopup(navigateTo = null) {
             $navTabs.removeClass('dle-filtered-out');
             $navGroups.removeClass('dle-filtered-out');
             if (savedGroupCollapse) {
+                // Keep the group that owns the now-active tab expanded on restore.
+                // A tab clicked during a live search force-expands its group; if the
+                // pre-search snapshot had it collapsed, re-collapsing here would hide
+                // the active nav item while its panel stays shown.
+                const activeGroupEl = $navTabs.filter('.active').closest('.dle-nav-group').get(0) || null;
                 $navGroups.each(function () {
                     const was = savedGroupCollapse.get(this);
-                    if (was != null) setGroupCollapsed($(this), was, false);
+                    if (was != null && this !== activeGroupEl) setGroupCollapsed($(this), was, false);
                 });
                 savedGroupCollapse = null;
             }
@@ -1581,6 +1586,10 @@ function clampInput(el, fallback) {
     const max = el?.max !== '' && el?.max != null ? Number(el.max) : null;
     if (min != null && Number.isFinite(min)) v = Math.max(min, v);
     if (max != null && Number.isFinite(max)) v = Math.min(max, v);
+    // Never emit a non-finite value: a NaN fallback (or NaN clamp via Math.max/min
+    // when v is NaN and a bound is finite) would otherwise stringify to "NaN" and
+    // persist. Prefer a finite bound, else 0.
+    if (!Number.isFinite(v)) v = Number.isFinite(min) ? min : Number.isFinite(max) ? max : 0;
     return v;
 }
 

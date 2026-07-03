@@ -384,7 +384,7 @@ export async function callAI(systemPrompt, userMessage, connectionConfig) {
             // rollback safety, but every dispatch site refuses with a clear error.
             // `callProxyViaCorsBridge` import is preserved so tests can still exercise
             // the pure scrubber / validator helpers in that module.
-            throw new Error('Custom Proxy mode was removed in v2.5. Pick a Connection Profile in DLE Settings → Connection → AI Connections.');
+            throw new Error('Custom Proxy mode was removed in v2.5. Pick a Connection Profile in DLE Settings → Setup → AI Connections.');
         } else {
             throw new Error(`callAI: unknown connection mode "${mode}" (expected 'profile' or 'proxy' — 'inherit' must be resolved by resolveConnectionConfig upstream)`);
         }
