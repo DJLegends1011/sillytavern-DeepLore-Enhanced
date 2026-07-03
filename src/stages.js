@@ -19,6 +19,13 @@ function _isDebug() {
  * gating. forceInject skips contextual gating, requires/excludes, reinjection
  * cooldown, and strip dedup. Only budget limits can exclude a forceInject entry.
  *
+ * **NAMING TRAP — `policy.forceInject` ≠ `helpers.js:isForceInjected()`.**
+ * The policy set is BROADER: constant ∪ seed ∪ gen-scoped bootstrap ∪ pins.
+ * The helper is constant ∪ active-bootstrap only. The policy set answers
+ * "which entries skip gating stages"; the helper answers "which entries are
+ * auto-injected regardless of matching". Seeds and pins are gating-exempt but
+ * NOT auto-injected — do not use one where the other is meant.
+ *
  * **Bootstrap exemption is gen-scoped.** Bootstrap entries are designed to seed
  * lore during the first few generations of a chat. They MUST only bypass gating
  * while `bootstrapActive === true` (chat short enough per `newChatThreshold`).
@@ -36,7 +43,7 @@ function _isDebug() {
  *   forceInject. When false (default), they're gated normally. Default false is
  *   deliberately conservative — accidentally bypassing gating is the bug; the
  *   normal flow always passes the real value.
- * @returns {{ forceInject: Set<string>, pins: Array<{title:string, vaultSource:string|null}>, blocks: Array<{title:string, vaultSource:string|null}> }}
+ * @returns {{ forceInject: Set<string>, pinnedKeys: Set<string>, pins: Array<{title:string, vaultSource:string|null}>, blocks: Array<{title:string, vaultSource:string|null}> }}
  */
 export function buildExemptionPolicy(vaultSnapshot, pins, blocks, bootstrapActive = false) {
     // BUG-AUDIT-9: seed is exempt from contextual gating — designed to be
@@ -56,14 +63,22 @@ export function buildExemptionPolicy(vaultSnapshot, pins, blocks, bootstrapActiv
     const normalizedBlocks = (blocks || []).map(normalizePinBlock);
     // Bare-string pins have vaultSource=null (match any vault), so one pin can
     // produce N trackerKeys — walk the snapshot and add every match.
+    // P2 (completed): pins are matched against the vault exactly ONCE per run,
+    // here. pinnedKeys carries the per-entry result so applyPinBlock does O(1)
+    // Set lookups instead of re-running the pins×vault match a second time.
+    const pinnedKeys = new Set();
     for (const pb of normalizedPins) {
         for (const entry of vaultSnapshot) {
             // pb is already normalized (normalizedPins above) — skip re-normalize.
-            if (matchesNormalizedPinBlock(pb, entry)) forceInject.add(trackerKey(entry));
+            if (matchesNormalizedPinBlock(pb, entry)) {
+                forceInject.add(trackerKey(entry));
+                pinnedKeys.add(trackerKey(entry));
+            }
         }
     }
     return {
         forceInject,
+        pinnedKeys,
         pins: normalizedPins,
         blocks: normalizedBlocks,
     };
@@ -76,7 +91,7 @@ export function buildExemptionPolicy(vaultSnapshot, pins, blocks, bootstrapActiv
  *
  * @param {Array} entries - Pipeline results (from runPipeline)
  * @param {Array} vaultSnapshot - Full vault, for finding pinned entries not in entries
- * @param {{ forceInject: Set, pins: Set, blocks: Set }} policy
+ * @param {{ forceInject: Set, pinnedKeys?: Set, pins: Array, blocks: Array }} policy
  * @param {Map} matchedKeys - mutated: pins get '(pinned)'
  * @returns {Array}
  */
@@ -90,6 +105,12 @@ export function applyPinBlock(entries, vaultSnapshot, policy, matchedKeys) {
     // policy.blocks are already normalized by buildExemptionPolicy, so use the
     // matchesNormalizedPinBlock fast-path (skip per-call normalize).
     if (policy.pins.length > 0) {
+        // P2 (completed): buildExemptionPolicy already matched pins against the vault
+        // and recorded the result in policy.pinnedKeys — O(1) lookup here instead of a
+        // second pins×vault scan. Back-compat derive for any hand-rolled policy from
+        // an external caller (every in-repo caller uses buildExemptionPolicy).
+        const pinnedKeys = policy.pinnedKeys
+            ?? new Set(vaultSnapshot.filter(e => policy.pins.some(pb => matchesNormalizedPinBlock(pb, e))).map(e => trackerKey(e)));
         // BUG-AUDIT-H15: index for O(1) lookup instead of findIndex per pin.
         // Key by trackerKey (vaultSource:title) so same-title entries from different
         // vaults don't collide — pinning vault B's "Castle" must not overwrite the
@@ -100,8 +121,7 @@ export function applyPinBlock(entries, vaultSnapshot, policy, matchedKeys) {
             if (!resultIdx.has(k)) resultIdx.set(k, ri);
         }
         for (const entry of vaultSnapshot) {
-            const isPinned = policy.pins.some(pb => matchesNormalizedPinBlock(pb, entry));
-            if (isPinned) {
+            if (pinnedKeys.has(trackerKey(entry))) {
                 // BUG-030: deep-clone array fields to prevent shared refs with vaultIndex.
                 const cloneFields = {
                     keys: [...(entry.keys || [])],

@@ -27,14 +27,56 @@ export function matchEntries(chat, snapshot = null, opts = {}) {
 }
 
 /**
+ * Shared AI-search fallback ladder for the ai-only and two-stage modes. Handles
+ * the `aiResult.error → settings.aiErrorFallback` and `results.length === 0 →
+ * settings.aiEmptyFallback` policies, which were previously duplicated (and had
+ * drifted) between the two mode branches. The mode-specific keyword source is
+ * injected via `keywordEntries(kind)`: two-stage reuses its stage-1 keyword
+ * result for both kinds; ai-only re-runs matchEntries (and, on the 'error'
+ * kind only, adopts its matchedKeys + trace fields — see the ai-only thunk).
+ *
+ * @param {{ error?: boolean, errorMessage?: string, results: Array }} aiResult
+ * @param {object} trace - mutated on the error path (aiFallback/aiError, BUG-004)
+ * @param {object} settings - runPipeline's settings snapshot
+ * @param {{ bootstrapActive: boolean, vaultSnapshot: VaultEntry[], keywordEntries: (kind: 'error'|'empty') => VaultEntry[] }} opts
+ * @returns {VaultEntry[]|null} fallback entries ([] is a valid "inject nothing"
+ *   result), or null when aiResult succeeded with results — caller proceeds to
+ *   its mode-specific success merge.
+ */
+function resolveAiFallback(aiResult, trace, settings, { bootstrapActive, vaultSnapshot, keywordEntries }) {
+    if (aiResult.error) {
+        trace.aiFallback = true;
+        trace.aiError = aiResult.errorMessage || ''; // BUG-004: surface to toast.
+        const fallback = settings.aiErrorFallback || 'keyword';
+        if (fallback === 'keyword') return keywordEntries('error');
+        if (fallback === 'constants_only') return vaultSnapshot.filter(e => e.constant);
+        if (fallback === 'bootstrap_only') return vaultSnapshot.filter(e => bootstrapActive && e.bootstrap);
+        return [];
+    }
+    if (aiResult.results.length === 0) {
+        const emptyFallback = settings.aiEmptyFallback || 'constants';
+        dedupWarning('AI didn\'t pick any lore for this scene — using your fallback.', 'ai_empty_fallback', { hint: `Empty fallback mode: ${emptyFallback}` });
+        if (emptyFallback === 'constants') return vaultSnapshot.filter(e => e.constant);
+        if (emptyFallback === 'constants_bootstrap') return vaultSnapshot.filter(e => e.constant || (bootstrapActive && e.bootstrap));
+        if (emptyFallback === 'keyword') return keywordEntries('empty');
+        return [];
+    }
+    return null;
+}
+
+/**
  * Full entry-selection pipeline. 3-mode branching: keywords-only, two-stage, ai-only.
  * Records a trace for the Pipeline Inspector (/dle-inspect).
  * @returns {Promise<{ finalEntries: VaultEntry[], matchedKeys: Map<string, string>, trace: object }>}
  */
 export async function runPipeline(chat, externalSnapshot, contextualGatingContext, { pins = [], blocks = [], folderFilter = null, signal = null, onStatus = null, genId = null } = {}) {
-    // Snapshot settings and vault so async stages (AI search) see a consistent view.
-    const rawSettings = getSettings();
-    const settings = { ...rawSettings, analyticsData: { ...rawSettings.analyticsData } };
+    // Shallow-snapshot settings so every stage in this run reads one consistent view
+    // even if the user edits settings mid-generation. The snapshot is THREADED into
+    // matchEntries / hierarchicalPreFilter / buildCandidateManifest / aiSearch below —
+    // without the explicit parameter each of those re-reads live getSettings() and the
+    // consistent-view promise silently breaks (gotcha #94). Top-level scalars are
+    // frozen-in-time; nested objects still share refs (runPipeline never mutates them).
+    const settings = { ...getSettings() };
     // External snapshots are assumed already-filtered (caller used getWriterVisibleEntries()).
     // Otherwise filter out lorebook-guide here — Librarian-only, must never reach the writing AI.
     const vaultSnapshot = externalSnapshot || getWriterVisibleEntries();
@@ -113,7 +155,7 @@ export async function runPipeline(chat, externalSnapshot, contextualGatingContex
         // runs an AI category pass (otherwise hierarchicalPreFilter no-ops and this label
         // would flicker). Phase key, not display text — index.js maps it canonically.
         if (settings.hierarchicalPreFilter) onStatus?.('prefilter');
-        const preFiltered = await hierarchicalPreFilter(vaultSnapshot, chat, signal);
+        const preFiltered = await hierarchicalPreFilter(vaultSnapshot, chat, signal, settings);
         if (signal?.aborted) { const e = new Error('Pipeline aborted by user'); e.name = 'AbortError'; e.userAborted = true; throw e; }
         // `if (preFiltered)` would discard valid empty-array results — null is the skip sentinel.
         if (preFiltered != null) {
@@ -137,7 +179,7 @@ export async function runPipeline(chat, externalSnapshot, contextualGatingContex
             aiOnlyCandidates = applyFolderFilter(aiOnlyCandidates, folderFilter, exemptionPolicy, settings.debugMode);
         }
 
-        const { manifest: candidateManifest, header: candidateHeader } = buildCandidateManifest(aiOnlyCandidates, bootstrapActive);
+        const { manifest: candidateManifest, header: candidateHeader } = buildCandidateManifest(aiOnlyCandidates, bootstrapActive, settings);
         const alwaysInject = vaultSnapshot.filter(e => e.constant || (bootstrapActive && e.bootstrap));
 
         // BUG-AUDIT v2.5: matchedKeys keyed by trackerKey(entry) (vaultSource:title)
@@ -154,48 +196,38 @@ export async function runPipeline(chat, externalSnapshot, contextualGatingContex
         if (candidateManifest) {
             onStatus?.('consulting');
             const _aiStart = performance.now();
-            const aiResult = await aiSearch(chat, candidateManifest, candidateHeader, vaultSnapshot, aiOnlyCandidates, signal);
+            const aiResult = await aiSearch(chat, candidateManifest, candidateHeader, vaultSnapshot, aiOnlyCandidates, signal, settings);
             trace.aiSearchMs = Math.round(performance.now() - _aiStart);
             trace.aiCached = aiResult.cached ?? false; // BUG-396c: feeds injection-log staleness detection.
             if (signal?.aborted) { const e = new Error('Pipeline aborted by user'); e.name = 'AbortError'; e.userAborted = true; throw e; }
-            if (aiResult.error) {
-                trace.aiFallback = true;
-                trace.aiError = aiResult.errorMessage || ''; // BUG-004
-                const fallback = settings.aiErrorFallback || 'keyword';
-                if (fallback === 'keyword') {
-                    const kwResult = matchEntries(chat, vaultSnapshot);
-                    finalEntries = kwResult.matched;
-                    matchedKeys = kwResult.matchedKeys;
-                    trace.keywordMatched = kwResult.matched.map(e => ({ title: e.title, vaultSource: e.vaultSource || '', matchedBy: kwResult.matchedKeys.get(trackerKey(e)) || '?' }));
-                    trace.probabilitySkipped = kwResult.probabilitySkipped;
-                    trace.warmupFailed = kwResult.warmupFailed;
-                    trace.fuzzyStats = kwResult.fuzzyStats;
-                    trace.refineKeyBlocked = kwResult.refineKeyBlocked;
-                    // Warn when ai-only fallback collapsed to constants-only.
-                    const nonConstant = finalEntries.filter(e => !e.constant && !e.bootstrap);
-                    if (nonConstant.length === 0 && finalEntries.length > 0) {
-                        console.warn('[DLE] AI-only mode failed and keyword fallback found only constants/bootstraps — lore coverage is minimal');
-                        dedupWarning('AI search hit a snag — only your always-send lore is active.', 'ai_fallback', { hint: 'Check AI connection in DeepLore settings.' });
+            const fallbackEntries = resolveAiFallback(aiResult, trace, settings, {
+                bootstrapActive,
+                vaultSnapshot,
+                keywordEntries: (kind) => {
+                    const kwResult = matchEntries(chat, vaultSnapshot, { settings });
+                    // Error-path keyword fallback replaces the (never-run) keyword stage
+                    // wholesale: adopt its matchedKeys and populate the keyword trace
+                    // fields. The empty-path 'keyword' fallback intentionally does NOT —
+                    // pre-refactor behavior preserved (it only takes the entries).
+                    if (kind === 'error') {
+                        matchedKeys = kwResult.matchedKeys;
+                        trace.keywordMatched = kwResult.matched.map(e => ({ title: e.title, vaultSource: e.vaultSource || '', matchedBy: kwResult.matchedKeys.get(trackerKey(e)) || '?' }));
+                        trace.probabilitySkipped = kwResult.probabilitySkipped;
+                        trace.warmupFailed = kwResult.warmupFailed;
+                        trace.fuzzyStats = kwResult.fuzzyStats;
+                        trace.refineKeyBlocked = kwResult.refineKeyBlocked;
+                        // Warn when ai-only fallback collapsed to constants-only.
+                        const nonConstant = kwResult.matched.filter(e => !e.constant && !e.bootstrap);
+                        if (nonConstant.length === 0 && kwResult.matched.length > 0) {
+                            console.warn('[DLE] AI-only mode failed and keyword fallback found only constants/bootstraps — lore coverage is minimal');
+                            dedupWarning('AI search hit a snag — only your always-send lore is active.', 'ai_fallback', { hint: 'Check AI connection in DeepLore settings.' });
+                        }
                     }
-                } else if (fallback === 'constants_only') {
-                    finalEntries = vaultSnapshot.filter(e => e.constant);
-                } else if (fallback === 'bootstrap_only') {
-                    finalEntries = vaultSnapshot.filter(e => bootstrapActive && e.bootstrap);
-                } else {
-                    finalEntries = [];
-                }
-            } else if (aiResult.results.length === 0) {
-                const emptyFallback = settings.aiEmptyFallback || 'constants';
-                dedupWarning('AI didn\'t pick any lore for this scene — using your fallback.', 'ai_empty_fallback', { hint: `Empty fallback mode: ${emptyFallback}` });
-                if (emptyFallback === 'constants') {
-                    finalEntries = vaultSnapshot.filter(e => e.constant);
-                } else if (emptyFallback === 'constants_bootstrap') {
-                    finalEntries = alwaysInject;
-                } else if (emptyFallback === 'keyword') {
-                    finalEntries = matchEntries(chat, vaultSnapshot).matched;
-                } else {
-                    finalEntries = [];
-                }
+                    return kwResult.matched;
+                },
+            });
+            if (fallbackEntries !== null) {
+                finalEntries = fallbackEntries;
             } else {
                 finalEntries = [...alwaysInject, ...aiResult.results.map(r => r.entry).filter(e => !isForceInjected(e, { bootstrapActive }))];
                 for (const r of aiResult.results) {
@@ -209,7 +241,7 @@ export async function runPipeline(chat, externalSnapshot, contextualGatingContex
 
     } else if (settings.aiSearchEnabled && settings.aiSearchMode === 'two-stage') {
         const _kwStart = performance.now();
-        const keywordResult = matchEntries(chat, vaultSnapshot);
+        const keywordResult = matchEntries(chat, vaultSnapshot, { settings });
         trace.keywordMatchMs = Math.round(performance.now() - _kwStart);
         matchedKeys = keywordResult.matchedKeys;
         trace.keywordMatched = keywordResult.matched.map(e => ({ title: e.title, vaultSource: e.vaultSource || '', matchedBy: matchedKeys.get(trackerKey(e)) || '?' }));
@@ -258,7 +290,7 @@ export async function runPipeline(chat, externalSnapshot, contextualGatingContex
         let twoStageCandidates = expandedMatched;
         // C3: 'prefilter' phase only when the hierarchical pre-filter actually runs (see ai-only path).
         if (settings.hierarchicalPreFilter) onStatus?.('prefilter');
-        const preFiltered = await hierarchicalPreFilter(expandedMatched, chat, signal);
+        const preFiltered = await hierarchicalPreFilter(expandedMatched, chat, signal, settings);
         if (signal?.aborted) { const e = new Error('Pipeline aborted by user'); e.name = 'AbortError'; e.userAborted = true; throw e; }
         if (preFiltered != null) {
             twoStageCandidates = preFiltered;
@@ -279,42 +311,25 @@ export async function runPipeline(chat, externalSnapshot, contextualGatingContex
             twoStageCandidates = applyFolderFilter(twoStageCandidates, folderFilter, exemptionPolicy, settings.debugMode);
         }
 
-        const { manifest: candidateManifest, header: candidateHeader } = buildCandidateManifest(twoStageCandidates, bootstrapActive);
+        const { manifest: candidateManifest, header: candidateHeader } = buildCandidateManifest(twoStageCandidates, bootstrapActive, settings);
 
         if (!candidateManifest) {
             finalEntries = keywordResult.matched;
         } else {
             onStatus?.('consulting');
             const _aiStart2 = performance.now();
-            const aiResult = await aiSearch(chat, candidateManifest, candidateHeader, vaultSnapshot, twoStageCandidates, signal);
+            const aiResult = await aiSearch(chat, candidateManifest, candidateHeader, vaultSnapshot, twoStageCandidates, signal, settings);
             trace.aiSearchMs = Math.round(performance.now() - _aiStart2);
             trace.aiCached = aiResult.cached ?? false; // BUG-396c
             if (signal?.aborted) { const e = new Error('Pipeline aborted by user'); e.name = 'AbortError'; e.userAborted = true; throw e; }
-            if (aiResult.error) {
-                trace.aiFallback = true;
-                trace.aiError = aiResult.errorMessage || ''; // BUG-004
-                const fallback = settings.aiErrorFallback || 'keyword';
-                if (fallback === 'keyword') {
-                    finalEntries = keywordResult.matched;
-                } else if (fallback === 'constants_only') {
-                    finalEntries = vaultSnapshot.filter(e => e.constant);
-                } else if (fallback === 'bootstrap_only') {
-                    finalEntries = vaultSnapshot.filter(e => bootstrapActive && e.bootstrap);
-                } else {
-                    finalEntries = [];
-                }
-            } else if (aiResult.results.length === 0) {
-                const emptyFallback = settings.aiEmptyFallback || 'constants';
-                dedupWarning('AI didn\'t pick any lore for this scene — using your fallback.', 'ai_empty_fallback', { hint: `Empty fallback mode: ${emptyFallback}` });
-                if (emptyFallback === 'constants') {
-                    finalEntries = vaultSnapshot.filter(e => e.constant);
-                } else if (emptyFallback === 'constants_bootstrap') {
-                    finalEntries = vaultSnapshot.filter(e => e.constant || (bootstrapActive && e.bootstrap));
-                } else if (emptyFallback === 'keyword') {
-                    finalEntries = keywordResult.matched;
-                } else {
-                    finalEntries = [];
-                }
+            const fallbackEntries = resolveAiFallback(aiResult, trace, settings, {
+                bootstrapActive,
+                vaultSnapshot,
+                // Two-stage already ran the keyword stage — both fallback kinds reuse it.
+                keywordEntries: () => keywordResult.matched,
+            });
+            if (fallbackEntries !== null) {
+                finalEntries = fallbackEntries;
             } else {
                 const ctx = { bootstrapActive };
                 const alwaysInject = keywordResult.matched.filter(e => isForceInjected(e, ctx));
@@ -332,7 +347,7 @@ export async function runPipeline(chat, externalSnapshot, contextualGatingContex
 
     } else {
         const _kwStart2 = performance.now();
-        const keywordResult = matchEntries(chat, vaultSnapshot);
+        const keywordResult = matchEntries(chat, vaultSnapshot, { settings });
         trace.keywordMatchMs = Math.round(performance.now() - _kwStart2);
         finalEntries = keywordResult.matched;
         matchedKeys = keywordResult.matchedKeys;
@@ -387,11 +402,11 @@ export async function matchTextForExternal(scanInput) {
     // falls back to raw vaultIndex and leaks lorebook-guide entries to external
     // consumers (e.g. globalThis.deepLoreEnhanced_matchText), violating the
     // "guides never reach the writing AI" contract in CLAUDE.md.
-    const { matched } = matchEntries(fakeChat, getWriterVisibleEntries());
+    const { matched } = matchEntries(fakeChat, getWriterVisibleEntries(), { settings });
     clearScanTextCache();
     const policy = buildExemptionPolicy(matched, [], []);
-    const { result: gated } = applyRequiresExcludesGating(matched, policy, false, getSettings().priorityReversed);
-    const { groups, count, totalTokens } = formatAndGroup(gated, getSettings(), PROMPT_TAG_PREFIX);
+    const { result: gated } = applyRequiresExcludesGating(matched, policy, false, settings.priorityReversed);
+    const { groups, count, totalTokens } = formatAndGroup(gated, settings, PROMPT_TAG_PREFIX);
 
     const combinedText = groups.map(g => g.text).join('\n\n');
     return { text: combinedText, count, tokens: totalTokens };

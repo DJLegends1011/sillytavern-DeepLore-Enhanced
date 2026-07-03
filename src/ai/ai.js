@@ -437,9 +437,10 @@ export async function callAI(systemPrompt, userMessage, connectionConfig) {
     return result;
 }
 
-/** Inject settings into the extracted pure manifest builder. */
-export function buildCandidateManifest(candidates, excludeBootstrap = false) {
-    return _buildCandidateManifest(candidates, excludeBootstrap, getSettings());
+/** Inject settings into the extracted pure manifest builder. Pipeline callers pass
+ * runPipeline's settings snapshot (gotcha #94); others default to live getSettings(). */
+export function buildCandidateManifest(candidates, excludeBootstrap = false, settings = null) {
+    return _buildCandidateManifest(candidates, excludeBootstrap, settings || getSettings());
 }
 
 const HIERARCHICAL_THRESHOLD = 40;
@@ -449,8 +450,11 @@ const HIERARCHICAL_THRESHOLD = 40;
  * narrowing candidates before the main aiSearch call. Returns null to skip (caller uses all).
  * @returns {Promise<VaultEntry[]|null>}
  */
-export async function hierarchicalPreFilter(candidates, chat, signal) {
-    const settings = getSettings();
+export async function hierarchicalPreFilter(candidates, chat, signal, settingsIn = null) {
+    // gotcha #94: runPipeline threads its per-run settings snapshot so this stage
+    // sees the same values the rest of the run does; fall back to live settings
+    // only for out-of-pipeline callers.
+    const settings = settingsIn || getSettings();
     if (!settings.hierarchicalPreFilter) return null;
     const bootstrapActive = chat.length <= settings.newChatThreshold;
     let selectable = candidates.filter(e => !isForceInjected(e, { bootstrapActive }));
@@ -663,8 +667,10 @@ Example: ["Characters - Inner Circle", "Locations - Districts", "Lore - Magic Sy
  * @param {VaultEntry[]} [snapshot] - Vault index snapshot (avoids stale globals across await).
  * @returns {Promise<{ results: AiSearchMatch[], error: boolean }>}
  */
-export async function aiSearch(chat, candidateManifest, candidateHeader, snapshot, candidateEntries, signal) {
-    const settings = getSettings();
+export async function aiSearch(chat, candidateManifest, candidateHeader, snapshot, candidateEntries, signal, settingsIn = null) {
+    // gotcha #94: runPipeline threads its per-run settings snapshot — cache keys,
+    // thresholds, and fallback decisions must match what the rest of the run read.
+    const settings = settingsIn || getSettings();
 
     if (!settings.aiSearchEnabled || !candidateManifest) {
         return { results: [], error: false };

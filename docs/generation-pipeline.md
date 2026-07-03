@@ -130,7 +130,7 @@ try {
   → Check abort signal
 ```
 
-`runPipeline()` is in `src/pipeline/pipeline.js`. It runs the core matching logic based on mode:
+`runPipeline()` is in `src/pipeline/pipeline.js`. It shallow-snapshots settings once at entry and **threads that snapshot into every stage call** (`matchEntries`, `hierarchicalPreFilter`, `buildCandidateManifest`, `aiSearch`) so a mid-generation settings edit can't split the run across two views — see gotcha #94. It runs the core matching logic based on mode:
 
 | Mode | Flow |
 |---|---|
@@ -202,7 +202,7 @@ Applies token budget (`maxTokensBudget`), entry limit (`maxEntries`), groups by 
 
 **genId** is a 6-char random identifier created at the top of `onGenerate()` via `Math.random().toString(36).slice(2, 8)`. It is passed to `runPipeline()` through the options object and stamped on the returned `trace` object. Used to correlate log lines and diagnostics across a single generation.
 
-**Per-stage timing:** 10 `*Ms` fields are recorded on `trace`, one per stage call in `onGenerate()`. Each uses `performance.now()` bookends around the stage call, assigned to trace after the stage completes:
+**Per-stage timing:** 10 `*Ms` fields are recorded on `trace`, one per stage call in `onGenerate()`. Stages 1–9 route through the local `timeStage(field, fn)` helper (defined in `onGenerate()` right after the post-`runPipeline` epoch guard), which runs `fn`, stamps `trace[field]` with the rounded elapsed ms, and returns `fn`'s result. The sibling `diffRemoved(before, after, reason)` helper computes the trace removal arrays (`contextualGatingRemoved`, `cooldownRemoved`, `stripDedupRemoved`) keyed by `trackerKey` — never re-inline the `${vaultSource}:${title}` template (gotcha #50):
 
 `ensureIndexFreshMs`, `pinBlockMs`, `contextualGatingMs`, `reinjectionCooldownMs`, `requiresExcludesMs`, `stripDedupMs`, `formatGroupMs`, `trackGenerationMs`, `recordAnalyticsMs`, `perChatCountsMs`
 
@@ -232,7 +232,7 @@ Enriches `trace` with gating/budget/dedup details. **Epoch-guarded** (in `onGene
     → writeVerdict({trace, injectedSources: [], ...}) so consumers see "nothing this turn"
 ```
 
-**Two epoch checks** before committing (in `onGenerate()`). Both must pass.
+**One epoch check** guards the whole commit phase (in `onGenerate()`), immediately before the `groups.length` branch — there is no await between it and either `clearPrompts` site, so it covers both the commit branch and the no-groups else branch. (A second, byte-identical check used to sit inside the `groups.length > 0` branch; it was dead — no await separated them — and was removed in the v2.6 thermo hot-path pass.)
 
 **clearPrompts placement**: Two sites — inside the `if (groups.length > 0)` block (clear-before-replace), and in the `else` branch (clear stale prompts when no groups survived). Earlier empty-check branches also call clearPrompts with their own epoch guards.
 
@@ -373,10 +373,10 @@ onGenerate(chatMessages, contextSize, abort, type)             [index.js]
   ├─ getWriterVisibleEntries()                                 [in onGenerate()]
   ├─ (swipe rollback from lastGenerationTrackerSnapshot)       [in onGenerate()]
   ├─ runPipeline(chatMessages, vaultSnapshot, ctx, opts)        [in onGenerate()]
-  │   ├─ matchEntries(chatMessages, snapshot)                   [src/pipeline/pipeline.js]
-  │   ├─ hierarchicalPreFilter(entries, chatMessages, signal)   [optional, ai-only + two-stage modes]
-  │   ├─ buildCandidateManifest(entries)                       [src/ai/ai.js → manifest.js]
-  │   └─ aiSearch(chat, manifest, header, snapshot, cands, signal) [src/ai/ai.js]
+  │   ├─ matchEntries(chatMessages, snapshot, { settings })     [src/pipeline/pipeline.js — settings threaded, gotcha #94]
+  │   ├─ hierarchicalPreFilter(entries, chatMessages, signal, settings) [optional, ai-only + two-stage modes]
+  │   ├─ buildCandidateManifest(entries, bootstrap, settings)   [src/ai/ai.js → manifest.js]
+  │   └─ aiSearch(chat, manifest, header, snapshot, cands, signal, settings) [src/ai/ai.js]
   ├─ buildExemptionPolicy(vaultSnapshot, pins, blocks, bootstrapActive) [src/stages.js — gen-scoped bootstrap, gotcha #60]
   ├─ applyPinBlock(entries, vaultSnapshot, policy, matchedKeys)[src/stages.js]
   ├─ applyContextualGating(entries, ctx, policy, ...)          [src/stages.js]

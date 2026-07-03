@@ -1351,6 +1351,12 @@ export function normalizeLoreGap(gap) {
 /**
  * Force-injected? Constant, or bootstrap when bootstrap is active for this gen.
  * Caller computes `bootstrapActive` from its own context (chat length, settings).
+ *
+ * **NAMING TRAP — this is NARROWER than `stages.js` `policy.forceInject`.**
+ * This helper answers "auto-injected regardless of matching" (constant ∪
+ * active-bootstrap). The policy set answers "skips gating stages" and ALSO
+ * includes seeds and pins. Seeds/pins are gating-exempt but NOT auto-injected —
+ * do not use one where the other is meant.
  * @param {object} entry
  * @param {{ bootstrapActive: boolean }} context
  * @returns {boolean}

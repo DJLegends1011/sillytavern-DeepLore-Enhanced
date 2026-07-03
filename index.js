@@ -1246,6 +1246,23 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
             return;
         }
 
+        // Stage bookend helper — times fn and stamps trace[field]. Replaces the ten
+        // hand-rolled performance.now() bookend pairs that used to wrap Stages 1-9.
+        const timeStage = (field, fn) => {
+            const t0 = performance.now();
+            const result = fn();
+            trace[field] = Math.round(performance.now() - t0);
+            return result;
+        };
+        // Removed-entry diff for trace enrichment. Keyed by trackerKey — NEVER inline
+        // the `${vaultSource}:${title}` template here (gotcha #50 trackerKey drift class).
+        const diffRemoved = (before, after, reason) => {
+            const afterKeys = new Set(after.map(e => trackerKey(e)));
+            return before
+                .filter(e => !afterKeys.has(trackerKey(e)))
+                .map(e => ({ title: e.title, vaultSource: e.vaultSource || '', reason }));
+        };
+
         // P2-3: single exit for the early-empty branches (no-match / cooldown-empty /
         // gating-empty). Each used to clearPrompts + return WITHOUT writing a verdict,
         // violating the verdict contract (gotcha #46): consumers then saw the PRIOR
@@ -1282,24 +1299,13 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
         const policy = buildExemptionPolicy(vaultSnapshot, pins, blocks, trace?.bootstrapActive === true);
 
         // Stage 1: Pin/Block overrides.
-        const _pinBlockStart = performance.now();
-        let finalEntries = applyPinBlock(pipelineEntries, vaultSnapshot, policy, matchedKeys);
-        trace.pinBlockMs = Math.round(performance.now() - _pinBlockStart);
+        let finalEntries = timeStage('pinBlockMs', () => applyPinBlock(pipelineEntries, vaultSnapshot, policy, matchedKeys));
 
         // Stage 2: Contextual gating.
-        const _gatingStart = performance.now();
-        // Capture pre/post entry refs so vaultSource survives the diff (title-only Set
-        // would conflate multi-vault entries with the same title in conflictResolution='all').
-        const preContextual = new Map(finalEntries.map(e => [`${e.vaultSource || ''}:${e.title}`, e]));
         const fieldDefs = fieldDefinitions.length > 0 ? fieldDefinitions : DEFAULT_FIELD_DEFINITIONS;
-        finalEntries = applyContextualGating(finalEntries, ctx, policy, settings.debugMode, settings, fieldDefs);
-        trace.contextualGatingMs = Math.round(performance.now() - _gatingStart);
-        if (trace) {
-            const postContextual = new Set(finalEntries.map(e => `${e.vaultSource || ''}:${e.title}`));
-            trace.contextualGatingRemoved = [...preContextual.entries()]
-                .filter(([k]) => !postContextual.has(k))
-                .map(([, entry]) => ({ title: entry.title, vaultSource: entry.vaultSource || '', reason: 'Filtered by era/location/scene/character' }));
-        }
+        const preContextual = finalEntries;
+        finalEntries = timeStage('contextualGatingMs', () => applyContextualGating(preContextual, ctx, policy, settings.debugMode, settings, fieldDefs));
+        trace.contextualGatingRemoved = diffRemoved(preContextual, finalEntries, 'Filtered by era/location/scene/character');
 
         if (trace?.aiFallback) {
             const aiErr = trace.aiError || '';
@@ -1327,16 +1333,9 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
         }
 
         // Stage 3: re-injection cooldown.
-        const _cooldownStart = performance.now();
-        const preCooldown = new Map(finalEntries.map(e => [`${e.vaultSource || ''}:${e.title}`, e]));
-        finalEntries = applyReinjectionCooldown(finalEntries, policy, injectionHistory, generationCount, settings.reinjectionCooldown, settings.debugMode);
-        trace.reinjectionCooldownMs = Math.round(performance.now() - _cooldownStart);
-        if (trace) {
-            const postCooldown = new Set(finalEntries.map(e => `${e.vaultSource || ''}:${e.title}`));
-            trace.cooldownRemoved = [...preCooldown.entries()]
-                .filter(([k]) => !postCooldown.has(k))
-                .map(([, entry]) => ({ title: entry.title, vaultSource: entry.vaultSource || '', reason: 'Cooldown active' }));
-        }
+        const preCooldown = finalEntries;
+        finalEntries = timeStage('reinjectionCooldownMs', () => applyReinjectionCooldown(preCooldown, policy, injectionHistory, generationCount, settings.reinjectionCooldown, settings.debugMode));
+        trace.cooldownRemoved = diffRemoved(preCooldown, finalEntries, 'Cooldown active');
 
         if (finalEntries.length === 0) {
             // P2-3: route through the shared empty-commit helper (BUG-271 guard inside).
@@ -1345,9 +1344,8 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
         }
 
         // Stage 4: requires/excludes gating (forceInject entries exempt).
-        const _reqExclStart = performance.now();
-        const { result: gated, removed: gatingRemoved } = applyRequiresExcludesGating(finalEntries, policy, settings.debugMode, settings.priorityReversed);
-        trace.requiresExcludesMs = Math.round(performance.now() - _reqExclStart);
+        const { result: gated, removed: gatingRemoved } = timeStage('requiresExcludesMs',
+            () => applyRequiresExcludesGating(finalEntries, policy, settings.debugMode, settings.priorityReversed));
 
         if (gated.length === 0) {
             // P2-3: route through the shared empty-commit helper (BUG-271 guard inside).
@@ -1361,24 +1359,23 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
         //   (2) AI cache miss — chat content changed enough that old dedup entries are stale
         // Done here (not at swipe-restore time) because chat_metadata may be reassigned by ST
         // during the async AI search, which would make a swipe-restore-time clear unreliable.
-        const _stripDedupStart = performance.now();
-        // #11: `=== false` (not `!trace.aiCached`) so the "AI cache missed" signal
-        // only fires when the AI actually RAN and missed. In keywords-only mode the
-        // AI never runs, leaving trace.aiCached === undefined; the old `!aiCached`
-        // truthiness wiped the injection log every generation BEFORE strip-dedup
-        // could read it, silently disabling this default-on feature. Now only a real
-        // swipe/regen (_snapMatch) or a genuine cache miss clears the log.
-        if (settings.stripDuplicateInjections && (_snapMatch || trace.aiCached === false)) {
-            if (chat_metadata.deeplore_injection_log?.length > 0) {
-                if (settings.debugMode) console.debug('[DLE][DIAG] strip-dedup-log-clear — %s, clearing %d stale injection log entries',
-                    _snapMatch ? 'swipe/regen detected' : 'AI cache missed (context changed)',
-                    chat_metadata.deeplore_injection_log.length);
-                chat_metadata.deeplore_injection_log = [];
-                saveMetadataDebounced();
+        const postDedup = timeStage('stripDedupMs', () => {
+            // #11: `=== false` (not `!trace.aiCached`) so the "AI cache missed" signal
+            // only fires when the AI actually RAN and missed. In keywords-only mode the
+            // AI never runs, leaving trace.aiCached === undefined; the old `!aiCached`
+            // truthiness wiped the injection log every generation BEFORE strip-dedup
+            // could read it, silently disabling this default-on feature. Now only a real
+            // swipe/regen (_snapMatch) or a genuine cache miss clears the log.
+            if (settings.stripDuplicateInjections && (_snapMatch || trace.aiCached === false)) {
+                if (chat_metadata.deeplore_injection_log?.length > 0) {
+                    if (settings.debugMode) console.debug('[DLE][DIAG] strip-dedup-log-clear — %s, clearing %d stale injection log entries',
+                        _snapMatch ? 'swipe/regen detected' : 'AI cache missed (context changed)',
+                        chat_metadata.deeplore_injection_log.length);
+                    chat_metadata.deeplore_injection_log = [];
+                    saveMetadataDebounced();
+                }
             }
-        }
-        let postDedup = gated;
-        if (settings.stripDuplicateInjections) {
+            if (!settings.stripDuplicateInjections) return gated;
             if (settings.debugMode) {
                 const _sLog = chat_metadata.deeplore_injection_log;
                 console.debug('[DLE][DIAG] strip-dedup-input', {
@@ -1393,30 +1390,24 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
                     },
                 });
             }
-            postDedup = applyStripDedup(gated, policy, chat_metadata.deeplore_injection_log, settings.stripLookbackDepth, settings, settings.debugMode);
+            const deduped = applyStripDedup(gated, policy, chat_metadata.deeplore_injection_log, settings.stripLookbackDepth, settings, settings.debugMode);
             if (settings.debugMode) {
-                const _removed = gated.filter(e => !postDedup.some(p => p.title === e.title));
+                const _removed = gated.filter(e => !deduped.some(p => p.title === e.title));
                 console.debug('[DLE][DIAG] strip-dedup-result', {
-                    keptCount: postDedup.length,
-                    keptTitles: postDedup.map(e => e.title),
+                    keptCount: deduped.length,
+                    keptTitles: deduped.map(e => e.title),
                     removedCount: _removed.length,
                     removedTitles: _removed.map(e => e.title),
                 });
             }
-            if (trace) {
-                const postDedupKeys = new Set(postDedup.map(e => `${e.vaultSource || ''}:${e.title}`));
-                trace.stripDedupRemoved = gated
-                    .filter(e => !postDedupKeys.has(`${e.vaultSource || ''}:${e.title}`))
-                    .map(e => ({ title: e.title, vaultSource: e.vaultSource || '', reason: 'Already in recent context' }));
-            }
-        }
-        trace.stripDedupMs = Math.round(performance.now() - _stripDedupStart);
+            trace.stripDedupRemoved = diffRemoved(gated, deduped, 'Already in recent context');
+            return deduped;
+        });
 
         // Stage 6: format with budget, grouped by injection position.
         // BUG-014: use the captured `settings` object so the whole pipeline sees consistent values.
-        const _fmtStart = performance.now();
-        const { groups, count: injectedCount, totalTokens, acceptedEntries } = formatAndGroup(postDedup, settings, PROMPT_TAG_PREFIX);
-        trace.formatGroupMs = Math.round(performance.now() - _fmtStart);
+        const { groups, count: injectedCount, totalTokens, acceptedEntries } = timeStage('formatGroupMs',
+            () => formatAndGroup(postDedup, settings, PROMPT_TAG_PREFIX));
 
         injectedEntries = acceptedEntries;
 
@@ -1424,8 +1415,8 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
             trace.gatedOut = gatingRemoved.map(e => ({
                 title: e.title, vaultSource: e.vaultSource || '', requires: e.requires, excludes: e.excludes,
             }));
-            const acceptedKeys = new Set(acceptedEntries.map(e => `${e.vaultSource || ''}:${e.title}`));
-            trace.budgetCut = postDedup.filter(e => !acceptedKeys.has(`${e.vaultSource || ''}:${e.title}`))
+            const acceptedKeys = new Set(acceptedEntries.map(e => trackerKey(e)));
+            trace.budgetCut = postDedup.filter(e => !acceptedKeys.has(trackerKey(e)))
                 .map(e => ({ title: e.title, vaultSource: e.vaultSource || '', tokens: e.tokenEstimate, priority: e.priority }));
             // BUG-AUDIT v2.5: trace.injected must carry vaultSource so drawer fallback
             // (when injectedSources is empty but trace.injected isn't) doesn't collapse
@@ -1472,20 +1463,17 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
             }
         }
 
-        // BUG-AUDIT-5: epoch guard on commit — stale force-released pipelines must not wipe
-        // prompts the new pipeline just set.
+        // BUG-AUDIT-5: final epoch check before commit — stale force-released pipelines must
+        // not wipe prompts the new pipeline just set. Both clearPrompts sites below (commit
+        // branch AND the no-groups else branch) run only past this guard, and there is no
+        // await between here and either clearPrompts, so we never wipe prompts without
+        // verified replacement (or a verified this-turn-empty verdict) in hand.
         if (epoch !== chatEpoch || lockEpoch !== generationLockEpoch) {
             console.warn('[DLE] Stale pipeline reached commit phase — discarding');
             return;
         }
 
         if (groups.length > 0) {
-            // Final epoch check immediately before commit. clearPrompts is inside this branch
-            // so we never wipe prompts without verified replacement content.
-            if (epoch !== chatEpoch || lockEpoch !== generationLockEpoch) {
-                console.warn('[DLE] Chat changed or pipeline superseded during commit — discarding results');
-                return;
-            }
             clearPrompts(extension_prompts, PROMPT_TAG_PREFIX, PROMPT_TAG);
             if (settings.injectionMode === 'prompt_list' && promptManager) {
                 for (const id of [`${PROMPT_TAG_PREFIX}constants`, `${PROMPT_TAG_PREFIX}lore`, 'deeplore_notebook', 'deeplore_ai_notepad']) {
@@ -1627,11 +1615,11 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
 
         // Stage 7: track cooldowns + injection history. Both epoch+lockEpoch guards required —
         // a force-released stale pipeline must not corrupt these Maps concurrently with its successor.
-        const _trackStart = performance.now();
-        if (epoch === chatEpoch && lockEpoch === generationLockEpoch) {
-            trackGeneration(injectedEntries, generationCount, cooldownTracker, decayTracker, injectionHistory, settings);
-        }
-        trace.trackGenerationMs = Math.round(performance.now() - _trackStart);
+        timeStage('trackGenerationMs', () => {
+            if (epoch === chatEpoch && lockEpoch === generationLockEpoch) {
+                trackGeneration(injectedEntries, generationCount, cooldownTracker, decayTracker, injectionHistory, settings);
+            }
+        });
 
         // Dedup-toggled-off: nuke the now-meaningless injection log (epoch-guarded).
         if (!settings.stripDuplicateInjections && epoch === chatEpoch && chat_metadata.deeplore_injection_log?.length > 0) {
@@ -1694,28 +1682,28 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
 
         // Stage 8: analytics — postDedup is the "matched" set (passed all gating).
         // Epoch+lock guards mirror Stages 7 and 9 to prevent cross-chat pollution.
-        const _analyticsStart = performance.now();
-        if (postDedup.length > 0 && epoch === chatEpoch && lockEpoch === generationLockEpoch) {
-            recordAnalytics(postDedup, injectedEntries, settings.analyticsData);
-            // generationCount > 0 skips the gen-0 case (first gen after CHAT_CHANGED) — that
-            // would save before any mutation accumulates. _analyticsPendingSave lets
-            // CHAT_CHANGED / beforeunload flush any unpersisted batch.
-            _analyticsPendingSave = true;
-            if (generationCount > 0 && generationCount % 5 === 0) {
-                invalidateSettingsCache();
-                saveSettingsDebounced();
-                _analyticsPendingSave = false;
+        timeStage('recordAnalyticsMs', () => {
+            if (postDedup.length > 0 && epoch === chatEpoch && lockEpoch === generationLockEpoch) {
+                recordAnalytics(postDedup, injectedEntries, settings.analyticsData);
+                // generationCount > 0 skips the gen-0 case (first gen after CHAT_CHANGED) — that
+                // would save before any mutation accumulates. _analyticsPendingSave lets
+                // CHAT_CHANGED / beforeunload flush any unpersisted batch.
+                _analyticsPendingSave = true;
+                if (generationCount > 0 && generationCount % 5 === 0) {
+                    invalidateSettingsCache();
+                    saveSettingsDebounced();
+                    _analyticsPendingSave = false;
+                }
             }
-        }
-        trace.recordAnalyticsMs = Math.round(performance.now() - _analyticsStart);
+        });
 
         // Stage 9: per-chat injection counts. Epoch + lock guards + swipe-aware rollback.
         // BUG-291/292/293: keyed by `${msgIdx}|${swipe_id}` with per-swipe trackerKey map. Handles:
         //   - regen of current swipe (key matches → decrement the prior keys exactly)
         //   - alternate-swipe nav (different swipe_id → different key → no false decrement)
         //   - reload between generations (perSwipeInjectedKeys is persisted to chat_metadata)
-        const _countsStart = performance.now();
-        if (epoch === chatEpoch && lockEpoch === generationLockEpoch) {
+        timeStage('perChatCountsMs', () => {
+            if (epoch !== chatEpoch || lockEpoch !== generationLockEpoch) return;
             // P2-1: key on the assistant's eventual global slot (verdictMsgIdx) via the
             // shared helper, identical to the early swipe-check above and to the
             // MESSAGE_SWIPED rebuild. A fresh user→assistant turn with pre-push
@@ -1758,8 +1746,7 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
             // CHAT_CHANGED and never flush. Belt-and-braces fallback if saveMetadata throws sync.
             try { saveMetadata(); } catch { saveMetadataDebounced(); }
             notifyChatInjectionCountsUpdated();
-        }
-        trace.perChatCountsMs = Math.round(performance.now() - _countsStart);
+        });
 
         if (groups.length > 0) {
             // Context-usage warning with hysteresis: warn at 20% (with +5% gap from last warn),

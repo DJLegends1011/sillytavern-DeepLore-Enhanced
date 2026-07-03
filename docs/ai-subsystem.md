@@ -92,9 +92,11 @@ Dispatches to `callViaProfile()` when `mode === 'profile'`, or ~~`callProxyViaCo
 ### `aiSearch()` -- ai.js
 
 ```js
-aiSearch(chat, candidateManifest, candidateHeader, snapshot, candidateEntries, signal)
+aiSearch(chat, candidateManifest, candidateHeader, snapshot, candidateEntries, signal, settingsIn = null)
   -> { results: AiSearchMatch[], error: boolean, errorMessage?: string }
 ```
+
+**`settingsIn` (gotcha #94):** `runPipeline` threads its per-run settings snapshot so cache keys, thresholds, and prompts match what the rest of the run read. Falls back to live `getSettings()` only for out-of-pipeline callers.
 
 **Timeout:** the call passes `timeout: settings.aiSearchTimeout` (`ai.js:895`), default **20000ms** (`settings.js:100`, validation range `{min:1000, max:999999}` at `settings.js:350`). The 500ms throttle is separate — see AI Call Throttle above.
 
@@ -196,9 +198,9 @@ Bigram Dice coefficient similarity. Returns `{title, similarity}` for best match
 
 ## 3. Hierarchical Pre-Filter
 
-### `hierarchicalPreFilter(candidates, chat, signal)` -- ai.js
+### `hierarchicalPreFilter(candidates, chat, signal, settingsIn = null)` -- ai.js
 
-Two-phase AI search for large vaults. Called from the pipeline before `aiSearch()`.
+Two-phase AI search for large vaults. Called from the pipeline before `aiSearch()`. `settingsIn` receives `runPipeline`'s per-run settings snapshot (gotcha #94); falls back to live `getSettings()` for out-of-pipeline callers.
 
 ```
 HIERARCHICAL_THRESHOLD = 40  // ai.js: module-top const
@@ -245,7 +247,7 @@ Shows up to 5 sample titles per category.
 
 ### `buildCandidateManifest(candidates, excludeBootstrap, settings)` -- manifest.js
 
-Pure function (no SillyTavern imports). The ai.js wrapper (`buildCandidateManifest()` in ai.js) injects `getSettings()`.
+Pure function (no SillyTavern imports). The ai.js wrapper (`buildCandidateManifest(candidates, excludeBootstrap, settings = null)` in ai.js) forwards the caller's settings when given — `runPipeline` passes its per-run snapshot (gotcha #94) — and injects live `getSettings()` otherwise.
 
 ```js
 // Returns: { manifest: string, header: string }

@@ -24,6 +24,7 @@ Format: `#N — title`. Listed under the subsystem you'd most likely be editing 
 - #60 — Bootstrap exemption is gen-scoped to `bootstrapActive` (Stages H-3)
 - #63 — Cascade-pulled `excludeRecursion:true` entries don't seed recursion text (M-5)
 - #65 — Stages MEDIUMs bundle (M-3/M-4/M-6/M-7/M-8 — strip-dedup, warmup, gating, truncation hash)
+- #94 — runPipeline settings snapshot must be threaded into match/AI stages
 
 **State & lifecycle** (`src/state.js`, `init()`, observers)
 - #3 — State mutation scoping (session vs chat vs generation reset)
@@ -1545,5 +1546,17 @@ ST clones a git extension into a folder named after the **repo slug** — verifi
 Both constants live in `src/drawer/drawer-state.js`. **Why the viewport source was added:** `chat_width` is a *percentage* preference and never reflects actual pixels — on a phone `chat_width` may be small while the real viewport is narrow, so the percentage threshold alone never engaged and phones never got overlay. The pixel breakpoint keys off `window.innerWidth` so narrow real viewports (phones, narrow desktop windows) now get overlay regardless of the percentage. The two triggers are additive: `chat_width >= 60` keeps its desktop role (wide chat squeezes the side panel) and the new viewport check covers everything the percentage missed. This is a surgical viewport-source fix, NOT the bottom-sheet rebuild.
 
 **Merge-checklist flag for the DJLegends v3 mobile PR:** the v3 mobile UI is a full bottom-sheet rebuild and should SUBSUME/replace `updateOverlayMode` rather than stack a third overlay path on top of it. Reviewers merging the mobile PR must reconcile this dual-trigger with the new mobile layout, not leave both running.
+
+---
+
+## 94. runPipeline's settings snapshot MUST be threaded into match/AI stages (v2.6 thermo hot-path fix)
+
+**Rule:** `runPipeline` shallow-snapshots settings once per run (`const settings = { ...getSettings() }`) and passes that snapshot as an explicit parameter to every stage it invokes: `matchEntries(chat, snapshot, { settings })`, `hierarchicalPreFilter(candidates, chat, signal, settings)`, `buildCandidateManifest(candidates, bootstrap, settings)`, `aiSearch(..., signal, settings)`. When adding a NEW stage call inside `runPipeline`, thread the snapshot the same way — do not let the callee default to its own `getSettings()`.
+
+**Why:** Before this fix the snapshot's "async stages see a consistent view" comment was a lie — every one of those callees re-read live `getSettings()` internally, so a user editing settings during the (up to tens of seconds) AI await made the keyword fallback, cache keys, and thresholds read DIFFERENT values than `trace.mode` recorded. The callees keep a `settingsIn || getSettings()` fallback ONLY for out-of-pipeline callers (settings-ui test button, librarian-session, external API) where live settings are correct.
+
+**Also in this fix:** the per-generation `analyticsData: { ...rawSettings.analyticsData }` copy was deleted — it had zero readers inside `runPipeline` (index.js's Stage 8 `recordAnalytics` uses its own live `settings.analyticsData`, which is the same object `getSettings()` returns and mutations must persist through).
+
+**Where:** `src/pipeline/pipeline.js: runPipeline()` (snapshot + all four threaded call sites), `src/ai/ai.js: aiSearch()/hierarchicalPreFilter()/buildCandidateManifest()` (the `settingsIn` params).
 
 ---

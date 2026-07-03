@@ -1350,7 +1350,10 @@ test('BUG-029: symmetric mutual excludes resolve deterministically by priority',
 test('BUG-030: pinned entry arrays are deep copies', () => {
     const original = makeEntry('Eris', { keys: ['eris', 'goddess'], tags: ['lorebook', 'character'] });
     setVaultIndex([original]);
-    const policy = buildExemptionPolicy([], ['eris'], []);
+    // P2 pinnedKeys contract: policy must be built from the same snapshot passed to
+    // applyPinBlock (production always does — H-3-6). The pin→entry match happens once,
+    // in buildExemptionPolicy.
+    const policy = buildExemptionPolicy([original], ['eris'], []);
     const matchedKeys = new Map();
 
     const result = applyPinBlock([], [original], policy, matchedKeys);
@@ -1686,9 +1689,11 @@ test('Pipeline Sim: pin override forces entry even without keyword match', () =>
     const chat = makeChat2('just chatting');
     const settings = makeSettings({ scanDepth: 5 });
     const { matched, matchedKeys } = matchEntriesPure(chat, entries, { settings });
-    // Secret not matched by keywords — use pin to force it
+    // Secret not matched by keywords — use pin to force it.
+    // P2 pinnedKeys contract: build policy from the FULL vault (as production does),
+    // not the matched subset — the pin→entry match happens in buildExemptionPolicy.
     const pins = [{ title: 'Secret', vaultSource: null }];
-    const policy = buildExemptionPolicy(matched, pins, []);
+    const policy = buildExemptionPolicy(entries, pins, []);
     const result = applyPinBlock(matched, entries, policy, matchedKeys);
     assert(result.some(e => e.title === 'Secret'), 'pinned entry forced into result');
 });

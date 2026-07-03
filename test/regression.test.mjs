@@ -917,7 +917,10 @@ test('BUG-030: pinned entry arrays are cloned (shared reference guard)', () => {
         requires: ['Zeus'],
         excludes: ['Hera'],
     });
-    const policy = buildExemptionPolicy([], ['eris'], []);
+    // P2 pinnedKeys contract: policy must be built from the same snapshot passed to
+    // applyPinBlock (production always does — H-3-6). The pin→entry match happens
+    // once, in buildExemptionPolicy.
+    const policy = buildExemptionPolicy([original], ['eris'], []);
     const matchedKeys = new Map();
     const result = applyPinBlock([], [original], policy, matchedKeys);
     const pinned = result[0];
