@@ -599,9 +599,15 @@ export async function flagLoreAction(args, callerEpoch) {
     const epoch = callerEpoch !== undefined ? callerEpoch : chatEpoch;
     const debug = getSettings().debugMode;
     const title = args?.title?.trim();
-    const reason = args?.reason?.trim();
-    if (!title) return 'No title provided.';
-    if (!reason) return 'No reason provided.';
+    // GHOST-FLAG fix (2026-07-03): models routinely omit `reason` despite
+    // required[] in the tool schema (some provider backends don't enforce
+    // JSON-schema required). A titled flag is still real gap signal — record
+    // it with an empty reason instead of silently discarding it. The drawer
+    // already renders empty reasons ('No reason provided' fallback in
+    // drawer-events.js). Title stays mandatory: a flag without a topic is
+    // unrenderable and unmergeable.
+    const reason = args?.reason?.trim() || '';
+    if (!title) return { ok: false, message: 'No title provided.' };
 
     const urgency = ['low', 'medium', 'high'].includes(args?.urgency) ? args.urgency : 'medium';
     const flagType = ['gap', 'update'].includes(args?.flag_type) ? args.flag_type : 'gap';
@@ -650,9 +656,15 @@ export async function flagLoreAction(args, callerEpoch) {
         };
         updatedGaps = [...loreGaps, newGap];
     }
+    // GHOST-FLAG fix: track whether the gap actually landed in loreGaps so the
+    // caller can gate the per-message dropdown push on it. `recorded` is false
+    // on epoch mismatch (stale chat — caller's own guard bails anyway) and on
+    // persistGaps failure (no chatMetadata — BUG-304 cold start: the gap is in
+    // NEITHER memory nor metadata, so rendering it would be a ghost).
+    let recorded = false;
     if (epoch === chatEpoch) {
-        const ok = persistGaps(updatedGaps);
-        if (!ok) console.warn('[DLE] flagLore: persist failed (no chat metadata) for "%s"', title);
+        recorded = persistGaps(updatedGaps);
+        if (!recorded) console.warn('[DLE] flagLore: persist failed (no chat metadata) for "%s"', title);
         else if (debug) console.debug('[DLE] flagLore: persisted — %s', existingGap ? 'merged' : 'new');
     } else {
         if (debug) console.debug('[DLE] flagLore: epoch guard — skipped persist for "%s"', title);
@@ -684,8 +696,13 @@ export async function flagLoreAction(args, callerEpoch) {
         console.debug('[DLE] flagLore: epoch guard — skipped activity/analytics for "%s"', title);
     }
 
-    if (flagType === 'update' && entryTitle) {
-        return `Flagged update: "${title}" (entry: ${entryTitle}). Do not acknowledge this flag — continue seamlessly.`;
-    }
-    return `Flagged gap: "${title}". Do not acknowledge this flag — continue seamlessly.`;
+    // GHOST-FLAG fix: structured return. `message` is the tool-result string fed
+    // back to the model (unchanged wording); `ok` tells the caller whether the
+    // gap is really in loreGaps — the agentic loop only pushes toolActivity
+    // (the per-message "N gaps noted" dropdown) for ok flags, keeping the chat
+    // header and the drawer Flags panel in sync. See docs/gotchas.md #104.
+    const message = (flagType === 'update' && entryTitle)
+        ? `Flagged update: "${title}" (entry: ${entryTitle}). Do not acknowledge this flag — continue seamlessly.`
+        : `Flagged gap: "${title}". Do not acknowledge this flag — continue seamlessly.`;
+    return { ok: recorded, message };
 }

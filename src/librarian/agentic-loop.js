@@ -435,13 +435,21 @@ export async function runAgenticLoop(options) {
                     // Thread the loop's captured epoch so flagLoreAction's internal
                     // guard skips activity/analytics if the chat switched mid-loop.
                     const flagResult = await flagLoreAction(tc.input || {}, epoch);
-                    results.push({ id: tc.id, name: tc.name, result: flagResult || 'Flag recorded.' });
+                    results.push({ id: tc.id, name: tc.name, result: flagResult?.message || 'Flag recorded.' });
                     // Symmetric post-await epoch/lock guard (mirrors _runFlagIteration
                     // and the SEARCH path): if the chat switched or the lock rolled
                     // during the flag await, don't leak this stale flag into the new
                     // chat's drawer-dropdown toolActivity.
                     if (epoch !== chatEpoch || lockEpoch !== generationLockEpoch) {
                         if (debug) console.debug('[DLE] agentic inline-flag: epoch mismatch after flagLoreAction, skip toolActivity push');
+                        break;
+                    }
+                    // GHOST-FLAG guard (gotcha #104): only render flags that were
+                    // actually recorded in loreGaps. A rejected/unpersisted flag
+                    // must not appear in the per-message "N gaps noted" dropdown —
+                    // that desyncs the chat header from the drawer Flags panel.
+                    if (!flagResult?.ok) {
+                        if (debug) console.debug('[DLE] agentic inline-flag: flag not recorded ("%s"), skip toolActivity push', tc.input?.title || '');
                         break;
                     }
                     toolActivity.push({
@@ -611,10 +619,20 @@ async function _runFlagIteration(messages, tools, toolChoice, maxTokens, signal,
         // dropdown) push below from leaking a stale flag into the new chat.
         if (epoch !== undefined && (epoch !== chatEpoch || lockEpoch !== generationLockEpoch)) {
             if (debug) console.debug('[DLE] _runFlagIteration: epoch mismatch after flagLoreAction, skip toolActivity push');
-            results.push({ id: tc.id, name: tc.name, result: flagResult || 'Flag recorded.' });
+            results.push({ id: tc.id, name: tc.name, result: flagResult?.message || 'Flag recorded.' });
             break;
         }
-        results.push({ id: tc.id, name: tc.name, result: flagResult || 'Flag recorded.' });
+        results.push({ id: tc.id, name: tc.name, result: flagResult?.message || 'Flag recorded.' });
+        // GHOST-FLAG guard (gotcha #104): flagLoreAction rejected or failed to
+        // persist this flag (no title / no chatMetadata) — it is NOT in loreGaps,
+        // so it must not render in the message dropdown either. This was the
+        // "N gaps noted in chat, sidebar empty" desync: models omit `reason`
+        // despite required[], the old code discarded the gap but still pushed
+        // the activity row.
+        if (!flagResult?.ok) {
+            if (debug) console.debug('[DLE] _runFlagIteration: flag not recorded ("%s"), skip toolActivity push', tc.input?.title || '');
+            continue;
+        }
         toolActivity.push({
             type: 'flag',
             query: tc.input?.title || '',

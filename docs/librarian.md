@@ -183,24 +183,26 @@ Uses accumulated `totalTokens` from real `entry.tokenEstimate` values. Falls bac
 
 **File:** `src/librarian/librarian-tools.js: flagLoreAction()`
 
-### `flagLoreAction(args, callerEpoch?) -> Promise<string>`
+### `flagLoreAction(args, callerEpoch?) -> Promise<{ ok: boolean, message: string }>`
 
 `callerEpoch` (optional) is the agentic loop's start-of-loop `chatEpoch`. When passed, `flagLoreAction` self-guards its `persistGaps` AND its activity/analytics side-effects behind `epoch === chatEpoch` (symmetric with `searchLoreAction`) so a chat switch during the multi-second agentic await can't pollute the now-current chat. Direct/test callers omit it and fall back to a fresh `chatEpoch` capture. The body is synchronous (`async` by signature only — no internal `await`).
 
+**Return contract (GHOST-FLAG fix, gotcha #104):** `message` is the tool-result string fed back to the model. `ok` means the gap is REALLY in `loreGaps` (validation passed + `persistGaps` succeeded on a matching epoch). Callers MUST gate any render/activity push (per-message dropdown, drawer rows) on `ok` — rendering an `ok:false` flag recreates the "N gaps noted in chat, Flags panel empty" desync.
+
 **Input shape:**
 ```js
-{ title: string, reason: string, urgency?: 'low'|'medium'|'high',
+{ title: string, reason?: string, urgency?: 'low'|'medium'|'high',
   flag_type?: 'gap'|'update', entry_title?: string }
 ```
 
 **Flow:**
 
-1. Validate `title` and `reason` are non-empty.
+1. Validate `title` is non-empty (`ok:false` otherwise). `reason` is OPTIONAL — models omit it despite `required[]` in the tool schema (backends don't all enforce it); a missing/empty reason records as `''` instead of rejecting the flag.
 2. Default `urgency` to `'medium'`, `flag_type` to `'gap'`.
 3. Call `findSimilarGap(loreGaps, title, 'flag', flagType)` for overlap detection.
 4. If overlapping gap found: merge (increment frequency, escalate urgency if higher, append reason). Also `clearHiddenSilently()` to resurface hidden gaps.
 5. If new: create gap record with `gapId()`, `type: 'flag'`, `subtype: flagType`.
-6. Persist via `persistGaps(updatedGaps)` (guarded by `epoch === chatEpoch`).
+6. Persist via `persistGaps(updatedGaps)` (guarded by `epoch === chatEpoch`); the persist outcome IS the returned `ok`.
 
 **Gap record shape (flag):**
 ```js

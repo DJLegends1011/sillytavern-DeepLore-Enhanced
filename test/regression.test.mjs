@@ -2755,7 +2755,7 @@ test('F5a: epoch-stable FLAG iteration processes flag normally (real fn)', async
     let flagCalled = 0;
     _installFlagHooks({
         callWithTools: async () => ({ toolCalls: [{ name: 'flag', id: 't1', input: { title: 'Castle', flag_type: 'gap', urgency: 'high' } }] }),
-        flagLoreAction: async () => { flagCalled++; return 'Flagged.'; },
+        flagLoreAction: async () => { flagCalled++; return { ok: true, message: 'Flagged.' }; },
     });
     const toolActivity = [];
     const messages = [];
@@ -2781,7 +2781,7 @@ test('F5b: CHAT_CHANGED mid-callWithTools bails before any flag write (real fn)'
             setChatEpoch(11); // CHAT_CHANGED mid-await (mutates the live epoch the real fn reads)
             return { toolCalls: [{ name: 'flag', id: 't1', input: { title: 'Ghost', reason: 'y' } }] };
         },
-        flagLoreAction: async () => { flagCalled++; return 'Flagged.'; },
+        flagLoreAction: async () => { flagCalled++; return { ok: true, message: 'Flagged.' }; },
     });
     const toolActivity = [];
     const flagCount = await _runFlagIterationForTests([], [], 'auto', 256, { aborted: false }, toolActivity, {}, false, 0, 10, 3);
@@ -2803,7 +2803,7 @@ test('F5b2: lockEpoch bump mid-callWithTools also bails (real fn — second guar
             setGenerationLockEpoch(4); // force-release bumped the lock epoch
             return { toolCalls: [{ name: 'flag', id: 't1', input: { title: 'Z', reason: 'y' } }] };
         },
-        flagLoreAction: async () => { flagCalled++; return 'Flagged.'; },
+        flagLoreAction: async () => { flagCalled++; return { ok: true, message: 'Flagged.' }; },
     });
     const toolActivity = [];
     const flagCount = await _runFlagIterationForTests([], [], 'auto', 256, { aborted: false }, toolActivity, {}, false, 0, 10, 3);
@@ -2826,7 +2826,7 @@ test('F5c: CHAT_CHANGED during flagLoreAction skips the toolActivity push (real 
             flagCalled++;
             await new Promise(resolve => setImmediate(resolve));
             setChatEpoch(12); // CHAT_CHANGED during the flag's own await
-            return 'Flagged.';
+            return { ok: true, message: 'Flagged.' };
         },
     });
     const toolActivity = [];
@@ -2864,7 +2864,7 @@ test('F5e: epoch mismatch BEFORE the API call bails without calling callWithTool
     let flagCalled = 0;
     _installFlagHooks({
         callWithTools: async () => { apiCalled++; return { toolCalls: [] }; },
-        flagLoreAction: async () => { flagCalled++; return 'Flagged.'; },
+        flagLoreAction: async () => { flagCalled++; return { ok: true, message: 'Flagged.' }; },
     });
     const toolActivity = [];
     const flagCount = await _runFlagIterationForTests([], [], 'auto', 256, { aborted: false }, toolActivity, {}, false, 0, 10, 3);
@@ -2907,7 +2907,7 @@ test('F5-BG-1: write delivers prose synchronously; FLAG turn deferred to pending
             // FLAG turn — only reached when pendingFlag() runs.
             return { toolCalls: [{ name: 'flag', id: 'f1', input: { title: 'Castle', reason: 'missing', flag_type: 'gap', urgency: 'high' } }] };
         },
-        flagLoreAction: async () => { flagCalled++; return 'Flagged.'; },
+        flagLoreAction: async () => { flagCalled++; return { ok: true, message: 'Flagged.' }; },
     });
     const result = await runAgenticLoop({
         messages: [{ role: 'user', content: 'hi' }],
@@ -2940,7 +2940,7 @@ test('F5-BG-2: flagEnabled=false → no pendingFlag (nothing to background)', as
     _installFlagHooks({
         getUsage: () => ({ input_tokens: 0, output_tokens: 0 }),
         callWithTools: async () => { apiCalls++; return { toolCalls: [{ name: 'write', id: 'w1', input: { content: 'X.' } }] }; },
-        flagLoreAction: async () => 'Flagged.',
+        flagLoreAction: async () => ({ ok: true, message: 'Flagged.' }),
     });
     const result = await runAgenticLoop({
         messages: [], maxSearches: 2, searchEnabled: true, flagEnabled: false,
@@ -2962,7 +2962,7 @@ test('F5-BG-3: a new generation (lockEpoch bump) auto-cancels the backgrounded f
     _installFlagHooks({
         getUsage: () => ({ input_tokens: 0, output_tokens: 0 }),
         callWithTools: async () => { apiCalls++; return { toolCalls: [{ name: 'write', id: 'w1', input: { content: 'Y.' } }] }; },
-        flagLoreAction: async () => { flagCalled++; return 'Flagged.'; },
+        flagLoreAction: async () => { flagCalled++; return { ok: true, message: 'Flagged.' }; },
     });
     const result = await runAgenticLoop({
         messages: [], maxSearches: 2, searchEnabled: true, flagEnabled: true,
@@ -2977,6 +2977,91 @@ test('F5-BG-3: a new generation (lockEpoch bump) auto-cancels the backgrounded f
     assertEqual(apiCalls, 1, 'F5-BG-3: deferred FLAG API call NOT made — superseded generation (lockEpoch pre-call guard)');
     assertEqual(flagCalled, 0, 'F5-BG-3: flagLoreAction not called for the stale background flag');
     assertEqual(flagRes.flagActivity.length, 0, 'F5-BG-3: no flag activity to append');
+
+    setChatEpoch(0); setGenerationLockEpoch(0); delete globalThis.__DLE_TEST_HOOKS;
+});
+
+// ============================================================================
+// GHOST-FLAG — flag activity gated on recorded flags (gotcha #104)
+// ============================================================================
+// Live repro (2026-07-03, v2.6.0): model omitted `reason` despite required[] in
+// the tool schema (provider backend didn't enforce it) → flagLoreAction
+// rejected the flag ('No reason provided.') → gap never persisted to loreGaps,
+// but the old loop pushed toolActivity anyway → chat header said "3 gaps
+// noted" while the drawer Flags panel was truthfully empty. Fix: flagLoreAction
+// returns { ok, message }; the loop only renders ok flags. (flagLoreAction
+// itself is also lenient on missing reason now — records with reason '' — but
+// that lives in librarian-tools.js which is not node-importable; covered by
+// live verification.)
+
+section('GHOST-FLAG — flag activity gated on recorded flags (gotcha #104)');
+
+test('GHOST-FLAG-1: unrecorded flag (ok:false) is NOT pushed to toolActivity', async () => {
+    setChatEpoch(10);
+    setGenerationLockEpoch(3);
+    let flagCalled = 0;
+    _installFlagHooks({
+        callWithTools: async () => ({ toolCalls: [{ name: 'flag', id: 't1', input: { title: 'Ghost Gap', flag_type: 'gap', urgency: 'high' } }] }),
+        flagLoreAction: async () => { flagCalled++; return { ok: false, message: 'No title provided.' }; },
+    });
+    const toolActivity = [];
+    const flagCount = await _runFlagIterationForTests([], [], 'auto', 256, { aborted: false }, toolActivity, {}, false, 0, 10, 3);
+
+    assertEqual(flagCalled, 1, 'GHOST-FLAG-1: flagLoreAction was invoked');
+    assertEqual(flagCount, 1, 'GHOST-FLAG-1: attempt still counts toward MAX_FLAG_CALLS cap');
+    assertEqual(toolActivity.length, 0, 'GHOST-FLAG-1: rejected flag NOT rendered — no chat/drawer desync');
+
+    setChatEpoch(0); setGenerationLockEpoch(0); delete globalThis.__DLE_TEST_HOOKS;
+});
+
+test('GHOST-FLAG-2: legacy plain-string return means NOT recorded — push skipped (contract drift guard)', async () => {
+    // Pins the { ok, message } contract: if flagLoreAction ever reverts to
+    // returning a bare string, flags silently stop rendering and this test
+    // documents why. A string return must be treated as "not recorded".
+    setChatEpoch(10);
+    setGenerationLockEpoch(3);
+    _installFlagHooks({
+        callWithTools: async () => ({ toolCalls: [{ name: 'flag', id: 't1', input: { title: 'Legacy', reason: 'y' } }] }),
+        flagLoreAction: async () => 'Flagged gap: "Legacy". Do not acknowledge this flag — continue seamlessly.',
+    });
+    const toolActivity = [];
+    await _runFlagIterationForTests([], [], 'auto', 256, { aborted: false }, toolActivity, {}, false, 0, 10, 3);
+
+    assertEqual(toolActivity.length, 0, 'GHOST-FLAG-2: string return (no .ok) treated as unrecorded — no push');
+
+    setChatEpoch(0); setGenerationLockEpoch(0); delete globalThis.__DLE_TEST_HOOKS;
+});
+
+test('GHOST-FLAG-3: backgrounded FLAG turn — unrecorded flags yield empty flagActivity (end-to-end)', async () => {
+    // Exact shape of the live bug: write() delivers prose, pendingFlag() runs the
+    // deferred FLAG turn, flagLoreAction rejects every flag. flagActivity must
+    // come back EMPTY so index.js appends nothing to the message ("N gaps noted"
+    // header stays honest).
+    setChatEpoch(20);
+    setGenerationLockEpoch(5);
+    let apiCalls = 0;
+    _installFlagHooks({
+        getUsage: () => ({ input_tokens: 0, output_tokens: 0 }),
+        callWithTools: async () => {
+            apiCalls++;
+            if (apiCalls === 1) {
+                return { toolCalls: [{ name: 'write', id: 'w1', input: { content: 'Prose.' } }] };
+            }
+            return { toolCalls: [{ name: 'flag', id: 'f1', input: { title: 'No-Reason Gap', urgency: 'medium' } }] };
+        },
+        flagLoreAction: async () => ({ ok: false, message: 'No title provided.' }),
+    });
+    const result = await runAgenticLoop({
+        messages: [{ role: 'user', content: 'hi' }],
+        maxSearches: 2, searchEnabled: true, flagEnabled: true,
+        maxTokens: 256, signal: { aborted: false }, epoch: 20, lockEpoch: 5,
+        onStatus: () => {}, onProse: async () => {}, injectedTitles: new Set(), settings: {},
+    });
+    assertEqual(typeof result.pendingFlag, 'function', 'GHOST-FLAG-3: pendingFlag thunk returned');
+
+    const flagRes = await result.pendingFlag();
+    assertEqual(apiCalls, 2, 'GHOST-FLAG-3: deferred FLAG API call was made');
+    assertEqual(flagRes.flagActivity.length, 0, 'GHOST-FLAG-3: unrecorded flags NOT in flagActivity — nothing appended to message');
 
     setChatEpoch(0); setGenerationLockEpoch(0); delete globalThis.__DLE_TEST_HOOKS;
 });

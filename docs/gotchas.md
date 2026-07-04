@@ -1656,3 +1656,22 @@ The v2.6 settings overhaul deleted the Connection/Features header rows and both 
 - **ARIA:** sidebar is a plain `nav` + `aria-current="page"` — NOT `role=tablist` (accordion group headers are invalid tablist children; same violation class as the old nested subtabs, BUG-225 lineage). Panels have no `role=tabpanel`.
 
 ---
+
+## 104. Flag activity is gated on `flagLoreAction().ok` — ghost flags desync chat vs drawer (GHOST-FLAG, 2026-07-03)
+
+Live repro on v2.6.0: the assistant reply header said "3 gaps noted" while the drawer Librarian → Flags panel was truthfully empty (`deeplore_lore_gaps: []`). Root cause chain:
+
+1. Models routinely omit `reason` in the `flag` tool call **despite `required: ['title','reason']` in the schema** — some provider backends (observed: CMRS `cc`-mode profiles) don't enforce JSON-schema `required`.
+2. Old `flagLoreAction` hard-rejected on missing reason (`return 'No reason provided.'`) **before** creating/persisting the gap — silently discarding real gap signal.
+3. Both agentic-loop call paths (inline `case 'flag'` and `_runFlagIteration`) pushed the flag into `toolActivity` **without checking the result** — the per-message "N gaps noted" dropdown rendered flags that were never in `loreGaps`.
+
+Invariants now:
+
+- **`flagLoreAction(args, callerEpoch?)` returns `{ ok, message }`**, not a string. `message` = tool-result text for the model (wording unchanged). `ok` = "this gap is really in `loreGaps` (validated + `persistGaps` succeeded on a matching epoch)". `ok` is `false` on missing title, epoch mismatch, or `persistGaps` failure (no chatMetadata — BUG-304 cold start).
+- **Missing/empty `reason` no longer rejects the flag** — recorded with `reason: ''`. Title stays mandatory. The drawer already renders empty reasons (`'No reason provided'` fallback, `drawer-events.js`). `findSimilarGap` merge is safe with `''` (`.includes('')` keeps the existing reason).
+- **Both loop paths push `toolActivity` ONLY when `flagResult.ok === true`.** A bare-string return is treated as NOT recorded (contract drift guard: reverting the return type makes flags visibly stop rendering instead of silently ghosting). Any future `flagLoreAction` call site MUST gate its render/activity on `.ok`.
+- Attempts still count toward `MAX_FLAG_CALLS` (cap counts calls, not successes).
+
+Guards: `test/regression.test.mjs` GHOST-FLAG-1..3 (loop gate, string-contract drift, backgrounded-turn end-to-end). `flagLoreAction`'s leniency itself is not node-testable (ST imports) — verified live.
+
+---

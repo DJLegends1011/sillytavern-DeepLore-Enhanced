@@ -8,6 +8,13 @@ All notable changes to DeepLore are documented here. This file follows
 
 ---
 
+## [2.6.1] - 2026-07-04
+
+### Fixed
+- **Librarian ghost flags** — the reply header could say "N gaps noted" while the drawer's Librarian → Flags panel stayed empty. Models sometimes omit the flag's `reason` argument (not every backend enforces the tool schema's `required` list); DLE discarded those gaps but still rendered them in the per-message dropdown. Flags with a missing reason are now recorded (empty reason, drawer shows its "No reason provided" fallback), and the dropdown only renders flags that actually landed in the gap store — the chat header and the Flags panel can no longer disagree. (`flagLoreAction` now returns `{ ok, message }`; both agentic-loop call paths gate activity on `ok`. See `docs/gotchas.md` #104.)
+
+---
+
 ## [2.6.0] - 2026-07-03
 
 > An interface release: a full settings-popup overhaul, a deep UI/UX polish pass across every surface, Issue #39 fixed (clearable vault cache + overlay drawer on phones), and a batch of long-standing bug fixes from a release-readiness audit. No pipeline-behavior changes.
