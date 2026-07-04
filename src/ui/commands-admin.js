@@ -495,7 +495,7 @@ export function registerAdminCommands() {
             html += `<p><b>Cache age:</b> ${ageLabel}</p>`;
             html += `<p><b>Browser storage:</b> ${storageInfo}</p>`;
             html += `<p><b>Index loaded at:</b> ${indexTimestamp ? new Date(indexTimestamp).toLocaleTimeString() : 'never'}</p>`;
-            html += `<br><button class="menu_button dle-cache-clear-btn" style="margin-top: 8px;"><i class="fa-solid fa-trash-can"></i> Clear Cache</button>`;
+            html += `<br><button type="button" class="menu_button dle-cache-clear-btn" style="margin-top: 8px;"><i class="fa-solid fa-trash-can"></i> Clear Cache</button>`;
             html += `</div>`;
 
             await callGenericPopup(html, POPUP_TYPE.TEXT, '', {

@@ -48,7 +48,7 @@ function yamlSerializeValue(val) {
  */
 export function buildCopyButton(plainText) {
     const encoded = btoa(unescape(encodeURIComponent(plainText)));
-    return `<button class="menu_button dle-copy-btn dle-text-sm" data-copy="${encoded}">Copy to Clipboard</button>`;
+    return `<button type="button" class="menu_button dle-copy-btn dle-text-sm" data-copy="${encoded}">Copy to Clipboard</button>`;
 }
 
 /** Idempotent — class-guarded to avoid duplicate listeners. */
@@ -481,7 +481,7 @@ export async function showBrowsePopup() {
             html += obsidianLink;
             html += `</div>`;
             if (chat && chat.length > 0 && !entry.constant) {
-                html += `<div id="dle-whynot-${entryId}" class="dle-mt-1"><button class="menu_button dle-whynot-btn dle-text-xs" data-title="${escapeHtml(entry.title)}">Why not injected?</button></div>`;
+                html += `<div id="dle-whynot-${entryId}" class="dle-mt-1"><button type="button" class="menu_button dle-whynot-btn dle-text-xs" data-title="${escapeHtml(entry.title)}">Why not injected?</button></div>`;
             }
             html += `</td></tr>`;
         }

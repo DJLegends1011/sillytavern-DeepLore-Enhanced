@@ -221,10 +221,6 @@ export function testEntryMatch(entry, scanText, settings, trace = null) {
                 matchedForTrace = cached.refine.filter(test).length;
                 trace.push({ title: entry.title, vaultSource: entry.vaultSource, result: 'refine-blocked', primaryMatched: primaryMatch, refineKeys: cached.refine.map(r => r.rKey), reason: `selective_logic=${logic} blocked (${matchedForTrace}/${total} refine keys matched)` });
             }
-            // applySelectiveLogic is still the pinned predicate for any
-            // future refine-gate site — exercised in tests, used by
-            // diagnostics.js / commands-pipeline.js for user-facing copy.
-            void applySelectiveLogic;
             return null;
         }
     }

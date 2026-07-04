@@ -171,7 +171,7 @@ export function initEvents(gs, dbg) {
                     panel.setAttribute('aria-label', trf('dle_graph_details_aria_label', entry.title));
                     panel.innerHTML = `<div class="dle-graph-detail-header">
                         <strong>${escapeHtml(entry.title)}</strong>
-                        <button class="dle-graph-detail-close" title="${escapeHtml(tr('dle_graph_details_close_title'))}" aria-label="${escapeHtml(tr('dle_graph_details_close_aria'))}"><i class="fa-solid fa-xmark"></i></button>
+                        <button type="button" class="dle-graph-detail-close" title="${escapeHtml(tr('dle_graph_details_close_title'))}" aria-label="${escapeHtml(tr('dle_graph_details_close_aria'))}"><i class="fa-solid fa-xmark"></i></button>
                     </div><div class="dle-graph-detail-body">${details.join('<br>')}</div>`;
                     panel.style.display = '';
                     const closeBtn = panel.querySelector('.dle-graph-detail-close');

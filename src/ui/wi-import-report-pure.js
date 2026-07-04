@@ -281,7 +281,7 @@ export function renderImportReportHtml(report, strings = {}) {
         lines.push('<div class="dle-import-report-em-box">');
         lines.push(`<p class="dle-text-sm">${S('emExplainer')}</p>`);
         if (report.emAppended > 0) {
-            lines.push(`<button class="menu_button dle-import-skip-em-future" style="margin-top:0.5em">${S('emSkipButton')}</button>`);
+            lines.push(`<button type="button" class="menu_button dle-import-skip-em-future" style="margin-top:0.5em">${S('emSkipButton')}</button>`);
         }
         lines.push('</div>');
         if (report.emEntries.length > 0) {

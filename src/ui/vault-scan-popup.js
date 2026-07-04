@@ -85,7 +85,7 @@ export async function openVaultScanPopup(opts = {}) {
                         <span class="dle-vault-scan-port">${esc(v.host)}:${v.port}</span>
                         ${schemeBadge} ${authBadge}
                     </div>
-                    <button class="menu_button dle-vault-scan-pick">${esc(tr('dle_vaultscan_use_this_btn', 'Use this'))}</button>
+                    <button type="button" class="menu_button dle-vault-scan-pick">${esc(tr('dle_vaultscan_use_this_btn', 'Use this'))}</button>
                 </div>`);
         }
         for (const c of certUntrusted) {

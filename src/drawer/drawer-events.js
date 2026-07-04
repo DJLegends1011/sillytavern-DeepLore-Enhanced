@@ -1054,11 +1054,11 @@ export function wireGatingTab($drawer) {
         let html = '<div class="dle-popup"><h4>Select Folders</h4>';
         if (current.length) html += `<p class="dle-mb-2">Active: <strong>${escapeHtml(current.join(', '))}</strong></p>`;
         html += '<div class="dle-flex-col dle-gap-1">';
-        html += '<button class="menu_button dle-field-select dle-folder-select dle-flex-between dle-w-full" data-value="">Clear all folders</button>';
+        html += '<button type="button" class="menu_button dle-field-select dle-folder-select dle-flex-between dle-w-full" data-value="">Clear all folders</button>';
         for (const { path, entryCount } of folderList) {
             const isActive = currentSet.has(path);
             const activeClass = isActive ? ' dle-field-select--active' : '';
-            html += `<button class="menu_button dle-field-select dle-folder-select dle-flex-between dle-w-full${activeClass}" data-value="${escapeHtml(path)}">${escapeHtml(path)}<span class="dle-text-xs" style="opacity:0.5;margin-left:auto;padding-left:8px;">${escapeHtml(trPlural('dle_popup_entry_count', entryCount))}</span></button>`;
+            html += `<button type="button" class="menu_button dle-field-select dle-folder-select dle-flex-between dle-w-full${activeClass}" data-value="${escapeHtml(path)}">${escapeHtml(path)}<span class="dle-text-xs" style="opacity:0.5;margin-left:auto;padding-left:8px;">${escapeHtml(trPlural('dle_popup_entry_count', entryCount))}</span></button>`;
         }
         html += '</div></div>';
 

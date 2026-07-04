@@ -430,7 +430,7 @@ export async function summarizeEntries(entries) {
                     <p><b>Generated Summary:</b></p>
                     <textarea id="dle-summary-edit" class="text_pole dle-summary-textarea">${escapeHtml(summary)}</textarea>
                     <p class="dle-text-xs dle-faint">OK = write to Obsidian, Cancel = skip this entry.</p>
-                    ${remaining > 0 ? '<button id="dle-summary-abort" class="menu_button" style="margin-top:8px;"><i class="fa-solid fa-stop"></i> Abort remaining</button>' : ''}
+                    ${remaining > 0 ? '<button type="button" id="dle-summary-abort" class="menu_button" style="margin-top:8px;"><i class="fa-solid fa-stop"></i> Abort remaining</button>' : ''}
                 </div>`;
 
             let capturedTextarea = null;

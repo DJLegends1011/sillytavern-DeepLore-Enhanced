@@ -284,8 +284,8 @@ export async function showSuggestionPopup(suggestions) {
                     <div class="dle-preview dle-preview--short dle-mt-1">${escapeHtml(s.content || '')}</div>
                 </details>
                 <div class="dle-flex dle-mt-1 dle-gap-1">
-                    <button class="menu_button dle-accept-suggest dle-text-sm" data-index="${i}">Accept</button>
-                    <button class="menu_button dle-reject-suggest dle-text-sm dle-muted" data-index="${i}">Reject</button>
+                    <button type="button" class="menu_button dle-accept-suggest dle-text-sm" data-index="${i}">Accept</button>
+                    <button type="button" class="menu_button dle-reject-suggest dle-text-sm dle-muted" data-index="${i}">Reject</button>
                 </div>
             </div>`;
     }

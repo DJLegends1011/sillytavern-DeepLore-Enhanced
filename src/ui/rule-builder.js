@@ -75,10 +75,10 @@ function buildFieldRowHtml(field, index) {
             <input class="dle-rb-name text_pole" data-prop="name" value="${nameVal}" placeholder="field_name" title="Frontmatter field name (snake_case)" />
             <input class="dle-rb-label text_pole" data-prop="label" value="${labelVal}" placeholder="Display Label" title="Human-readable label" />
             <div class="dle-rb-field-tools">
-                <button class="dle-rb-move-up menu_button" title="Move up" aria-label="Move field up"><i class="fa-solid fa-chevron-up"></i></button>
-                <button class="dle-rb-move-down menu_button" title="Move down" aria-label="Move field down"><i class="fa-solid fa-chevron-down"></i></button>
-                <button class="dle-rb-dupe menu_button" title="Duplicate field" aria-label="Duplicate field"><i class="fa-solid fa-copy"></i></button>
-                <button class="dle-rb-delete menu_button" title="Remove field" aria-label="Remove field #${index + 1}"><i class="fa-solid fa-trash"></i></button>
+                <button type="button" class="dle-rb-move-up menu_button" title="Move up" aria-label="Move field up"><i class="fa-solid fa-chevron-up"></i></button>
+                <button type="button" class="dle-rb-move-down menu_button" title="Move down" aria-label="Move field down"><i class="fa-solid fa-chevron-down"></i></button>
+                <button type="button" class="dle-rb-dupe menu_button" title="Duplicate field" aria-label="Duplicate field"><i class="fa-solid fa-copy"></i></button>
+                <button type="button" class="dle-rb-delete menu_button" title="Remove field" aria-label="Remove field #${index + 1}"><i class="fa-solid fa-trash"></i></button>
             </div>
         </div>
         <div class="dle-rb-field-body">
@@ -158,12 +158,12 @@ export async function openRuleBuilder() {
             ${working.map((f, i) => buildFieldRowHtml(f, i)).join('')}
         </div>
         <div class="dle-rb-actions">
-            <button class="dle-rb-add menu_button"><i class="fa-solid fa-plus"></i> Add Field</button>
-            <button class="dle-rb-reset menu_button" title="Reset to 4 built-in defaults (era, location, scene_type, character_present)"><i class="fa-solid fa-rotate-left"></i> Reset Defaults</button>
+            <button type="button" class="dle-rb-add menu_button"><i class="fa-solid fa-plus"></i> Add Field</button>
+            <button type="button" class="dle-rb-reset menu_button" title="Reset to 4 built-in defaults (era, location, scene_type, character_present)"><i class="fa-solid fa-rotate-left"></i> Reset Defaults</button>
         </div>
         <div class="dle-rb-footer">
-            <button class="dle-rb-save menu_button menu_button_default"><i class="fa-solid fa-floppy-disk"></i> Save to Obsidian</button>
-            <button class="dle-rb-cancel menu_button"><i class="fa-solid fa-xmark"></i> Cancel</button>
+            <button type="button" class="dle-rb-save menu_button menu_button_default"><i class="fa-solid fa-floppy-disk"></i> Save to Obsidian</button>
+            <button type="button" class="dle-rb-cancel menu_button"><i class="fa-solid fa-xmark"></i> Cancel</button>
         </div>
     </div>`;
 
