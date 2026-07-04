@@ -68,12 +68,23 @@ export const STATUS_CLASSES = {
     'offline': 'dle-status-offline',
 };
 
-/** BROWSE_ROW_HEIGHT must match CSS .dle-browse-entry height. */
-export const BROWSE_ROW_HEIGHT = 32;
+/** BROWSE_ROW_HEIGHT must match CSS .dle-browse-entry AND .dle-browse-folder-header height. */
+export const BROWSE_ROW_HEIGHT = 38;
 export const BROWSE_OVERSCAN = 8;
 
 /** chat_width percentage; above this threshold the drawer switches to fixed-overlay mode. */
 export const OVERLAY_CHAT_WIDTH_THRESHOLD = 60;
+
+/**
+ * Real viewport-width (px) at or below which the drawer ALWAYS switches to fixed-overlay
+ * mode, regardless of chat_width. Issue #39: chat_width is a *percentage* preference and
+ * doesn't reflect actual pixels — on phones chat_width may be small while the viewport is
+ * narrow, so the percentage threshold alone never engages overlay. This pixel breakpoint
+ * keys off window.innerWidth so narrow real viewports (phones, narrow desktop windows) get
+ * overlay mode. Additive to OVERLAY_CHAT_WIDTH_THRESHOLD (which keeps its desktop role for
+ * wide-chat-squeezes-the-side-panel cases). 768px is the conventional phone/tablet boundary.
+ */
+export const OVERLAY_VIEWPORT_WIDTH_PX = 768;
 
 // ─── Mutable State (shared object — avoids circular imports) ───
 

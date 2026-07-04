@@ -221,10 +221,6 @@ export function testEntryMatch(entry, scanText, settings, trace = null) {
                 matchedForTrace = cached.refine.filter(test).length;
                 trace.push({ title: entry.title, vaultSource: entry.vaultSource, result: 'refine-blocked', primaryMatched: primaryMatch, refineKeys: cached.refine.map(r => r.rKey), reason: `selective_logic=${logic} blocked (${matchedForTrace}/${total} refine keys matched)` });
             }
-            // applySelectiveLogic is still the pinned predicate for any
-            // future refine-gate site — exercised in tests, used by
-            // diagnostics.js / commands-pipeline.js for user-facing copy.
-            void applySelectiveLogic;
             return null;
         }
     }
@@ -320,85 +316,13 @@ export function countKeywordOccurrences(entry, scanText, settings) {
     return count;
 }
 
-/**
- * Apply conditional gating rules (requires/excludes) to matched entries.
- * Iterates until stable since removing a gated entry may affect another's requires.
- * @param {import('./pipeline.js').VaultEntry[]} entries - Matched entries (already merged)
- * @returns {import('./pipeline.js').VaultEntry[]}
- */
-export function applyGating(entries) {
-    // BUG-029: descending by priority for deterministic mutual-excludes resolution.
-    // Legacy — live pipeline uses applyRequiresExcludesGating in stages.js.
-    // M-1: nullish so `priority: 0` isn't demoted to 50 (falsy-coalesce class).
-    let result = [...entries].sort((a, b) => ((b.priority ?? 50) - (a.priority ?? 50)) || a.title.localeCompare(b.title));
-    let changed = true;
-    let iterations = 0;
-    const MAX_ITERATIONS = 10;
-
-    // L13: refcount titles instead of a plain Set (mirrors applyRequiresExcludesGating in
-    // src/stages.js). Two same-titled entries from DIFFERENT vaults: dropping one must NOT
-    // purge the title while its twin survives, or a third entry's `requires:[Title]` wrongly
-    // fails. A title is "active" while its count > 0. Preserves gotcha #50 item 7 (permissive
-    // cross-vault bare-title lookup); only fixes the destructive-delete-while-twin-survives bug.
-    const activeTitles = new Map();
-    const isActive = (t) => (activeTitles.get(t) || 0) > 0;
-    const dropTitle = (t) => {
-        const n = (activeTitles.get(t) || 0) - 1;
-        if (n <= 0) activeTitles.delete(t); else activeTitles.set(t, n);
-    };
-    for (const e of result) {
-        const t = e.title.toLowerCase();
-        activeTitles.set(t, (activeTitles.get(t) || 0) + 1);
-    }
-
-    while (changed && iterations < MAX_ITERATIONS) {
-        changed = false;
-        iterations++;
-
-        const nextResult = [];
-        for (const entry of result) {
-            if (entry.requires && entry.requires.length > 0) {
-                const allPresent = entry.requires.every(r => isActive(r.toLowerCase()));
-                if (!allPresent) {
-                    changed = true;
-                    dropTitle(entry.title.toLowerCase());
-                    continue;
-                }
-            }
-            if (entry.excludes && entry.excludes.length > 0) {
-                const anyPresent = entry.excludes.some(r => isActive(r.toLowerCase()));
-                if (anyPresent) {
-                    changed = true;
-                    dropTitle(entry.title.toLowerCase());
-                    continue;
-                }
-            }
-            nextResult.push(entry);
-        }
-        result = nextResult;
-    }
-
-    // Detect contradictory gating (A requires B, B excludes A) for debugging.
-    const removedEntries = entries.filter(e => !result.includes(e));
-    if (removedEntries.length > 0) {
-        for (const removed of removedEntries) {
-            if (removed.requires && removed.requires.length > 0) {
-                for (const req of removed.requires) {
-                    const reqEntry = entries.find(e => e.title.toLowerCase() === req.toLowerCase());
-                    if (reqEntry && reqEntry.excludes && reqEntry.excludes.some(exc => exc.toLowerCase() === removed.title.toLowerCase())) {
-                        console.warn(`[DLE] Contradictory gating: "${removed.title}" requires "${reqEntry.title}" but "${reqEntry.title}" excludes "${removed.title}" — both dropped`);
-                    }
-                }
-            }
-        }
-    }
-
-    if (iterations >= MAX_ITERATIONS && changed) {
-        console.warn('[DLE] Gating did not stabilize after', MAX_ITERATIONS, 'iterations — results may be incomplete. Check for circular requires/excludes.');
-    }
-
-    return result;
-}
+// #24: the legacy `applyGating(entries)` was deleted (2026-07-01). It had ZERO
+// production callers — the live pipeline uses `applyRequiresExcludesGating` in
+// `src/stages.js`, which is the SSOT for the requires/excludes fixpoint (with
+// exemption-policy support the legacy copy lacked). Keeping a second full copy
+// meant every fix (e.g. the L13 refcount-titles cross-vault correctness fix) had
+// to be hand-applied twice. Tests now call `applyRequiresExcludesGating` with an
+// empty policy. See docs/gotchas.md #50.
 
 /**
  * Resolve raw wiki-link targets to confirmed entry titles in the vault index.

@@ -7,6 +7,7 @@
  */
 
 import { RingBuffer } from './ring-buffer.js';
+import { TRACE_ENTRY_ARRAY_KEYS } from './pseudonymize-trace.js';
 
 export const generationBuffer = new RingBuffer(50);
 
@@ -32,17 +33,12 @@ function pseudoTitle(title) {
 function summarizeTrace(trace) {
     if (!trace || typeof trace !== 'object') return null;
     const arr = (k) => Array.isArray(trace[k]) ? trace[k].length : 0;
+    // Per-stage entry counts — key list is single-sourced (#13b): every trace
+    // entry-array gets a count without hand-maintaining a second enumeration.
+    const stageCounts = {};
+    for (const k of TRACE_ENTRY_ARRAY_KEYS) stageCounts[k] = arr(k);
     return {
-        keywordMatched:           arr('keywordMatched'),
-        aiSelected:               arr('aiSelected'),
-        gatedOut:                 arr('gatedOut'),
-        contextualGatingRemoved:  arr('contextualGatingRemoved'),
-        cooldownRemoved:          arr('cooldownRemoved'),
-        warmupFailed:             arr('warmupFailed'),
-        refineKeyBlocked:         arr('refineKeyBlocked'),
-        stripDedupRemoved:        arr('stripDedupRemoved'),
-        budgetCut:                arr('budgetCut'),
-        injected:                 arr('injected'),
+        ...stageCounts,
         injectedTitles:           Array.isArray(trace.injected)
                                       ? trace.injected.slice(0, 30).map(e => pseudoTitle(e?.title || e?.filename || '?'))
                                       : [],

@@ -34,7 +34,7 @@ No getter functions exist — other modules `import { vaultIndex } from './state
 | `entityRegexVersion` | `number` (monotonic) | Session | setEntityShortNameRegexes | AI cache staleness check |
 | `fuzzySearchIndex` | `object\|null` | Session (rebuilt) | vault.js | BM25 matching |
 | `mentionWeights` | `Map` | Session (rebuilt) | vault.js | graph edges |
-| `buildEpoch` | `number` (counter) | Session | vault.js | zombie build guard |
+| `buildEpoch` | `number` (counter) | Session | vault.js, sync.js, state.js (`resetVaultIndexState` — the clear-path epoch fence, gotcha #95) | zombie build guard + clear fence |
 | `syncIntervalId` | `number\|null` | Session | vault/sync.js | sync dedup, teardown |
 
 ### AI Search State
@@ -331,7 +331,7 @@ All registered via `_registerEs()` in `init()`. Full list:
 | `SETTINGS_UPDATED` | Invalidate settings cache (inline in `init()`) |
 | `MESSAGE_EDITED` | Remove AI notes from edited message (inline in `init()`) |
 | `CHAT_CHANGED` | Full reset sequence (see above — inline in `init()`). **Early-registered stub** at top of `_doInit()` (`_earlyChatChangedStub`) captures events that fire before the real `_realCcHandler` registers; `_installRealChatChangedHandler` drains the queued chatId once. See gotchas #59 (BOOT-MED-3). |
-| `APP_READY` | `_wizardOnce` (first-run wizard) + `_autoConnectOnce` (auto-connect), both `{ once: true }` |
+| `APP_READY` | `_wizardOnce` (first-run wizard) + `_autoConnectOnce` (auto-connect), both `{ once: true }`. The wizard launcher now gates on `wizardSkipped` (settings `_wizardSkipped` OR `dle-wizard-skipped` LS) in addition to `wizardCompleted` and "no enabled vaults" — a dismissed wizard no longer auto-relaunches (v2.6). |
 
 **Boot-time module-scope vars (`index.js`, Boot-MED-1/3, 2026-05-22):**
 | Variable | Purpose |
@@ -342,6 +342,36 @@ All registered via `_registerEs()` in `init()`. Full list:
 | `_pendingChatChanged` / `_pendingChatChangedFired` | Single-slot queue for CHAT_CHANGED events that fire during init's awaits. Drained exactly once at `_installRealChatChangedHandler`. |
 
 **`_onChatDeleted(name)` verdict IDB eviction (L3, 2026-05-29):** `_onChatDeleted` now also clears the deleted chat's verdict IndexedDB rows via `clearChatIdb(name)` (fire-and-forget, try/catch, NOT awaited). Both `CHAT_DELETED` and `GROUP_CHAT_DELETED` emit the deleted chat's id as the first arg, in the same form `getCurrentChatId()` returns (the value verdict keys IDB rows on). Still calls `clearLibrarianSessionState()` first. ST wipes `chat_metadata` on delete, but verdict IDB is a SEPARATE store — without this, deleted chats' verdict rows leaked forever.
+
+### Setup-wizard skip state (`_wizardSkipped` / `_wizardLastStep`, v2.6)
+
+Two NEW persisted **settings** keys (settings-scoped — NOT `chat_metadata`), siblings of `_wizardCompleted`:
+
+| Key | Type | Meaning |
+|---|---|---|
+| `_wizardSkipped` | boolean | The wizard was dismissed without finishing (X / Esc / "Finish later"). Gates the APP_READY relaunch so it doesn't reappear. |
+| `_wizardLastStep` | number (1–9) | The page the user was on when they dismissed — `getStartPage()` resumes there on a manual re-open. |
+
+Written by `persistWizardSkip(lastStep)` (`src/ui/setup-wizard.js`) on any non-finish dismissal; cleared by `clearWizardSkip()` on genuine completion. Both are **dual-written to `localStorage`** (`dle-wizard-skipped` = `'1'`, `dle-wizard-last-step`) as a crash-backup, mirroring the `dle-wizard-completed` sentinel (BUG-125 rationale — settings may not have flushed if the page is closed right after dismissal). The APP_READY launcher reads either source (`firstRunSettings._wizardSkipped || localStorage 'dle-wizard-skipped' === '1'`).
+
+**Wizard module-scope state (`src/ui/setup-wizard.js`):**
+| Variable | Purpose |
+|---|---|
+| `wizardFinished` | Per-open boolean. Set true only on genuine Finish (and pre-set when "Finish later" already persisted the skip). Distinguishes a Finish from a dismissal so the dialog-close handler doesn't double-write `persistWizardSkip` after a real completion. |
+| `currentPage` | The active wizard page (1–9); `persistWizardSkip(currentPage)` reads it on dismissal. |
+
+**a11y (FOCUS-ON-ADVANCE):** `goToPage(page)` moves keyboard/SR focus to the newly-active `[role="tabpanel"]` panel (each `.dle-wizard-page` carries `tabindex="-1"` in `setup-wizard.html`) via `moveFocusToPanel`, AFTER per-page wiring so the panel's first control already exists. It also announces "Step N of M: \<title\>" through the SR-only polite live region `#dle-wizard-progress-live` (`announceProgress` → `trf('dle_wizard_progress_announce', page, TOTAL_PAGES, stepLabel)`).
+
+### LP1 pipeline-toast module-scope vars (`index.js`, v2.6)
+
+The elapsed-heartbeat + Cancel affordance on the pipeline toast (see `docs/generation-pipeline.md` "LP1 elapsed heartbeat + Cancel" and gotcha #74) is driven by module-scope vars, NOT new `state.js` globals — Cancel reuses the canonical `GENERATION_STOPPED` teardown so it adds no epoch/lock state:
+
+| Variable | Purpose |
+|---|---|
+| `_pipelineElapsedTimer` | The single 1/sec `setInterval` handle (`null` = not running). Cleared on every `_removePipelineStatus` path. |
+| `_pipelineElapsedStartAt` | ms timestamp the current elapsed run began (0 = not running). |
+| `_pipelineElapsedPhase` | Phase key the elapsed run tracks, so a re-emit of the same phase doesn't reset the counter. |
+| `_pipelineToastPendingPhase` | Latest phase KEY captured while the toast's first-show is still deferred (paired with the existing `_pipelineToastPendingText`). |
 
 ---
 

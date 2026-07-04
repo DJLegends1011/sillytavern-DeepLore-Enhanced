@@ -62,7 +62,7 @@ export async function callScribe(systemPrompt, userMessage, _settings) {
     // fall through to ST's active-connection 'st' path below (which would mask
     // the misconfiguration and use whatever connection ST happens to have).
     if (mode === 'proxy') {
-        throw new Error('Custom Proxy mode was removed in v2.5. Pick a Connection Profile in DLE Settings → Connection → AI Connections.');
+        throw new Error('Custom Proxy mode was removed in v2.5. Pick a Connection Profile in DLE Settings → Setup → AI Connections.');
     }
 
     // 'st' mode — ST's active connection via generateQuietPrompt.

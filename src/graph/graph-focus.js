@@ -7,6 +7,7 @@
  *             computeHoverDistances, applyFilters, fitToView, findNearest, hitRadius }}
  */
 import { isRehidden } from './graph-util.js';
+import { tr, trf } from '../i18n/i18n.js';
 
 export function initFocus(gs, dbg) {
 
@@ -169,7 +170,7 @@ export function initFocus(gs, dbg) {
 
         const backBtn = document.getElementById('dle-graph-back');
         if (backBtn) {
-            backBtn.textContent = `← ${rootNode.title} (${depthMap.size} nodes, ${depth}-hop)`;
+            backBtn.textContent = trf('dle_graph_back_focus_label', rootNode.title, depthMap.size, depth);
             backBtn.style.display = 'inline-block';
         }
         const hopMinus = document.getElementById('dle-graph-hop-minus');
@@ -195,10 +196,10 @@ export function initFocus(gs, dbg) {
         const el = document.getElementById('dle-graph-hints');
         if (!el) return;
         if (focusMode) {
-            // BUG-357 / ST quirk: focus exit key is `e`, not Escape/Backspace. See graph-events.js keydown handler.
-            el.textContent = 'Double-click node to re-root · +/- to change depth · e to exit focus · Scroll to zoom · 0 to fit';
+            // Focus exit: Esc (intercepted before it reaches ST's popup-close) or `e`. See graph-events.js keydown handler.
+            el.textContent = tr('dle_graph_hints_focus');
         } else {
-            el.textContent = 'Drag to move · Right-click for menu · Scroll to zoom · Click+drag to pan · Double-click to focus · 0 to fit';
+            el.textContent = tr('dle_graph_hints_normal');
         }
     }
 

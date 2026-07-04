@@ -12,6 +12,7 @@
  */
 
 import { scrubDeep, makeCtx } from './scrubber.js';
+import { TRACE_ENTRY_ARRAY_KEYS } from './pseudonymize-trace.js';
 import { captureStateSnapshot } from './state-snapshot.js';
 import { consoleBuffer, networkBuffer, errorBuffer, eventBuffer, aiCallBuffer, aiPromptBuffer, installFailures } from './interceptors.js';
 import { generationBuffer } from './flight-recorder.js';
@@ -403,6 +404,27 @@ If you find something the scrubber missed, **that's a bug** — please open an i
 ---
 `;
 
+// #13b: the trace entry-array schema doc is GENERATED from the shared key list
+// so it can't drift from what pseudonymizeTrace / flight-recorder actually
+// cover. Descriptions are looked up per key; a key added to the shared list
+// without a description still gets documented with the generic fallback.
+const TRACE_ENTRY_ARRAY_DOCS = {
+    keywordMatched: 'entries that matched on keyword/BM25 in stage 1',
+    aiSelected: 'entries the AI picked in stage 2',
+    gatedOut: 'removed by requires/excludes gating',
+    contextualGatingRemoved: 'removed by era/location/scene gating',
+    cooldownRemoved: 'entries on cooldown',
+    warmupFailed: 'entries below their warmup keyword-hit threshold',
+    probabilitySkipped: 'skipped by their probability roll this generation',
+    refineKeyBlocked: 'failed refine_keys selective-logic check',
+    stripDedupRemoved: 'already in recent context',
+    budgetCut: 'dropped to fit token budget',
+    injected: 'final survivors actually sent to the model',
+};
+const traceEntryArrayDocLines = TRACE_ENTRY_ARRAY_KEYS
+    .map(k => `- \`${k}[]\` — ${TRACE_ENTRY_ARRAY_DOCS[k] || 'per-entry pipeline stage array'}`)
+    .join('\n');
+
 // Base64-encoded in the report so it doesn't clutter GitHub issues.
 const AI_INSTRUCTIONS = `## How to Read This File (for AI assistants)
 
@@ -425,15 +447,7 @@ diagnose what's wrong with the user's setup.
 ### Schema reference
 
 \`pipelineTrace\` fields (in \`snapshot.pipeline.verdict.trace\`):
-- \`keywordMatched[]\` — entries that matched on keyword/BM25 in stage 1
-- \`aiSelected[]\` — entries the AI picked in stage 2
-- \`gatedOut[]\`, \`contextualGatingRemoved[]\` — removed by era/location/scene gating
-- \`cooldownRemoved[]\` — entries on cooldown
-- \`warmupFailed[]\` — entries below their warmup keyword-hit threshold
-- \`refineKeyBlocked[]\` — failed AND_ANY refine_keys check
-- \`stripDedupRemoved[]\` — already in recent context
-- \`budgetCut[]\` — dropped to fit token budget
-- \`injected[]\` — final survivors actually sent to the model
+${traceEntryArrayDocLines}
 - \`bootstrapActive\` — chat is short, bootstrap entries force-injected
 - \`aiFallback\`, \`aiError\` — AI search failed, fell back to keyword/constants
 

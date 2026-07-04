@@ -6,6 +6,7 @@ import { writeNote, obsidianFetch, encodeVaultPath } from './obsidian-api.js';
 import { getSettings, getPrimaryVault, resolveWriteVault } from '../../settings.js';
 import { convertWiEntry } from '../helpers.js';
 import { classifyDedupProbe } from './vault-pure.js';
+import { makeImportFailure } from './import-pure.js';
 
 // Pure JSON parser re-exported from ./import-pure.js (Wave 7 — node tests pull
 // the pure module directly to avoid the settings.js → ST module chain).
@@ -17,19 +18,23 @@ const MAX_DEDUP_ATTEMPTS = 20;
 /**
  * Resolve a target path that doesn't collide with an existing vault file by
  * appending `_imported`, `_imported_2`, … until a 404 is found (or attempts
- * run out). Returns the unique path or null when the dedup check times out,
- * the cap is reached, or a network error makes the check unverifiable.
+ * run out). Returns `{ path, failureSite }`: `path` is the unique path, or
+ * null when the dedup check times out, the cap is reached, or a network error
+ * makes the check unverifiable — with `failureSite` saying WHICH of those it
+ * was ('dedup-transient' for network/abort/inconclusive, 'dedup-cap' for
+ * attempts exhausted) so callers can categorize the failure at the source
+ * (#14) instead of leaving downstream code to sniff a merged error string.
  *
  * V-C2: A network error during an existence check used to return the
  * candidate path "assume free" — but if the file ACTUALLY existed, the
  * caller would then writeNote over it, silently overwriting vault content.
  * That's the exact opposite of what the dedup helper is supposed to do.
- * Return null so callers fail loud and skip the file.
+ * Return a null path so callers fail loud and skip the file.
  *
  * @param {object} vault - {host, port, apiKey, https}
  * @param {string} filename - desired base filename (e.g. "Foo.md")
  * @param {string} folder - target folder, may be ''
- * @returns {Promise<string|null>}
+ * @returns {Promise<{ path: string|null, failureSite: 'dedup-transient'|'dedup-cap'|null }>}
  */
 async function _findUniquePath(vault, filename, folder) {
     const base = filename.replace(/\.md$/, '');
@@ -67,11 +72,11 @@ async function _findUniquePath(vault, filename, folder) {
             if (probeErr) {
                 console.warn(`[DLE Import] _findUniquePath: existence check for "${candidatePath}" failed (${probeErr.name || 'Error'}): ${probeErr.message}`);
             }
-            return null;
+            return { path: null, failureSite: 'dedup-transient' };
         }
-        return candidatePath;
+        return { path: candidatePath, failureSite: null };
     }
-    return null;
+    return { path: null, failureSite: 'dedup-cap' };
 }
 
 /**
@@ -82,7 +87,12 @@ async function _findUniquePath(vault, filename, folder) {
  * @param {object} [options]
  * @param {boolean|string} [options.compress] - #18: caveman-compress each entry's body
  *   before write. Defaults to `settings.importCompressByDefault`.
- * @returns {Promise<{ imported: number, failed: number, errors: string[] }>}
+ * @returns {Promise<{ imported: number, failed: number, errors: string[], failures: object[] }>}
+ *   `errors` keeps the legacy flat `"${filename}: ${reason}"` strings (console
+ *   dump + any external consumer); `failures` (#14) carries the structured
+ *   per-entry records `{ filename, title, reason, category, retryable, entry }`
+ *   with the category assigned at the failure site — buildImportReport prefers
+ *   these over keyword-sniffing the flat strings.
  */
 export async function importEntries(entries, folder, onProgress, options = {}) {
     const settings = getSettings();
@@ -102,6 +112,11 @@ export async function importEntries(entries, folder, onProgress, options = {}) {
     let imported = 0;
     let failed = 0;
     const errors = [];
+    // #14: structured failure records, one per errors[] push. Category comes
+    // from the site itself (makeImportFailure map in import-pure.js); `entry`
+    // is the source WI entry so retry paths can re-import without rebuilding a
+    // filename→entry lookup.
+    const failures = [];
 
     // Wave 1 (WI parity): accumulator threaded into convertWiEntry. Buckets:
     //   nativeApplied[field] — Tier A fields emitted as native frontmatter
@@ -132,9 +147,17 @@ export async function importEntries(entries, folder, onProgress, options = {}) {
         // Per-entry finally guarantees progress always advances — even on the
         // dedup-fail and existence-check `continue` branches below, which used to
         // skip the trailing onProgress and stall the bar short of 100%.
+        // #14: filename/entryTitle hoisted so the catch can tell a converter
+        // throw (filename never assigned → 'convert') from a post-convert
+        // throw ('unexpected'; writeNote and the probes catch internally, so
+        // this is defensive only).
+        let filename = '';
+        let entryTitle = '';
         try {
             const converted = convertWiEntry(wiEntry, lorebookTag, { compress, report, emHandling });
-            const { filename, content, title: entryTitle, _emPosition } = converted;
+            filename = converted.filename;
+            entryTitle = converted.title;
+            const { content, _emPosition } = converted;
 
             // Wave 4: skip path. Drop the EM entry before any vault I/O. Note
             // the title so the import report can list which entries didn't land.
@@ -161,14 +184,24 @@ export async function importEntries(entries, folder, onProgress, options = {}) {
                     accept: 'text/markdown',
                 });
                 if (checkResult.status === 200) {
-                    const candidatePath = await _findUniquePath(vault, filename, folder);
-                    if (!candidatePath) {
+                    const dedup = await _findUniquePath(vault, filename, folder);
+                    if (!dedup.path) {
                         // V-C2: covers abort, network error, AND cap exhausted.
+                        // Legacy flat string stays merged; the structured record
+                        // splits transient (probe glitch) from collision (cap).
                         errors.push(`${filename}: skipped — dedup check failed (network error, aborted, or exceeded ${MAX_DEDUP_ATTEMPTS} attempts)`);
+                        failures.push(makeImportFailure(dedup.failureSite, {
+                            filename,
+                            title: entryTitle || '',
+                            reason: dedup.failureSite === 'dedup-cap'
+                                ? `dedup cap exhausted — ${MAX_DEDUP_ATTEMPTS}+ name collisions for "${filename}"`
+                                : 'dedup check failed — could not verify a free name (network error or aborted)',
+                            entry: wiEntry,
+                        }));
                         failed++;
                         continue;
                     }
-                    fullPath = candidatePath;
+                    fullPath = dedup.path;
                     renamed++;
                 }
             } catch (existErr) {
@@ -176,6 +209,12 @@ export async function importEntries(entries, folder, onProgress, options = {}) {
                 // so a thrown error is always a network/timeout problem.
                 console.warn(`[DLE Import] Network error checking existence of "${fullPath}":`, existErr.message);
                 errors.push(`${filename}: skipped — could not verify existence (${existErr.message})`);
+                failures.push(makeImportFailure('exist-check', {
+                    filename,
+                    title: entryTitle || '',
+                    reason: `could not verify existence (${existErr.message})`,
+                    entry: wiEntry,
+                }));
                 failed++;
                 continue;
             }
@@ -186,16 +225,28 @@ export async function importEntries(entries, folder, onProgress, options = {}) {
             } else {
                 failed++;
                 errors.push(`${filename}: ${result.error}`);
+                failures.push(makeImportFailure('write', {
+                    filename,
+                    title: entryTitle || '',
+                    reason: String(result.error || 'write failed'),
+                    entry: wiEntry,
+                }));
             }
         } catch (err) {
             failed++;
             errors.push(`Entry: ${err.message}`);
+            failures.push(makeImportFailure(filename ? 'unexpected' : 'convert', {
+                filename,
+                title: entryTitle || String(wiEntry?.comment || '').trim(),
+                reason: filename ? String(err.message) : `convert failed: ${err.message}`,
+                entry: wiEntry,
+            }));
         } finally {
             if (onProgress) onProgress(imported + failed + skipped, entries.length);
         }
     }
 
-    return { imported, failed, renamed, errors, report };
+    return { imported, failed, renamed, errors, failures, report };
 }
 
 /**
@@ -267,12 +318,13 @@ export async function upsertConvertedEntry(wiEntry, folder, options = {}) {
     if (existed) {
         if (policy === 'skip') return { ok: true, action: 'skipped', path: fullPath, report };
         if (policy === 'rename') {
-            const candidatePath = await _findUniquePath(targetVault, filename, folder);
-            if (!candidatePath) {
+            const dedup = await _findUniquePath(targetVault, filename, folder);
+            if (!dedup.path) {
                 // V-C2: covers abort, network error, AND cap exhausted.
+                // Error string kept stable — companion-extension contract.
                 return { ok: false, action: null, path: fullPath, error: `dedup check failed (network error, aborted, or exceeded ${MAX_DEDUP_ATTEMPTS} attempts)` };
             }
-            fullPath = candidatePath;
+            fullPath = dedup.path;
         }
         // policy === 'replace' falls through — writeNote overwrites.
     }

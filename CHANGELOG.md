@@ -8,6 +8,41 @@ All notable changes to DeepLore are documented here. This file follows
 
 ---
 
+## [2.6.0] - 2026-07-03
+
+> An interface release: a full settings-popup overhaul, a deep UI/UX polish pass across every surface, Issue #39 fixed (clearable vault cache + overlay drawer on phones), and a batch of long-standing bug fixes from a release-readiness audit. No pipeline-behavior changes.
+
+### Added
+
+- **`/dle-clear`** — clearing the vault cache now wipes the IndexedDB cache AND the live index (wipe-and-stop; run `/dle-refresh` to re-index), so an intentionally emptied vault finally stays empty. The Clear Cache button does the same; failures report honestly instead of toasting success. Phantom `/dle-force-refresh` / `/dle-rebuild` references replaced with real commands. (Issue #39)
+- **Graph** — the two legends merged into one docked panel that survives node hover; the whole view localized.
+- **Setup wizard** — welcome page is a three-card decision fork (demo vault / connect Obsidian / import lorebook); skip/resume without auto-relaunch nagging; keyboard focus + screen-reader announcements on step change; vault scanner wired in.
+- **Librarian** — contextual bulk-action bar for the Flags list; gap rows get an expand chevron and a one-line "Reason" teaser.
+- **Import** — per-entry recovery table for failed/skipped entries with classified failure types and Retry / Retry-all.
+- **Pipeline toast** — elapsed-time counter and a Cancel button during the AI phases.
+- **Toasts** — unified `notify` facade (severity routing, dedup, click-to-copy errors) on the high-value error sites.
+- **Onboarding** — decision-aware Browse/Injection empty states; expand/collapse-all for Browse folder grouping with count chips.
+
+### Changed
+
+- **Settings popup overhaul** — the old Connection/Features header rows and both subtab tiers are gone, replaced by a header strip (brand, master on/off switch, version chip, wiki help link) over a flat sidebar: a settings search box, a pinned **About** landing panel, and four accordion groups (Setup / Lore pipeline / Assistants / Tools). The former **Matching** and **AI Search** tabs are merged into one **Search** tab. Pre-overhaul tab tokens (persisted "last tab", deep links) resolve through a permanent alias so nothing breaks. Type sizing re-anchored to ST's font-scale slider. (See `docs/gotchas.md` #103.)
+- Footer health icons became a clickable diagnostics dock; Browse per-row actions fold into a hover-reveal `⋮` kebab.
+- Drawer overlay mode now also triggers on narrow viewports, so phones get the overlay drawer (the other half of Issue #39; the settings popup itself stays desktop-first for now).
+- Localized: Cartographer "Why?" modal, Reference tab + `/dle` palette, `/dle-lint` popup and the index-build warning toast (which now links to `/dle-lint`).
+- Interface, motion & accessibility: the whole UI moved onto DLE's motion/type tokens; reduced-motion honored properly (infinite animations disabled, spinner freezes); 44px touch targets and over-scroll containment; unified focus ring and contrast-safe colors; number inputs clamp on commit; iconography unified; pipeline toast and drawer status row rebalanced.
+- De-slop pass: the Graph Health panel moved onto design tokens and its emoji severity dots replaced with the semantic `●`; ~30 stray inline px/opacity values folded into the `--dle-*` scale across the drawer, wizard, settings, and Rule Builder.
+
+### Fixed
+
+- All 25 confirmed regressions from the polish pass, caught by an adversarial bug-hunt before merge — highlights: undismissable/yanked pipeline toasts, the circuit-breaker "back online" toast lost on most recovery paths, graph-gravity values corrupted on edit, Rule Builder clobbering divergent context keys, the frozen drawer activity spinner, missing screen-reader phase announcements, and a multi-vault collision in Browse expand.
+- From the release-readiness audit: the shareable diagnostics report no longer leaks private lore (titles, keywords, vault names, hosts — all pseudonymized) or fabricates "0 searches, 0 flags"; probability-skipped BM25 entries show up in `/dle-why`; corrupt-cache entries can no longer outrank fresh parses or silently disable cache hydration; drawer tabs no longer render blank after a teardown; the idle spinner fully stops; a literal `</entry>` in a summary can't break out of the AI selection manifest; same-vault duplicate titles survive multi-vault conflict resolution; and import failures carry their real failure type instead of a keyword-sniffed guess.
+
+### i18n
+
+- ~210 new UI strings (including the settings-overhaul nav/search/header labels), plus 80 more from localizing the whole setup wizard runtime, Rule Builder field labels, and the Browse quick-filter pills; all 7 locales at full key parity — **2,672 keys × 7 locales**.
+
+---
+
 ## [2.5.1] - 2026-06-27
 
 ### Fixed

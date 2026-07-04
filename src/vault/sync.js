@@ -3,8 +3,10 @@
  */
 import { escapeHtml } from '../../../../../utils.js';
 import { getSettings } from '../../settings.js';
-import { syncIntervalId, indexing, setSyncIntervalId, setIndexing, setBuildPromise, buildEpoch, setBuildEpoch } from '../state.js';
+import { syncIntervalId, indexing, setSyncIntervalId, setIndexing, setBuildPromise, buildEpoch, setBuildEpoch, getIndexBuildReport } from '../state.js';
 import { getAllCircuitStates } from './obsidian-api.js';
+import { tr, trf, trPlural } from '../i18n/i18n.js';
+import { openLintPopup } from '../ui/commands-lint.js';
 
 const SYNC_TOAST_TIMEOUT = 8000;
 const SYNC_EXTENDED_TIMEOUT = 12000;
@@ -39,13 +41,45 @@ export function showChangesToast(changes) {
         parts.push(`Keys changed: ${truncList(changes.keysChanged)}`);
     }
 
-    toastr.info(parts.join('<br>'), 'DeepLore', {
+    // Surface warnings/skips from the same build so the lint tool is discoverable
+    // at the moment authoring breaks — a passive, clickable pointer, not an
+    // auto-popup (auto-lint-after-build stays OFF per directive). Suppressed when
+    // counts are zero so clean builds stay quiet.
+    const report = getIndexBuildReport();
+    const warnCount = report ? (report.warnCount || 0) : 0;
+    const skipCount = report ? (report.skipCount || 0) : 0;
+    const showLintPointer = (warnCount + skipCount) > 0;
+    if (showLintPointer) {
+        const segs = [];
+        if (skipCount > 0) segs.push(trf('dle_sync_toast_skipped', skipCount));
+        if (warnCount > 0) segs.push(trPlural('dle_sync_toast_warnings', warnCount));
+        const cta = `<span class="dle-lint-toast-link" style="text-decoration:underline;cursor:pointer">${escapeHtml(tr('dle_sync_toast_lint_cta'))}</span>`;
+        parts.push(`<span class="dle-sync-toast-lint">⚠ ${escapeHtml(segs.join(' · '))} — ${cta}</span>`);
+    }
+
+    // escapeHtml:false — this toast intentionally renders markup (<br> joins + the
+    // clickable lint CTA span). toastr 2.1.3 has NO `enableHtml` option (that's
+    // angular-toastr); the real toggle is `escapeHtml`, and ST's global sets it
+    // true, so we must override it here or the markup renders as literal text and
+    // the CTA click handler never binds. All dynamic content above is already
+    // escaped piecewise (truncList + escapeHtml), so this is safe.
+    const $toast = toastr.info(parts.join('<br>'), 'DeepLore', {
         timeOut: SYNC_TOAST_TIMEOUT,
         extendedTimeOut: SYNC_EXTENDED_TIMEOUT,
         progressBar: true,
         closeButton: true,
-        enableHtml: true,
+        escapeHtml: false,
     });
+
+    // Open the lint popup when the pointer is clicked. Scoped to the lint link so
+    // clicking elsewhere on the toast keeps toastr's default dismiss behavior.
+    if (showLintPointer && $toast && typeof $toast.on === 'function') {
+        $toast.on('click', '.dle-lint-toast-link', (ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            openLintPopup();
+        });
+    }
 }
 
 /**

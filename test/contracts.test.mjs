@@ -13,6 +13,7 @@ import {
 } from './helpers.mjs';
 
 import { validateCachedEntry } from '../src/vault/cache-validate.js';
+import { computeEntityDerivedState } from '../src/vault/vault-pure.js';
 import {
     normalizePinBlock, matchesPinBlock, normalizeLoreGap,
     fuzzyTitleMatch, isForceInjected, convertWiEntry,
@@ -21,7 +22,7 @@ import {
     resolveEntryVault,
 } from '../src/helpers.js';
 import { trackerKey } from '../src/state.js';
-import { parseVaultFile } from '../core/pipeline.js';
+import { parseVaultFile, DEFAULT_PRIORITY } from '../core/pipeline.js';
 import { validateSettings } from '../core/utils.js';
 
 // ============================================================================
@@ -102,16 +103,18 @@ test('A15: non-number tokenEstimate returns false', () => {
     assert(validateCachedEntry(entry) === false, 'string tokenEstimate should return false');
 });
 
-test('A16: backfill missing priority to 50', () => {
+test('A16: backfill missing priority to the parser default (#15)', () => {
     const entry = { title: 'Test', keys: [], content: '', tokenEstimate: 10 };
     validateCachedEntry(entry);
-    assertEqual(entry.priority, 50, 'missing priority should be backfilled to 50');
+    // #15: was 50 — corrupt-cache entries outranked fresh parses (lower = higher).
+    assertEqual(entry.priority, DEFAULT_PRIORITY, 'missing priority should be backfilled to the shared parser default');
+    assertEqual(entry.priority, 100, 'shared default is 100');
 });
 
-test('A17: backfill NaN priority to 50', () => {
+test('A17: backfill NaN priority to the parser default (#15)', () => {
     const entry = { title: 'Test', keys: [], content: '', tokenEstimate: 10, priority: NaN };
     validateCachedEntry(entry);
-    assertEqual(entry.priority, 50, 'NaN priority should be backfilled to 50');
+    assertEqual(entry.priority, DEFAULT_PRIORITY, 'NaN priority should be backfilled to the shared parser default');
 });
 
 test('A18: backfill non-boolean constant to false', () => {
@@ -261,6 +264,66 @@ test('A38: null probability preserved', () => {
     const entry = { title: 'Test', keys: [], content: '', tokenEstimate: 10, probability: null };
     validateCachedEntry(entry);
     assertNull(entry.probability, 'null probability should be preserved');
+});
+
+// #15 — cache backfill default must equal the parser default (single shared constant).
+test('A39: #15 — cache priority backfill matches the frontmatter parser default', () => {
+    const parsed = parseVaultFile(
+        { filename: 'Test.md', content: '---\ntags:\n  - lorebook\n---\n\nBody text.' },
+        { lorebookTag: 'lorebook' },
+    );
+    assertNotNull(parsed, 'fixture entry parses');
+    assertEqual(parsed.priority, DEFAULT_PRIORITY, 'parser default priority is the shared constant');
+    const cached = { title: 'Test', keys: [], content: '', tokenEstimate: 10 };
+    validateCachedEntry(cached);
+    assertEqual(cached.priority, parsed.priority, 'cache backfill equals fresh-parse default (no rank inversion)');
+});
+
+// #16 — string-array element sanitation (keys/links/resolvedLinks/tags/requires/excludes).
+// Policy: strings kept; finite numbers coerced via String(); everything else dropped.
+test('A40: #16 — non-string keys elements coerced or dropped', () => {
+    const entry = { title: 'Test', keys: ['dragon', 42, null, undefined, {}, ['x'], true, NaN, Infinity], content: '', tokenEstimate: 10 };
+    assert(validateCachedEntry(entry) === true, 'entry with dirty keys is repaired, not rejected');
+    assertEqual(entry.keys, ['dragon', '42'], 'strings kept, finite numbers coerced, the rest dropped');
+});
+
+test('A41: #16 — all-string keys array left untouched', () => {
+    const keys = ['dragon', 'wyrm'];
+    const entry = { title: 'Test', keys, content: '', tokenEstimate: 10 };
+    validateCachedEntry(entry);
+    assert(entry.keys === keys, 'clean array is not rewritten (same reference)');
+});
+
+test('A42: #16 — tags/links/resolvedLinks sanitized', () => {
+    const entry = {
+        title: 'Test', keys: [], content: '', tokenEstimate: 10,
+        tags: ['lorebook', null], links: [{}, 'Castle'], resolvedLinks: [7, 'Cave.md'],
+    };
+    validateCachedEntry(entry);
+    assertEqual(entry.tags, ['lorebook'], 'null dropped from tags');
+    assertEqual(entry.links, ['Castle'], 'object dropped from links');
+    assertEqual(entry.resolvedLinks, ['7', 'Cave.md'], 'number coerced in resolvedLinks');
+});
+
+test('A43: #16 — requires/excludes sanitized when present, undefined skipped', () => {
+    const entry = {
+        title: 'Test', keys: [], content: '', tokenEstimate: 10,
+        requires: ['Mountain', null, 3],
+    };
+    validateCachedEntry(entry);
+    assertEqual(entry.requires, ['Mountain', '3'], 'requires sanitized');
+    assert(entry.excludes === undefined, 'undefined excludes stays undefined (A36 contract)');
+});
+
+test('A44: #16 — sanitized entry survives computeEntityDerivedState (the hydration crash)', () => {
+    // Pre-fix repro: a single non-string key passed Array.isArray, then threw on
+    // key.toLowerCase() inside computeEntityDerivedState under the blanket
+    // hydration try/catch — silently disabling whole-vault cache hydration.
+    const entry = { title: 'Test', keys: ['dragon', 42, null], content: '', tokenEstimate: 10 };
+    validateCachedEntry(entry);
+    let threw = false;
+    try { computeEntityDerivedState([entry]); } catch { threw = true; }
+    assert(!threw, 'computeEntityDerivedState must not throw on a validated entry');
 });
 
 // ============================================================================

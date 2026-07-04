@@ -27,7 +27,7 @@ Parser validates `frontmatter.selective_logic` against the four-name enum; unkno
 
 ```javascript
 buildExemptionPolicy(vaultSnapshot, pins, blocks, bootstrapActive = false)
-  → { forceInject: Set<string>, pins: Array<{title, vaultSource}>, blocks: Array<{title, vaultSource}> }
+  → { forceInject: Set<string>, pinnedKeys: Set<string>, pins: Array<{title, vaultSource}>, blocks: Array<{title, vaultSource}> }
 ```
 **Location:** `src/stages.js:buildExemptionPolicy()`
 
@@ -52,6 +52,8 @@ Entries added to `forceInject`:
 
 Pin/block normalization: `normalizePinBlock()` (called at top of `buildExemptionPolicy()`) converts bare title strings to `{title, vaultSource: null}` for backward compatibility.
 
+**`pinnedKeys` (v2.6 thermo hot-path fix, completes PERF-P2).** The pin walk records every matched entry's `trackerKey` into `policy.pinnedKeys` alongside the `forceInject` add. This makes the policy the SINGLE site where pins are matched against the vault: `applyPinBlock` consumes `pinnedKeys` via O(1) Set lookups instead of re-running the pins×vault `matchesNormalizedPinBlock` scan a second time per generation. Contract: the policy must be built from the same (or a superset) snapshot later passed to `applyPinBlock` — production always does; tests that hand-build narrower policies were aligned. `applyPinBlock` keeps a derive-on-missing fallback for hand-rolled policies from external callers.
+
 **Run-scoped caching (Wave C PERF-P2).** `runPipeline()` builds the policy **exactly once** at the top of the function using the full `vaultSnapshot`, then threads that same `exemptionPolicy` reference through every internal stage call (contextual gating, folder filter, re-application after each search-mode branch). Previously, six inner sites rebuilt it with identical pins/blocks but progressively-narrower candidate snapshots — wasted O(N) + O(P×N) work per generation. The optimization is safe because:
 
 1. `vaultSnapshot`, `pins`, and `blocks` are immutable within a pipeline run.
@@ -73,6 +75,7 @@ applyPinBlock(entries, vaultSnapshot, policy, matchedKeys)
 **Location:** `src/stages.js:applyPinBlock()`
 
 **Pins:**
+- Pin→entry matching is NOT re-run here — `policy.pinnedKeys` (computed once in `buildExemptionPolicy`) answers "is this vault entry pinned" in O(1). A derive-on-missing fallback covers hand-rolled policies.
 - Looks up pinned entries in `vaultSnapshot` (not just pipeline results)
 - Deep-clones array fields to prevent shared references with `vaultIndex` (BUG-030)
 - Shallow-clones `customFields` with array spread (BUG-AUDIT-P8)

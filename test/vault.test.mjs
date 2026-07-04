@@ -244,10 +244,12 @@ test('B8: mode "last" earlier entry data replaced', () => {
 test('B9: mode "merge" unions array fields (keys, tags, links, requires, excludes)', () => {
     const entries = [
         makeEntry('Dragon', {
+            vaultSource: 'v1',
             keys: ['fire', 'drake'], tags: ['lorebook'], links: ['Castle'],
             requires: ['Mountain'], excludes: ['Sea'],
         }),
         makeEntry('Dragon', {
+            vaultSource: 'v2',
             keys: ['drake', 'wyrm'], tags: ['lorebook', 'beast'], links: ['Castle', 'Cave'],
             requires: ['Mountain', 'Volcano'], excludes: ['Sea', 'Ocean'],
         }),
@@ -273,8 +275,8 @@ test('B9: mode "merge" unions array fields (keys, tags, links, requires, exclude
 
 test('B10: mode "merge" concatenates content with separator', () => {
     const entries = [
-        makeEntry('Dragon', { content: 'Fire breather.' }),
-        makeEntry('Dragon', { content: 'Ice breather.' }),
+        makeEntry('Dragon', { vaultSource: 'v1', content: 'Fire breather.' }),
+        makeEntry('Dragon', { vaultSource: 'v2', content: 'Ice breather.' }),
     ];
     const result = deduplicateMultiVault(entries, 'merge');
     assert(result[0].content.includes('Fire breather.'), 'first content present');
@@ -284,8 +286,8 @@ test('B10: mode "merge" concatenates content with separator', () => {
 
 test('B11: mode "merge" sums member tokenEstimates', () => {
     const entries = [
-        makeEntry('Dragon', { content: 'Short text.', tokenEstimate: 3 }),
-        makeEntry('Dragon', { content: 'More text here.', tokenEstimate: 4 }),
+        makeEntry('Dragon', { vaultSource: 'v1', content: 'Short text.', tokenEstimate: 3 }),
+        makeEntry('Dragon', { vaultSource: 'v2', content: 'More text here.', tokenEstimate: 4 }),
     ];
     const result = deduplicateMultiVault(entries, 'merge');
     // Sum tokenizer-accurate member estimates (not char/4, which diverged from tokenizer units).
@@ -294,8 +296,8 @@ test('B11: mode "merge" sums member tokenEstimates', () => {
 
 test('B12: mode "merge" summary prefers first non-empty', () => {
     const entries = [
-        makeEntry('Dragon', { summary: 'A fierce dragon' }),
-        makeEntry('Dragon', { summary: 'A tame dragon' }),
+        makeEntry('Dragon', { vaultSource: 'v1', summary: 'A fierce dragon' }),
+        makeEntry('Dragon', { vaultSource: 'v2', summary: 'A tame dragon' }),
     ];
     const result = deduplicateMultiVault(entries, 'merge');
     assertEqual(result[0].summary, 'A fierce dragon', 'first summary kept');
@@ -303,17 +305,17 @@ test('B12: mode "merge" summary prefers first non-empty', () => {
 
 test('B13: mode "merge" summary uses second if first empty', () => {
     const entries = [
-        makeEntry('Dragon', { summary: '' }),
-        makeEntry('Dragon', { summary: 'Fallback summary' }),
+        makeEntry('Dragon', { vaultSource: 'v1', summary: '' }),
+        makeEntry('Dragon', { vaultSource: 'v2', summary: 'Fallback summary' }),
     ];
     const result = deduplicateMultiVault(entries, 'merge');
     assertEqual(result[0].summary, 'Fallback summary', 'second summary used');
 });
 
 test('B14: mode "merge" boolean flags OR-merged (constant, seed, bootstrap, guide)', () => {
-    const e1 = makeEntry('Dragon', { constant: false, seed: true, bootstrap: false });
+    const e1 = makeEntry('Dragon', { vaultSource: 'v1', constant: false, seed: true, bootstrap: false });
     e1.guide = false;
-    const e2 = makeEntry('Dragon', { constant: true, seed: false, bootstrap: true });
+    const e2 = makeEntry('Dragon', { vaultSource: 'v2', constant: true, seed: false, bootstrap: true });
     e2.guide = true;
     const result = deduplicateMultiVault([e1, e2], 'merge');
     assert(result[0].constant === true, 'constant OR-merged');
@@ -324,8 +326,8 @@ test('B14: mode "merge" boolean flags OR-merged (constant, seed, bootstrap, guid
 
 test('B15: mode "merge" customFields — arrays unioned', () => {
     const entries = [
-        makeEntry('Dragon', { customFields: { era: ['medieval'], location: ['cave'] } }),
-        makeEntry('Dragon', { customFields: { era: ['medieval', 'modern'], location: ['mountain'] } }),
+        makeEntry('Dragon', { vaultSource: 'v1', customFields: { era: ['medieval'], location: ['cave'] } }),
+        makeEntry('Dragon', { vaultSource: 'v2', customFields: { era: ['medieval', 'modern'], location: ['mountain'] } }),
     ];
     const result = deduplicateMultiVault(entries, 'merge');
     assertEqual(result[0].customFields.era.length, 2, 'era unioned');
@@ -336,8 +338,8 @@ test('B15: mode "merge" customFields — arrays unioned', () => {
 
 test('B16: mode "merge" customFields — scalars: first wins unless null/undefined', () => {
     const entries = [
-        makeEntry('Dragon', { customFields: { mood: 'fierce', region: '', count: 0, missing: null } }),
-        makeEntry('Dragon', { customFields: { mood: 'calm', region: 'north', count: 42, missing: 'found' } }),
+        makeEntry('Dragon', { vaultSource: 'v1', customFields: { mood: 'fierce', region: '', count: 0, missing: null } }),
+        makeEntry('Dragon', { vaultSource: 'v2', customFields: { mood: 'calm', region: 'north', count: 42, missing: 'found' } }),
     ];
     const result = deduplicateMultiVault(entries, 'merge');
     assertEqual(result[0].customFields.mood, 'fierce', 'first non-empty scalar kept');
@@ -348,9 +350,9 @@ test('B16: mode "merge" customFields — scalars: first wins unless null/undefin
 });
 
 test('B17: BUG-378 — _contentHash preserved from first entry (not recomputed)', () => {
-    const e1 = makeEntry('Dragon', { content: 'Original' });
+    const e1 = makeEntry('Dragon', { vaultSource: 'v1', content: 'Original' });
     e1._contentHash = 'abc123_original';
-    const e2 = makeEntry('Dragon', { content: 'Extra' });
+    const e2 = makeEntry('Dragon', { vaultSource: 'v2', content: 'Extra' });
     e2._contentHash = 'def456_extra';
     const result = deduplicateMultiVault([e1, e2], 'merge');
     assertEqual(result[0]._contentHash, 'abc123_original', '_contentHash preserved from first');
@@ -373,8 +375,8 @@ test('B18: mode "merge" 3 entries same title all merged', () => {
 
 test('B19: mode "merge" entry with empty content does not double separator', () => {
     const entries = [
-        makeEntry('Dragon', { content: 'Real content.' }),
-        makeEntry('Dragon', { content: '' }),
+        makeEntry('Dragon', { vaultSource: 'v1', content: 'Real content.' }),
+        makeEntry('Dragon', { vaultSource: 'v2', content: '' }),
     ];
     const result = deduplicateMultiVault(entries, 'merge');
     // Empty content should not trigger concatenation
@@ -418,8 +420,8 @@ test('B22: mixed some duplicated some unique handled correctly', () => {
 });
 
 test('B23: mode "merge" does not mutate original entries', () => {
-    const e1 = makeEntry('Dragon', { keys: ['fire'], content: 'first' });
-    const e2 = makeEntry('Dragon', { keys: ['ice'], content: 'second' });
+    const e1 = makeEntry('Dragon', { vaultSource: 'v1', keys: ['fire'], content: 'first' });
+    const e2 = makeEntry('Dragon', { vaultSource: 'v2', keys: ['ice'], content: 'second' });
     const origKeys1 = [...e1.keys];
     const origContent1 = e1.content;
     deduplicateMultiVault([e1, e2], 'merge');
@@ -429,8 +431,8 @@ test('B23: mode "merge" does not mutate original entries', () => {
 
 test('B24: mode "merge" resolvedLinks field unioned', () => {
     const entries = [
-        makeEntry('Dragon', { resolvedLinks: ['Castle.md'] }),
-        makeEntry('Dragon', { resolvedLinks: ['Castle.md', 'Cave.md'] }),
+        makeEntry('Dragon', { vaultSource: 'v1', resolvedLinks: ['Castle.md'] }),
+        makeEntry('Dragon', { vaultSource: 'v2', resolvedLinks: ['Castle.md', 'Cave.md'] }),
     ];
     const result = deduplicateMultiVault(entries, 'merge');
     assertEqual(result[0].resolvedLinks.length, 2, 'resolvedLinks deduped');
@@ -439,8 +441,8 @@ test('B24: mode "merge" resolvedLinks field unioned', () => {
 
 test('B25: mode "merge" customFields new key from second entry added', () => {
     const entries = [
-        makeEntry('Dragon', { customFields: { mood: 'fierce' } }),
-        makeEntry('Dragon', { customFields: { mood: 'calm', weakness: 'water' } }),
+        makeEntry('Dragon', { vaultSource: 'v1', customFields: { mood: 'fierce' } }),
+        makeEntry('Dragon', { vaultSource: 'v2', customFields: { mood: 'calm', weakness: 'water' } }),
     ];
     const result = deduplicateMultiVault(entries, 'merge');
     assertEqual(result[0].customFields.weakness, 'water', 'new key from second entry');
@@ -457,6 +459,146 @@ test('B26: mode "last" with 3 entries keeps the very last', () => {
     assertEqual(result.length, 1, 'deduped to one');
     assertEqual(result[0].content, 'three', 'last vault wins');
     assertEqual(result[0].vaultSource, 'v3', 'v3 source');
+});
+
+// ============================================================================
+//  B-SV. #22 — Same-vault same-title duplicates pass through UNTOUCHED
+// ============================================================================
+// deduplicateMultiVault is *multi-vault* conflict resolution. Pre-fix it keyed
+// on bare title.toLowerCase(), so two same-titled entries in the SAME vault were
+// silently collapsed under first/last/merge. Contract now: resolution applies
+// across DIFFERENT vaultSources only; same-vault duplicates survive every mode.
+
+section('B-SV. #22 — same-vault duplicate preservation (all 4 modes)');
+
+test('B-SV1: mode "all" keeps same-vault duplicates (baseline)', () => {
+    const entries = [
+        makeEntry('Castle', { vaultSource: 'v1', content: 'copy one' }),
+        makeEntry('Castle', { vaultSource: 'v1', content: 'copy two' }),
+    ];
+    assertEqual(deduplicateMultiVault(entries, 'all').length, 2, 'all keeps both');
+});
+
+test('B-SV2: mode "first" keeps same-vault duplicates untouched', () => {
+    const entries = [
+        makeEntry('Castle', { vaultSource: 'v1', content: 'copy one' }),
+        makeEntry('Castle', { vaultSource: 'v1', content: 'copy two' }),
+    ];
+    const result = deduplicateMultiVault(entries, 'first');
+    assertEqual(result.length, 2, 'both same-vault copies kept');
+    assert(result[0] === entries[0] && result[1] === entries[1], 'same object references, untouched');
+});
+
+test('B-SV3: mode "last" keeps same-vault duplicates untouched', () => {
+    const entries = [
+        makeEntry('Castle', { vaultSource: 'v1', content: 'copy one' }),
+        makeEntry('Castle', { vaultSource: 'v1', content: 'copy two' }),
+    ];
+    const result = deduplicateMultiVault(entries, 'last');
+    assertEqual(result.length, 2, 'both same-vault copies kept');
+});
+
+test('B-SV4: mode "merge" keeps same-vault duplicates untouched (no merge)', () => {
+    const entries = [
+        makeEntry('Castle', { vaultSource: 'v1', content: 'copy one', keys: ['a'] }),
+        makeEntry('Castle', { vaultSource: 'v1', content: 'copy two', keys: ['b'] }),
+    ];
+    const result = deduplicateMultiVault(entries, 'merge');
+    assertEqual(result.length, 2, 'both same-vault copies kept');
+    assertEqual(result[0].content, 'copy one', 'first not merged');
+    assertEqual(result[1].content, 'copy two', 'second not merged');
+    assertEqual(result[0].keys, ['a'], 'keys not unioned');
+});
+
+test('B-SV5: empty vaultSource counts as one (same) vault', () => {
+    // Single-vault setups have vaultSource '' everywhere — duplicates there are
+    // same-vault by definition and must survive first/last/merge.
+    const entries = [
+        makeEntry('Castle', { content: 'copy one' }),
+        makeEntry('Castle', { content: 'copy two' }),
+    ];
+    assertEqual(deduplicateMultiVault(entries, 'first').length, 2, 'first: both kept');
+    assertEqual(deduplicateMultiVault(entries, 'last').length, 2, 'last: both kept');
+    assertEqual(deduplicateMultiVault(entries, 'merge').length, 2, 'merge: both kept');
+});
+
+test('B-SV6: mixed — mode "first" keeps ALL of the first vault\'s copies, drops other vaults', () => {
+    const entries = [
+        makeEntry('Castle', { vaultSource: 'v1', content: 'v1 copy one' }),
+        makeEntry('Castle', { vaultSource: 'v1', content: 'v1 copy two' }),
+        makeEntry('Castle', { vaultSource: 'v2', content: 'v2 copy' }),
+    ];
+    const result = deduplicateMultiVault(entries, 'first');
+    assertEqual(result.length, 2, 'both v1 copies kept, v2 dropped');
+    assert(result.every(e => e.vaultSource === 'v1'), 'only v1 entries remain');
+});
+
+test('B-SV7: mixed — mode "last" keeps the winning vault\'s copies, drops earlier vaults', () => {
+    const entries = [
+        makeEntry('Castle', { vaultSource: 'v1', content: 'v1 copy' }),
+        makeEntry('Castle', { vaultSource: 'v2', content: 'v2 copy one' }),
+        makeEntry('Castle', { vaultSource: 'v2', content: 'v2 copy two' }),
+    ];
+    const result = deduplicateMultiVault(entries, 'last');
+    assertEqual(result.length, 2, 'both v2 copies kept, v1 dropped');
+    assert(result.every(e => e.vaultSource === 'v2'), 'only v2 entries remain');
+});
+
+test('B-SV8: mixed — mode "merge" merges ONE representative per vault, extra same-vault copies pass through', () => {
+    const entries = [
+        makeEntry('Castle', { vaultSource: 'v1', content: 'v1 rep', keys: ['a'] }),
+        makeEntry('Castle', { vaultSource: 'v1', content: 'v1 extra', keys: ['x'] }),
+        makeEntry('Castle', { vaultSource: 'v2', content: 'v2 rep', keys: ['b'] }),
+    ];
+    const result = deduplicateMultiVault(entries, 'merge');
+    assertEqual(result.length, 2, 'merged rep + untouched same-vault extra');
+    const merged = result[0];
+    assert(merged.content.includes('v1 rep'), 'merge base is first vault rep');
+    assert(merged.content.includes('v2 rep'), 'other vault rep merged in');
+    assert(!merged.content.includes('v1 extra'), 'same-vault extra NOT merged');
+    assertEqual(merged.keys.sort().join(','), 'a,b', 'reps keys unioned, extra keys excluded');
+    assertEqual(result[1].content, 'v1 extra', 'extra copy passes through untouched');
+    assert(result[1] === entries[1], 'extra copy is the same object reference');
+});
+
+test('B-SV9: same-vault case-insensitive duplicates preserved too', () => {
+    const entries = [
+        makeEntry('Dragon', { vaultSource: 'v1', content: 'upper' }),
+        makeEntry('dragon', { vaultSource: 'v1', content: 'lower' }),
+    ];
+    assertEqual(deduplicateMultiVault(entries, 'first').length, 2, 'case-variant same-vault copies kept');
+});
+
+test('B-SV10: unique titles still untouched alongside same-vault duplicates', () => {
+    const entries = [
+        makeEntry('Castle', { vaultSource: 'v1' }),
+        makeEntry('Castle', { vaultSource: 'v1' }),
+        makeEntry('Moat', { vaultSource: 'v2' }),
+    ];
+    const result = deduplicateMultiVault(entries, 'merge');
+    assertEqual(result.length, 3, 'nothing collapsed');
+});
+
+test('B-SV11: last-mode winner emits at the GROUP-FIRST slot (pre-#22 ordering preserved)', () => {
+    // Adversarial-review finding: emitting the 'last' winner at its own slot
+    // reordered vaultIndex vs pre-#22 builds ([T@B, U@A] became [U@A, T@B]),
+    // shifting stable-sort priority tie-breaks and Browse default order.
+    const tA = makeEntry('T', { vaultSource: 'A' });
+    const uA = makeEntry('U', { vaultSource: 'A' });
+    const tB = makeEntry('T', { vaultSource: 'B' });
+    const out = deduplicateMultiVault([tA, uA, tB], 'last');
+    assertEqual(out.map(e => `${e.title}@${e.vaultSource}`).join(','), 'T@B,U@A',
+        'last winner lands where the group first appeared');
+    assert(out[0] === tB, 'winner keeps object identity');
+});
+
+test('B-SV12: last-mode keeps ALL of the winning vault\'s same-title copies, together at the group-first slot', () => {
+    const tB1 = makeEntry('T', { vaultSource: 'B', content: 'one' });
+    const tA = makeEntry('T', { vaultSource: 'A' });
+    const tB2 = makeEntry('T', { vaultSource: 'B', content: 'two' });
+    const out = deduplicateMultiVault([tB1, tA, tB2], 'last');
+    assertEqual(out.length, 2, 'both same-vault copies of the winning vault survive');
+    assert(out[0] === tB1 && out[1] === tB2, 'copies keep identity and original relative order');
 });
 
 // ============================================================================

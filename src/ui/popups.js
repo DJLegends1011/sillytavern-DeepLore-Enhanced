@@ -23,6 +23,7 @@ import { extractAiResponseClient, buildObsidianURI, STAGE_COLORS, normalizePinBl
 import { diagnoseEntry } from './diagnostics.js';
 import { computeEntryTemperatures } from '../drawer/drawer-state.js';
 import { tr, trf } from '../i18n/i18n.js';
+import { notify } from '../toast-dedup.js';
 
 /**
  * Serialize a value for YAML frontmatter.
@@ -47,7 +48,7 @@ function yamlSerializeValue(val) {
  */
 export function buildCopyButton(plainText) {
     const encoded = btoa(unescape(encodeURIComponent(plainText)));
-    return `<button class="menu_button dle-copy-btn dle-text-sm" data-copy="${encoded}">Copy to Clipboard</button>`;
+    return `<button type="button" class="menu_button dle-copy-btn dle-text-sm" data-copy="${encoded}">Copy to Clipboard</button>`;
 }
 
 /** Idempotent — class-guarded to avoid duplicate listeners. */
@@ -480,7 +481,7 @@ export async function showBrowsePopup() {
             html += obsidianLink;
             html += `</div>`;
             if (chat && chat.length > 0 && !entry.constant) {
-                html += `<div id="dle-whynot-${entryId}" class="dle-mt-1"><button class="menu_button dle-whynot-btn dle-text-xs" data-title="${escapeHtml(entry.title)}">Why not injected?</button></div>`;
+                html += `<div id="dle-whynot-${entryId}" class="dle-mt-1"><button type="button" class="menu_button dle-whynot-btn dle-text-xs" data-title="${escapeHtml(entry.title)}">Why not injected?</button></div>`;
             }
             html += `</td></tr>`;
         }
@@ -798,7 +799,7 @@ export async function showOptimizePopup(entry, result) {
                 toastr.error(tr('dle_toast_keywords_save_failed'), 'DeepLore');
             }
         } catch (err) {
-            toastr.error(classifyError(err), 'DeepLore');
+            notify.error(classifyError(err), { copyable: true });
         }
     }
 }

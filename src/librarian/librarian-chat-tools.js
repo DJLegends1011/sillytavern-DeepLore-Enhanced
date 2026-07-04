@@ -73,7 +73,7 @@ const LIBRARIAN_TOOLS = [
         name: 'list_flags',
         description: 'List the lore-gap queue — entries flagged by the librarian during generation as missing or incomplete. Read-only.',
         parameters: {
-            status: { type: 'string', required: false, description: 'Filter by status: open, in_progress, resolved, dismissed (default: all)' },
+            status: { type: 'string', required: false, description: 'Filter by status: pending, written (default: all)' },
         },
     },
     {
@@ -292,11 +292,11 @@ function toolListFlags(args) {
     }
     let gaps = loreGaps;
     if (statusFilter) {
-        gaps = gaps.filter(g => (g.status || 'open').toLowerCase() === statusFilter);
+        gaps = gaps.filter(g => (g.status || 'pending').toLowerCase() === statusFilter);
         if (gaps.length === 0) return `No gaps with status "${statusFilter}".`;
     }
     const lines = gaps.slice(0, 30).map((g, i) => {
-        const status = g.status || 'open';
+        const status = g.status || 'pending';
         const urgency = g.urgency || 'medium';
         return `${i + 1}. [${status}/${urgency}] **${g.query || '(no query)'}**\n   ${g.reason || '(no reason)'}`;
     });

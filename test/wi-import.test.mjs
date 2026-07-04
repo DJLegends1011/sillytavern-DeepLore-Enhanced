@@ -454,4 +454,132 @@ test('full-parity emission: every round-trip:* field appears as snake_case front
     }
 });
 
+// ============================================================================
+// #14 — structured import failures (thermo review): category assigned at the
+// failure SITE instead of re-derived downstream by keyword-sniffing the flat
+// error string. Producer: importEntries pushes makeImportFailure records into
+// result.failures[] (legacy errors[] strings kept for back-compat); consumer:
+// buildImportReport prefers failures[] and only falls back to classifyFailure
+// for legacy shapes. importEntries itself is not node-importable (settings.js
+// → ST chain), so the wiring is source-pinned like audit-fix-vault.test.mjs.
+// ============================================================================
+
+import { makeImportFailure, IMPORT_FAILURE_SITE_CATEGORY } from '../src/vault/import-pure.js';
+import { buildImportReport, classifyFailure, CATEGORY_LABEL_KEY } from '../src/ui/wi-import-report-pure.js';
+
+test('#14: makeImportFailure maps every failure site to its consumer category', () => {
+    assert(makeImportFailure('dedup-transient').category === 'transient', 'dedup probe glitch → transient');
+    assert(makeImportFailure('dedup-cap').category === 'collision', 'dedup attempts exhausted → collision');
+    assert(makeImportFailure('exist-check').category === 'transient', 'existence-check network error → transient');
+    assert(makeImportFailure('write').category === 'write', 'writeNote !ok → write');
+    assert(makeImportFailure('convert').category === 'convert', 'convertWiEntry throw → convert');
+    assert(makeImportFailure('unexpected').category === 'unknown', 'post-convert throw → unknown');
+    assert(makeImportFailure('no-such-site').category === 'unknown', 'unmapped site defaults to unknown');
+});
+
+test('#14: makeImportFailure record carries filename/title/reason/retryable + the source entry by reference', () => {
+    const entry = { comment: 'Castle', key: ['castle'], content: 'c' };
+    const rec = makeImportFailure('write', { filename: 'Castle.md', title: 'Castle', reason: 'HTTP 500: boom', entry });
+    assert(rec.filename === 'Castle.md', 'filename preserved');
+    assert(rec.title === 'Castle', 'title preserved');
+    assert(rec.reason === 'HTTP 500: boom', 'reason preserved');
+    assert(rec.retryable === true, 'retryable recorded on the row (FAILURE_RETRYABLE parity)');
+    assert(rec.entry === entry, 'source WI entry kept by IDENTITY — retry re-imports it directly');
+});
+
+test('#14: producer category vocabulary matches the consumer badge map exactly', () => {
+    for (const [site, cat] of Object.entries(IMPORT_FAILURE_SITE_CATEGORY)) {
+        assert(cat in CATEGORY_LABEL_KEY, `producer site "${site}" emits category "${cat}" unknown to CATEGORY_LABEL_KEY`);
+    }
+});
+
+test('#14: network reason containing "exceeded"/"attempts" stays transient via the structured path (string-sniffing regression)', () => {
+    // The exact misclassification the flat-string pipeline shipped: a network
+    // error whose message happens to contain collision keywords. classifyFailure
+    // checks 'exceeded'/'attempts' BEFORE the network keywords, so the legacy
+    // path labels this a name clash and the recovery table gives wrong guidance.
+    const entry = { comment: 'Castle', key: ['castle'], content: 'c' };
+    const reason = 'could not verify existence (connection attempts exceeded)';
+    // Documented trap: the legacy sniffer gets this WRONG. If this assertion
+    // ever flips, classifyFailure changed — re-check the fallback contract.
+    assert(classifyFailure(`Castle.md: ${reason}`).category === 'collision',
+        'legacy keyword sniffing misclassifies the network error as collision (the bug #14 fixes)');
+    const rec = makeImportFailure('exist-check', { filename: 'Castle.md', title: 'Castle', reason, entry });
+    const report = buildImportReport(
+        { imported: 0, failed: 1, errors: [`Castle.md: skipped — ${reason}`], failures: [rec], report: {} },
+        'WI', '',
+    );
+    assert(report.failures.length === 1, 'one recovery row');
+    assert(report.failures[0].category === 'transient', 'structured category wins — network error classified transient');
+    assert(report.failures[0].name === 'Castle.md', 'row keyed by filename');
+});
+
+test('#14: buildImportReport prefers failures[] over errors[] when both present', () => {
+    const entry = { comment: 'A' };
+    const failures = [makeImportFailure('write', { filename: 'A.md', title: 'A', reason: 'HTTP 500', entry })];
+    // Deliberately divergent errors[] (extra row, different category flavor) to
+    // prove rows come from the structured records, not the strings.
+    const errors = ['A.md: HTTP 500', 'B.md: network timeout'];
+    const r = buildImportReport({ imported: 0, failed: 1, errors, failures, report: {} }, 'WI', '');
+    assert(r.failures.length === 1, 'rows sourced from failures[], not errors[]');
+    assert(r.failures[0].category === 'write', 'source-assigned category honored');
+    assert(r.failures[0].entry === entry, 'entry ref preserved through buildImportReport (retry contract)');
+    assert(r.errors.length === 2, 'legacy errors[] still passed through untouched for other consumers');
+});
+
+test('#14: legacy fallback — errors[]-only results still classify via classifyFailure', () => {
+    const r = buildImportReport(
+        { imported: 0, failed: 1, errors: ['C.md: could not verify existence (fetch failed)'], report: {} },
+        'WI', '',
+    );
+    assert(r.failures.length === 1, 'legacy shape still produces recovery rows');
+    assert(r.failures[0].category === 'transient', 'fallback keyword classification still works');
+    assert(r.failures[0].entry == null, 'legacy rows carry no entry ref');
+});
+
+// --- source-pins (import.js / commands-vault.js are not node-importable) ----
+
+const IMPORT_SRC = readFileSync(join(__dirname, '..', 'src', 'vault', 'import.js'), 'utf8');
+
+function importEntriesBody() {
+    const start = IMPORT_SRC.indexOf('export async function importEntries');
+    assert(start > 0, 'importEntries declaration found');
+    const end = IMPORT_SRC.indexOf('export async function upsertConvertedEntry', start);
+    return IMPORT_SRC.slice(start, end > start ? end : undefined);
+}
+
+test('#14 source-pin: every importEntries failure site pushes a structured record with its own site key', () => {
+    const body = importEntriesBody();
+    assert(body.includes('makeImportFailure(dedup.failureSite'), 'dedup site threads _findUniquePath failureSite (transient vs cap)');
+    assert(body.includes("makeImportFailure('exist-check'"), 'existence-check catch → exist-check');
+    assert(body.includes("makeImportFailure('write'"), 'writeNote !ok → write');
+    assert(body.includes("makeImportFailure(filename ? 'unexpected' : 'convert'"), 'converter throw → convert; post-convert throw → unexpected');
+});
+
+test('#14 source-pin: errors.push and failures.push stay paired in importEntries (no drift)', () => {
+    const body = importEntriesBody();
+    const errPushes = (body.match(/errors\.push\(/g) || []).length;
+    const failPushes = (body.match(/failures\.push\(makeImportFailure\(/g) || []).length;
+    assert(errPushes > 0, 'legacy errors[] strings still produced (back-compat)');
+    assert(errPushes === failPushes,
+        `every legacy errors.push needs a paired structured failures.push (errors=${errPushes}, failures=${failPushes})`);
+});
+
+test('#14 source-pin: _findUniquePath distinguishes dedup-cap from dedup-transient at the source', () => {
+    assert(IMPORT_SRC.includes("return { path: null, failureSite: 'dedup-transient' }"), 'probe network/abort → dedup-transient');
+    assert(IMPORT_SRC.includes("return { path: null, failureSite: 'dedup-cap' }"), 'attempts exhausted → dedup-cap');
+});
+
+test('#14 source-pin: importEntries returns failures[] alongside legacy errors[]', () => {
+    assert(/return \{ imported, failed, renamed, errors, failures, report \}/.test(importEntriesBody()),
+        'result carries both errors (legacy strings) and failures (structured records)');
+});
+
+test('#14 source-pin: commands-vault retry consumes row.entry — no filename-map reconstruction', () => {
+    const src = readFileSync(join(__dirname, '..', 'src', 'ui', 'commands-vault.js'), 'utf8');
+    assert(!src.includes('byFilename'), 'filename→entry Map reconstruction removed');
+    assert(!src.includes('convertWiEntry('), 'retry no longer re-runs convertWiEntry to rebuild filenames');
+    assert(src.includes('rows.map(f => f.entry)'), 'retry re-imports the source WI entries straight off the rows');
+});
+
 await summary('WI Import Full-Parity Tests');

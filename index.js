@@ -27,6 +27,7 @@ import {
     activateSendButtons,
     deactivateSendButtons,
     getCurrentChatId,
+    stopGeneration,
 } from '../../../../script.js';
 import { renderExtensionTemplateAsync, saveMetadataDebounced } from '../../../extensions.js';
 import { callGenericPopup, POPUP_TYPE, POPUP_RESULT } from '../../../popup.js';
@@ -43,7 +44,7 @@ import { clearPrompts } from './core/pipeline.js';
 import { getSettings, PROMPT_TAG_PREFIX, PROMPT_TAG, invalidateSettingsCache, resolveConnectionConfig, PROXY_DEPRECATION_MODE_KEYS } from './settings.js';
 import { resolvePromptOrOverride, loadPromptsForBoot } from './src/prompts/prompt-store.js';
 import {
-    vaultIndex, getWriterVisibleEntries, indexEverLoaded, indexing,
+    vaultIndex, getWriterVisibleEntries, indexEverLoaded, indexing, buildEpoch,
     lastScribeChatLength, scribeInProgress,
     cooldownTracker, generationCount, injectionHistory, consecutiveInjections,
     chatInjectionCounts, setChatInjectionCounts, trackerKey,
@@ -153,7 +154,12 @@ let _realChatChangedHandler = null;
 
 function _earlyChatChangedStub() {
     if (_realChatChangedHandler) {
-        try { _realChatChangedHandler(); } catch (err) { console.warn('[DLE] CHAT_CHANGED handler error:', err?.message); }
+        // #21: once the real handler is installed it is ALSO registered directly on
+        // CHAT_CHANGED (see _registerEs at the real-handler site), so it fires on its
+        // own. This stub must genuinely no-op here — invoking the handler too made
+        // every post-init CHAT_CHANGED run the handler twice (double epoch bump,
+        // double IDB hydrate, double saves). The queued-during-init event is replayed
+        // exactly once by _installRealChatChangedHandler's drain.
         return;
     }
     let id = null;
@@ -472,13 +478,131 @@ function capNotepad(text, opts = {}) {
  * Fallback: if `#form_sheld` is missing, attach to `document.body` so status
  * still surfaces (visual position differs but functional and observable).
  */
-function _updatePipelineStatus(text) {
+// f029: anti-flash guards for the chat toast. Fast keyword-only / cached runs used to
+// flash the toast in and immediately slide it out (or never finish the 0.32s slide-in) —
+// a distracting blip with no readable information. Two guards fix this:
+//   • SHOW_DELAY: defer the very first appearance by a small threshold so a run that
+//     finishes under it never shows the toast at all (no flash for trivial generations).
+//   • MIN_DWELL: once the toast is actually on screen, keep it for at least this long
+//     before a remove is honored, so the user can always read the status.
+const _PIPELINE_TOAST_SHOW_DELAY = 120;  // ms — sub-threshold runs skip the toast entirely
+const _PIPELINE_TOAST_MIN_DWELL = 600;   // ms — minimum on-screen time once shown
+let _pipelineToastShownAt = 0;           // timestamp the toast became visible (0 = not shown)
+let _pipelineToastShowTimer = null;      // pending deferred first-show timer
+let _pipelineToastRemoveTimer = null;    // pending deferred dwell-honoring removal timer
+let _pipelineToastPendingText = '';      // latest phase text while first-show is deferred
+let _pipelineToastPendingPhase = null;   // latest phase KEY while first-show is deferred (LP1 elapsed/cancel)
+let _pipelineToastFallbackTimer = null;  // post-slide-out fallback remove() timer (cleared on resurrection)
+let _pipelineToastAnimEndHandler = null; // named animationend handler ref (detached on resurrection)
+
+// LP1 (v2.6): elapsed-time heartbeat + cancel for the indeterminate AI phases.
+// The toast is otherwise a static "Consulting vault…" with no sign of life while a slow
+// model thinks. A single 1/sec interval ticks a "(Ns)" suffix; a Cancel button stops the
+// in-flight generation. Both are torn down on EVERY toast-removal path (no leaked interval
+// across generations). The interval and the cancel handler are module-scoped because the
+// toast helpers run at module scope — the per-generation onGenerate AbortController is NOT
+// reachable here, so cancel routes through the canonical GENERATION_STOPPED path instead
+// (see _pipelineCancel below + gotcha #74 / #38).
+let _pipelineElapsedTimer = null;        // 1/sec interval handle (null = not running)
+let _pipelineElapsedStartAt = 0;         // ms timestamp the current elapsed run began (0 = not running)
+let _pipelineElapsedPhase = '';          // phase key the elapsed run is tracking (for restart-on-phase-change)
+
+// Phases where the toast is indeterminate and an elapsed counter + cancel are useful.
+// 'choosing'/'prefilter' are typically sub-second (keyword + pre-filter); the long waits
+// are the AI round-trips: 'consulting' (retrieval), 'generating'/'writing'/'searching'/
+// 'flagging' (Librarian). Showing the heartbeat only here keeps fast runs uncluttered.
+const _PIPELINE_ELAPSED_PHASES = new Set(['consulting', 'generating', 'searching', 'writing', 'flagging']);
+function _isElapsedPhase(phaseKey) { return !!phaseKey && _PIPELINE_ELAPSED_PHASES.has(phaseKey); }
+
+/**
+ * Cancel the in-flight generation from the toast's Cancel button.
+ *
+ * The real abort handle is the per-generation `pipelineAbort` AbortController, local to
+ * `onGenerate` and out of module scope. Rather than thread a module-scoped controller ref
+ * (extra surface, easy to leave dangling across generations), call ST's own `stopGeneration()` —
+ * the EXACT function the Stop button invokes. It (a) aborts ST's streamingProcessor + internal
+ * abortController, then (b) emits GENERATION_STOPPED, which reaches BOTH onGenerate's `onStop`
+ * listener → `abortWith(pipelineAbort, 'pipeline:generation_stopped')` (aborts DLE's live AI
+ * request) AND the init-block GENERATION_STOPPED handler (bumps generationLockEpoch, releases
+ * the lock, clears stale prompts, sets phase idle, removes the toast). The agentic dispatch's
+ * AbortError then unwinds through its try/finally, restoring the send button. Because this is
+ * literally the Stop-button path, send-button + lock + epoch teardown all match the established,
+ * battle-tested behavior — nothing bespoke to keep in sync. See gotcha #74 / #38.
+ */
+function _pipelineCancel() {
+    // Stop the heartbeat immediately so the UI reads as "cancelling" even before the async
+    // teardown lands. _removePipelineStatus (fired by the GENERATION_STOPPED handler) stops it
+    // too — both are idempotent.
+    _stopPipelineElapsed();
+    try {
+        stopGeneration();
+    } catch (e) {
+        console.warn('[DLE] pipeline cancel: stopGeneration() failed:', e?.message);
+        // Fallback: synthesize the event directly so DLE's own listeners still tear down,
+        // then clear the toast so the user isn't stranded on a stuck status.
+        try { eventSource.emit(event_types.GENERATION_STOPPED); } catch { /* noop */ }
+        try { _removePipelineStatus(); } catch { /* noop */ }
+    }
+}
+
+function _stopPipelineElapsed() {
+    if (_pipelineElapsedTimer) { clearInterval(_pipelineElapsedTimer); _pipelineElapsedTimer = null; }
+    _pipelineElapsedStartAt = 0;
+    _pipelineElapsedPhase = '';
+}
+
+/**
+ * Start (or restart on phase change) the 1/sec elapsed heartbeat for an indeterminate phase.
+ * Idempotent for the same phase — a phase swap re-zeros the counter so each AI wait reads its
+ * own elapsed time rather than the cumulative pipeline time. No-op (and stops any running timer)
+ * for non-elapsed phases so 'choosing'/'prefilter' never show a counter.
+ */
+function _startPipelineElapsed(phaseKey, elapsedSpan) {
+    if (!_isElapsedPhase(phaseKey)) { _stopPipelineElapsed(); if (elapsedSpan) elapsedSpan.textContent = ''; return; }
+    // Same phase already ticking → leave the running counter alone (don't reset mid-wait).
+    if (_pipelineElapsedTimer && _pipelineElapsedPhase === phaseKey) return;
+    _stopPipelineElapsed();
+    _pipelineElapsedPhase = phaseKey;
+    _pipelineElapsedStartAt = Date.now();
+    const tick = () => {
+        const span = document.getElementById('dle-pipeline-status')?.querySelector('.dle-pipeline-elapsed');
+        if (!span) { _stopPipelineElapsed(); return; } // toast gone — self-clean (belt-and-braces).
+        const secs = Math.max(0, Math.floor((Date.now() - _pipelineElapsedStartAt) / 1000));
+        // tr(...,fallback) degrades gracefully if the locale key isn't present yet (the EN
+        // key is added in the parent's i18n pass). Single `${0}` → direct replace, no
+        // interpolate import needed.
+        span.textContent = tr('dle_pipeline_elapsed', '${0}s').replace('${0}', String(secs));
+    };
+    tick(); // paint 0s immediately rather than waiting a full second.
+    _pipelineElapsedTimer = setInterval(tick, 1000);
+}
+
+function _updatePipelineStatus(text, phaseKey = null) {
+    // A new phase cancels any pending dwell-removal — we're clearly still working.
+    if (_pipelineToastRemoveTimer) { clearTimeout(_pipelineToastRemoveTimer); _pipelineToastRemoveTimer = null; }
+    const existing = document.getElementById('dle-pipeline-status');
+    if (!existing && _pipelineToastShownAt === 0) {
+        // Not shown yet — defer first appearance so trivial fast runs never flash.
+        _pipelineToastPendingText = text;
+        _pipelineToastPendingPhase = phaseKey;
+        if (_pipelineToastShowTimer) return; // already armed; latest text/phase captured above
+        _pipelineToastShowTimer = setTimeout(() => {
+            _pipelineToastShowTimer = null;
+            _renderPipelineToast(_pipelineToastPendingText, _pipelineToastPendingPhase);
+        }, _PIPELINE_TOAST_SHOW_DELAY);
+        return;
+    }
+    _renderPipelineToast(text, phaseKey);
+}
+
+function _renderPipelineToast(text, phaseKey = null) {
     let el = document.getElementById('dle-pipeline-status');
     if (!el) {
         const target = document.getElementById('form_sheld') || document.body;
         if (!target) return; // No DOM at all — skip (test envs / cold-boot).
         el = document.createElement('div');
         el.id = 'dle-pipeline-status';
+        _pipelineToastShownAt = Date.now();
         // a11y (Wave D): live region so screen readers announce each phase change.
         // aria-atomic re-reads the whole line (prefix + phase) on every swap.
         el.setAttribute('role', 'status');
@@ -489,6 +613,13 @@ function _updatePipelineStatus(text) {
         target.prepend(el);
     }
     el.classList.remove('dle-toast-out');
+    // Resurrection: a pending slide-out removal (stored fallback timer + animationend handler)
+    // would otherwise remove this now-live node mid-pipeline. Cancel both — same node ref.
+    if (_pipelineToastFallbackTimer) { clearTimeout(_pipelineToastFallbackTimer); _pipelineToastFallbackTimer = null; }
+    if (_pipelineToastAnimEndHandler) { el.removeEventListener('animationend', _pipelineToastAnimEndHandler); _pipelineToastAnimEndHandler = null; }
+    // f029: if the element was resurrected mid-slide-out (shownAt reset to 0), re-stamp so
+    // the dwell guard measures from this re-appearance.
+    if (_pipelineToastShownAt === 0) _pipelineToastShownAt = Date.now();
     // Wave D: stable structure — a decorative spinner (aria-hidden, never re-rendered so
     // its spin animation never restarts mid-pipeline) + a swappable text span that
     // cross-fades on phase change. Building via querySelector self-heals any pre-Wave-D
@@ -497,10 +628,30 @@ function _updatePipelineStatus(text) {
     if (!span) {
         // Wave I: goo-spinner replaces the FA spinner. Built once (querySelector self-heal),
         // so its jelly physics run continuously without restart across phase swaps.
-        el.innerHTML = '<goo-spinner size="38" color="currentColor" aria-hidden="true"></goo-spinner>'
-            + '<span class="dle-pipeline-status-text"></span>';
+        // f049: trimmed 38 → 28 so the per-turn toast is legible but no longer the
+        // screen's focal point — the larger goo-spinner stays reserved for the drawer
+        // brand mark, keeping visual weight tracking information durability.
+        // LP1 (v2.6): two extra inert children — an elapsed-seconds span (driven by the
+        // 1/sec heartbeat) and a Cancel button (aborts the in-flight generation). Both are
+        // aria-friendly: the elapsed span stays out of the live-region re-read via its own
+        // text; the cancel button carries an aria-label. Structure is built ONCE (self-heal)
+        // so the spinner physics + cancel listener survive phase swaps.
+        el.innerHTML = '<goo-spinner size="28" color="currentColor" aria-hidden="true"></goo-spinner>'
+            + '<span class="dle-pipeline-status-text"></span>'
+            + '<span class="dle-pipeline-elapsed" aria-hidden="true"></span>'
+            + `<button type="button" class="dle-pipeline-cancel" aria-label="${tr('dle_common_cancel', 'Cancel')}">${tr('dle_common_cancel', 'Cancel')}</button>`;
         span = el.querySelector('.dle-pipeline-status-text');
+        const cancelBtn = el.querySelector('.dle-pipeline-cancel');
+        // Bind once at build time — the structure is never rebuilt for the life of the toast,
+        // so no double-wiring guard is needed. Clicking emits GENERATION_STOPPED (see _pipelineCancel).
+        if (cancelBtn) cancelBtn.addEventListener('click', _pipelineCancel);
     }
+    const elapsedSpan = el.querySelector('.dle-pipeline-elapsed');
+    // Drive the heartbeat for this phase BEFORE the unchanged-text early-return below — a
+    // re-emitted 'consulting' with the same label must still keep the counter ticking.
+    // _startPipelineElapsed is idempotent for the same phase and stops the timer (+ clears
+    // the span text) for non-elapsed phases, so the counter never lingers on 'choosing'.
+    _startPipelineElapsed(phaseKey, elapsedSpan);
     const full = trf('dle_status_header', text); // "DeepLore: ${text}" — localizable prefix.
     if (span.textContent === full) return;       // unchanged → keep spin smooth, skip re-fade.
     span.textContent = full;
@@ -511,12 +662,52 @@ function _updatePipelineStatus(text) {
 }
 
 function _removePipelineStatus() {
+    // LP1 (v2.6): the AI wait is over the moment removal is requested — stop the heartbeat
+    // here, at the TOP, so it's cleared on EVERY removal path (deferred-show cancel,
+    // dwell-deferred slide-out, and immediate). The displayed seconds simply freeze at their
+    // last value for the brief min-dwell window before the node leaves the DOM. No interval
+    // can ever leak across generations because this runs on all teardown paths.
+    _stopPipelineElapsed();
+    // f029: if the toast hasn't actually appeared yet (deferred first-show pending), the run
+    // finished under the show-delay threshold — cancel the pending show so it never flashes.
+    if (_pipelineToastShowTimer) {
+        clearTimeout(_pipelineToastShowTimer);
+        _pipelineToastShowTimer = null;
+        _pipelineToastShownAt = 0;
+        return;
+    }
     const el = document.getElementById('dle-pipeline-status');
-    if (!el) return;
+    if (!el) { _pipelineToastShownAt = 0; return; }
+    // f029: enforce a minimum on-screen dwell so a fast multi-phase run can't yank the
+    // toast away before it's readable. Defer the slide-out until the dwell has elapsed.
+    const shownFor = _pipelineToastShownAt ? Date.now() - _pipelineToastShownAt : _PIPELINE_TOAST_MIN_DWELL;
+    const wait = Math.max(0, _PIPELINE_TOAST_MIN_DWELL - shownFor);
+    if (_pipelineToastRemoveTimer) { clearTimeout(_pipelineToastRemoveTimer); _pipelineToastRemoveTimer = null; }
+    if (wait > 0) {
+        _pipelineToastRemoveTimer = setTimeout(() => { _pipelineToastRemoveTimer = null; _removePipelineStatus(); }, wait);
+        return;
+    }
+    _pipelineToastShownAt = 0;
+    // Clear any stale slide-out artifacts before re-arming (e.g. back-to-back removes).
+    if (_pipelineToastFallbackTimer) { clearTimeout(_pipelineToastFallbackTimer); _pipelineToastFallbackTimer = null; }
+    if (_pipelineToastAnimEndHandler) { el.removeEventListener('animationend', _pipelineToastAnimEndHandler); _pipelineToastAnimEndHandler = null; }
     el.classList.add('dle-toast-out');
-    el.addEventListener('animationend', () => el.remove(), { once: true });
-    // Fallback removal — animationend won't fire on a detached element.
-    setTimeout(() => el?.remove(), 500);
+    // Store the handler ref so a resurrection (_renderPipelineToast) can detach it; without
+    // detach it leaks whenever the node survives a removal (animationend suppressed under
+    // prefers-reduced-motion, or the toast is re-shown before the slide-out completes).
+    _pipelineToastAnimEndHandler = () => {
+        _pipelineToastAnimEndHandler = null;
+        if (_pipelineToastFallbackTimer) { clearTimeout(_pipelineToastFallbackTimer); _pipelineToastFallbackTimer = null; }
+        el.remove();
+    };
+    el.addEventListener('animationend', _pipelineToastAnimEndHandler, { once: true });
+    // Fallback removal — animationend won't fire on a detached element. Stored so a
+    // resurrection within the window cancels it instead of removing the now-live toast.
+    _pipelineToastFallbackTimer = setTimeout(() => {
+        _pipelineToastFallbackTimer = null;
+        if (_pipelineToastAnimEndHandler) { el.removeEventListener('animationend', _pipelineToastAnimEndHandler); _pipelineToastAnimEndHandler = null; }
+        el?.remove();
+    }, 500);
 }
 
 // ============================================================================
@@ -614,7 +805,8 @@ async function _maybeShowProxyDeprecationNotice() {
             const { openSettingsPopup } = await import('./src/ui/settings-ui.js');
             const toolKey = PROXY_MIG_TOOL_KEY[firstKey];
             // openSettingsPopup honors { tab, subtab, toolKey } — see settings-ui.js applyNavigateTo.
-            await openSettingsPopup({ tab: 'connection', subtab: 'ai-connections', toolKey });
+            // (Old two-tier tokens still resolve via the TAB_ALIAS map there.)
+            await openSettingsPopup({ tab: 'ai-connections', toolKey });
 
             // Pulse-glow the first migrated feature's accordion. Defer so the
             // popup's DOM has time to mount, then schedule removal so we never
@@ -810,7 +1002,7 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
     }
     setGenerationLock(true);
     setPipelinePhase('choosing');
-    _updatePipelineStatus(pipelineLabelFor('choosing'));
+    _updatePipelineStatus(pipelineLabelFor('choosing'), 'choosing');
 
     // Reset librarian per-generation search counter
     setLoreGapSearchCount(0);
@@ -1030,7 +1222,7 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
         // C3: runPipeline emits canonical PHASE KEYS ('prefilter', 'consulting') — set the
         // phase deterministically and derive the toast label from the same map. No more
         // `text.includes('Consulting')` sniff (broke on relabel/localization).
-        const _pipelineOnStatus = (phase) => { setPipelinePhase(phase); _updatePipelineStatus(pipelineLabelFor(phase)); };
+        const _pipelineOnStatus = (phase) => { setPipelinePhase(phase); _updatePipelineStatus(pipelineLabelFor(phase), phase); };
         const { finalEntries: pipelineEntries, matchedKeys, trace } = await runPipeline(chatMessages, vaultSnapshot, ctx, { pins, blocks, folderFilter, signal: pipelineAbort.signal, onStatus: _pipelineOnStatus, genId });
         trace.totalMs = Math.round(performance.now() - _pipelineStartMs);
         trace.ensureIndexFreshMs = _indexFreshMs;
@@ -1054,6 +1246,23 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
             try { generationBuffer.push({ t: Date.now(), discarded: true, reason: 'superseded_post_pipeline' }); } catch { /* noop */ }
             return;
         }
+
+        // Stage bookend helper — times fn and stamps trace[field]. Replaces the ten
+        // hand-rolled performance.now() bookend pairs that used to wrap Stages 1-9.
+        const timeStage = (field, fn) => {
+            const t0 = performance.now();
+            const result = fn();
+            trace[field] = Math.round(performance.now() - t0);
+            return result;
+        };
+        // Removed-entry diff for trace enrichment. Keyed by trackerKey — NEVER inline
+        // the `${vaultSource}:${title}` template here (gotcha #50 trackerKey drift class).
+        const diffRemoved = (before, after, reason) => {
+            const afterKeys = new Set(after.map(e => trackerKey(e)));
+            return before
+                .filter(e => !afterKeys.has(trackerKey(e)))
+                .map(e => ({ title: e.title, vaultSource: e.vaultSource || '', reason }));
+        };
 
         // P2-3: single exit for the early-empty branches (no-match / cooldown-empty /
         // gating-empty). Each used to clearPrompts + return WITHOUT writing a verdict,
@@ -1091,24 +1300,13 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
         const policy = buildExemptionPolicy(vaultSnapshot, pins, blocks, trace?.bootstrapActive === true);
 
         // Stage 1: Pin/Block overrides.
-        const _pinBlockStart = performance.now();
-        let finalEntries = applyPinBlock(pipelineEntries, vaultSnapshot, policy, matchedKeys);
-        trace.pinBlockMs = Math.round(performance.now() - _pinBlockStart);
+        let finalEntries = timeStage('pinBlockMs', () => applyPinBlock(pipelineEntries, vaultSnapshot, policy, matchedKeys));
 
         // Stage 2: Contextual gating.
-        const _gatingStart = performance.now();
-        // Capture pre/post entry refs so vaultSource survives the diff (title-only Set
-        // would conflate multi-vault entries with the same title in conflictResolution='all').
-        const preContextual = new Map(finalEntries.map(e => [`${e.vaultSource || ''}:${e.title}`, e]));
         const fieldDefs = fieldDefinitions.length > 0 ? fieldDefinitions : DEFAULT_FIELD_DEFINITIONS;
-        finalEntries = applyContextualGating(finalEntries, ctx, policy, settings.debugMode, settings, fieldDefs);
-        trace.contextualGatingMs = Math.round(performance.now() - _gatingStart);
-        if (trace) {
-            const postContextual = new Set(finalEntries.map(e => `${e.vaultSource || ''}:${e.title}`));
-            trace.contextualGatingRemoved = [...preContextual.entries()]
-                .filter(([k]) => !postContextual.has(k))
-                .map(([, entry]) => ({ title: entry.title, vaultSource: entry.vaultSource || '', reason: 'Filtered by era/location/scene/character' }));
-        }
+        const preContextual = finalEntries;
+        finalEntries = timeStage('contextualGatingMs', () => applyContextualGating(preContextual, ctx, policy, settings.debugMode, settings, fieldDefs));
+        trace.contextualGatingRemoved = diffRemoved(preContextual, finalEntries, 'Filtered by era/location/scene/character');
 
         if (trace?.aiFallback) {
             const aiErr = trace.aiError || '';
@@ -1136,16 +1334,9 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
         }
 
         // Stage 3: re-injection cooldown.
-        const _cooldownStart = performance.now();
-        const preCooldown = new Map(finalEntries.map(e => [`${e.vaultSource || ''}:${e.title}`, e]));
-        finalEntries = applyReinjectionCooldown(finalEntries, policy, injectionHistory, generationCount, settings.reinjectionCooldown, settings.debugMode);
-        trace.reinjectionCooldownMs = Math.round(performance.now() - _cooldownStart);
-        if (trace) {
-            const postCooldown = new Set(finalEntries.map(e => `${e.vaultSource || ''}:${e.title}`));
-            trace.cooldownRemoved = [...preCooldown.entries()]
-                .filter(([k]) => !postCooldown.has(k))
-                .map(([, entry]) => ({ title: entry.title, vaultSource: entry.vaultSource || '', reason: 'Cooldown active' }));
-        }
+        const preCooldown = finalEntries;
+        finalEntries = timeStage('reinjectionCooldownMs', () => applyReinjectionCooldown(preCooldown, policy, injectionHistory, generationCount, settings.reinjectionCooldown, settings.debugMode));
+        trace.cooldownRemoved = diffRemoved(preCooldown, finalEntries, 'Cooldown active');
 
         if (finalEntries.length === 0) {
             // P2-3: route through the shared empty-commit helper (BUG-271 guard inside).
@@ -1154,9 +1345,8 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
         }
 
         // Stage 4: requires/excludes gating (forceInject entries exempt).
-        const _reqExclStart = performance.now();
-        const { result: gated, removed: gatingRemoved } = applyRequiresExcludesGating(finalEntries, policy, settings.debugMode, settings.priorityReversed);
-        trace.requiresExcludesMs = Math.round(performance.now() - _reqExclStart);
+        const { result: gated, removed: gatingRemoved } = timeStage('requiresExcludesMs',
+            () => applyRequiresExcludesGating(finalEntries, policy, settings.debugMode, settings.priorityReversed));
 
         if (gated.length === 0) {
             // P2-3: route through the shared empty-commit helper (BUG-271 guard inside).
@@ -1170,18 +1360,23 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
         //   (2) AI cache miss — chat content changed enough that old dedup entries are stale
         // Done here (not at swipe-restore time) because chat_metadata may be reassigned by ST
         // during the async AI search, which would make a swipe-restore-time clear unreliable.
-        const _stripDedupStart = performance.now();
-        if (settings.stripDuplicateInjections && (_snapMatch || !trace.aiCached)) {
-            if (chat_metadata.deeplore_injection_log?.length > 0) {
-                if (settings.debugMode) console.debug('[DLE][DIAG] strip-dedup-log-clear — %s, clearing %d stale injection log entries',
-                    _snapMatch ? 'swipe/regen detected' : 'AI cache missed (context changed)',
-                    chat_metadata.deeplore_injection_log.length);
-                chat_metadata.deeplore_injection_log = [];
-                saveMetadataDebounced();
+        const postDedup = timeStage('stripDedupMs', () => {
+            // #11: `=== false` (not `!trace.aiCached`) so the "AI cache missed" signal
+            // only fires when the AI actually RAN and missed. In keywords-only mode the
+            // AI never runs, leaving trace.aiCached === undefined; the old `!aiCached`
+            // truthiness wiped the injection log every generation BEFORE strip-dedup
+            // could read it, silently disabling this default-on feature. Now only a real
+            // swipe/regen (_snapMatch) or a genuine cache miss clears the log.
+            if (settings.stripDuplicateInjections && (_snapMatch || trace.aiCached === false)) {
+                if (chat_metadata.deeplore_injection_log?.length > 0) {
+                    if (settings.debugMode) console.debug('[DLE][DIAG] strip-dedup-log-clear — %s, clearing %d stale injection log entries',
+                        _snapMatch ? 'swipe/regen detected' : 'AI cache missed (context changed)',
+                        chat_metadata.deeplore_injection_log.length);
+                    chat_metadata.deeplore_injection_log = [];
+                    saveMetadataDebounced();
+                }
             }
-        }
-        let postDedup = gated;
-        if (settings.stripDuplicateInjections) {
+            if (!settings.stripDuplicateInjections) return gated;
             if (settings.debugMode) {
                 const _sLog = chat_metadata.deeplore_injection_log;
                 console.debug('[DLE][DIAG] strip-dedup-input', {
@@ -1196,30 +1391,24 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
                     },
                 });
             }
-            postDedup = applyStripDedup(gated, policy, chat_metadata.deeplore_injection_log, settings.stripLookbackDepth, settings, settings.debugMode);
+            const deduped = applyStripDedup(gated, policy, chat_metadata.deeplore_injection_log, settings.stripLookbackDepth, settings, settings.debugMode);
             if (settings.debugMode) {
-                const _removed = gated.filter(e => !postDedup.some(p => p.title === e.title));
+                const _removed = gated.filter(e => !deduped.some(p => p.title === e.title));
                 console.debug('[DLE][DIAG] strip-dedup-result', {
-                    keptCount: postDedup.length,
-                    keptTitles: postDedup.map(e => e.title),
+                    keptCount: deduped.length,
+                    keptTitles: deduped.map(e => e.title),
                     removedCount: _removed.length,
                     removedTitles: _removed.map(e => e.title),
                 });
             }
-            if (trace) {
-                const postDedupKeys = new Set(postDedup.map(e => `${e.vaultSource || ''}:${e.title}`));
-                trace.stripDedupRemoved = gated
-                    .filter(e => !postDedupKeys.has(`${e.vaultSource || ''}:${e.title}`))
-                    .map(e => ({ title: e.title, vaultSource: e.vaultSource || '', reason: 'Already in recent context' }));
-            }
-        }
-        trace.stripDedupMs = Math.round(performance.now() - _stripDedupStart);
+            trace.stripDedupRemoved = diffRemoved(gated, deduped, 'Already in recent context');
+            return deduped;
+        });
 
         // Stage 6: format with budget, grouped by injection position.
         // BUG-014: use the captured `settings` object so the whole pipeline sees consistent values.
-        const _fmtStart = performance.now();
-        const { groups, count: injectedCount, totalTokens, acceptedEntries } = formatAndGroup(postDedup, settings, PROMPT_TAG_PREFIX);
-        trace.formatGroupMs = Math.round(performance.now() - _fmtStart);
+        const { groups, count: injectedCount, totalTokens, acceptedEntries } = timeStage('formatGroupMs',
+            () => formatAndGroup(postDedup, settings, PROMPT_TAG_PREFIX));
 
         injectedEntries = acceptedEntries;
 
@@ -1227,8 +1416,8 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
             trace.gatedOut = gatingRemoved.map(e => ({
                 title: e.title, vaultSource: e.vaultSource || '', requires: e.requires, excludes: e.excludes,
             }));
-            const acceptedKeys = new Set(acceptedEntries.map(e => `${e.vaultSource || ''}:${e.title}`));
-            trace.budgetCut = postDedup.filter(e => !acceptedKeys.has(`${e.vaultSource || ''}:${e.title}`))
+            const acceptedKeys = new Set(acceptedEntries.map(e => trackerKey(e)));
+            trace.budgetCut = postDedup.filter(e => !acceptedKeys.has(trackerKey(e)))
                 .map(e => ({ title: e.title, vaultSource: e.vaultSource || '', tokens: e.tokenEstimate, priority: e.priority }));
             // BUG-AUDIT v2.5: trace.injected must carry vaultSource so drawer fallback
             // (when injectedSources is empty but trace.injected isn't) doesn't collapse
@@ -1275,20 +1464,17 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
             }
         }
 
-        // BUG-AUDIT-5: epoch guard on commit — stale force-released pipelines must not wipe
-        // prompts the new pipeline just set.
+        // BUG-AUDIT-5: final epoch check before commit — stale force-released pipelines must
+        // not wipe prompts the new pipeline just set. Both clearPrompts sites below (commit
+        // branch AND the no-groups else branch) run only past this guard, and there is no
+        // await between here and either clearPrompts, so we never wipe prompts without
+        // verified replacement (or a verified this-turn-empty verdict) in hand.
         if (epoch !== chatEpoch || lockEpoch !== generationLockEpoch) {
             console.warn('[DLE] Stale pipeline reached commit phase — discarding');
             return;
         }
 
         if (groups.length > 0) {
-            // Final epoch check immediately before commit. clearPrompts is inside this branch
-            // so we never wipe prompts without verified replacement content.
-            if (epoch !== chatEpoch || lockEpoch !== generationLockEpoch) {
-                console.warn('[DLE] Chat changed or pipeline superseded during commit — discarding results');
-                return;
-            }
             clearPrompts(extension_prompts, PROMPT_TAG_PREFIX, PROMPT_TAG);
             if (settings.injectionMode === 'prompt_list' && promptManager) {
                 for (const id of [`${PROMPT_TAG_PREFIX}constants`, `${PROMPT_TAG_PREFIX}lore`, 'deeplore_notebook', 'deeplore_ai_notepad']) {
@@ -1430,11 +1616,11 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
 
         // Stage 7: track cooldowns + injection history. Both epoch+lockEpoch guards required —
         // a force-released stale pipeline must not corrupt these Maps concurrently with its successor.
-        const _trackStart = performance.now();
-        if (epoch === chatEpoch && lockEpoch === generationLockEpoch) {
-            trackGeneration(injectedEntries, generationCount, cooldownTracker, decayTracker, injectionHistory, settings);
-        }
-        trace.trackGenerationMs = Math.round(performance.now() - _trackStart);
+        timeStage('trackGenerationMs', () => {
+            if (epoch === chatEpoch && lockEpoch === generationLockEpoch) {
+                trackGeneration(injectedEntries, generationCount, cooldownTracker, decayTracker, injectionHistory, settings);
+            }
+        });
 
         // Dedup-toggled-off: nuke the now-meaningless injection log (epoch-guarded).
         if (!settings.stripDuplicateInjections && epoch === chatEpoch && chat_metadata.deeplore_injection_log?.length > 0) {
@@ -1497,28 +1683,28 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
 
         // Stage 8: analytics — postDedup is the "matched" set (passed all gating).
         // Epoch+lock guards mirror Stages 7 and 9 to prevent cross-chat pollution.
-        const _analyticsStart = performance.now();
-        if (postDedup.length > 0 && epoch === chatEpoch && lockEpoch === generationLockEpoch) {
-            recordAnalytics(postDedup, injectedEntries, settings.analyticsData);
-            // generationCount > 0 skips the gen-0 case (first gen after CHAT_CHANGED) — that
-            // would save before any mutation accumulates. _analyticsPendingSave lets
-            // CHAT_CHANGED / beforeunload flush any unpersisted batch.
-            _analyticsPendingSave = true;
-            if (generationCount > 0 && generationCount % 5 === 0) {
-                invalidateSettingsCache();
-                saveSettingsDebounced();
-                _analyticsPendingSave = false;
+        timeStage('recordAnalyticsMs', () => {
+            if (postDedup.length > 0 && epoch === chatEpoch && lockEpoch === generationLockEpoch) {
+                recordAnalytics(postDedup, injectedEntries, settings.analyticsData);
+                // generationCount > 0 skips the gen-0 case (first gen after CHAT_CHANGED) — that
+                // would save before any mutation accumulates. _analyticsPendingSave lets
+                // CHAT_CHANGED / beforeunload flush any unpersisted batch.
+                _analyticsPendingSave = true;
+                if (generationCount > 0 && generationCount % 5 === 0) {
+                    invalidateSettingsCache();
+                    saveSettingsDebounced();
+                    _analyticsPendingSave = false;
+                }
             }
-        }
-        trace.recordAnalyticsMs = Math.round(performance.now() - _analyticsStart);
+        });
 
         // Stage 9: per-chat injection counts. Epoch + lock guards + swipe-aware rollback.
         // BUG-291/292/293: keyed by `${msgIdx}|${swipe_id}` with per-swipe trackerKey map. Handles:
         //   - regen of current swipe (key matches → decrement the prior keys exactly)
         //   - alternate-swipe nav (different swipe_id → different key → no false decrement)
         //   - reload between generations (perSwipeInjectedKeys is persisted to chat_metadata)
-        const _countsStart = performance.now();
-        if (epoch === chatEpoch && lockEpoch === generationLockEpoch) {
+        timeStage('perChatCountsMs', () => {
+            if (epoch !== chatEpoch || lockEpoch !== generationLockEpoch) return;
             // P2-1: key on the assistant's eventual global slot (verdictMsgIdx) via the
             // shared helper, identical to the early swipe-check above and to the
             // MESSAGE_SWIPED rebuild. A fresh user→assistant turn with pre-push
@@ -1561,8 +1747,7 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
             // CHAT_CHANGED and never flush. Belt-and-braces fallback if saveMetadata throws sync.
             try { saveMetadata(); } catch { saveMetadataDebounced(); }
             notifyChatInjectionCountsUpdated();
-        }
-        trace.perChatCountsMs = Math.round(performance.now() - _countsStart);
+        });
 
         if (groups.length > 0) {
             // Context-usage warning with hysteresis: warn at 20% (with +5% gap from last warn),
@@ -1601,7 +1786,7 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
 
         // Pipeline complete — show "Generating..." until first streaming token arrives.
         setPipelinePhase('generating');
-        _updatePipelineStatus(pipelineLabelFor('generating'));
+        _updatePipelineStatus(pipelineLabelFor('generating'), 'generating');
 
         // === Agentic Loop Dispatch ===
         // When Librarian is enabled and the active API supports tool calling, DLE runs its
@@ -1715,13 +1900,19 @@ async function onGenerate(chatMessages, contextSize, abort, type) {
                 };
 
                 setPipelinePhase('writing');
-                _updatePipelineStatus(pipelineLabelFor('writing'));
-                const onAgenticStatus = (text) => {
-                    // Agentic-loop status carries dynamic progress (e.g. search "(1/2)"), so the
-                    // toast keeps that richer text; the drawer label stays canonical via the phase.
-                    _updatePipelineStatus(text);
-                    if (text.startsWith('Searching')) setPipelinePhase('searching');
-                    else if (text.startsWith('Writing') || text.startsWith('Generating')) setPipelinePhase('writing');
+                _updatePipelineStatus(pipelineLabelFor('writing'), 'writing');
+                const onAgenticStatus = (status) => {
+                    // f025: the loop passes a structured { phase, progress } object — NEVER infer
+                    // the phase by string-matching display text (gotcha #74). Set the phase
+                    // deterministically; compose the localized label + (n/m) progress for the toast.
+                    const phase = status?.phase || 'writing';
+                    setPipelinePhase(phase);
+                    const label = pipelineLabelFor(phase);
+                    const p = status?.progress;
+                    const text = (p && Number.isFinite(p.current) && Number.isFinite(p.total))
+                        ? trf('dle_status_progress', label, p.current, p.total)
+                        : label;
+                    _updatePipelineStatus(text, phase);
                 };
                 const result = await runAgenticLoop({
                     messages: agenticMessages,
@@ -2012,8 +2203,10 @@ async function _doInit() {
         //
         // We intentionally use eventSource.on directly (not _registerEs) AND push
         // it into _dleListeners so teardown removes it. The stub remains in place
-        // until the real handler attaches; both run, but the stub becomes a no-op
-        // trampoline once _realChatChangedHandler is set.
+        // until the real handler attaches; both listeners stay registered, but the
+        // stub becomes a genuine no-op once _realChatChangedHandler is set (#21) —
+        // the real handler's own direct registration fires the event, so the stub
+        // must NOT also invoke it.
         eventSource.on(event_types.CHAT_CHANGED, _earlyChatChangedStub);
         _dleListeners.eventSource.push({
             event: event_types.CHAT_CHANGED,
@@ -2082,6 +2275,12 @@ async function _doInit() {
         const _lsSentinel = typeof localStorage !== 'undefined' && localStorage.getItem('dle-wizard-completed') === '1';
         const _settingsFlag = !!firstRunSettings._wizardCompleted;
         const wizardCompleted = _settingsFlag || _lsSentinel;
+        // SKIP/RESUME (v2.6): user dismissed the wizard before finishing — suppress auto-relaunch.
+        // Dual-source (settings flag + localStorage sentinel) mirrors _wizardCompleted (BUG-125)
+        // so a settings-save crash can't resurrect the wizard. The wizard side (setup-wizard.js
+        // persistWizardSkip) writes both _wizardSkipped and the 'dle-wizard-skipped' sentinel.
+        const _skipLs = typeof localStorage !== 'undefined' && localStorage.getItem('dle-wizard-skipped') === '1';
+        const wizardSkipped = !!firstRunSettings._wizardSkipped || _skipLs;
         // The two sources can diverge if a write path fails (settings save crash, localStorage quota).
         // Reconcile so drawer status / wizard re-launch / diagnostics all read the same truth next load.
         if (wizardCompleted && _settingsFlag !== _lsSentinel) {
@@ -2095,7 +2294,7 @@ async function _doInit() {
                 }
             } catch { /* noop */ }
         }
-        if (!hasEnabledVaults && !wizardCompleted) {
+        if (!hasEnabledVaults && !wizardCompleted && !wizardSkipped) {
             const launchWizard = async () => {
                 try {
                     // Wait for ST onboarding to be gone — covers cases where APP_READY fires early
@@ -2110,9 +2309,10 @@ async function _doInit() {
                         await new Promise(r => setTimeout(r, 250));
                         waited += 250;
                     }
-                    // Re-check — user may have configured a vault during the onboarding wait.
+                    // Re-check — user may have configured a vault OR skipped the wizard during
+                    // the onboarding wait (a skip persisted mid-wait must still suppress launch).
                     const s = getSettings();
-                    if ((s.vaults || []).some(v => v.enabled) || s._wizardCompleted) return;
+                    if ((s.vaults || []).some(v => v.enabled) || s._wizardCompleted || s._wizardSkipped) return;
                     const { showSetupWizard } = await import('./src/ui/setup-wizard.js');
                     showSetupWizard();
                 } catch (err) {
@@ -2183,8 +2383,14 @@ async function _doInit() {
                 // Skip if a build was already triggered by early user generation.
                 if (indexEverLoaded || indexing) return;
                 try {
+                    // Epoch fence (gotcha #95): if a /dle-clear lands while hydrateFromCache
+                    // awaits its IDB read, hydration bails and returns false — but falling
+                    // through to buildIndex here would re-fetch from Obsidian and overwrite
+                    // the clear (wipe-and-stop means STOP). Only auto-build when no
+                    // clear/force-release bumped buildEpoch during hydration.
+                    const bootBuildEpoch = buildEpoch;
                     const hydrated = await hydrateFromCache();
-                    if (!hydrated) {
+                    if (!hydrated && buildEpoch === bootBuildEpoch) {
                         await buildIndex();
                     }
                     // hydrateFromCache (when it succeeds) triggers a background buildIndex itself.

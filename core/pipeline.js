@@ -116,6 +116,15 @@ export const WI_PARITY_FIELD_SET = new Set([
     'sticky', 'delay', 'group', 'group_weight',
 ]);
 
+/**
+ * #15 — Canonical priority default (lower = higher priority). Single source of
+ * truth shared by the frontmatter parser below AND the cache backfill in
+ * `src/vault/cache-validate.js`. The cache side used to backfill 50 while the
+ * parser defaulted 100 — a corrupt-cache entry silently OUTRANKED every fresh
+ * parse of the same file. Keep both sites on this constant.
+ */
+export const DEFAULT_PRIORITY = 100;
+
 const CANONICAL_FM_LOOKUP = {
     keys: 'keys',
     tags: 'tags',
@@ -277,7 +286,7 @@ export function parseVaultFile(file, tagConfig, fieldDefinitions, options = {}) 
     const links = extractWikiLinks(body);
     const content = cleanContent(body);
     const priorityCoerced = coerceNumber(frontmatter.priority, 'priority', warnings, lenient);
-    const priority = priorityCoerced.value !== null ? priorityCoerced.value : 100;
+    const priority = priorityCoerced.value !== null ? priorityCoerced.value : DEFAULT_PRIORITY;
 
     const constantTagToMatch = tagConfig.constantTag ? tagConfig.constantTag.toLowerCase() : '';
     const constant = frontmatter.constant === true || (constantTagToMatch && tags.includes(constantTagToMatch));

@@ -9,28 +9,32 @@ import {
 } from '../fields.js';
 import { writeFieldDefinitions } from '../vault/obsidian-api.js';
 import { buildIndex } from '../vault/vault.js';
+import { tr } from '../i18n/i18n.js';
 
+// JS value key → locale key + English fallback. Resolved at render time via tr()
+// so the dropdowns honor the active locale. The op/type/tolerance strings were
+// authored in all locale files but the Rule Builder hardcoded English until now.
 const OPERATOR_LABELS = {
-    match_any: 'Match Any',
-    match_all: 'Match All',
-    not_any: 'Not Any',
-    exists: 'Exists',
-    not_exists: 'Not Exists',
-    gt: 'Greater Than',
-    lt: 'Less Than',
-    eq: 'Equals',
+    match_any: ['dle_op_match_any', 'Match Any'],
+    match_all: ['dle_op_match_all', 'Match All'],
+    not_any: ['dle_op_not_any', 'Not Any'],
+    exists: ['dle_op_exists', 'Exists'],
+    not_exists: ['dle_op_not_exists', 'Not Exists'],
+    gt: ['dle_op_greater_than', 'Greater Than'],
+    lt: ['dle_op_less_than', 'Less Than'],
+    eq: ['dle_op_equals', 'Equals'],
 };
 
 const TOLERANCE_LABELS = {
-    strict: 'Strict — require match or filter out',
-    moderate: 'Moderate — pass if context not set',
-    lenient: 'Lenient — pass unless mismatch',
+    strict: ['dle_tolerance_strict', 'Strict — require match or filter out'],
+    moderate: ['dle_tolerance_moderate', 'Moderate — pass if context not set'],
+    lenient: ['dle_tolerance_lenient', 'Lenient — pass unless mismatch'],
 };
 
 const TYPE_LABELS = {
-    string: 'Text',
-    number: 'Number',
-    boolean: 'Boolean',
+    string: ['dle_type_text', 'Text'],
+    number: ['dle_type_number', 'Number'],
+    boolean: ['dle_type_boolean', 'Boolean'],
 };
 
 function buildFieldRowHtml(field, index) {
@@ -40,19 +44,29 @@ function buildFieldRowHtml(field, index) {
     const valuesStr = escapeHtml((field.values || []).join(', '));
 
     const typeOptions = Object.entries(TYPE_LABELS)
-        .map(([k, v]) => `<option value="${k}"${field.type === k ? ' selected' : ''}>${v}</option>`)
+        .map(([k, [lk, fb]]) => `<option value="${k}"${field.type === k ? ' selected' : ''}>${escapeHtml(tr(lk, fb))}</option>`)
         .join('');
 
     const operatorOptions = Object.entries(OPERATOR_LABELS)
-        .map(([k, v]) => `<option value="${k}"${field.gating?.operator === k ? ' selected' : ''}>${v}</option>`)
+        .map(([k, [lk, fb]]) => `<option value="${k}"${field.gating?.operator === k ? ' selected' : ''}>${escapeHtml(tr(lk, fb))}</option>`)
         .join('');
 
     const toleranceOptions = Object.entries(TOLERANCE_LABELS)
-        .map(([k, v]) => `<option value="${k}"${field.gating?.tolerance === k ? ' selected' : ''}>${escapeHtml(v)}</option>`)
+        .map(([k, [lk, fb]]) => `<option value="${k}"${field.gating?.tolerance === k ? ' selected' : ''}>${escapeHtml(tr(lk, fb))}</option>`)
         .join('');
 
     const gatingDisabled = field.gating?.enabled === false;
     const gatingDimClass = gatingDisabled ? ' dle-rb-gating-disabled' : '';
+
+    // A saved field with a deliberately divergent contextKey reopens UNLINKED so the
+    // .dle-rb-name handler won't clobber it on the first keystroke.
+    const linked = (field.contextKey || field.name || '') === (field.name || '');
+    const linkIconClass = linked ? 'fa-link' : 'fa-link-slash';
+    const linkIconTitle = linked
+        ? tr('dle_rb_link_linked', 'Linked to field name — click to unlink')
+        : tr('dle_rb_link_unlinked', 'Unlinked from field name — click to re-link');
+    const linkIconStyle = linked ? '' : ' style="opacity:var(--dle-opacity-disabled,0.4)"';
+    const ctxManualAttr = linked ? '' : ' data-manual="true"';
 
     return `
     <div class="dle-rb-field" data-idx="${index}">
@@ -60,30 +74,32 @@ function buildFieldRowHtml(field, index) {
             <span class="dle-rb-field-num">#${index + 1}</span>
             <input class="dle-rb-name text_pole" data-prop="name" value="${nameVal}" placeholder="field_name" title="Frontmatter field name (snake_case)" />
             <input class="dle-rb-label text_pole" data-prop="label" value="${labelVal}" placeholder="Display Label" title="Human-readable label" />
-            <button class="dle-rb-move-up menu_button" title="Move up" aria-label="Move field up"><i class="fa-solid fa-chevron-up"></i></button>
-            <button class="dle-rb-move-down menu_button" title="Move down" aria-label="Move field down"><i class="fa-solid fa-chevron-down"></i></button>
-            <button class="dle-rb-dupe menu_button" title="Duplicate field" aria-label="Duplicate field"><i class="fa-solid fa-copy"></i></button>
-            <button class="dle-rb-delete menu_button" title="Remove field" aria-label="Remove field #${index + 1}"><i class="fa-solid fa-trash"></i></button>
+            <div class="dle-rb-field-tools">
+                <button type="button" class="dle-rb-move-up menu_button" title="Move up" aria-label="Move field up"><i class="fa-solid fa-chevron-up"></i></button>
+                <button type="button" class="dle-rb-move-down menu_button" title="Move down" aria-label="Move field down"><i class="fa-solid fa-chevron-down"></i></button>
+                <button type="button" class="dle-rb-dupe menu_button" title="Duplicate field" aria-label="Duplicate field"><i class="fa-solid fa-copy"></i></button>
+                <button type="button" class="dle-rb-delete menu_button" title="Remove field" aria-label="Remove field #${index + 1}"><i class="fa-solid fa-trash"></i></button>
+            </div>
         </div>
         <div class="dle-rb-field-body">
             <div class="dle-rb-row">
-                <label class="dle-rb-lbl">Type</label>
+                <label class="dle-rb-lbl">${tr('dle_rb_lbl_type', 'Type')}</label>
                 <select class="dle-rb-select" data-prop="type">${typeOptions}</select>
-                <label class="dle-rb-lbl dle-rb-multi-lbl"><input type="checkbox" data-prop="multi" ${field.multi ? 'checked' : ''} ${field.type === 'boolean' ? 'disabled' : ''} /> Multi-value</label>
+                <label class="dle-rb-lbl dle-rb-multi-lbl"><input type="checkbox" data-prop="multi" ${field.multi ? 'checked' : ''} ${field.type === 'boolean' ? 'disabled' : ''} /> ${tr('dle_rb_lbl_multi_value', 'Multi-value')}</label>
             </div>
             <div class="dle-rb-row">
-                <label class="dle-rb-lbl">Gating</label>
-                <label class="dle-rb-lbl dle-rb-enabled-lbl" title="Enable or disable contextual gating for this field"><input type="checkbox" data-prop="gating.enabled" ${field.gating?.enabled !== false ? 'checked' : ''} /> Enabled</label>
+                <label class="dle-rb-lbl">${tr('dle_rb_lbl_gating', 'Gating')}</label>
+                <label class="dle-rb-lbl dle-rb-enabled-lbl" title="Enable or disable contextual gating for this field"><input type="checkbox" data-prop="gating.enabled" ${field.gating?.enabled !== false ? 'checked' : ''} /> ${tr('dle_rb_lbl_enabled', 'Enabled')}</label>
                 <select class="dle-rb-select${gatingDimClass}" data-prop="gating.operator">${operatorOptions}</select>
                 <select class="dle-rb-select dle-rb-tolerance${gatingDimClass}" data-prop="gating.tolerance">${toleranceOptions}</select>
             </div>
             <div class="dle-rb-row">
-                <label class="dle-rb-lbl">Context Key</label>
-                <input class="dle-rb-ctx text_pole" data-prop="contextKey" value="${contextKeyVal}" placeholder="chat_metadata key" title="Key used in chat_metadata.deeplore_context" />
-                <span class="dle-rb-link-icon" role="button" tabindex="0" aria-label="Toggle link between context key and field name" title="Linked to field name — click to unlink"><i class="fa-solid fa-link"></i></span>
+                <label class="dle-rb-lbl">${tr('dle_rb_lbl_context_key', 'Context Key')}</label>
+                <input class="dle-rb-ctx text_pole" data-prop="contextKey" value="${contextKeyVal}"${ctxManualAttr} placeholder="chat_metadata key" title="Key used in chat_metadata.deeplore_context" />
+                <span class="dle-rb-link-icon" role="button" tabindex="0" aria-label="Toggle link between context key and field name" title="${escapeHtml(linkIconTitle)}"${linkIconStyle}><i class="fa-solid ${linkIconClass}"></i></span>
             </div>
             <div class="dle-rb-row">
-                <label class="dle-rb-lbl">Allowed Values</label>
+                <label class="dle-rb-lbl">${tr('dle_rb_lbl_allowed_values', 'Allowed Values')}</label>
                 <input class="dle-rb-values text_pole" data-prop="values" value="${valuesStr}" placeholder="e.g. morning, afternoon, evening (or leave empty for freeform)" title="Comma-separated allowed values. Leave empty for freeform." />
             </div>
         </div>
@@ -142,12 +158,12 @@ export async function openRuleBuilder() {
             ${working.map((f, i) => buildFieldRowHtml(f, i)).join('')}
         </div>
         <div class="dle-rb-actions">
-            <button class="dle-rb-add menu_button"><i class="fa-solid fa-plus"></i> Add Field</button>
-            <button class="dle-rb-reset menu_button" title="Reset to 4 built-in defaults (era, location, scene_type, character_present)"><i class="fa-solid fa-rotate-left"></i> Reset Defaults</button>
+            <button type="button" class="dle-rb-add menu_button"><i class="fa-solid fa-plus"></i> Add Field</button>
+            <button type="button" class="dle-rb-reset menu_button" title="Reset to 4 built-in defaults (era, location, scene_type, character_present)"><i class="fa-solid fa-rotate-left"></i> Reset Defaults</button>
         </div>
         <div class="dle-rb-footer">
-            <button class="dle-rb-save menu_button menu_button_default"><i class="fa-solid fa-floppy-disk"></i> Save to Obsidian</button>
-            <button class="dle-rb-cancel menu_button"><i class="fa-solid fa-xmark"></i> Cancel</button>
+            <button type="button" class="dle-rb-save menu_button menu_button_default"><i class="fa-solid fa-floppy-disk"></i> Save to Obsidian</button>
+            <button type="button" class="dle-rb-cancel menu_button"><i class="fa-solid fa-xmark"></i> Cancel</button>
         </div>
     </div>`;
 
@@ -227,7 +243,7 @@ export async function openRuleBuilder() {
         if (!$ctx.data('manual')) {
             $ctx.val($(this).val().trim());
             $icon.find('i').removeClass('fa-link-slash').addClass('fa-link');
-            $icon.attr('title', 'Linked to field name — click to unlink');
+            $icon.attr('title', tr('dle_rb_link_linked', 'Linked to field name — click to unlink'));
             $icon.css('opacity', '');
         }
     });
@@ -236,7 +252,7 @@ export async function openRuleBuilder() {
         const $icon = $row.find('.dle-rb-link-icon');
         $(this).data('manual', true);
         $icon.find('i').removeClass('fa-link').addClass('fa-link-slash');
-        $icon.attr('title', 'Unlinked from field name — click to re-link');
+        $icon.attr('title', tr('dle_rb_link_unlinked', 'Unlinked from field name — click to re-link'));
         $icon.css('opacity', '0.4');
     });
 
@@ -256,12 +272,12 @@ export async function openRuleBuilder() {
             $ctx.data('manual', false);
             $ctx.val($row.find('[data-prop="name"]').val().trim());
             $(this).find('i').removeClass('fa-link-slash').addClass('fa-link');
-            $(this).attr('title', 'Linked to field name — click to unlink');
+            $(this).attr('title', tr('dle_rb_link_linked', 'Linked to field name — click to unlink'));
             $(this).css('opacity', '');
         } else {
             $ctx.data('manual', true);
             $(this).find('i').removeClass('fa-link').addClass('fa-link-slash');
-            $(this).attr('title', 'Unlinked from field name — click to re-link');
+            $(this).attr('title', tr('dle_rb_link_unlinked', 'Unlinked from field name — click to re-link'));
             $(this).css('opacity', '0.4');
         }
         dirty = true;
@@ -368,7 +384,7 @@ export async function openRuleBuilder() {
                 console.warn('[DLE] Index rebuild after field save failed:', err?.message);
                 try {
                     toastr.error(
-                        `Fields saved, but index rebuild failed: ${err?.message || 'unknown error'}. Run /dle-force-refresh or rebuild from the drawer.`,
+                        `Fields saved, but index rebuild failed: ${err?.message || 'unknown error'}. Run /dle-refresh or rebuild from the drawer.`,
                         'Reindex Failed',
                         { timeOut: 12000 },
                     );

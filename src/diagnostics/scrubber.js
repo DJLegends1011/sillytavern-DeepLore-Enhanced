@@ -30,7 +30,12 @@
 // do NOT match non-secret camelCase fields like `maxTokens`, `tokenizer`,
 // `tokenEstimate`, `inputTokens`, or `authorization`/`oauth_token` (those are either
 // already covered or correctly left alone).
-const SENSITIVE_KEY_RE = /(api[_-]?key|apikey|access[_-]?token|secret|password|passwd|authorization|auth[_-]?header|bearer|x[_-]?api[_-]?key|obsidianapikey|proxy[_-]?key|cookie|session|refresh[_-]?token|oauth[_-]?token|private[_-]?key|client[_-]?id|app[_-]?key|encryption[_-]?key|master[_-]?key|helicone[_-]?auth|cf[_-]?access|credential|webhook|\btoken\b|\bauth\b)/i;
+// #13d: `session` is anchored the same way — `\bsession\b` (a key literally named
+// `session`) plus `session`+id/token/key/secret/cookie variants. The old bare
+// `session` substring wholesale-redacted stats objects like `sessionStats` /
+// `librarianSessionStats`, and the report then fabricated "0 searches, 0 flags"
+// from the `<redacted>` placeholder (`ss.searchCalls ?? 0`).
+const SENSITIVE_KEY_RE = /(api[_-]?key|apikey|access[_-]?token|secret|password|passwd|authorization|auth[_-]?header|bearer|x[_-]?api[_-]?key|obsidianapikey|proxy[_-]?key|cookie|\bsession\b|session[_-]?(?:id|token|key|secret|cookie)|refresh[_-]?token|oauth[_-]?token|private[_-]?key|client[_-]?id|app[_-]?key|encryption[_-]?key|master[_-]?key|helicone[_-]?auth|cf[_-]?access|credential|webhook|\btoken\b|\bauth\b)/i;
 
 // Keys whose VALUE is a user-authored prompt body (AI prompt overrides, custom
 // system prompts, prompt presets). These are not secrets but they ARE user

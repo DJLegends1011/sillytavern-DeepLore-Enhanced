@@ -131,7 +131,10 @@ const PHASE_FLAG = 'FLAG';
  * @param {AbortSignal} options.signal
  * @param {number} options.epoch - chatEpoch snapshot
  * @param {number} options.lockEpoch - generationLockEpoch snapshot
- * @param {function} options.onStatus
+ * @param {function} options.onStatus - Called with a structured `{ phase, progress }`
+ *   object (phase = canonical PIPELINE_PHASE key; progress = `{ current, total }` or
+ *   null). The consumer sets the phase deterministically and composes the localized
+ *   label — it must NOT string-match display text (gotcha #74). See f025.
  * @param {function} options.onProse - Called when write() fires; awaited so saveReply
  *   completes before the loop returns. The FLAG turn is now backgrounded (see the
  *   `pendingFlag` thunk in the return value) — onProse no longer gates a synchronous
@@ -271,9 +274,11 @@ export async function runAgenticLoop(options) {
                         break;
                     }
                     searchCount++;
-                    // C3: canonical "Searching vault\u2026" prefix (matches PIPELINE_PHASE_LABELS);
-                    // keeps the dynamic (n/m) progress in the chat toast.
-                    onStatus?.(`Searching vault\u2026 (${searchCount}/${maxSearches})`);
+                    // C3 (gotcha #74): never make the consumer infer the phase from display text.
+                    // Pass the canonical phase KEY plus the dynamic (n/m) progress as structured
+                    // data; index.js sets the phase deterministically and composes the localized
+                    // label + progress for the toast. See f025.
+                    onStatus?.({ phase: 'searching', progress: { current: searchCount, total: maxSearches } });
 
                     // CRIT-LIB-2: searchLoreAction returns `{ text, titles }` (see its
                     // doc comment). `titles` is the authoritative matched-entry list;
@@ -299,6 +304,15 @@ export async function runAgenticLoop(options) {
                         break;
                     }
                     const searchResult = await searchLoreAction({ queries: tc.input.queries || [] });
+                    // #23: searchLoreAction refunds its own loreGapSearchCount when a
+                    // search delivered no value (index not ready / zero hits) and tells
+                    // the model the search was free. Mirror that on the loop's searchCount
+                    // so the two budgets stay aligned — otherwise the loop keeps counting
+                    // the "free" search and withdraws TOOL_SEARCH early, burning paid
+                    // iterations on lore-sparse vaults.
+                    if (searchResult && searchResult.refunded) {
+                        searchCount = Math.max(0, searchCount - 1);
+                    }
                     const resultText = typeof searchResult === 'string'
                         ? searchResult
                         : (searchResult?.text ?? '');

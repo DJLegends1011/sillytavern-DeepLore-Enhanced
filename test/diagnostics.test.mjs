@@ -13,9 +13,15 @@ import {
     test, section, summary,
 } from './helpers.mjs';
 
+import { readFileSync } from 'node:fs';
+
 import { RingBuffer, safeStringify } from '../src/diagnostics/ring-buffer.js';
 import { makeCtx, scrubString, scrubDeep } from '../src/diagnostics/scrubber.js';
-import { createPseudonymContext, pseudonymizeTrace } from '../src/diagnostics/pseudonymize-trace.js';
+import {
+    createPseudonymContext, pseudonymizeTrace, pseudonymizeTitle,
+    pseudonymizeVaultSource, pseudonymizeHealth, replaceKnownAliases,
+    TRACE_ENTRY_ARRAY_KEYS, HEALTH_QUOTED_DETAIL_RULES,
+} from '../src/diagnostics/pseudonymize-trace.js';
 
 
 // ============================================================================
@@ -1238,6 +1244,443 @@ test('G2: dead scrubber stat is the source of the lie — scrubbing titles never
     // No production code path increments scrubberCtx.stats.titles — confirm it
     // stays 0 even though titles WERE aliased (in the other context).
     assertEqual(scrubberCtx.stats.titles | 0, 0, 'scrubber stats.titles is the never-written dead stat (always 0)');
+});
+
+
+// ============================================================================
+//  H. Trace entry-array key list — single source + drift guard (#13b)
+//
+//  Thermo-review #13(b): `probabilitySkipped` was missing from the hand-rolled
+//  ENTRY_ARRAY_KEYS list in pseudonymize-trace.js, so raw {title, vaultSource}
+//  objects passed through pseudonymization unscrubbed into the shareable
+//  export. Three separate enumerations of the trace entry-array keys existed
+//  (pseudonymize-trace.js, flight-recorder.js, export.js AI schema doc); they
+//  are now single-sourced in TRACE_ENTRY_ARRAY_KEYS. These tests pin the leak
+//  fix and guard the list against future drift from the pipeline trace factory.
+// ============================================================================
+
+section('H. Trace entry-array keys — single source + drift guard (#13b)');
+
+test('H1: probabilitySkipped entries are pseudonymized (leak regression)', () => {
+    const ctx = createPseudonymContext();
+    const trace = {
+        probabilitySkipped: [
+            { title: 'Secret NPC', vaultSource: 'Private Vault', probability: 0.3, roll: 0.9 },
+        ],
+    };
+    const out = pseudonymizeTrace(trace, ctx);
+    const json = JSON.stringify(out);
+    assert(!json.includes('Secret NPC'), 'raw title must not survive in probabilitySkipped');
+    assert(!json.includes('Private Vault'), 'raw vaultSource must not survive in probabilitySkipped');
+    assertMatch(out.probabilitySkipped[0].title, /^<title-\d+>$/, 'title pseudonymized');
+    assertMatch(out.probabilitySkipped[0].vaultSource, /^<vault-\d+>$/, 'vaultSource pseudonymized');
+    assertEqual(out.probabilitySkipped[0].probability, 0.3, 'non-identifying metadata preserved');
+    assertEqual(out.probabilitySkipped[0].roll, 0.9, 'roll preserved');
+});
+
+test('H2: TRACE_ENTRY_ARRAY_KEYS covers every entry-array key in the pipeline trace factory (drift guard)', () => {
+    // The canonical trace shape is the factory in src/pipeline/pipeline.js
+    // (`const trace = { ... };`). Scan its source: every key initialized to
+    // `[]` there is an array of per-entry objects and MUST be covered by the
+    // shared list, or its raw titles/vaultSources leak past pseudonymization.
+    const src = readFileSync(new URL('../src/pipeline/pipeline.js', import.meta.url), 'utf8');
+    const factoryMatch = src.match(/const trace = \{([\s\S]*?)\n {4}\};/);
+    assertNotNull(factoryMatch, 'pipeline.js trace factory (`const trace = {...};`) must be found');
+    const factoryArrayKeys = [...factoryMatch[1].matchAll(/^\s*(\w+):\s*\[\],?\s*$/gm)].map(m => m[1]);
+    assertGreaterThan(factoryArrayKeys.length, 9, `sanity: factory declares the entry arrays (found ${factoryArrayKeys.length})`);
+    for (const k of factoryArrayKeys) {
+        assert(
+            TRACE_ENTRY_ARRAY_KEYS.includes(k),
+            `trace factory array key '${k}' is NOT in TRACE_ENTRY_ARRAY_KEYS — its raw titles would leak into the diagnostic export. Add it to the shared list in src/diagnostics/pseudonymize-trace.js.`,
+        );
+    }
+    // And no duplicates in the shared list.
+    assertEqual(new Set(TRACE_ENTRY_ARRAY_KEYS).size, TRACE_ENTRY_ARRAY_KEYS.length, 'shared list has no duplicate keys');
+});
+
+test('H3: representative trace — every array-of-entry key is covered and no raw title survives', () => {
+    // Representative runtime trace mirroring the pipeline factory, with every
+    // entry array populated. Iterate ITS keys (not the shared list) and assert
+    // each array-of-entry key is covered — the drift-guard direction that
+    // catches "new stage added, list not updated".
+    const entry = (t) => ({ title: `Raw_${t}_Title`, vaultSource: 'RawVaultName' });
+    const representativeTrace = {
+        genId: 'abc123', mode: 'two-stage', indexed: 10,
+        keywordMatched: [entry('kw')], aiSelected: [entry('ai')], gatedOut: [entry('go')],
+        budgetCut: [entry('bc')], injected: [entry('inj')], probabilitySkipped: [entry('ps')],
+        warmupFailed: [entry('wf')], cooldownRemoved: [entry('cr')],
+        contextualGatingRemoved: [entry('cgr')], stripDedupRemoved: [entry('sdr')],
+        refineKeyBlocked: [entry('rkb')],
+        bootstrapActive: false, chatMessageCount: 5, vaultSnapshotSize: 10,
+        generationNumber: 1, aiFallback: false, aiError: '', fuzzyStats: null,
+    };
+    for (const [key, val] of Object.entries(representativeTrace)) {
+        const isEntryArray = Array.isArray(val) && val.length > 0
+            && val.every(e => e && typeof e === 'object' && 'title' in e);
+        if (isEntryArray) {
+            assert(TRACE_ENTRY_ARRAY_KEYS.includes(key), `entry-array key '${key}' must be covered by TRACE_ENTRY_ARRAY_KEYS`);
+        }
+    }
+    // End-to-end: pseudonymize the whole thing, no raw title/vault survives.
+    const out = pseudonymizeTrace(representativeTrace, createPseudonymContext());
+    const json = JSON.stringify(out);
+    assert(!json.includes('Raw_'), 'no raw title survives pseudonymization of the representative trace');
+    assert(!json.includes('RawVaultName'), 'no raw vaultSource survives');
+});
+
+test('H4: single-sourcing — flight-recorder and export.js import the shared list (source guard)', () => {
+    // flight-recorder.js and export.js can't be imported from node tests (they
+    // transitively import ST), so guard their single-sourcing at source level.
+    const fr = readFileSync(new URL('../src/diagnostics/flight-recorder.js', import.meta.url), 'utf8');
+    assertMatch(fr, /TRACE_ENTRY_ARRAY_KEYS/, 'flight-recorder must import the shared key list');
+    assert(!/stripDedupRemoved:\s*arr\(/.test(fr), 'flight-recorder must not hand-enumerate stage-count keys anymore');
+    const ex = readFileSync(new URL('../src/diagnostics/export.js', import.meta.url), 'utf8');
+    assertMatch(ex, /TRACE_ENTRY_ARRAY_KEYS/, 'export.js AI schema doc must be generated from the shared key list');
+    assert(!/- \\`stripDedupRemoved\[\]\\`/.test(ex), 'export.js must not hand-write the trace entry-array bullet list');
+});
+
+
+// ============================================================================
+//  I. pseudonymizeHealth — health-check issues in the shareable export (#13a)
+//
+//  Thermo-review #13(a): snap.health carried raw entry titles, keywords, vault
+//  names, and librarian queries into both the human-readable summary and the
+//  verbose blob. pseudonymizeHealth() reuses the SAME per-snapshot pseudonym
+//  context as pseudonymizeTrace(), so an entry keeps one alias across the
+//  trace and health sections.
+// ============================================================================
+
+section('I. pseudonymizeHealth — health issues scrubbed (#13a)');
+
+test('I1: health entry title shares the alias minted for the same title in the trace', () => {
+    const ctx = createPseudonymContext();
+    // Trace processed first (as in captureStateSnapshot: pipeline → ... → health).
+    const trace = pseudonymizeTrace({ injected: [{ title: 'Castle Greyhawk', vaultSource: 'MyVault' }] }, ctx);
+    const traceAlias = trace.injected[0].title;
+    const health = {
+        issues: [{ type: 'Entry Config', severity: 'warning', entry: 'Castle Greyhawk', detail: 'No trigger keywords defined' }],
+        errors: 0,
+        warnings: 1,
+    };
+    const out = pseudonymizeHealth(health, ctx);
+    assertEqual(out.issues[0].entry, traceAlias, 'health entry alias === trace alias (same pseudonym table)');
+    assertEqual(out.issues[0].detail, 'No trigger keywords defined', 'static detail text untouched');
+    assertEqual(out.errors, 0, 'errors count preserved');
+    assertEqual(out.warnings, 1, 'warnings count preserved');
+});
+
+test('I2: quoted user values in detail are minted (requires targets, keywords)', () => {
+    const ctx = createPseudonymContext();
+    const health = {
+        issues: [
+            { type: 'Gating', severity: 'error', entry: 'EntryA', detail: 'Requires "Lost Amulet of Zess" which doesn\'t exist in the vault' },
+            { type: 'Keywords', severity: 'info', entry: 'EntryA', detail: 'Keyword "aelarion" is 8 char(s) — may cause false matches' },
+            { type: 'Librarian', severity: 'info', entry: '—', detail: 'AI searched for "dragon cult hierarchy" 3 times with no results — consider creating an entry' },
+        ],
+        errors: 1, warnings: 0,
+    };
+    const out = pseudonymizeHealth(health, ctx);
+    const json = JSON.stringify(out);
+    assert(!json.includes('Lost Amulet of Zess'), 'raw requires target must not survive');
+    assert(!json.includes('aelarion'), 'raw keyword must not survive');
+    assert(!json.includes('dragon cult hierarchy'), 'raw librarian query must not survive');
+    assertMatch(out.issues[0].detail, /^Requires "<title-\d+>" which doesn't exist/, 'requires message keeps shape, target aliased');
+    assertMatch(out.issues[1].detail, /^Keyword "<title-\d+>" is 8 char\(s\)/, 'keyword aliased in place');
+    assertEqual(out.issues[2].entry, '—', 'em-dash placeholder entry preserved');
+});
+
+test('I2b: quoted keyword that IS an entry title shares that title\'s alias', () => {
+    const ctx = createPseudonymContext();
+    const alias = pseudonymizeTitle(ctx, 'Alice');
+    const out = pseudonymizeHealth({
+        issues: [{ type: 'Keywords', severity: 'info', entry: 'Alice Entry', detail: 'Keyword "Alice" is 5 char(s) — may cause false matches' }],
+        errors: 0, warnings: 0,
+    }, ctx);
+    assert(out.issues[0].detail.includes(`"${alias}"`), 'quoted keyword reuses the existing title alias (same map as matchedBy)');
+    assert(!JSON.stringify(out).includes('Alice'), 'raw "Alice" does not survive anywhere');
+});
+
+test('I3: multi-title entry fields — "A, B" and "A ↔ B" alias each component', () => {
+    const ctx = createPseudonymContext();
+    const out = pseudonymizeHealth({
+        issues: [
+            { type: 'Keywords', severity: 'info', entry: 'Queen Mirabel, House Veyra', detail: 'Keyword "crown" shared by 2 entries' },
+            { type: 'Gating', severity: 'error', entry: 'Queen Mirabel ↔ House Veyra', detail: 'Neither entry can trigger because they each require the other' },
+        ],
+        errors: 1, warnings: 0,
+    }, ctx);
+    const json = JSON.stringify(out);
+    assert(!json.includes('Queen Mirabel'), 'raw title 1 must not survive');
+    assert(!json.includes('House Veyra'), 'raw title 2 must not survive');
+    assertMatch(out.issues[0].entry, /^<title-\d+>, <title-\d+>$/, 'comma-joined titles each aliased');
+    assertMatch(out.issues[1].entry, /^<title-\d+> ↔ <title-\d+>$/, 'circular-requires pair each aliased');
+    // Cardinality: the same title gets the SAME alias in both issues.
+    const a1 = out.issues[0].entry.split(', ')[0];
+    const a2 = out.issues[1].entry.split(' ↔ ')[0];
+    assertEqual(a1, a2, 'same real title → same alias across issues');
+});
+
+test('I4: vault name in detail uses the SAME <vault-N> alias as vaultSource pseudonymization', () => {
+    const ctx = createPseudonymContext();
+    // Simulate the settings.vaults sanitization minting the vault alias first (#13c).
+    const vaultAlias = pseudonymizeVaultSource(ctx, 'Kara Campaign');
+    const out = pseudonymizeHealth({
+        issues: [{ type: 'Settings', severity: 'warning', entry: '—', detail: 'Vault "Kara Campaign" has no API key' }],
+        errors: 0, warnings: 1,
+    }, ctx);
+    assertEqual(out.issues[0].detail, `Vault "${vaultAlias}" has no API key`, 'vault name replaced with its <vault-N> alias');
+    assert(!JSON.stringify(out).includes('Kara Campaign'), 'raw vault name does not survive');
+});
+
+test('I5: static UI strings survive — "Add Vault" whitelist + unquoted prose', () => {
+    const ctx = createPseudonymContext();
+    const detail = 'No enabled vaults configured. Go to DeepLore settings → Vault Connections and click "Add Vault".';
+    const out = pseudonymizeHealth({
+        issues: [{ type: 'Settings', severity: 'error', entry: '—', detail }],
+        errors: 1, warnings: 0,
+    }, ctx);
+    assertEqual(out.issues[0].detail, detail, 'static settings guidance passes through verbatim');
+});
+
+test('I6: unresolved wiki-links list (unquoted user values) is aliased', () => {
+    const ctx = createPseudonymContext();
+    const out = pseudonymizeHealth({
+        issues: [{ type: 'Links', severity: 'info', entry: 'Old Map', detail: 'Unresolved wiki-links: Hidden Shrine, Sunken Archive' }],
+        errors: 0, warnings: 0,
+    }, ctx);
+    const json = JSON.stringify(out);
+    assert(!json.includes('Hidden Shrine'), 'raw wiki-link 1 must not survive');
+    assert(!json.includes('Sunken Archive'), 'raw wiki-link 2 must not survive');
+    assert(!json.includes('Old Map'), 'raw entry title must not survive');
+    assertMatch(out.issues[0].detail, /^Unresolved wiki-links: <title-\d+>, <title-\d+>$/, 'each link aliased, list shape kept');
+});
+
+test('I7: input not mutated; defensive on null/error shapes', () => {
+    const ctx = createPseudonymContext();
+    const original = {
+        issues: [{ type: 'Gating', severity: 'error', entry: 'RealTitle', detail: 'Requires "RealTarget" which doesn\'t exist in the vault' }],
+        errors: 1, warnings: 0,
+    };
+    const before = JSON.stringify(original);
+    pseudonymizeHealth(original, ctx);
+    assertEqual(JSON.stringify(original), before, 'input health object must not be mutated');
+    assertNull(pseudonymizeHealth(null, ctx), 'null passes through');
+    assertEqual(pseudonymizeHealth(undefined, ctx), undefined, 'undefined passes through');
+    const errShape = pseudonymizeHealth({ __error: 'boom' }, ctx);
+    assertEqual(errShape.__error, 'boom', 'error shape passes through unchanged');
+});
+
+test('I8: known titles embedded in detail prose are replaced (replaceKnownAliases, longest-first)', () => {
+    const ctx = createPseudonymContext();
+    pseudonymizeTitle(ctx, 'Aelarion');
+    pseudonymizeTitle(ctx, 'Aelarion the Grey');
+    const out = replaceKnownAliases(ctx, 'Excludes "X" — Aelarion the Grey and Aelarion clash');
+    assert(!out.includes('Aelarion'), 'no raw name fragment survives');
+    // Longest-first: the longer title must be replaced as a unit, not corrupted
+    // by the shorter one replacing its prefix.
+    const longAlias = ctx.titleMap.get('Aelarion the Grey');
+    assert(out.includes(longAlias), 'longer real replaced with its own alias (not prefix-corrupted)');
+});
+
+test('I9: embedded quote in a quoted value — no raw fragment leaks (format-anchored greedy capture)', () => {
+    // Verified leak: the generic pair regex split `Keyword "dra"gon" is ...`
+    // at the embedded quote, minting only "dra" and leaking `gon` raw.
+    const ctx = createPseudonymContext();
+    const out = pseudonymizeHealth({
+        issues: [{ type: 'Keywords', severity: 'info', entry: 'Dragon Lore', detail: 'Keyword "dra"gon" is 7 char(s) — may cause false matches' }],
+        errors: 0, warnings: 0,
+    }, ctx);
+    const detail = out.issues[0].detail;
+    assert(!detail.includes('dra'), 'no raw "dra" fragment survives');
+    assert(!detail.includes('gon'), 'no raw "gon" fragment survives');
+    assertMatch(detail, /^Keyword "<title-\d+>" is 7 char\(s\) — may cause false matches$/,
+        'whole embedded-quote value minted as ONE alias, format text intact');
+});
+
+test('I10: librarian query with embedded quotes — whole query minted as one alias', () => {
+    const ctx = createPseudonymContext();
+    const out = pseudonymizeHealth({
+        issues: [{ type: 'Librarian', severity: 'info', entry: '—', detail: 'AI searched for "the "crimson pact" ritual" 4 times with no results — consider creating an entry' }],
+        errors: 0, warnings: 0,
+    }, ctx);
+    const detail = out.issues[0].detail;
+    assert(!detail.includes('crimson'), 'no raw query fragment survives');
+    assert(!detail.includes('ritual'), 'no raw query fragment survives');
+    assertMatch(detail, /^AI searched for "<title-\d+>" 4 times with no results — consider creating an entry$/,
+        'LLM-generated query with embedded quotes minted whole');
+});
+
+test('I11: short quoted mint no longer garbles later details (the v<title-N>ault case)', () => {
+    // Verified garble: minting keyword "a" put a 1-char real into the
+    // substring-replacement map, so every later detail containing the letter
+    // was rewritten ("...doesn\'t exist in the v<title-2>ault").
+    const ctx = createPseudonymContext();
+    const out = pseudonymizeHealth({
+        issues: [
+            { type: 'Keywords', severity: 'info', entry: 'Article', detail: 'Keyword "a" is 1 char(s) — may cause false matches' },
+            { type: 'Gating', severity: 'error', entry: 'Article', detail: 'Requires "Ghost" which doesn\'t exist in the vault' },
+            { type: 'Settings', severity: 'info', entry: '—', detail: 'Cache disabled — vault will be fetched every generation' },
+        ],
+        errors: 1, warnings: 0,
+    }, ctx);
+    assertMatch(out.issues[0].detail, /^Keyword "<title-\d+>" is 1 char\(s\) — may cause false matches$/,
+        'the short keyword itself is still aliased in its quoted context');
+    assertMatch(out.issues[1].detail, /^Requires "<title-\d+>" which doesn't exist in the vault$/,
+        'later known-format detail keeps its static text intact (no v<title-N>ault garble)');
+    assertEqual(out.issues[2].detail, 'Cache disabled — vault will be fetched every generation',
+        'later free-text detail with no standalone "a" passes through untouched');
+});
+
+test('I12: 1-2 char REAL title still aliases in exact/quoted contexts and standalone free text', () => {
+    const ctx = createPseudonymContext();
+    // Simulate the trace minting a genuinely short entry title first.
+    const alias = pseudonymizeTitle(ctx, 'Al');
+    const out = pseudonymizeHealth({
+        issues: [{ type: 'Keywords', severity: 'info', entry: 'Al', detail: 'Keyword "Al" is 2 char(s) — may cause false matches' }],
+        errors: 0, warnings: 0,
+    }, ctx);
+    assertEqual(out.issues[0].entry, alias, 'exact entry field reuses the short title\'s alias');
+    assert(out.issues[0].detail.includes(`"${alias}"`), 'quoted context reuses the short title\'s alias');
+    // Free text: standalone occurrences replaced at word boundaries; embedded
+    // occurrences inside longer words stay raw (deliberate trade-off — blind
+    // replacement is the I11 garble).
+    const free = replaceKnownAliases(ctx, 'Al meets Bob at the Altar');
+    assertEqual(free, `${alias} meets Bob at the Altar`,
+        'standalone short title aliased; "Altar" not corrupted');
+});
+
+test('I13: unknown format with unbalanced quotes — whole remainder minted (over-scrub beats leak)', () => {
+    const ctx = createPseudonymContext();
+    const out = pseudonymizeHealth({
+        issues: [{ type: 'Future', severity: 'info', entry: '—', detail: 'New lint: value "dra"gon" leaks here' }],
+        errors: 0, warnings: 0,
+    }, ctx);
+    const detail = out.issues[0].detail;
+    assert(!detail.includes('dra'), 'no raw fragment before the embedded quote');
+    assert(!detail.includes('gon'), 'no raw fragment after the embedded quote');
+    assertMatch(detail, /^New lint: value "<title-\d+>"$/,
+        'odd quote count → everything from the first quote minted as one alias');
+});
+
+test('I14: drift guard — every quoted runHealthCheck() detail format has exactly one anchored rule', () => {
+    const diagSrc = readFileSync(new URL('../src/ui/diagnostics.js', import.meta.url), 'utf8');
+    const start = diagSrc.indexOf('export function runHealthCheck');
+    const end = diagSrc.indexOf('export function diagnoseEntry');
+    assert(start !== -1 && end > start, 'runHealthCheck/diagnoseEntry source markers present');
+    const body = diagSrc.slice(start, end);
+    const quotedFormats = [...body.matchAll(/detail:\s*`([^`]*)`/g)]
+        .map(m => m[1])
+        .filter(t => t.includes('"${'));
+    assertEqual(quotedFormats.length, HEALTH_QUOTED_DETAIL_RULES.length,
+        'quoted detail formats in runHealthCheck() and HEALTH_QUOTED_DETAIL_RULES must stay 1:1 — new quoting format needs a new anchored rule');
+    const usedRules = new Set();
+    for (const t of quotedFormats) {
+        // Instantiate the template: the quoted placeholder becomes a marker
+        // value, remaining placeholders become a numeric-ish token (\w+ / \d+).
+        const sample = t
+            .replace(/"\$\{[^}]*\}"/g, '"SECRETVAL"')
+            .replace(/\$\{[^}]*\}/g, '7');
+        const matching = HEALTH_QUOTED_DETAIL_RULES
+            .map((r, i) => [r, i])
+            .filter(([r]) => r.re.test(sample));
+        assertEqual(matching.length, 1, `exactly one anchored rule must match: ${sample}`);
+        usedRules.add(matching[0][1]);
+        const ctx = createPseudonymContext();
+        const out = pseudonymizeHealth({
+            issues: [{ type: 'x', severity: 'info', entry: '—', detail: sample }],
+            errors: 0, warnings: 0,
+        }, ctx).issues[0].detail;
+        assert(!out.includes('SECRETVAL'), `quoted value must not survive: ${sample}`);
+        assertMatch(out, /<(?:title|vault)-\d+>/, `an alias must be minted for: ${sample}`);
+    }
+    assertEqual(usedRules.size, HEALTH_QUOTED_DETAIL_RULES.length,
+        'every anchored rule matches a live source format (no stale rules for removed formats)');
+});
+
+
+// ============================================================================
+//  J. state-snapshot wiring — source guards (#13a + #13c)
+//
+//  state-snapshot.js transitively imports ST (script.js, settings.js) and
+//  cannot be imported from node tests, so its wiring is guarded at source
+//  level (same pattern as audit-fix-librarian.test.mjs production guards).
+// ============================================================================
+
+section('J. state-snapshot wiring — source guards (#13a/#13c)');
+
+const stateSnapshotSrc = readFileSync(new URL('../src/diagnostics/state-snapshot.js', import.meta.url), 'utf8');
+
+test('J1: settings.vaults names/hosts are sanitized at capture (#13c)', () => {
+    assertMatch(stateSnapshotSrc, /name:\s*pseudonymizeVaultSource\(v\.name\)/,
+        'vault name must be pseudonymized via the shared vaultSource minter (name IS the vaultSource)');
+    assertMatch(stateSnapshotSrc, /host:\s*maskString\(v\.host\)/, 'vault host must be masked');
+    assertMatch(stateSnapshotSrc, /url:\s*maskString\(v\.url\)/, 'legacy vault url must be masked');
+    assert(!/snap\.settings\s*=\s*getSettings\(\);/.test(stateSnapshotSrc),
+        'raw getSettings() must not be assigned to snap.settings without vault sanitization');
+});
+
+test('J2: snap.health is routed through pseudonymizeHealth with the per-snapshot context (#13a)', () => {
+    assertMatch(stateSnapshotSrc, /pseudonymizeHealth as pseudonymizeHealthPure/, 'pseudonymizeHealth must be imported');
+    assertMatch(stateSnapshotSrc, /snap\.health\s*=\s*pseudonymizeHealthPure\(runHealthCheck\(\),\s*_pseudoCtx\)/,
+        'runHealthCheck() output must pass through the pseudonymizer with the shared per-snapshot context');
+});
+
+
+// ============================================================================
+//  K. Session-key scrubbing — anchored, stats survive (#13d)
+//
+//  Thermo-review #13(d): the bare `session` substring in SENSITIVE_KEY_RE
+//  wholesale-redacted `sessionStats` (and any *session* key), and the summary
+//  section then fabricated "Session stats: 0 searches, 0 flags" by reading
+//  `ss.searchCalls ?? 0` off the '<redacted>' string. The pattern is now
+//  anchored: real session credentials are still redacted, stats survive.
+// ============================================================================
+
+section('K. Session-key scrubbing — anchored (#13d)');
+
+test('K1: librarian session stats survive scrubDeep (no fabricated zeros)', () => {
+    const snap = {
+        librarian: {
+            sessionStats: { searchCalls: 7, flagCalls: 2, estimatedExtraTokens: 1234 },
+            chatStats: { searchCalls: 3 },
+        },
+    };
+    const out = scrubDeep(snap);
+    assertEqual(typeof out.librarian.sessionStats, 'object', 'sessionStats must survive as an object, not a redaction placeholder');
+    assertEqual(out.librarian.sessionStats.searchCalls, 7, 'searchCalls intact');
+    assertEqual(out.librarian.sessionStats.flagCalls, 2, 'flagCalls intact');
+    assertEqual(out.librarian.sessionStats.estimatedExtraTokens, 1234, 'estimatedExtraTokens intact');
+    // Mirror of export.js's summary read (`ss.searchCalls ?? 0`) — this is the
+    // exact expression that fabricated "0 searches" from the redacted string.
+    const ss = out.librarian.sessionStats;
+    assertEqual(ss.searchCalls ?? 0, 7, 'summary-section read yields the real count, not a fabricated 0');
+});
+
+test('K2: session credential keys are still redacted', () => {
+    const input = {
+        session: 'raw-session-blob',
+        sessionId: 'abc',
+        session_id: 'def',
+        sessionToken: 'ghi',
+        session_key: 'jkl',
+        sessionSecret: 'mno',
+        SESSION_COOKIE: 'pqr',
+    };
+    const out = scrubDeep(input);
+    for (const k of Object.keys(input)) {
+        assertEqual(out[k], '<redacted>', `credential key '${k}' must still be redacted`);
+    }
+});
+
+test('K3: other *session* stats/state keys survive', () => {
+    const out = scrubDeep({
+        librarianSessionStats: { searchCalls: 1 },
+        sessionSearches: 4,
+        sessionStatsEnabled: true,
+    });
+    assertEqual(out.librarianSessionStats.searchCalls, 1, 'librarianSessionStats survives');
+    assertEqual(out.sessionSearches, 4, 'sessionSearches survives');
+    assertEqual(out.sessionStatsEnabled, true, 'sessionStatsEnabled survives');
 });
 
 
