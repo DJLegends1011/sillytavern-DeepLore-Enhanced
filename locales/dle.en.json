@@ -23,7 +23,7 @@
   "dle_about_token_estimation_note": "Token counts shown throughout DLE (budget bars, entry sizes, injection totals) are estimates based on ~4 characters per token. This is accurate for typical English text but may undercount for non-Latin scripts, code blocks, or highly punctuated content. For precise counts, consult your API provider's tokenizer.",
   "dle_about_troubleshooting_h4": "Troubleshooting",
   "dle_about_troubleshooting_note": "Re-run the guided setup wizard, or reset settings to defaults. Vault connections and AI connection profiles are preserved in both cases.",
-  "dle_about_version_text": "v2.6.0",
+  "dle_about_version_text": "v2.6.2",
   "dle_about_wiki_link": "Wiki",
   "dle_activity_detail_one": "${0} entry, ${1} tok",
   "dle_activity_detail_other": "${0} entries, ${1} tok",

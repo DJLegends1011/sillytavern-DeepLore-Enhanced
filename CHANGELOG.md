@@ -8,6 +8,13 @@ All notable changes to DeepLore are documented here. This file follows
 
 ---
 
+## [2.6.2] - 2026-07-04
+
+### Fixed
+- **Librarian gap flags never reached the inbox** — the gap-finder ran and found real gaps, but the flagging prompt described the `flag` tool in prose without naming its schema fields (`title`/`reason`), so some models (observed: Opus 4.6) emitted a batched `{flags:[{note,…}]}` shape instead of the flat call. `flagLoreAction` read `title` → undefined → every flag was silently dropped and the Librarian → Flags panel stayed empty. Fixed on two axes: (1) the flagging prompts (`buildFlaggingInstructions` and the `flag` tool description) now name the flat fields with an example and instruct "one call per gap"; (2) the backgrounded gap-finder now detects a malformed flag call, feeds the model a corrective message naming the exact format, and retries once so the gaps are recovered instead of dropped. (See `docs/gotchas.md` #105.)
+
+---
+
 ## [2.6.1] - 2026-07-04
 
 ### Fixed

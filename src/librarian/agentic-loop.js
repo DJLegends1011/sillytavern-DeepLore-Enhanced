@@ -114,6 +114,13 @@ const TOOL_FLAG = {
 
 const MAX_ITERATIONS = 15;
 const MAX_FLAG_CALLS = 5;
+// Backgrounded FLAG turn: how many API round-trips the gap-finder gets. >1 so a
+// malformed flag call (batched `{flags:[...]}` / missing title — the shapes the
+// model drifts into when it follows the flagging prose over the flat TOOL_FLAG
+// schema) can be fed a correction and RE-emitted correctly. Capped so a model
+// that keeps fumbling the format drops the gaps rather than looping forever
+// (one retry). See `_runFlagIteration` + gotcha #105.
+const MAX_FLAG_ITERATIONS = 2;
 const PHASE_SEARCH = 'SEARCH';
 const PHASE_FLAG = 'FLAG';
 
@@ -547,105 +554,158 @@ export async function runAgenticLoop(options) {
  * NEW chat's Activity feed and double-count session/chat stats. AbortError
  * is re-thrown so the main loop can surface it.
  */
+// Corrective guidance handed back to the model when a flag call is malformed.
+// Claude sometimes follows the flagging prose over the flat TOOL_FLAG schema and
+// emits a batched `{flags:[{note,...}]}` shape (or omits `title`); the retry loop
+// in `_runFlagIteration` feeds this string as the tool result and re-calls so the
+// model re-emits ONE well-formed flat flag per gap. Field names mirror TOOL_FLAG.
+const FLAG_FORMAT_HINT =
+    'Call the flag tool ONCE PER gap with these arguments: '
+    + 'title (required, short topic name), reason (required, why the gap matters), '
+    + 'flag_type ("gap" or "update"), urgency ("low", "medium", or "high"). '
+    + 'Do not pass a "flags" array and do not use a "note" field.';
+
+/**
+ * Returns a corrective message when the flag tool input is malformed enough to
+ * warrant a feedback-and-retry (batched `flags` array, non-object, or missing
+ * `title`), or `null` if it is usable by `flagLoreAction`. Missing `reason` is
+ * NOT malformed — the GHOST-FLAG fix (gotcha #104) intentionally records titled,
+ * reason-less flags, so it must not trip the retry.
+ */
+function flagInputProblem(input) {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) {
+        return `No flag arguments received. ${FLAG_FORMAT_HINT}`;
+    }
+    if (Array.isArray(input.flags)) {
+        return `Do not batch gaps into a "flags" array — make a separate flag call for each gap. ${FLAG_FORMAT_HINT}`;
+    }
+    if (!(typeof input.title === 'string' && input.title.trim())) {
+        return `Missing required "title". ${FLAG_FORMAT_HINT}`;
+    }
+    return null;
+}
+
+/** Push batched tool results as one message (or array for OpenAI-shape). */
+function _pushFlagToolResults(messages, results, providerFormat) {
+    const toolResultMsg = buildToolResults(results, providerFormat);
+    if (Array.isArray(toolResultMsg)) {
+        messages.push(...toolResultMsg);
+    } else {
+        messages.push(toolResultMsg);
+    }
+}
+
 async function _runFlagIteration(messages, tools, toolChoice, maxTokens, signal, toolActivity, settings, debug, outerFlagCount = 0, epoch, lockEpoch) {
-    // Pre-call guard. The main loop checked at iteration top, but we await
-    // here before any flag-side mutation — re-check before the API call too.
-    if (signal?.aborted) {
-        const err = new Error('Agentic loop aborted');
-        err.name = 'AbortError';
-        throw err;
-    }
-    if (epoch !== undefined && (epoch !== chatEpoch || lockEpoch !== generationLockEpoch)) {
-        if (debug) console.debug('[DLE] _runFlagIteration: epoch mismatch before API call, bail');
-        return 0;
-    }
-
-    const response = await callWithTools(messages, tools, toolChoice, maxTokens, signal);
-
-    // Post-API guard. callWithTools can take many seconds; CHAT_CHANGED during
-    // the wait must NOT lead to flagLoreAction writes against the new chat.
-    if (signal?.aborted) {
-        const err = new Error('Agentic loop aborted');
-        err.name = 'AbortError';
-        throw err;
-    }
-    if (epoch !== undefined && (epoch !== chatEpoch || lockEpoch !== generationLockEpoch)) {
-        if (debug) console.debug('[DLE] _runFlagIteration: epoch mismatch after API call, bail');
-        return 0;
-    }
-
-    const toolCalls = parseToolCalls(response);
-    if (toolCalls.length === 0) return 0;
-
-    // Resolve provider format ONCE for this flag iteration's message builders
-    // from the Librarian profile (same rationale + P1-6 profile-awareness as
-    // runAgenticLoop — avoid per-call resolveConnectionConfig, freeze to the
-    // dispatched profile rather than ST's global connection).
+    // Resolve provider format ONCE for this flag turn's message builders from the
+    // Librarian profile (P1-6 profile-awareness — freeze to the dispatched profile,
+    // not ST's global connection).
     const providerFormat = _resolveProviderFormat(_resolveLibrarianConnConfig());
-
-    const assistantMsg = buildAssistantMessage(response, providerFormat);
-    messages.push(assistantMsg);
-
-    const results = [];
     let flagCount = 0;
-    for (const tc of toolCalls) {
-        // Cap is global across the whole loop, not per-iteration. Inline flags
-        // (write+flag×N responses) already incremented outerFlagCount; respect that here.
-        if (tc.name !== 'flag' || (flagCount + outerFlagCount) >= MAX_FLAG_CALLS) {
-            results.push({ id: tc.id, name: tc.name, result: 'End your turn now.' });
-            continue;
-        }
-        // Re-check before each await — a CHAT_CHANGED between flag calls must
-        // stop the remaining flags from polluting the new chat's activity log.
+
+    // Feedback-to-agent retry loop (gotcha #105): a malformed flag call is NOT
+    // recorded — the model is fed FLAG_FORMAT_HINT as the tool result and re-called
+    // so it can re-emit the flat shape. Capped at MAX_FLAG_ITERATIONS (one retry):
+    // if the model keeps fumbling the format the gaps are dropped rather than
+    // looping. Every iteration re-runs the epoch/lock/abort guards (gotcha #21 +
+    // #81) so a chat switch or superseding generation between the round-trips bails
+    // cleanly, without polluting the new chat.
+    for (let flagIter = 0; flagIter < MAX_FLAG_ITERATIONS; flagIter++) {
+        // Pre-call guard. We await below before any flag-side mutation.
         if (signal?.aborted) {
             const err = new Error('Agentic loop aborted');
             err.name = 'AbortError';
             throw err;
         }
         if (epoch !== undefined && (epoch !== chatEpoch || lockEpoch !== generationLockEpoch)) {
-            if (debug) console.debug('[DLE] _runFlagIteration: epoch mismatch mid-loop, bail');
-            break;
+            if (debug) console.debug('[DLE] _runFlagIteration: epoch mismatch before API call, bail');
+            return flagCount;
         }
-        flagCount++;
-        // Thread the loop's captured epoch into flagLoreAction so its OWN internal
-        // guard skips the persist + activity/analytics side-effects when the chat
-        // switched mid-loop (mirrors searchLoreAction). It mutates loreGaps,
-        // sessionActivityLog + librarianSessionStats + librarianChatStats.
-        const flagResult = await flagLoreAction(tc.input || {}, epoch);
-        // Post-call guard. flagLoreAction has NO internal await — it runs
-        // synchronously (it's `async` only by signature). The epoch-sensitive
-        // side-effects now self-guard INSIDE flagLoreAction via the threaded
-        // epoch; this remaining guard only prevents the toolActivity (drawer
-        // dropdown) push below from leaking a stale flag into the new chat.
+
+        const response = await callWithTools(messages, tools, toolChoice, maxTokens, signal);
+
+        // Post-API guard. callWithTools can take many seconds; CHAT_CHANGED during
+        // the wait must NOT lead to flagLoreAction writes against the new chat.
+        if (signal?.aborted) {
+            const err = new Error('Agentic loop aborted');
+            err.name = 'AbortError';
+            throw err;
+        }
         if (epoch !== undefined && (epoch !== chatEpoch || lockEpoch !== generationLockEpoch)) {
-            if (debug) console.debug('[DLE] _runFlagIteration: epoch mismatch after flagLoreAction, skip toolActivity push');
+            if (debug) console.debug('[DLE] _runFlagIteration: epoch mismatch after API call, bail');
+            return flagCount;
+        }
+
+        const toolCalls = parseToolCalls(response);
+        if (toolCalls.length === 0) break; // model ended its turn — nothing (more) to flag
+
+        messages.push(buildAssistantMessage(response, providerFormat));
+
+        const results = [];
+        let malformed = 0;
+        for (const tc of toolCalls) {
+            // Cap is global across the whole loop, not per-iteration. Inline flags
+            // (write+flag×N responses) already incremented outerFlagCount; respect that here.
+            if (tc.name !== 'flag' || (flagCount + outerFlagCount) >= MAX_FLAG_CALLS) {
+                results.push({ id: tc.id, name: tc.name, result: 'End your turn now.' });
+                continue;
+            }
+            // Feedback-to-agent backstop: reject a malformed flag shape with a
+            // correction INSTEAD of dropping it silently or persisting garbage.
+            // Detected BEFORE flagLoreAction; the outer loop then re-calls so the
+            // model can retry with the flat format. Not counted toward the cap.
+            const problem = flagInputProblem(tc.input);
+            if (problem) {
+                malformed++;
+                results.push({ id: tc.id, name: tc.name, result: problem });
+                if (debug) console.debug('[DLE] _runFlagIteration: malformed flag input — feeding correction, will retry');
+                continue;
+            }
+            // Re-check before each await — a CHAT_CHANGED between flag calls must
+            // stop the remaining flags from polluting the new chat's activity log.
+            if (signal?.aborted) {
+                const err = new Error('Agentic loop aborted');
+                err.name = 'AbortError';
+                throw err;
+            }
+            if (epoch !== undefined && (epoch !== chatEpoch || lockEpoch !== generationLockEpoch)) {
+                if (debug) console.debug('[DLE] _runFlagIteration: epoch mismatch mid-loop, bail');
+                return flagCount;
+            }
+            flagCount++;
+            // Thread the loop's captured epoch into flagLoreAction so its OWN internal
+            // guard skips the persist + activity/analytics side-effects when the chat
+            // switched mid-loop (mirrors searchLoreAction). It mutates loreGaps,
+            // sessionActivityLog + librarianSessionStats + librarianChatStats.
+            const flagResult = await flagLoreAction(tc.input || {}, epoch);
+            // Post-call guard. flagLoreAction has NO internal await — it runs
+            // synchronously (it's `async` only by signature). This guard only
+            // prevents the toolActivity (drawer dropdown) push below from leaking a
+            // stale flag into the new chat (gotcha #104 / F5c).
+            if (epoch !== undefined && (epoch !== chatEpoch || lockEpoch !== generationLockEpoch)) {
+                if (debug) console.debug('[DLE] _runFlagIteration: epoch mismatch after flagLoreAction, skip toolActivity push');
+                results.push({ id: tc.id, name: tc.name, result: flagResult?.message || 'Flag recorded.' });
+                return flagCount;
+            }
             results.push({ id: tc.id, name: tc.name, result: flagResult?.message || 'Flag recorded.' });
-            break;
+            // GHOST-FLAG guard (gotcha #104): only render flags actually recorded in
+            // loreGaps. A persist failure (ok:false) is NOT malformed — retrying
+            // can't fix a missing chatMetadata — so it does not trip the retry.
+            if (!flagResult?.ok) {
+                if (debug) console.debug('[DLE] _runFlagIteration: flag not recorded ("%s"), skip toolActivity push', tc.input?.title || '');
+                continue;
+            }
+            toolActivity.push({
+                type: 'flag',
+                query: tc.input?.title || '',
+                subtype: tc.input?.flag_type || 'gap',
+                urgency: tc.input?.urgency || 'medium',
+                timestamp: Date.now(),
+            });
         }
-        results.push({ id: tc.id, name: tc.name, result: flagResult?.message || 'Flag recorded.' });
-        // GHOST-FLAG guard (gotcha #104): flagLoreAction rejected or failed to
-        // persist this flag (no title / no chatMetadata) — it is NOT in loreGaps,
-        // so it must not render in the message dropdown either. This was the
-        // "N gaps noted in chat, sidebar empty" desync: models omit `reason`
-        // despite required[], the old code discarded the gap but still pushed
-        // the activity row.
-        if (!flagResult?.ok) {
-            if (debug) console.debug('[DLE] _runFlagIteration: flag not recorded ("%s"), skip toolActivity push', tc.input?.title || '');
-            continue;
-        }
-        toolActivity.push({
-            type: 'flag',
-            query: tc.input?.title || '',
-            subtype: tc.input?.flag_type || 'gap',
-            urgency: tc.input?.urgency || 'medium',
-            timestamp: Date.now(),
-        });
-    }
-    const toolResultMsg = buildToolResults(results, providerFormat);
-    if (Array.isArray(toolResultMsg)) {
-        messages.push(...toolResultMsg);
-    } else {
-        messages.push(toolResultMsg);
+        _pushFlagToolResults(messages, results, providerFormat);
+        // Only loop when we fed back a correction for a malformed call. If every
+        // flag this iteration was well-formed (or hit the cap/End paths), stop.
+        if (malformed === 0) break;
     }
     if (debug) console.debug(`[DLE] Flag phase: processed ${flagCount} flag(s)`);
     return flagCount;
@@ -662,6 +722,8 @@ function buildFlaggingInstructions(settings) {
         'Response recorded successfully.',
         '',
         'If you noticed any lore gaps or entries that need updating, use the flag tool now.',
+        'Make ONE flag call per gap; do not batch multiple gaps into a single call. Example:',
+        '  flag(title: "<short topic name>", reason: "<why this gap matters>", flag_type: "gap", urgency: "low")',
         'Flag types:',
         '- **gap**: Missing lore \u2014 you had to invent or guess a detail that should exist in the vault.',
         '- **update**: Existing entry is outdated, incomplete, or contradicts what happened in the story.',

@@ -131,11 +131,11 @@ export const AGENTIC_TOOL_WRITE_FLAG_HINT =
 
 /** Description de l'outil de flag. \`${0}\` = flags max. */
 export const AGENTIC_TOOL_FLAG = [
-    "**flag** (disponible après write uniquement) — Signale les lacunes de lore ou les",
-    "entrées nécessitant des mises à jour. Signale uniquement les lacunes authentiques où",
-    "tu as dû inventer ou deviner des détails qui devraient exister dans le coffre-fort.",
-    "Après que tu appelles write, search devient indisponible — seul flag reste. Maximum ${0}",
-    "flags par tour.",
+    "**flag** (disponible après write uniquement) — Signale une lacune de lore ou une entrée nécessitant une mise à jour :",
+    "flag(title, reason, flag_type: gap|update, urgency: low|medium|high). Signale uniquement les lacunes authentiques",
+    "où tu as dû inventer ou deviner des détails qui devraient exister dans le coffre-fort. Fais un appel à flag par",
+    "lacune — ne les regroupe pas. Après que tu appelles write, search devient indisponible — seul flag reste.",
+    "Maximum ${0} flags par tour.",
 ].join('\n');
 
 /** Ligne de flux de travail. \`${0}\` = étapes de flux séparées par flèche. */

@@ -50,15 +50,16 @@ DONE (synchronous):
     - pendingFlag  = detached FLAG-turn thunk (or null) — see below
 
 FLAG turn (BACKGROUNDED — fired by index.js AFTER lock release):
-  pendingFlag() → _runFlagIteration (one extra callWithTools, flag tool only,
-                  capped at MAX_FLAG_CALLS = 5)
+  pendingFlag() → _runFlagIteration (flag tool only; 1–MAX_FLAG_ITERATIONS
+                  callWithTools — a malformed flag call is fed a correction and
+                  retried once; flags capped at MAX_FLAG_CALLS = 5)
               → resolves { flagCount, flagActivity }
               → caller appends flagActivity to the saved prose msg + refreshes dropdown
 ```
 
 The FLAG turn is **backgrounded** (Issue-1, 2026-06-02): it is NOT a synchronous loop iteration. Once `write` delivers prose the loop breaks; the generation lock + send button release immediately and `pendingFlag` runs fire-and-forget so the user is never held through the gap-finder's extra API round-trip. `pendingFlag` self-guards on `chatEpoch` + `lockEpoch` + `swipe_id` (chat switch / a new generation / swipe-to-another-alternate all cancel the stale write — `generationLockEpoch` bumps only on lock ACQUIRE; swipe nav bumps neither epoch but swaps `message.extra`). The in-flight flag API call itself is best-effort and not cancellable once the dispatch returns. See `docs/gotchas.md` #81. Inline flags (write+flag in one response) still process synchronously — they cost no extra round-trip. `pendingFlag` is `null` when flagging is disabled, the flag cap is already spent by inline flags, or on the CRIT-LIB-3 onProse-error degraded path.
 
-Constants: `MAX_ITERATIONS = 15`, `MAX_FLAG_CALLS = 5`.
+Constants: `MAX_ITERATIONS = 15`, `MAX_FLAG_CALLS = 5`, `MAX_FLAG_ITERATIONS = 2` (backgrounded FLAG-turn API round-trips — >1 so a malformed flag call can be corrected and retried once; see `docs/gotchas.md` #105).
 
 ### Tool Definitions (agentic-loop.js)
 

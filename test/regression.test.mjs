@@ -2879,6 +2879,57 @@ test('F5e: epoch mismatch BEFORE the API call bails without calling callWithTool
     delete globalThis.__DLE_TEST_HOOKS;
 });
 
+test('F5-RETRY: malformed batched flag → correction fed back → retry records (gotcha #105)', async () => {
+    // The observed Opus 4.6 drift: the model batches gaps into `{flags:[{note,...}]}`
+    // instead of the flat schema. The retry loop must NOT record the malformed call,
+    // must re-call (feeding a correction), and record the flat re-emission.
+    setChatEpoch(10);
+    setGenerationLockEpoch(3);
+    let apiCalls = 0;
+    let flagCalled = 0;
+    const seenInputs = [];
+    _installFlagHooks({
+        callWithTools: async () => {
+            apiCalls++;
+            if (apiCalls === 1) {
+                return { toolCalls: [{ name: 'flag', id: 'b1', input: { flags: [{ note: 'X', type: 'gap' }] } }] };
+            }
+            return { toolCalls: [{ name: 'flag', id: 'r1', input: { title: 'X', reason: 'why', flag_type: 'gap', urgency: 'low' } }] };
+        },
+        flagLoreAction: async (input) => { flagCalled++; seenInputs.push(input); return { ok: true, message: 'Flagged.' }; },
+    });
+    const toolActivity = [];
+    const flagCount = await _runFlagIterationForTests([], [], 'auto', 256, { aborted: false }, toolActivity, {}, false, 0, 10, 3);
+
+    assertEqual(apiCalls, 2, 'F5-RETRY: malformed first call triggers exactly one retry');
+    assertEqual(flagCalled, 1, 'F5-RETRY: flagLoreAction NOT called for the batched shape; called once on the flat retry');
+    assertEqual(flagCount, 1, 'F5-RETRY: the corrected flag is recorded');
+    assertEqual(seenInputs[0]?.title, 'X', 'F5-RETRY: flagLoreAction received the flat shape, not the batched array');
+    assertEqual(toolActivity[0]?.query, 'X', 'F5-RETRY: recovered flag carries the title');
+
+    setChatEpoch(0); setGenerationLockEpoch(0); delete globalThis.__DLE_TEST_HOOKS;
+});
+
+test('F5-RETRY-2: model fumbles the format twice → gaps dropped, capped at MAX_FLAG_ITERATIONS', async () => {
+    setChatEpoch(10);
+    setGenerationLockEpoch(3);
+    let apiCalls = 0;
+    let flagCalled = 0;
+    _installFlagHooks({
+        callWithTools: async () => { apiCalls++; return { toolCalls: [{ name: 'flag', id: 'b' + apiCalls, input: { flags: [{ note: 'X' }] } }] }; },
+        flagLoreAction: async () => { flagCalled++; return { ok: true, message: 'Flagged.' }; },
+    });
+    const toolActivity = [];
+    const flagCount = await _runFlagIterationForTests([], [], 'auto', 256, { aborted: false }, toolActivity, {}, false, 0, 10, 3);
+
+    assertEqual(apiCalls, 2, 'F5-RETRY-2: capped at 2 iterations — one retry, then give up');
+    assertEqual(flagCalled, 0, 'F5-RETRY-2: never recorded a malformed flag');
+    assertEqual(flagCount, 0, 'F5-RETRY-2: gaps dropped when the model never emits the flat shape');
+    assertEqual(toolActivity.length, 0, 'F5-RETRY-2: no activity for dropped gaps');
+
+    setChatEpoch(0); setGenerationLockEpoch(0); delete globalThis.__DLE_TEST_HOOKS;
+});
+
 // ============================================================================
 // F5-BG — runAgenticLoop BACKGROUNDS the FLAG (gap-finder) turn (Issue-1)
 // ============================================================================

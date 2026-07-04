@@ -127,10 +127,10 @@ export const AGENTIC_TOOL_WRITE_FLAG_HINT =
 
 /** Flag Tool-Beschreibung. `${0}` = Max Markierungen. */
 export const AGENTIC_TOOL_FLAG = [
-    "**flag** (verfügbar nur nach write) — Markiere Lore-Lücken oder Einträge, die",
-    "Aktualisierungen brauchen. Markiere nur echte Lücken, wo du Details erfinden oder raten",
-    "musstest, die im Vault sein sollten. Nachdem du write aufrufst, wird search nicht mehr",
-    "verfügbar — nur flag bleibt. Maximum ${0} Markierungen pro Zug.",
+    "**flag** (verfügbar nur nach write) — Markiere eine Lore-Lücke oder einen Eintrag, der eine Aktualisierung braucht:",
+    "flag(title, reason, flag_type: gap|update, urgency: low|medium|high). Markiere nur echte Lücken, wo du Details",
+    "erfinden oder raten musstest, die im Vault sein sollten. Setze einen flag-Aufruf pro Lücke — bündle sie nicht.",
+    "Nachdem du write aufrufst, wird search nicht mehr verfügbar — nur flag bleibt. Maximum ${0} Markierungen pro Zug.",
 ].join('\n');
 
 /** Workflow-Zeile. `${0}` = Pfeil-getrennte Workflow-Schritte. */
