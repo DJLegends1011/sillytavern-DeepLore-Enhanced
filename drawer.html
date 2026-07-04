@@ -394,20 +394,6 @@
                 </button>
             </div>
         </div>
-        <!-- f041: SUPERSEDED by the contextual bulk-action bar above. Kept hidden for
-             back-compat (handlers delegate on .dle-librarian-action and still resolve here);
-             render also force-hides it. Safe to delete once no skin depends on the class. -->
-        <div class="dle-librarian-action-row" hidden>
-            <button type="button" class="menu_button dle-tool-btn dle-librarian-action" data-librarian-action="open" title="Open the selected gap in the Librarian editor" disabled data-i18n="[title]dle_librarian_open_tooltip">
-                <i class="fa-solid fa-pen-to-square" aria-hidden="true"></i> <span data-i18n="dle_librarian_open_label">Open</span>
-            </button>
-            <button type="button" class="menu_button dle-tool-btn dle-librarian-action" data-librarian-action="done" title="Mark selected as written" disabled data-i18n="[title]dle_librarian_done_tooltip">
-                <i class="fa-solid fa-check" aria-hidden="true"></i> <span data-i18n="dle_librarian_mark_done_label">Mark Done</span>
-            </button>
-            <button type="button" class="menu_button dle-tool-btn dle-librarian-action" data-librarian-action="remove" title="Remove (hide on first click, dismiss forever on second)" disabled data-i18n="[title]dle_librarian_remove_tooltip">
-                <i class="fa-solid fa-trash" aria-hidden="true"></i> <span data-i18n="dle_librarian_remove_label">Remove</span>
-            </button>
-        </div>
         <div class="dle-librarian-toolbar-bottom">
             <button type="button" id="dle-librarian-new-entry-btn-toolbar" class="menu_button dle-tool-btn dle-librarian-new-entry-btn" data-action="librarian-new" title="Create a new vault entry from scratch" data-i18n="[title]dle_new_entry_empty_tooltip">
                 <i class="fa-solid fa-plus" aria-hidden="true"></i> <span data-i18n="dle_librarian_new_entry_label">New Entry</span>

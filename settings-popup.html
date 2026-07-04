@@ -730,7 +730,7 @@
                         <input id="dle-sp-ai-manifest-fields" type="text" class="text_pole" placeholder="era, faction, mood" data-i18n="[placeholder]dle_ai_manifest_fields_placeholder">
                     </div>
 
-                    <h5 class="dle-settings-subsection-label" style="margin-top: 12px;" data-i18n="dle_response_prefill_heading">Response Prefill</h5>
+                    <h5 class="dle-settings-subsection-label" style="margin-top: var(--dle-space-3);" data-i18n="dle_response_prefill_heading">Response Prefill</h5>
                     <span class="dle-text-xs dle-muted" data-i18n="dle_response_prefill_desc">Inject seed text as the last assistant message so the writing AI continues from it instead of starting with "Certainly, here's…".</span>
                     <div class="flex-container">
                         <div class="flex1" title="Mode: off (no injection), anthropic-only (only when underlying model is Claude — uses Anthropic's native prefill behavior), all-providers (every chat-completion source — some treat it as continuation, others may ignore)." data-i18n="[title]dle_response_prefill_mode_tooltip">
@@ -871,11 +871,11 @@
                             <span data-i18n="dle_notepad_extract_mode_label_full">Extract Mode</span>
                         </label>
                     </div>
-                    <div id="dle-sp-ai-notepad-mode-tag-desc" class="dle-text-xs dle-muted" style="margin-top: 4px;">
+                    <div id="dle-sp-ai-notepad-mode-tag-desc" class="dle-text-xs dle-muted" style="margin-top: var(--dle-space-1);">
                         <i class="fa-solid fa-tag" aria-hidden="true"></i>
                         The writing AI includes <code>&lt;dle-notes&gt;</code> tags in its response. No extra API calls — notes are extracted from the response text. Best with flagship models (Claude Opus/Sonnet, GPT-4o). Smaller models may not follow the format.
                     </div>
-                    <div id="dle-sp-ai-notepad-mode-extract-desc" class="dle-text-xs dle-muted" style="display: none; margin-top: 4px;">
+                    <div id="dle-sp-ai-notepad-mode-extract-desc" class="dle-text-xs dle-muted" style="display: none; margin-top: var(--dle-space-1);">
                         <i class="fa-solid fa-bolt" aria-hidden="true"></i>
                         After each response, DLE sends the text to your <b>AI Search connection</b> to extract session notes. Works with any writing model — the extraction uses a separate, reliable call. Visible "Note to self:" prose is automatically stripped. Costs one extra API call per message.
                     </div>
@@ -1050,7 +1050,7 @@
                     <span data-i18n="dle_graph_show_labels_label">Show Labels</span>
                 </label>
 
-                <div class="flex-container" style="margin-top: 8px;">
+                <div class="flex-container" style="margin-top: var(--dle-space-2);">
                     <div class="flex1" title="Physics: node repulsion strength. Higher = more spread. Default: 0.3." data-i18n="[title]dle_graph_repulsion_tooltip">
                         <label for="dle-sp-graph-repulsion"><small data-i18n="dle_graph_repulsion_label">Repulsion</small></label>
                         <input id="dle-sp-graph-repulsion" type="number" class="text_pole" min="0.1" max="5.0" step="0.05" placeholder="0.3" />
@@ -1075,7 +1075,7 @@
                     </div>
                 </div>
 
-                <p class="dle-section-desc" style="margin-top: 8px;"><small><i class="fa-solid fa-circle-info" aria-hidden="true"></i> Graph also has its own in-window settings panel (gear icon) with live sliders and presets.</small></p>
+                <p class="dle-section-desc" style="margin-top: var(--dle-space-2);"><small><i class="fa-solid fa-circle-info" aria-hidden="true"></i> Graph also has its own in-window settings panel (gear icon) with live sliders and presets.</small></p>
             </div>
             </div>
         </div>
@@ -1097,12 +1097,12 @@
             <p class="dle-section-desc" data-i18n="dle_librarian_tools_p">During each AI reply, these tools let the AI look up lore and flag anything missing from your vault.</p>
 
             <div class="flex-container flexFlowColumn">
-                <div style="margin-bottom: 8px;">
+                <div style="margin-bottom: var(--dle-space-2);">
                     <button id="dle-sp-librarian-tour" type="button" class="menu_button" title="Open a Librarian session focused on writing-style guides for Emma." data-i18n="[title]dle_librarian_tour_tooltip">
                         <i class="fa-solid fa-book-open-reader" aria-hidden="true"></i>
                         <span data-i18n="dle_librarian_tour_button">Library Tour…</span>
                     </button>
-                    <small style="display:block; opacity:0.7; margin-top:4px;">
+                    <small class="dle-muted" style="display:block; margin-top:var(--dle-space-1);">
                         Open Emma the Librarian to write a meta/style guide. Guides are read by Emma only — never by the writing AI.
                     </small>
                 </div>
@@ -1112,7 +1112,7 @@
                     <span data-i18n="dle_librarian_enabled_label">Enable Librarian</span>
                 </label>
 
-                <div id="dle-sp-librarian-sub" class="flex-container flexFlowColumn" style="margin-left: 20px;">
+                <div id="dle-sp-librarian-sub" class="flex-container flexFlowColumn dle-sp-indent">
                     <label class="checkbox_label" for="dle-sp-librarian-search" title="Registers the search_lore tool. Lets the AI search the vault for entries the pipeline missed." data-i18n="[title]dle_librarian_search_tooltip">
                         <input id="dle-sp-librarian-search" type="checkbox" class="checkbox">
                         <span data-i18n="dle_librarian_search_label">Allow vault searches during generation</span>
@@ -1145,7 +1145,7 @@
                         </div>
                     </div>
 
-                    <p class="dle-section-desc" style="margin-top: 4px;"><small><i class="fa-solid fa-circle-info" aria-hidden="true"></i> Requires a model that supports function calling (tool use).</small></p>
+                    <p class="dle-section-desc" style="margin-top: var(--dle-space-1);"><small><i class="fa-solid fa-circle-info" aria-hidden="true"></i> Requires a model that supports function calling (tool use).</small></p>
                 </div>
             </div>
             </div>
@@ -1199,7 +1199,7 @@
                         </div>
                     </div>
 
-                    <h5 class="dle-settings-subsection-label" style="margin-top: 12px;" data-i18n="dle_settings_tool_call_budgets_h5">Tool-Call Budgets</h5>
+                    <h5 class="dle-settings-subsection-label" style="margin-top: var(--dle-space-3);" data-i18n="dle_settings_tool_call_budgets_h5">Tool-Call Budgets</h5>
                     <p class="dle-text-xs dle-muted" data-i18n="dle_settings_tool_call_budgets_desc">Raise these if Emma keeps hitting "tool call limit reached" before finishing a write. Lower them to bound runaway agentic loops.</p>
                     <div class="flex-container">
                         <div class="flex1" title="Maximum search/flag tool calls Emma can make within a single user turn before being forced to finalize. Default: 10." data-i18n="[title]dle_librarian_max_tool_calls_per_turn_tooltip">
@@ -1228,7 +1228,7 @@
                         </div>
                     </div>
 
-                    <h5 class="dle-settings-subsection-label" style="margin-top: 12px;" data-i18n="dle_librarian_system_prompt_h5">System Prompt</h5>
+                    <h5 class="dle-settings-subsection-label" style="margin-top: var(--dle-space-3);" data-i18n="dle_librarian_system_prompt_h5">System Prompt</h5>
                     <div class="flex-container flexFlowColumn">
                         <div class="radio_group">
                             <label class="checkbox_label" title="Use the built-in entry writing guide." data-i18n="[title]dle_librarian_prompt_mode_default_tooltip">
@@ -1287,8 +1287,8 @@
                         </tr>
                     </tbody>
                 </table>
-                <div id="dle-sp-lib-entries-written" class="dle-text-xs" style="margin-top: 6px; opacity: 0.6;"></div>
-                <div id="dle-sp-lib-unmet-queries" style="margin-top: 8px;"></div>
+                <div id="dle-sp-lib-entries-written" class="dle-text-xs dle-muted" style="margin-top: 6px;"></div>
+                <div id="dle-sp-lib-unmet-queries" style="margin-top: var(--dle-space-2);"></div>
             </div>
             </div>
 

@@ -507,7 +507,7 @@ export function renderBrowseTab() {
         for (const e of vaultIndex) {
             if (e.tags) for (const t of e.tags) tagCounts.set(t, (tagCounts.get(t) || 0) + 1);
         }
-        $tagSelect.html('<option value="">Tags</option>' +
+        $tagSelect.html('<option value="">' + escapeHtml(tr('dle_tags_all')) + '</option>' +
             [...ds.cachedTagSet].sort().map(t => `<option value="${escapeHtml(t)}"${ds.browseTagFilter === t ? ' selected' : ''}>${escapeHtml(t)} (${tagCounts.get(t) || 0})</option>`).join(''));
     }
     if ($folderSelect.length && ds.cachedFolderSet) {
@@ -521,7 +521,7 @@ export function renderBrowseTab() {
                 }
             }
         }
-        $folderSelect.html('<option value="">Folder</option>' +
+        $folderSelect.html('<option value="">' + escapeHtml(tr('dle_browse_filter_folder_all')) + '</option>' +
             [...ds.cachedFolderSet].sort().map(f => `<option value="${escapeHtml(f)}"${ds.browseFolderFilter === f ? ' selected' : ''}>${escapeHtml(f)} (${folderCounts.get(f) || 0})</option>`).join(''));
     }
 
@@ -699,8 +699,8 @@ export function renderBrowseTab() {
     const sinceGenActive = activeQF === 'since-gen';
     const neverInjectedActive = activeQF === 'never-injected';
     $quickFilters.html(
-        `<span class="dle-qf-pill${sinceGenActive ? ' dle-qf-active' : ''}" role="button" tabindex="0" aria-pressed="${sinceGenActive}" data-qf="since-gen">Since last gen</span>` +
-        `<span class="dle-qf-pill${neverInjectedActive ? ' dle-qf-active' : ''}" role="button" tabindex="0" aria-pressed="${neverInjectedActive}" data-qf="never-injected">Never injected</span>`
+        `<span class="dle-qf-pill${sinceGenActive ? ' dle-qf-active' : ''}" role="button" tabindex="0" aria-pressed="${sinceGenActive}" data-qf="since-gen">${escapeHtml(tr('dle_browse_qf_since_gen', 'Since last gen'))}</span>` +
+        `<span class="dle-qf-pill${neverInjectedActive ? ' dle-qf-active' : ''}" role="button" tabindex="0" aria-pressed="${neverInjectedActive}" data-qf="never-injected">${escapeHtml(tr('dle_browse_filter_never_injected', 'Never Injected'))}</span>`
     );
     if (sinceGenActive && _browseVerdict && getPreviousVerdict()) {
         const diff = diffVerdicts(_browseVerdict, getPreviousVerdict());
@@ -840,8 +840,8 @@ export function renderBrowseTab() {
             never_injected: 'dle_browse_filter_never_injected',
         };
         const quickLabels = {
-            'since-gen': 'Since last gen',
-            'never-injected': 'Never injected',
+            'since-gen': tr('dle_browse_qf_since_gen', 'Since last gen'),
+            'never-injected': tr('dle_browse_filter_never_injected', 'Never Injected'),
         };
         const chips = [];
         if (statusFilter && statusFilter !== 'all') {

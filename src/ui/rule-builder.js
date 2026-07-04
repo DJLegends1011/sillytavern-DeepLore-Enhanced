@@ -63,9 +63,9 @@ function buildFieldRowHtml(field, index) {
     const linked = (field.contextKey || field.name || '') === (field.name || '');
     const linkIconClass = linked ? 'fa-link' : 'fa-link-slash';
     const linkIconTitle = linked
-        ? 'Linked to field name — click to unlink'
-        : 'Unlinked from field name — click to re-link';
-    const linkIconStyle = linked ? '' : ' style="opacity:0.4"';
+        ? tr('dle_rb_link_linked', 'Linked to field name — click to unlink')
+        : tr('dle_rb_link_unlinked', 'Unlinked from field name — click to re-link');
+    const linkIconStyle = linked ? '' : ' style="opacity:var(--dle-opacity-disabled,0.4)"';
     const ctxManualAttr = linked ? '' : ' data-manual="true"';
 
     return `
@@ -83,23 +83,23 @@ function buildFieldRowHtml(field, index) {
         </div>
         <div class="dle-rb-field-body">
             <div class="dle-rb-row">
-                <label class="dle-rb-lbl">Type</label>
+                <label class="dle-rb-lbl">${tr('dle_rb_lbl_type', 'Type')}</label>
                 <select class="dle-rb-select" data-prop="type">${typeOptions}</select>
-                <label class="dle-rb-lbl dle-rb-multi-lbl"><input type="checkbox" data-prop="multi" ${field.multi ? 'checked' : ''} ${field.type === 'boolean' ? 'disabled' : ''} /> Multi-value</label>
+                <label class="dle-rb-lbl dle-rb-multi-lbl"><input type="checkbox" data-prop="multi" ${field.multi ? 'checked' : ''} ${field.type === 'boolean' ? 'disabled' : ''} /> ${tr('dle_rb_lbl_multi_value', 'Multi-value')}</label>
             </div>
             <div class="dle-rb-row">
-                <label class="dle-rb-lbl">Gating</label>
-                <label class="dle-rb-lbl dle-rb-enabled-lbl" title="Enable or disable contextual gating for this field"><input type="checkbox" data-prop="gating.enabled" ${field.gating?.enabled !== false ? 'checked' : ''} /> Enabled</label>
+                <label class="dle-rb-lbl">${tr('dle_rb_lbl_gating', 'Gating')}</label>
+                <label class="dle-rb-lbl dle-rb-enabled-lbl" title="Enable or disable contextual gating for this field"><input type="checkbox" data-prop="gating.enabled" ${field.gating?.enabled !== false ? 'checked' : ''} /> ${tr('dle_rb_lbl_enabled', 'Enabled')}</label>
                 <select class="dle-rb-select${gatingDimClass}" data-prop="gating.operator">${operatorOptions}</select>
                 <select class="dle-rb-select dle-rb-tolerance${gatingDimClass}" data-prop="gating.tolerance">${toleranceOptions}</select>
             </div>
             <div class="dle-rb-row">
-                <label class="dle-rb-lbl">Context Key</label>
+                <label class="dle-rb-lbl">${tr('dle_rb_lbl_context_key', 'Context Key')}</label>
                 <input class="dle-rb-ctx text_pole" data-prop="contextKey" value="${contextKeyVal}"${ctxManualAttr} placeholder="chat_metadata key" title="Key used in chat_metadata.deeplore_context" />
                 <span class="dle-rb-link-icon" role="button" tabindex="0" aria-label="Toggle link between context key and field name" title="${escapeHtml(linkIconTitle)}"${linkIconStyle}><i class="fa-solid ${linkIconClass}"></i></span>
             </div>
             <div class="dle-rb-row">
-                <label class="dle-rb-lbl">Allowed Values</label>
+                <label class="dle-rb-lbl">${tr('dle_rb_lbl_allowed_values', 'Allowed Values')}</label>
                 <input class="dle-rb-values text_pole" data-prop="values" value="${valuesStr}" placeholder="e.g. morning, afternoon, evening (or leave empty for freeform)" title="Comma-separated allowed values. Leave empty for freeform." />
             </div>
         </div>
@@ -243,7 +243,7 @@ export async function openRuleBuilder() {
         if (!$ctx.data('manual')) {
             $ctx.val($(this).val().trim());
             $icon.find('i').removeClass('fa-link-slash').addClass('fa-link');
-            $icon.attr('title', 'Linked to field name — click to unlink');
+            $icon.attr('title', tr('dle_rb_link_linked', 'Linked to field name — click to unlink'));
             $icon.css('opacity', '');
         }
     });
@@ -252,7 +252,7 @@ export async function openRuleBuilder() {
         const $icon = $row.find('.dle-rb-link-icon');
         $(this).data('manual', true);
         $icon.find('i').removeClass('fa-link').addClass('fa-link-slash');
-        $icon.attr('title', 'Unlinked from field name — click to re-link');
+        $icon.attr('title', tr('dle_rb_link_unlinked', 'Unlinked from field name — click to re-link'));
         $icon.css('opacity', '0.4');
     });
 
@@ -272,12 +272,12 @@ export async function openRuleBuilder() {
             $ctx.data('manual', false);
             $ctx.val($row.find('[data-prop="name"]').val().trim());
             $(this).find('i').removeClass('fa-link-slash').addClass('fa-link');
-            $(this).attr('title', 'Linked to field name — click to unlink');
+            $(this).attr('title', tr('dle_rb_link_linked', 'Linked to field name — click to unlink'));
             $(this).css('opacity', '');
         } else {
             $ctx.data('manual', true);
             $(this).find('i').removeClass('fa-link').addClass('fa-link-slash');
-            $(this).attr('title', 'Unlinked from field name — click to re-link');
+            $(this).attr('title', tr('dle_rb_link_unlinked', 'Unlinked from field name — click to re-link'));
             $(this).css('opacity', '0.4');
         }
         dirty = true;

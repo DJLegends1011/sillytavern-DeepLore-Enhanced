@@ -206,8 +206,11 @@ function wireNavigation() {
         // connection. isPageValid() only guards the Page-2 → Page-3 transition.
         if (!connectionVerified) {
             const proceed = await callGenericPopup(
-                'Your Obsidian connection has not been verified on the Connection step. DeepLore will be enabled but may not work until the connection succeeds.\n\nFinish anyway?',
-                POPUP_TYPE.CONFIRM, '', { okButton: 'Finish anyway', cancelButton: 'Go back' },
+                tr('dle_wiz_finish_unverified_confirm', 'Your Obsidian connection has not been verified on the Connection step. DeepLore will be enabled but may not work until the connection succeeds.\n\nFinish anyway?'),
+                POPUP_TYPE.CONFIRM, '', {
+                    okButton: tr('dle_wiz_finish_anyway_btn', 'Finish anyway'),
+                    cancelButton: tr('dle_wiz_go_back_btn', 'Go back'),
+                },
             );
             if (!proceed) { goToPage(2); return; }
         }
@@ -218,7 +221,7 @@ function wireNavigation() {
             await applyWizardSettings();
         } catch (err) {
             console.error('[DLE] Wizard finish error:', err);
-            toastr.warning('Setup saved but index build failed — it will retry on first generation.', 'DeepLore');
+            toastr.warning(tr('dle_wiz_index_build_failed_toast', 'Setup saved but index build failed — it will retry on first generation.'), 'DeepLore');
         }
         // Close popup regardless — settings are already saved before buildIndex().
         closeWizardPopup();
@@ -288,10 +291,11 @@ function updateNavButtons() {
         $next.prop('disabled', !valid);
         // Surface why Next is disabled so the user knows what to fix without hunting.
         if (!valid && currentPage === 2 && !connectionVerified) {
+            const reasonText = tr('dle_wiz_test_conn_to_continue', 'Test connection to continue');
             if (!$reason.length) {
-                $next.before('<span class="dle-wiz-next-reason dle-text-xs dle-muted" style="margin-right:8px;">Test connection to continue</span>');
+                $next.before('<span class="dle-wiz-next-reason dle-text-xs dle-muted" style="margin-right:8px;">' + escapeHtml(reasonText) + '</span>');
             } else {
-                $reason.text('Test connection to continue').show();
+                $reason.text(reasonText).show();
             }
         } else {
             $reason.hide();
@@ -372,7 +376,7 @@ function wireConnectionTest() {
         const apiKey = $wizard.find('#dle-wiz-api-key').val().trim();
         const useHttps = $wizard.find('#dle-wiz-https').is(':checked');
 
-        $btn.prop('disabled', true).html('<goo-spinner size="22" color="currentColor" aria-hidden="true"></goo-spinner> Testing...');
+        $btn.prop('disabled', true).html('<goo-spinner size="22" color="currentColor" aria-hidden="true"></goo-spinner> ' + tr('dle_wiz_testing', 'Testing...'));
         $result.hide();
 
         try {
@@ -388,17 +392,17 @@ function wireConnectionTest() {
                 connectionVerified = true;
                 $wizard.find('#dle-wiz-trust-cert').hide();
                 $result
-                    .html('<i class="fa-solid fa-circle-check"></i> Connected to Obsidian vault successfully')
+                    .html('<i class="fa-solid fa-circle-check"></i> ' + tr('dle_wiz_conn_success', 'Connected to Obsidian vault successfully'))
                     .removeClass('dle-wizard-result-error')
                     .addClass('dle-wizard-result-success')
                     .show();
-                $btn.html('<i class="fa-solid fa-circle-check"></i> Connected').addClass('dle-wizard-btn-verified');
+                $btn.html('<i class="fa-solid fa-circle-check"></i> ' + tr('dle_wiz_connected', 'Connected')).addClass('dle-wizard-btn-verified');
             } else {
                 connectionVerified = false;
                 if (result.diagnosis) {
                     const guidanceHtml = `<div class="dle-popup">${buildConnectionGuidanceHtml(result)}</div>`;
-                    callGenericPopup(guidanceHtml, POPUP_TYPE.TEXT, 'Connection Help', {
-                        wide: true, allowVerticalScrolling: true, okButton: 'Got it',
+                    callGenericPopup(guidanceHtml, POPUP_TYPE.TEXT, tr('dle_wiz_connection_help_title', 'Connection Help'), {
+                        wide: true, allowVerticalScrolling: true, okButton: tr('dle_wiz_got_it_btn', 'Got it'),
                     });
                 }
                 $wizard.find('#dle-wiz-trust-cert').hide();
@@ -407,22 +411,22 @@ function wireConnectionTest() {
                 // "undefined" — fall back to a diagnosis-derived string so the user
                 // doesn't see "Error: undefined" in the UI.
                 const errorText = result.error
-                    || (result.diagnosis ? `Diagnosis: ${result.diagnosis}` : 'Unknown error');
+                    || (result.diagnosis ? trf('dle_wiz_diagnosis_prefix', result.diagnosis) : tr('dle_wiz_unknown_error', 'Unknown error'));
                 $result
                     .html(`<i class="fa-solid fa-circle-xmark"></i> ${escapeHtml(errorText)}`)
                     .removeClass('dle-wizard-result-success')
                     .addClass('dle-wizard-result-error')
                     .show();
-                $btn.html('<i class="fa-solid fa-plug"></i> Test Connection');
+                $btn.html('<i class="fa-solid fa-plug"></i> ' + tr('dle_setup_wizard_test_connection_btn', 'Test Connection'));
             }
         } catch (err) {
             connectionVerified = false;
             $result
-                .html(`<i class="fa-solid fa-circle-xmark"></i> Error: ${escapeHtml(err.message)}`)
+                .html('<i class="fa-solid fa-circle-xmark"></i> ' + escapeHtml(trf('dle_wiz_error_prefix', err.message)))
                 .removeClass('dle-wizard-result-success')
                 .addClass('dle-wizard-result-error')
                 .show();
-            $btn.html('<i class="fa-solid fa-plug"></i> Test Connection');
+            $btn.html('<i class="fa-solid fa-plug"></i> ' + tr('dle_setup_wizard_test_connection_btn', 'Test Connection'));
         }
 
         $btn.prop('disabled', false);
@@ -439,14 +443,14 @@ function wireConnectionTest() {
         }
         connectionVerified = false;
         $wizard.find('#dle-wiz-test-conn')
-            .html('<i class="fa-solid fa-plug"></i> Test Connection')
+            .html('<i class="fa-solid fa-plug"></i> ' + tr('dle_setup_wizard_test_connection_btn', 'Test Connection'))
             .prop('disabled', false);
     });
 
     $wizard.find('#dle-wiz-host, #dle-wiz-port, #dle-wiz-api-key').on('input', () => {
         connectionVerified = false;
         $wizard.find('#dle-wiz-test-conn')
-            .html('<i class="fa-solid fa-plug"></i> Test Connection')
+            .html('<i class="fa-solid fa-plug"></i> ' + tr('dle_setup_wizard_test_connection_btn', 'Test Connection'))
             .removeClass('dle-wizard-btn-verified');
         $wizard.find('#dle-wiz-conn-result').hide();
         updateNavButtons();
@@ -467,8 +471,8 @@ function wireDemoVault() {
         const isHidden = !$instructions.is(':visible');
         $instructions.slideToggle(200);
         $btn.html(isHidden
-            ? '<i class="fa-solid fa-chevron-up"></i> Hide instructions'
-            : '<i class="fa-solid fa-folder-open"></i> Show me how');
+            ? '<i class="fa-solid fa-chevron-up"></i> ' + tr('dle_wiz_hide_instructions', 'Hide instructions')
+            : '<i class="fa-solid fa-folder-open"></i> ' + tr('dle_setup_wizard_demo_show_me_how_btn', 'Show me how'));
         if (isHidden) {
             $wizard.find('#dle-wiz-demo-path').text(getDemoVaultPath());
         }
@@ -477,8 +481,8 @@ function wireDemoVault() {
     $wizard.find('#dle-wiz-demo-copy').on('click', () => {
         const path = $wizard.find('#dle-wiz-demo-path').text();
         navigator.clipboard.writeText(path).then(
-            () => toastr.info('Path copied to clipboard', 'DeepLore'),
-            () => toastr.warning('Failed to copy — select and copy manually', 'DeepLore'),
+            () => toastr.info(tr('dle_wiz_path_copied', 'Path copied to clipboard'), 'DeepLore'),
+            () => toastr.warning(tr('dle_wiz_path_copy_failed', 'Failed to copy — select and copy manually'), 'DeepLore'),
         );
     });
 
@@ -490,13 +494,13 @@ function wireDemoVault() {
         $wizard.find('#dle-wiz-https').prop('checked', false);
         connectionVerified = false;
         $wizard.find('#dle-wiz-test-conn')
-            .html('<i class="fa-solid fa-plug"></i> Test Connection')
+            .html('<i class="fa-solid fa-plug"></i> ' + tr('dle_setup_wizard_test_connection_btn', 'Test Connection'))
             .removeClass('dle-wizard-btn-verified');
         $wizard.find('#dle-wiz-conn-result').hide();
         updateNavButtons();
         // API key is the only field the user must still enter.
         $wizard.find('#dle-wiz-api-key').val('').focus();
-        toastr.info('Connection fields filled — enter your Obsidian API key and click Test', 'DeepLore');
+        toastr.info(tr('dle_wiz_demo_fields_filled', 'Connection fields filled — enter your Obsidian API key and click Test'), 'DeepLore');
     });
 }
 
@@ -563,7 +567,7 @@ function wireVaultScan() {
                 $wizard.find('#dle-wiz-https').prop('checked', picked.scheme === 'https');
                 connectionVerified = false;
                 $wizard.find('#dle-wiz-test-conn')
-                    .html('<i class="fa-solid fa-plug"></i> Test Connection')
+                    .html('<i class="fa-solid fa-plug"></i> ' + tr('dle_setup_wizard_test_connection_btn', 'Test Connection'))
                     .removeClass('dle-wizard-btn-verified');
                 $wizard.find('#dle-wiz-conn-result').hide();
                 updateNavButtons();
@@ -598,8 +602,9 @@ function wirePresets() {
         $wizard.find('#dle-wiz-budget').val(values.budget);
 
         const label = preset.charAt(0).toUpperCase() + preset.slice(1);
+        // ${0}=preset label (e.g. "Medium"). English: "Configured for ${0} vault"
         $wizard.find('#dle-wiz-preset-badge')
-            .html(`<i class="fa-solid fa-check"></i> Configured for ${label} vault`)
+            .html('<i class="fa-solid fa-check"></i> ' + escapeHtml(trf('dle_wiz_preset_configured', label)))
             .addClass('dle-wizard-badge-visible');
 
         // Presets always override unlimited toggles.
@@ -629,7 +634,7 @@ function wireAiSetup() {
     $wizard.find('#dle-wiz-test-ai').on('click', async () => {
         const $btn = $wizard.find('#dle-wiz-test-ai');
         const $result = $wizard.find('#dle-wiz-ai-result');
-        $btn.prop('disabled', true).html('<goo-spinner size="22" color="currentColor" aria-hidden="true"></goo-spinner> Testing...');
+        $btn.prop('disabled', true).html('<goo-spinner size="22" color="currentColor" aria-hidden="true"></goo-spinner> ' + tr('dle_wiz_testing', 'Testing...'));
         $result.hide();
 
         try {
@@ -640,12 +645,12 @@ function wireAiSetup() {
 
             if (mode === 'profile') {
                 const profileId = $wizard.find('#dle-wiz-ai-profile').val();
-                if (!profileId) throw new Error('Select a connection profile first');
+                if (!profileId) throw new Error(tr('dle_wiz_ai_err_select_profile', 'Select a connection profile first'));
                 const { ConnectionManagerRequestService } = await import('../../../../shared.js')
                     .catch(() => ({ ConnectionManagerRequestService: null }));
-                if (!ConnectionManagerRequestService) throw new Error('Connection Manager not available');
+                if (!ConnectionManagerRequestService) throw new Error(tr('dle_wiz_ai_err_cm_unavailable', 'Connection Manager not available'));
                 const profile = ConnectionManagerRequestService.getProfile(profileId);
-                if (!profile) throw new Error('Selected profile not found');
+                if (!profile) throw new Error(tr('dle_wiz_ai_err_profile_not_found', 'Selected profile not found'));
                 // #15: selecting a profile is NOT a connectivity test — we send no request,
                 // so we must not claim "AI connection working". A bad key/endpoint only
                 // surfaces on first generation. Report honestly as "selected, not tested".
@@ -655,36 +660,39 @@ function wireAiSetup() {
             } else {
                 const proxyUrl = $wizard.find('#dle-wiz-ai-proxy-url').val().trim();
                 const model = $wizard.find('#dle-wiz-ai-model').val().trim();
-                if (!proxyUrl) throw new Error('Enter a proxy URL first');
-                if (!model) throw new Error('Enter a model name first (e.g. claude-haiku-4-5-20251001)');
+                if (!proxyUrl) throw new Error(tr('dle_wiz_ai_err_enter_proxy_url', 'Enter a proxy URL first'));
+                if (!model) throw new Error(tr('dle_wiz_ai_err_enter_model', 'Enter a model name first (e.g. claude-haiku-4-5-20251001)'));
                 const { testProxyConnection } = await import('../ai/proxy-api.js');
                 const result = await testProxyConnection(proxyUrl, model);
                 ok = result.ok;
                 liveTested = true;
-                detail = result.ok ? `Model: ${result.model || model}` : result.error;
+                // ${0}=model id. English: "Model: ${0}"
+                detail = result.ok ? trf('dle_wiz_ai_model_detail', result.model || model) : result.error;
             }
 
             if (ok && liveTested) {
+                // ${0}=detail (model). English: "AI connection working — ${0}"
                 $result
-                    .html(`<i class="fa-solid fa-circle-check"></i> AI connection working — ${escapeHtml(detail)}`)
+                    .html('<i class="fa-solid fa-circle-check"></i> ' + escapeHtml(trf('dle_wiz_ai_working', detail)))
                     .removeClass('dle-wizard-result-error')
                     .addClass('dle-wizard-result-success')
                     .show();
-                $btn.html('<i class="fa-solid fa-circle-check"></i> Connected').addClass('dle-wizard-btn-verified');
+                $btn.html('<i class="fa-solid fa-circle-check"></i> ' + tr('dle_wiz_connected', 'Connected')).addClass('dle-wizard-btn-verified');
             } else if (ok) {
                 // profile selected but not live-tested — honest, neutral messaging
+                // ${0}=detail (profile name). English: "Profile selected: ${0} — DLE will use it for AI search. Not live-tested here; a bad key or endpoint will surface on the first generation."
                 $result
-                    .html(`<i class="fa-solid fa-circle-info"></i> Profile selected: ${escapeHtml(detail)} — DLE will use it for AI search. Not live-tested here; a bad key or endpoint will surface on the first generation.`)
+                    .html('<i class="fa-solid fa-circle-info"></i> ' + escapeHtml(trf('dle_wiz_ai_profile_selected_msg', detail)))
                     .removeClass('dle-wizard-result-error dle-wizard-result-success')
                     .show();
-                $btn.html('<i class="fa-solid fa-circle-check"></i> Profile selected').addClass('dle-wizard-btn-verified');
+                $btn.html('<i class="fa-solid fa-circle-check"></i> ' + tr('dle_wiz_ai_profile_selected_btn', 'Profile selected')).addClass('dle-wizard-btn-verified');
             } else {
                 $result
                     .html(`<i class="fa-solid fa-circle-xmark"></i> ${escapeHtml(detail)}`)
                     .removeClass('dle-wizard-result-success')
                     .addClass('dle-wizard-result-error')
                     .show();
-                $btn.html('<i class="fa-solid fa-brain"></i> Test AI Connection');
+                $btn.html('<i class="fa-solid fa-brain"></i> ' + tr('dle_setup_wizard_test_ai_btn', 'Test AI Connection'));
             }
         } catch (err) {
             $result
@@ -692,7 +700,7 @@ function wireAiSetup() {
                 .removeClass('dle-wizard-result-success')
                 .addClass('dle-wizard-result-error')
                 .show();
-            $btn.html('<i class="fa-solid fa-brain"></i> Test AI Connection');
+            $btn.html('<i class="fa-solid fa-brain"></i> ' + tr('dle_setup_wizard_test_ai_btn', 'Test AI Connection'));
         }
 
         $btn.prop('disabled', false);
@@ -706,20 +714,18 @@ async function loadAiProfiles() {
         const { ConnectionManagerRequestService } = await import('../../../../shared.js')
             .catch(() => ({ ConnectionManagerRequestService: null }));
         if (!ConnectionManagerRequestService) {
-            $select.html('<option value="">Connection Manager not available</option>');
+            $select.html('<option value="">' + escapeHtml(tr('dle_wiz_ai_cm_unavailable_opt', 'Connection Manager not available')) + '</option>');
             return;
         }
         const profiles = ConnectionManagerRequestService.getSupportedProfiles();
         if (!profiles || profiles.length === 0) {
-            $select.html('<option value="">No profiles configured</option>');
+            $select.html('<option value="">' + escapeHtml(tr('dle_wiz_ai_no_profiles_opt', 'No profiles configured')) + '</option>');
             // Wave E (E3): don't dead-end on an empty dropdown — tell the user how to make a profile
             // (profile-is-canonical since v2.5) and offer the keywords-only escape hatch.
             $select.after(
                 '<div class="dle-wiz-no-profiles-help dle-text-xs dle-muted" style="margin-top:6px;">'
-                + '<i class="fa-solid fa-circle-info"></i> DeepLore routes AI through SillyTavern '
-                + '<strong>Connection Profiles</strong>. Create one in <strong>API Connections</strong> '
-                + '(the plug icon in the top bar) → <strong>Connection Profile</strong>, then reopen this step. '
-                + 'Or choose <strong>Keywords Only</strong> on the previous step to skip AI for now.'
+                + '<i class="fa-solid fa-circle-info"></i> '
+                + tr('dle_wiz_no_profiles_help', 'DeepLore routes AI through SillyTavern <strong>Connection Profiles</strong>. Create one in <strong>API Connections</strong> (the plug icon in the top bar) → <strong>Connection Profile</strong>, then reopen this step. Or choose <strong>Keywords Only</strong> on the previous step to skip AI for now.')
                 + '</div>',
             );
             return;
@@ -727,11 +733,11 @@ async function loadAiProfiles() {
         const s = getSettings();
         const savedId = s.aiSearchProfileId;
         const savedExists = savedId && profiles.some(p => p.id === savedId);
-        let options = '<option value="">— Select a profile —</option>';
+        let options = '<option value="">' + escapeHtml(tr('dle_wiz_ai_select_profile_opt', '— Select a profile —')) + '</option>';
         if (savedId && !savedExists) {
             // #72: the saved profile was deleted/renamed in ST — warn instead of silently
             // showing "— Select —" while a stale id lingers in settings.
-            options += '<option value="" disabled>⚠ Previously selected profile no longer exists — choose again</option>';
+            options += '<option value="" disabled>⚠ ' + escapeHtml(tr('dle_wiz_ai_stale_profile_opt', 'Previously selected profile no longer exists — choose again')) + '</option>';
         }
         for (const p of profiles) {
             const selected = p.id === savedId ? ' selected' : '';
@@ -742,7 +748,7 @@ async function loadAiProfiles() {
     } catch (err) {
         // BUG-112: log so dropdown load failures are diagnosable.
         console.debug('[DLE] Wizard profile dropdown load failed:', err?.message);
-        $select.html('<option value="">Failed to load profiles</option>');
+        $select.html('<option value="">' + escapeHtml(tr('dle_wiz_ai_load_profiles_failed_opt', 'Failed to load profiles')) + '</option>');
     }
 }
 
@@ -822,9 +828,9 @@ function wireVaultStructurePage() {
     if (!$btn.data('wired')) {
         $btn.data('wired', true);
         $btn.on('click', async () => {
-            $btn.prop('disabled', true).html('<goo-spinner size="22" color="currentColor" aria-hidden="true"></goo-spinner> Creating...');
+            $btn.prop('disabled', true).html('<goo-spinner size="22" color="currentColor" aria-hidden="true"></goo-spinner> ' + tr('dle_wiz_creating', 'Creating...'));
             await runVaultStructureCreation();
-            $btn.html('<i class="fa-solid fa-circle-check"></i> Done').addClass('dle-wizard-btn-verified').prop('disabled', false);
+            $btn.html('<i class="fa-solid fa-circle-check"></i> ' + tr('dle_wiz_done', 'Done')).addClass('dle-wizard-btn-verified').prop('disabled', false);
         });
     }
 
@@ -877,9 +883,14 @@ async function runVaultStructureCreation() {
 
     const $result = $wizard.find('#dle-wiz-vault-result');
     const lines = [];
-    const labels = { created: 'Created', skipped: 'Skipped', failed: 'Failed', exists: 'Already present' };
-    lines.push(`<div><strong>Field definitions:</strong> ${labels[outcome.fields]}${outcome.fieldsError ? ` &mdash; ${escapeHtml(outcome.fieldsError)}` : ''}</div>`);
-    lines.push(`<div><strong>Sessions folder:</strong> ${labels[outcome.sessions]}${outcome.sessionsError ? ` &mdash; ${escapeHtml(outcome.sessionsError)}` : ''}</div>`);
+    const labels = {
+        created: tr('dle_wiz_outcome_created', 'Created'),
+        skipped: tr('dle_wiz_outcome_skipped', 'Skipped'),
+        failed: tr('dle_wiz_outcome_failed', 'Failed'),
+        exists: tr('dle_wiz_outcome_exists', 'Already present'),
+    };
+    lines.push(`<div><strong>${escapeHtml(tr('dle_wiz_field_defs_label', 'Field definitions:'))}</strong> ${labels[outcome.fields]}${outcome.fieldsError ? ` &mdash; ${escapeHtml(outcome.fieldsError)}` : ''}</div>`);
+    lines.push(`<div><strong>${escapeHtml(tr('dle_wiz_sessions_folder_label', 'Sessions folder:'))}</strong> ${labels[outcome.sessions]}${outcome.sessionsError ? ` &mdash; ${escapeHtml(outcome.sessionsError)}` : ''}</div>`);
     const anyFailed = outcome.fields === 'failed' || outcome.sessions === 'failed';
     const anyDone = outcome.fields === 'created' || outcome.sessions === 'created';
     $result
@@ -917,7 +928,7 @@ function wireImport() {
         $wizard.find('#dle-wiz-import-file-name').text(file.name);
         const reader = new FileReader();
         reader.onload = () => { importJsonData = /** @type {string} */ (reader.result); };
-        reader.onerror = () => { toastr.error('Failed to read file.', 'DeepLore'); };
+        reader.onerror = () => { toastr.error(tr('dle_wiz_import_read_file_failed', 'Failed to read file.'), 'DeepLore'); };
         reader.readAsText(file);
     });
 
@@ -928,13 +939,14 @@ function wireImport() {
             const { loadWorldInfo } = await import('../../../../../world-info.js');
             const data = await loadWorldInfo(name);
             if (!data) {
-                toastr.error(`Failed to load lorebook "${name}".`, 'DeepLore');
+                // ${0}=lorebook name. English: 'Failed to load lorebook "${0}".'
+                toastr.error(trf('dle_wiz_import_load_lorebook_failed', name), 'DeepLore');
                 return;
             }
             importJsonData = JSON.stringify(data, null, 2);
         } catch (err) {
             console.error('[DLE] Wizard loadWorldInfo error:', err);
-            toastr.error('Couldn\'t load that lorebook. Try a different one or paste the JSON directly.', 'DeepLore');
+            toastr.error(tr('dle_wiz_import_load_lorebook_error', 'Couldn\'t load that lorebook. Try a different one or paste the JSON directly.'), 'DeepLore');
         }
     });
 
@@ -951,7 +963,7 @@ function wireImport() {
         }
 
         if (!jsonText) {
-            toastr.warning('No data to import. Select a lorebook, upload a file, or paste JSON first.', 'DeepLore');
+            toastr.warning(tr('dle_wiz_import_no_data', 'No data to import. Select a lorebook, upload a file, or paste JSON first.'), 'DeepLore');
             return;
         }
 
@@ -965,15 +977,16 @@ function wireImport() {
         }
 
         if (!entries || entries.length === 0) {
-            $result.html('<i class="fa-solid fa-circle-info"></i> No entries found in the provided data.')
+            $result.html('<i class="fa-solid fa-circle-info"></i> ' + tr('dle_wiz_import_no_entries', 'No entries found in the provided data.'))
                 .removeClass('dle-wizard-result-success dle-wizard-result-error').show();
             return;
         }
 
         const folder = $wizard.find('#dle-wiz-import-folder').val()?.trim() || '';
 
-        $btn.prop('disabled', true).html('<goo-spinner size="22" color="currentColor" aria-hidden="true"></goo-spinner> Importing...');
-        $result.html(`<goo-spinner size="22" color="currentColor" aria-hidden="true"></goo-spinner> Importing 0/${entries.length}...`)
+        $btn.prop('disabled', true).html('<goo-spinner size="22" color="currentColor" aria-hidden="true"></goo-spinner> ' + tr('dle_wiz_importing', 'Importing…'));
+        // ${0}=done, ${1}=total. English: "Importing ${0}/${1}…"
+        $result.html('<goo-spinner size="22" color="currentColor" aria-hidden="true"></goo-spinner> ' + escapeHtml(trf('dle_wiz_importing_progress', 0, entries.length)))
             .removeClass('dle-wizard-result-success dle-wizard-result-error').show();
 
         // #14: pass the wizard's live connection — on first run nothing is saved yet,
@@ -987,26 +1000,33 @@ function wireImport() {
 
         try {
             const result = await importEntries(entries, folder, (done, total) => {
-                $result.html(`<goo-spinner size="22" color="currentColor" aria-hidden="true"></goo-spinner> Importing ${done}/${total}...`);
+                // ${0}=done, ${1}=total. English: "Importing ${0}/${1}…"
+                $result.html('<goo-spinner size="22" color="currentColor" aria-hidden="true"></goo-spinner> ' + escapeHtml(trf('dle_wiz_importing_progress', done, total)));
             }, { vault: wizVault });
 
             importResult = result;
-            const renamedNote = result.renamed > 0 ? ` (${result.renamed} renamed to avoid overwrite)` : '';
+            // ${0}=renamed count. English: " (${0} renamed to avoid overwrite)"
+            const renamedNote = result.renamed > 0 ? trf('dle_wiz_import_renamed_note', result.renamed) : '';
             if (result.failed > 0) {
-                $result.html(`<i class="fa-solid fa-triangle-exclamation"></i> Imported ${result.imported}/${entries.length} from "${escapeHtml(source)}"${renamedNote}. ${result.failed} failed.`)
+                // source pre-escaped (rendered via .html); translated template carries no markup so trf output is not re-escaped.
+                // ${0}=imported, ${1}=total, ${2}=source, ${3}=renamedNote, ${4}=failed.
+                // English: 'Imported ${0}/${1} from "${2}"${3}. ${4} failed.'
+                $result.html('<i class="fa-solid fa-triangle-exclamation"></i> ' + trf('dle_wiz_import_result_failed', result.imported, entries.length, escapeHtml(source), renamedNote, result.failed))
                     .addClass('dle-wizard-result-error').removeClass('dle-wizard-result-success').show();
             } else {
-                $result.html(`<i class="fa-solid fa-circle-check"></i> Imported ${result.imported} entries from "${escapeHtml(source)}"${renamedNote}`)
+                // ${0}=imported, ${1}=source, ${2}=renamedNote. English: 'Imported ${0} entries from "${1}"${2}'
+                $result.html('<i class="fa-solid fa-circle-check"></i> ' + trf('dle_wiz_import_result_success', result.imported, escapeHtml(source), renamedNote))
                     .addClass('dle-wizard-result-success').removeClass('dle-wizard-result-error').show();
             }
             // L-23: re-enable on success too (catch branch already does) so a user can
             // import a second lorebook/file in the same wizard session without the button
             // staying permanently disabled.
-            $btn.html('<i class="fa-solid fa-circle-check"></i> Import Complete').prop('disabled', false);
+            $btn.html('<i class="fa-solid fa-circle-check"></i> ' + tr('dle_wiz_import_complete_btn', 'Import Complete')).prop('disabled', false);
         } catch (err) {
-            $result.html(`<i class="fa-solid fa-circle-xmark"></i> Import error: ${escapeHtml(err.message)}`)
+            // ${0}=error message. English: "Import error: ${0}"
+            $result.html('<i class="fa-solid fa-circle-xmark"></i> ' + escapeHtml(trf('dle_wiz_import_error', err.message)))
                 .addClass('dle-wizard-result-error').removeClass('dle-wizard-result-success').show();
-            $btn.html('<i class="fa-solid fa-file-import"></i> Import Entries').prop('disabled', false);
+            $btn.html('<i class="fa-solid fa-file-import"></i> ' + tr('dle_setup_wizard_import_entries_btn', 'Import Entries')).prop('disabled', false);
         }
     });
 }
@@ -1016,10 +1036,10 @@ async function loadImportLorebooks() {
     try {
         const { world_names } = await import('../../../../../world-info.js');
         if (!Array.isArray(world_names) || world_names.length === 0) {
-            $select.html('<option value="">No lorebooks available</option>');
+            $select.html('<option value="">' + escapeHtml(tr('dle_wiz_import_no_lorebooks_opt', 'No lorebooks available')) + '</option>');
             return;
         }
-        let options = '<option value="">— Select a lorebook —</option>';
+        let options = '<option value="">' + escapeHtml(tr('dle_wiz_import_select_lorebook_opt', '— Select a lorebook —')) + '</option>';
         for (const name of world_names) {
             options += `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`;
         }
@@ -1027,24 +1047,28 @@ async function loadImportLorebooks() {
     } catch (err) {
         // BUG-112: log so dropdown load failures are diagnosable.
         console.debug('[DLE] Wizard lorebook dropdown load failed:', err?.message);
-        $select.html('<option value="">Failed to load lorebooks</option>');
+        $select.html('<option value="">' + escapeHtml(tr('dle_wiz_import_load_lorebooks_failed_opt', 'Failed to load lorebooks')) + '</option>');
     }
 }
 
 function buildSummary() {
     const $summary = $wizard.find('#dle-wiz-summary');
-    const vaultName = $wizard.find('#dle-wiz-vault-name').val().trim() || 'Primary';
+    const vaultName = $wizard.find('#dle-wiz-vault-name').val().trim() || tr('dle_wiz_summary_default_vault', 'Primary');
     const host = $wizard.find('#dle-wiz-host').val().trim() || '127.0.0.1';
     const port = $wizard.find('#dle-wiz-port').val() || '27123';
 
-    const modeLabels = { keywords: 'Keywords Only', 'two-stage': 'Two-Stage (keywords + AI)', 'ai-only': 'AI Only' };
+    const modeLabels = {
+        keywords: tr('dle_wiz_summary_mode_keywords', 'Keywords Only'),
+        'two-stage': tr('dle_wiz_summary_mode_two_stage', 'Two-Stage (keywords + AI)'),
+        'ai-only': tr('dle_wiz_summary_mode_ai_only', 'AI Only'),
+    };
     const modeLabel = modeLabels[searchMode] || searchMode;
 
     const maxEntries = $wizard.find('#dle-wiz-max-entries').val();
     const budget = $wizard.find('#dle-wiz-budget').val();
 
     const scanDepth = parseInt($wizard.find('#dle-wiz-scan-depth').val());
-    let presetLabel = 'Custom';
+    let presetLabel = tr('dle_wiz_summary_preset_custom', 'Custom');
     for (const [name, vals] of Object.entries(PRESETS)) {
         if (vals.scanDepth === scanDepth && vals.maxEntries === parseInt(maxEntries) && vals.budget === parseInt(budget)) {
             presetLabel = name.charAt(0).toUpperCase() + name.slice(1);
@@ -1056,25 +1080,33 @@ function buildSummary() {
     const fieldsCreated = wizardState.fieldsOutcome === 'created' || wizardState.fieldsOutcome === 'exists';
     const sessionsCreated = wizardState.sessionsOutcome === 'created' || wizardState.sessionsOutcome === 'exists';
 
+    // Summary lines: markup-bearing templates carry their own <strong>; interpolated
+    // values are pre-escaped and substituted raw (interpolate() does not escape), so the
+    // trf output is NOT re-escaped — byte-identical to the prior template-literal render.
     const items = [
-        `<i class="fa-solid fa-circle-check"></i> Vault connected: <strong>${escapeHtml(vaultName)}</strong> on ${escapeHtml(host)}:${escapeHtml(port)}`,
-        `<i class="fa-solid fa-circle-check"></i> Search mode: <strong>${escapeHtml(modeLabel)}</strong>`,
-        `<i class="fa-solid fa-circle-check"></i> Matching: <strong>${escapeHtml(presetLabel)} preset</strong> (${maxEntries} entries, ${budget} token budget)`,
+        // ${0}=vaultName, ${1}=host, ${2}=port. English: 'Vault connected: <strong>${0}</strong> on ${1}:${2}'
+        '<i class="fa-solid fa-circle-check"></i> ' + trf('dle_wiz_summary_vault_connected', escapeHtml(vaultName), escapeHtml(host), escapeHtml(port)),
+        // ${0}=mode label. English: 'Search mode: <strong>${0}</strong>'
+        '<i class="fa-solid fa-circle-check"></i> ' + trf('dle_wiz_summary_search_mode', escapeHtml(modeLabel)),
+        // ${0}=preset label, ${1}=max entries, ${2}=budget. English: 'Matching: <strong>${0} preset</strong> (${1} entries, ${2} token budget)'
+        '<i class="fa-solid fa-circle-check"></i> ' + trf('dle_wiz_summary_matching', escapeHtml(presetLabel), maxEntries, budget),
     ];
 
-    if (fieldsCreated) items.push('<i class="fa-solid fa-circle-check"></i> Field definitions created');
-    if (sessionsCreated) items.push('<i class="fa-solid fa-circle-check"></i> Sessions folder created');
+    if (fieldsCreated) items.push('<i class="fa-solid fa-circle-check"></i> ' + tr('dle_wiz_summary_fields_created', 'Field definitions created'));
+    if (sessionsCreated) items.push('<i class="fa-solid fa-circle-check"></i> ' + tr('dle_wiz_summary_sessions_created', 'Sessions folder created'));
     if (importResult && importResult.imported > 0) {
-        items.push(`<i class="fa-solid fa-circle-check"></i> Imported <strong>${importResult.imported}</strong> entries${importResult.failed > 0 ? ` (${importResult.failed} failed)` : ''}`);
+        // ${0}=imported count, ${1}=failed suffix. English: 'Imported <strong>${0}</strong> entries${1}'
+        const failedSuffix = importResult.failed > 0 ? trf('dle_wiz_summary_import_failed_suffix', importResult.failed) : '';
+        items.push('<i class="fa-solid fa-circle-check"></i> ' + trf('dle_wiz_summary_imported', importResult.imported, failedSuffix));
     }
 
     // #67: gate on the explicit autofill flag (+ the real demo vault name) so a user who
     // names a real vault "Demo World" doesn't get Duskfrost-specific tips.
     const vaultNameLower = vaultName.toLowerCase();
     if (wizardState.demoAutofilled || vaultNameLower.includes('duskfrost')) {
-        items.push('<i class="fa-solid fa-flask"></i> <strong>Demo vault detected!</strong> Try mentioning "Duskfrost" or "Bellsummit" in chat to see lore injection.');
-        items.push('<i class="fa-solid fa-lightbulb"></i> Run <code>/dle-health</code> to see the health check (edge-case entries will flag intentional warnings)');
-        items.push('<i class="fa-solid fa-lightbulb"></i> Run <code>/dle-graph</code> to see the full relationship graph');
+        items.push('<i class="fa-solid fa-flask"></i> ' + tr('dle_wiz_summary_demo_detected', '<strong>Demo vault detected!</strong> Try mentioning "Duskfrost" or "Bellsummit" in chat to see lore injection.'));
+        items.push('<i class="fa-solid fa-lightbulb"></i> ' + tr('dle_wiz_summary_tip_health', 'Run <code>/dle-health</code> to see the health check (edge-case entries will flag intentional warnings)'));
+        items.push('<i class="fa-solid fa-lightbulb"></i> ' + tr('dle_wiz_summary_tip_graph', 'Run <code>/dle-graph</code> to see the full relationship graph'));
     }
 
     $summary.html(items.map((item, i) => `<div class="dle-wizard-summary-item" style="animation-delay: ${i * 120}ms">${item}</div>`).join(''));

@@ -273,22 +273,25 @@ export function initHealth(gs, dbg) {
         panelEl = document.createElement('div');
         panelEl.className = 'dle-graph-health-panel';
         // Inline-styled floating side view — self-contained, no container-HTML / CSS-file dependency.
-        panelEl.style.cssText = 'position:absolute;top:8px;right:8px;width:286px;max-height:calc(100% - 16px);overflow:auto;'
-            + 'background:var(--SmartThemeBlurTintColor,#15151a);border:1px solid rgba(255,255,255,0.12);border-radius:8px;'
-            + 'box-shadow:0 10px 30px rgba(0,0,0,0.5);z-index:35;font-size:12px;color:var(--SmartThemeBodyColor,#ddd);';
+        // Self-contained floating side view: uses --dle-* tokens when style.css is loaded,
+        // falls back to the raw values so the panel still styles if the token defs are absent.
+        panelEl.style.cssText = 'position:absolute;top:var(--dle-space-2,8px);right:var(--dle-space-2,8px);width:286px;max-height:calc(100% - var(--dle-space-4,16px));overflow:auto;'
+            + 'background:var(--dle-bg-surface,#15151a);border:1px solid var(--dle-border,rgba(255,255,255,0.12));border-radius:var(--dle-radius-lg,8px);'
+            + 'box-shadow:var(--dle-shadow-lg,0 10px 30px rgba(0,0,0,0.5));z-index:35;font-size:var(--dle-text-code,12px);color:var(--SmartThemeBodyColor,#ddd);';
 
         const T = (key, fallback) => (gs._t ? gs._t(key, fallback) : fallback);
+        // Severity is carried by the colored ● dot per row (SEV_COLOR); labels stay text-only — no emoji-as-icon.
         const groups = [
-            { sev: SEV.CRIT, label: '🔴 ' + T('dle_graph_health_group_breaks', 'Breaks silently') },
-            { sev: SEV.WARN, label: '🟠 ' + T('dle_graph_health_group_wont_fire', "Won't / doesn't fire") },
-            { sev: SEV.INFO, label: '🟡 ' + T('dle_graph_health_group_quality', 'Quality / budget') },
+            { sev: SEV.CRIT, label: T('dle_graph_health_group_breaks', 'Breaks silently') },
+            { sev: SEV.WARN, label: T('dle_graph_health_group_wont_fire', "Won't / doesn't fire") },
+            { sev: SEV.INFO, label: T('dle_graph_health_group_quality', 'Quality / budget') },
         ];
-        let html = '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-bottom:1px solid rgba(255,255,255,0.1);position:sticky;top:0;background:inherit;">'
+        let html = '<div style="display:flex;justify-content:space-between;align-items:center;padding:var(--dle-space-2,8px) 10px;border-bottom:1px solid var(--dle-border,rgba(255,255,255,0.1));position:sticky;top:0;background:inherit;">'
             + `<b><i class="fa-solid fa-stethoscope"></i> ${escapeHtml(T('dle_graph_health_heading', 'Vault Health'))}</b>`
             + `<span class="dle-health-close" role="button" tabindex="0" title="${escapeHtml(T('dle_graph_health_close_title', 'Close'))}" style="cursor:pointer;padding:0 4px;">&times;</span></div>`;
 
         if (findings.length === 0) {
-            html += `<div style="padding:14px;color:#7bbf7b;">${escapeHtml(T('dle_graph_health_none', 'No structural problems detected.'))}</div>`;
+            html += `<div style="padding:14px;color:var(--dle-success,#7bbf7b);">${escapeHtml(T('dle_graph_health_none', 'No structural problems detected.'))}</div>`;
         } else {
             for (const g of groups) {
                 const rows = findings.filter(f => f.sev === g.sev);
@@ -296,10 +299,10 @@ export function initHealth(gs, dbg) {
                 html += `<div style="padding:6px 10px 2px;color:${SEV_COLOR[g.sev]};font-weight:700;font-size:11px;">${g.label}</div>`;
                 for (const f of rows) {
                     html += `<div class="dle-health-row" data-key="${escapeHtml(f.key)}" role="button" tabindex="0" `
-                        + `style="display:flex;gap:8px;padding:7px 10px;border-bottom:1px solid rgba(255,255,255,0.06);cursor:pointer;">`
+                        + `style="display:flex;gap:var(--dle-space-2,8px);padding:7px 10px;border-bottom:1px solid var(--dle-border,rgba(255,255,255,0.06));cursor:pointer;">`
                         + `<span style="color:${SEV_COLOR[f.sev]};">●</span>`
-                        + `<div style="flex:1;min-width:0;"><div><b>${escapeHtml(f.title)}</b> <span style="color:#888;">${f.count}</span></div>`
-                        + `<div style="color:#9a9aa5;font-size:11px;margin-top:1px;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(f.detail)}</div></div></div>`;
+                        + `<div style="flex:1;min-width:0;"><div><b>${escapeHtml(f.title)}</b> <span style="color:var(--dle-text-muted,#888);">${f.count}</span></div>`
+                        + `<div style="color:var(--dle-text-muted,#9a9aa5);font-size:11px;margin-top:1px;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(f.detail)}</div></div></div>`;
                 }
             }
         }

@@ -255,12 +255,12 @@ export function renderPromptsGrid($container) {
 
     const html = [];
     html.push(`<div class="dle-prompts-grid-section">`);
-    html.push(`<h5>Substantive prompts (${substantive.length})</h5>`);
+    html.push(`<h5 class="dle-settings-subsection-label">Substantive prompts (${substantive.length})</h5>`);
     html.push(renderPromptRows(substantive));
     html.push(`</div>`);
 
     html.push(`<details class="dle-prompts-grid-section">`);
-    html.push(`<summary>Agentic-loop fragments (${fragments.length})</summary>`);
+    html.push(`<summary class="dle-settings-subsection-label">Agentic-loop fragments (${fragments.length})</summary>`);
     html.push(renderPromptRows(fragments));
     html.push(`</details>`);
 

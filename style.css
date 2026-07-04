@@ -9,7 +9,7 @@
     --dle-error: color-mix(in srgb, #f44336 70%, var(--SmartThemeQuoteColor, #f44336));
     --dle-warning: color-mix(in srgb, var(--SmartThemeQuoteColor, #ff9800) 70%, orange);
     --dle-info: var(--SmartThemeUnderlineColor, #2196f3);
-    --dle-accent: color-mix(in srgb, var(--SmartThemeUnderlineColor, #9c27b0) 60%, purple);
+    --dle-accent: color-mix(in srgb, var(--SmartThemeUnderlineColor, #9c27b0) 60%, purple); /* unslop-ignore: purple is DLE's deliberate brand accent, not an unspecified default */
     --dle-border: var(--SmartThemeBorderColor, #444);
     --dle-bg-surface: var(--SmartThemeBlurTintColor, #1a1a2e);
     --dle-bg-2: color-mix(in srgb, var(--SmartThemeBlurTintColor, #1a1a2e) 80%, var(--SmartThemeBodyColor, #fff));
@@ -2498,15 +2498,15 @@ button.dle-browse-block.dle-block-active {
 .dle-tools-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    gap: 3px;
+    gap: var(--dle-space-1);
 }
 
 .dle-tool-btn {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: var(--dle-space-1);
     font-size: var(--dle-text-xs);
-    padding: 3px 6px;
+    padding: var(--dle-space-1) var(--dle-space-2);
     justify-content: flex-start;
     white-space: nowrap;
     min-height: 24px;
@@ -4369,7 +4369,7 @@ button.dle-browse-block.dle-block-active {
 .dle-summary-textarea { height: 100px; font-size: 0.9em; }
 
 /* Rule-builder description */
-.dle-rb-desc { opacity: 0.7; margin-top: 4px; }
+.dle-rb-desc { opacity: var(--dle-opacity-muted); margin-top: var(--dle-space-1); }
 
 /* Graph legend swatches */
 .dle-graph-legend-swatch { display: inline-flex; align-items: center; gap: 4px; margin-right: 10px; max-width: 130px; }
@@ -4551,7 +4551,7 @@ button.dle-browse-block.dle-block-active {
 .dle-rb-field-num {
     font-weight: bold;
     font-size: var(--dle-text-sm);
-    opacity: 0.5;
+    opacity: var(--dle-opacity-faint);
     min-width: 24px;
 }
 .dle-rb-field-header .text_pole { flex: 1; min-width: 0; }
@@ -4971,6 +4971,7 @@ button.dle-chip-x:focus-visible { outline: 2px solid var(--dle-focus); outline-o
     position: absolute; top: var(--dle-space-1); right: var(--dle-space-1);
     font-size: var(--dle-text-xs); padding: 1px 6px; border-radius: var(--dle-radius-sm, 4px);
     background: color-mix(in srgb, var(--dle-accent) 18%, transparent); color: var(--dle-accent);
+    max-width: 55%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .dle-wizard-action-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--dle-space-2); margin: var(--dle-space-2) 0 var(--dle-space-1); }
 .dle-wizard-skip-btn { opacity: var(--dle-opacity-muted, 0.75); }
@@ -5069,7 +5070,7 @@ button.dle-chip-x:focus-visible { outline: 2px solid var(--dle-focus); outline-o
 
 .dle-wizard-actions-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
     gap: var(--dle-space-2);
     margin-bottom: var(--dle-space-3);
 }

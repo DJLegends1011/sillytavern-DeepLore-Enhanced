@@ -255,7 +255,6 @@ export function showSourcesPopup(sources, opts = {}) {
                 html += `<div class="dle-card dle-carto-rejected">`;
                 html += `<div class="dle-ctx-toggle dle-card-header" data-target="dle-rej-${groupId}" aria-expanded="false" role="button" tabindex="0">`;
                 html += `<span><i class="fa-solid ${group.icon} dle-text-muted dle-carto-section-icon"></i><strong>${escapeHtml(group.label)}</strong> <span class="dle-text-xs dle-faint">(${group.entries.length})</span></span>`;
-                html += `<span class="dle-text-xs dle-faint">${escapeHtml(tr('dle_carto_click_to_expand', 'click to expand'))}</span>`;
                 html += `</div>`;
                 html += `<div id="dle-rej-${groupId}" class="dle-ctx-detail">`;
 

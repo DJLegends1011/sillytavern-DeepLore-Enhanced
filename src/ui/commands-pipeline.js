@@ -404,7 +404,7 @@ export function registerPipelineCommands() {
             if (hasTimingData) {
                 const totalMs = timingFields.reduce((sum, [, v]) => sum + (v || 0), 0);
                 html += `<details><summary class="dle-health-summary"><b>Stage Timing</b> (${totalMs}ms total)</summary>`;
-                html += `<table class="dle-table" style="font-size:13px;"><tr><th>Stage</th><th>Time</th></tr>`;
+                html += `<table class="dle-table" style="font-size:var(--dle-text-sm);"><tr><th>Stage</th><th>Time</th></tr>`;
                 for (const [name, ms] of timingFields) {
                     if (ms == null) continue;
                     html += `<tr><td>${escapeHtml(name)}</td><td class="dle-text-center">${ms}ms</td></tr>`;

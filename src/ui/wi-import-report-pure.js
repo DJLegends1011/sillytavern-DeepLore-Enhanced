@@ -250,7 +250,7 @@ export function renderImportReportHtml(report, strings = {}) {
 
     const subline = [];
     if (report.renamed > 0) subline.push(S('renamed', report.renamed));
-    if (report.failed > 0) subline.push(`<span style="color:var(--SmartThemeWarningColor,#c44)">${S('failed', report.failed)}</span>`);
+    if (report.failed > 0) subline.push(`<span style="color:var(--dle-warning-fg,#c44)">${S('failed', report.failed)}</span>`);
     if (subline.length > 0) lines.push(`<p>${subline.join(' &middot; ')}</p>`);
 
     if (report.nativeApplied.length > 0) {
@@ -281,7 +281,7 @@ export function renderImportReportHtml(report, strings = {}) {
         lines.push('<div class="dle-import-report-em-box">');
         lines.push(`<p class="dle-text-sm">${S('emExplainer')}</p>`);
         if (report.emAppended > 0) {
-            lines.push(`<button type="button" class="menu_button dle-import-skip-em-future" style="margin-top:0.5em">${S('emSkipButton')}</button>`);
+            lines.push(`<button type="button" class="menu_button dle-import-skip-em-future" style="margin-top:var(--dle-space-2)">${S('emSkipButton')}</button>`);
         }
         lines.push('</div>');
         if (report.emEntries.length > 0) {
