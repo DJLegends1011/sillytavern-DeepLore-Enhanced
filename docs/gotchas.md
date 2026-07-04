@@ -1675,3 +1675,22 @@ Invariants now:
 Guards: `test/regression.test.mjs` GHOST-FLAG-1..3 (loop gate, string-contract drift, backgrounded-turn end-to-end). `flagLoreAction`'s leniency itself is not node-testable (ST imports) — verified live.
 
 ---
+
+## 105. Backgrounded FLAG turn RETRIES a malformed flag call — the model drifts to `{flags:[{note,…}]}` when prose beats schema (2026-07-04)
+
+Live repro on v2.6.1 (Opus 4.6 via CMRS `cc`): the gap-finder ran every turn (`backgroundFlag:true`), the model found real gaps and called `flag` — but with **`{ flags: [ { note, type, urgency }, … ] }`**: a batched array with prose-derived field names, NOT the flat `TOOL_FLAG` schema (`{title, reason, flag_type, urgency}`, `required:['title','reason']`). `flagLoreAction` read `args.title` → `undefined` → rejected every flag → drawer Flags panel stayed empty despite the header noting gaps.
+
+**Root cause is prompt-vs-schema, not a parser bug.** The schema on the wire is correct and flat (verified). The model followed the *flagging prose* over the JSON schema: the post-write `buildFlaggingInstructions` said "Flag types:" / "Urgency levels:" and never named `title`/`reason`, and "Maximum N flags per turn" invited batching — so the model generalized the earlier `search({queries:[…]})` array pattern into `flag({flags:[…]})` and invented `note` for the unnamed description field. Fixed on two axes:
+
+1. **Prompt** — `buildFlaggingInstructions` (hardcoded EN) and `AGENTIC_TOOL_FLAG` (i18n, **EN only** so far — 6 locales lag) now name the flat fields with an example: `flag(title, reason, flag_type, urgency)` + "one call per gap, do not batch".
+2. **Retry backstop (feedback-to-agent)** — `_runFlagIteration` is now a bounded loop (`MAX_FLAG_ITERATIONS = 2`). `flagInputProblem(input)` flags a malformed shape (a `flags` array, non-object, or missing `title`) **before** `flagLoreAction`; a malformed call is NOT recorded and NOT counted toward `MAX_FLAG_CALLS` — instead `FLAG_FORMAT_HINT` is fed back as the tool result and the loop re-calls so the model re-emits the flat shape. One retry only: fumble the format twice and the gaps are dropped rather than looping.
+
+Invariants:
+- **Missing `reason` is NOT malformed** — `flagInputProblem` only trips on a `flags` array / non-object / missing `title`. The GHOST-FLAG (#104) leniency for reason-less flags MUST survive; treating missing reason as malformed would re-break titled reason-less flags.
+- **A `flagLoreAction` `ok:false` (persist failure) is NOT malformed** — retrying can't fix missing chatMetadata, so it does not trip the retry loop (only the pre-`flagLoreAction` shape check does).
+- Every retry iteration re-runs the full epoch/lock/abort guards (gotcha #21 + #81). A chat switch or superseding generation between the round-trips bails cleanly (`return flagCount`).
+- The retry lives ONLY in the backgrounded `_runFlagIteration`. The **inline** flag path (main loop `case 'flag'`, write+flag in one response) is single-shot by design (breaks on `writeDone`) — it does not retry; the prompt fix is its only mitigation.
+
+Guards: `test/regression.test.mjs` F5-RETRY (malformed → correction → flat re-emission recorded, exactly one extra API call) + F5-RETRY-2 (fumble twice → 0 recorded, capped at 2 iterations). F5a-e + GHOST-FLAG-1..3 unchanged (well-formed and pre-`flagLoreAction`-bail paths). Prompt wording verified live on the 8002 test instance.
+
+---

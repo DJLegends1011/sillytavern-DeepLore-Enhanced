@@ -148,9 +148,9 @@ export const AGENTIC_TOOL_WRITE_FLAG_HINT =
 
 /** 标记工具说明。`${0}` = 最大标记数。 */
 export const AGENTIC_TOOL_FLAG = [
-    "**flag**(仅在 write 后可用) — 标记 lore 空白或需要",
-    "更新的条目。只标记真实空白,你必须发明或猜测应该",
-    "存在于 vault 中的细节。调用 write 后,搜索变得",
+    "**flag**(仅在 write 后可用) — 标记 lore 空白或需要更新的条目:",
+    "flag(title, reason, flag_type: gap|update, urgency: low|medium|high)。只标记真实空白,即你必须发明或猜测",
+    "应该存在于 vault 中的细节。每个空白调用一次 flag——不要批量合并。调用 write 后,搜索变得",
     "不可用 — 只有标记保持。每轮最多 ${0} 个标记。",
 ].join('\n');
 
