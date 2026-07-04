@@ -30,6 +30,7 @@ All notable changes to DeepLore are documented here. This file follows
 - Drawer overlay mode now also triggers on narrow viewports, so phones get the overlay drawer (the other half of Issue #39; the settings popup itself stays desktop-first for now).
 - Localized: Cartographer "Why?" modal, Reference tab + `/dle` palette, `/dle-lint` popup and the index-build warning toast (which now links to `/dle-lint`).
 - Interface, motion & accessibility: the whole UI moved onto DLE's motion/type tokens; reduced-motion honored properly (infinite animations disabled, spinner freezes); 44px touch targets and over-scroll containment; unified focus ring and contrast-safe colors; number inputs clamp on commit; iconography unified; pipeline toast and drawer status row rebalanced.
+- De-slop pass: the Graph Health panel moved onto design tokens and its emoji severity dots replaced with the semantic `●`; ~30 stray inline px/opacity values folded into the `--dle-*` scale across the drawer, wizard, settings, and Rule Builder.
 
 ### Fixed
 
@@ -38,7 +39,7 @@ All notable changes to DeepLore are documented here. This file follows
 
 ### i18n
 
-- ~210 new UI strings (including the settings-overhaul nav/search/header labels); all 7 locales at full key parity — **~2,600 keys × 7 locales**.
+- ~210 new UI strings (including the settings-overhaul nav/search/header labels), plus 80 more from localizing the whole setup wizard runtime, Rule Builder field labels, and the Browse quick-filter pills; all 7 locales at full key parity — **2,672 keys × 7 locales**.
 
 ---
 
