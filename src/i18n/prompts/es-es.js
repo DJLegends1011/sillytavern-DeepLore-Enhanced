@@ -125,10 +125,10 @@ export const AGENTIC_TOOL_WRITE_FLAG_HINT =
 
 /** Flag tool description. `${0}` = max flags. */
 export const AGENTIC_TOOL_FLAG = [
-    "**flag** (disponible solo después de write) — Señala brechas de tradición o entradas necesitadas",
-    "actualizaciones. Solo señala brechas genuinas donde tuviste que inventar o adivinar detalles",
-    "que deberían existir en el vault. Después de que llames write, la búsqueda se vuelve",
-    "indisponible — solo flag permanece. Máximo ${0} señales por turno.",
+    "**flag** (disponible solo después de write) — Señala una brecha de lore o una entrada que necesita actualización:",
+    "flag(title, reason, flag_type: gap|update, urgency: low|medium|high). Solo señala brechas genuinas donde tuviste",
+    "que inventar o adivinar detalles que deberían existir en el vault. Haz una llamada a flag por brecha — no las agrupes.",
+    "Después de que llames write, la búsqueda se vuelve indisponible — solo flag permanece. Máximo ${0} señales por turno.",
 ].join('\n');
 
 /** Workflow line. `${0}` = arrow-separated workflow steps. */

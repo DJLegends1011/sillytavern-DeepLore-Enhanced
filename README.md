@@ -9,7 +9,7 @@
 
 **World Info keyword matching breaks at scale. DeepLore reads your Obsidian vault instead: keywords plus AI retrieval, so the right lore fires even when the word wasn't typed.**
 
-![Version](https://img.shields.io/badge/version-2.5.0-blue)
+![Version](https://img.shields.io/badge/version-2.6.2-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![SillyTavern](https://img.shields.io/badge/SillyTavern-1.12.14+-orange)
 [![i18n](https://img.shields.io/badge/i18n-EN%20%7C%20ES%20%7C%20FR%20%7C%20DE%20%7C%20JA%20%7C%20ZH%20%7C%20RU-purple)](https://github.com/pixelnull/sillytavern-DeepLore/wiki/Contributing-Translations)
@@ -179,7 +179,7 @@ Diagnostics exports for bug reports are pseudonymized before they leave your mac
 
 1. SillyTavern → Extensions → **Install Extension**
 2. Paste: `https://github.com/pixelnull/sillytavern-DeepLore`
-3. Run `/dle-setup`, which walks through vault connection, tags, search mode, and provider
+3. Run `/dle-setup`. It opens with a welcome screen that lets you pick a path — try the demo, connect a vault, or import existing World Info — then walks through vault connection (with a localhost vault scanner), tags, search mode, and provider. Skip steps and resume later if you want.
 
 <p align="center">
   <img src="https://i.imgur.com/8Mktt2y.png" alt="Setup wizard first page" width="640">
@@ -231,11 +231,11 @@ If you had the older standalone `sillytavern-DeepLore` extension, uninstall it f
 
 ## Star History
 
-<a href="https://star-history.com/#pixelnull/sillytavern-DeepLore&Date">
+<a href="https://www.star-history.com/?type=date&repos=pixelnull%2Fsillytavern-deeplore">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=pixelnull/sillytavern-DeepLore&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=pixelnull/sillytavern-DeepLore&type=Date" />
-    <img alt="Star history chart for pixelnull/sillytavern-DeepLore" src="https://api.star-history.com/svg?repos=pixelnull/sillytavern-DeepLore&type=Date" width="600" />
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=pixelnull/sillytavern-deeplore&type=date&theme=dark&legend=top-left" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=pixelnull/sillytavern-deeplore&type=date&legend=top-left" />
+    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=pixelnull/sillytavern-deeplore&type=date&legend=top-left" />
   </picture>
 </a>
 

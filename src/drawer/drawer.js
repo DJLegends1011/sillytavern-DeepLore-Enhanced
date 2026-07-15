@@ -24,7 +24,7 @@ function _currentVerdictForChat() {
 }
 
 import {
-    ds, DRAWER_ID, OVERLAY_CHAT_WIDTH_THRESHOLD,
+    ds, DRAWER_ID, OVERLAY_CHAT_WIDTH_THRESHOLD, OVERLAY_VIEWPORT_WIDTH_PX,
     scheduleRender, announceToScreenReader, loadSTInternals, dragElement, isMobile, power_user,
     invalidateTemperatureCache,
 } from './drawer-state.js';
@@ -259,12 +259,20 @@ export async function createDrawerPanel() {
     // Overlay mode
     // ═══════════════════════════════════════════════════════════════════════
 
-    // chat_width above the threshold → switch drawer to fixed overlay (mirrors ST's mobile pattern).
+    // Switch the drawer to fixed overlay (mirrors ST's mobile pattern) when EITHER:
+    //   (a) the real viewport is narrow — window.innerWidth <= OVERLAY_VIEWPORT_WIDTH_PX. This is
+    //       the Issue #39 fix: chat_width is a *percentage* preference and never reflects actual
+    //       pixels, so on phones (narrow viewport, any chat_width) the old percentage-only test
+    //       never engaged overlay. Keying off real viewport width fixes that.
+    //   (b) chat_width is above the percentage threshold — preserved desktop behavior, where a
+    //       wide chat squeezes the inline side-panel space so overlay is still preferable.
+    // Additive: (a) ADDS the missing narrow-viewport case; (b) keeps chat_width's legitimate role.
     const $panel = $drawer.find('#deeplore-panel');
 
     function updateOverlayMode() {
         const chatWidth = power_user?.chat_width || 50;
-        if (chatWidth >= OVERLAY_CHAT_WIDTH_THRESHOLD) {
+        const viewportNarrow = (typeof window !== 'undefined' ? window.innerWidth : Infinity) <= OVERLAY_VIEWPORT_WIDTH_PX;
+        if (viewportNarrow || chatWidth >= OVERLAY_CHAT_WIDTH_THRESHOLD) {
             $panel.addClass('dle-overlay-mode');
         } else {
             $panel.removeClass('dle-overlay-mode');

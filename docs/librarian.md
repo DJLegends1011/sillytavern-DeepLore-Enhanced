@@ -50,15 +50,16 @@ DONE (synchronous):
     - pendingFlag  = detached FLAG-turn thunk (or null) — see below
 
 FLAG turn (BACKGROUNDED — fired by index.js AFTER lock release):
-  pendingFlag() → _runFlagIteration (one extra callWithTools, flag tool only,
-                  capped at MAX_FLAG_CALLS = 5)
+  pendingFlag() → _runFlagIteration (flag tool only; 1–MAX_FLAG_ITERATIONS
+                  callWithTools — a malformed flag call is fed a correction and
+                  retried once; flags capped at MAX_FLAG_CALLS = 5)
               → resolves { flagCount, flagActivity }
               → caller appends flagActivity to the saved prose msg + refreshes dropdown
 ```
 
 The FLAG turn is **backgrounded** (Issue-1, 2026-06-02): it is NOT a synchronous loop iteration. Once `write` delivers prose the loop breaks; the generation lock + send button release immediately and `pendingFlag` runs fire-and-forget so the user is never held through the gap-finder's extra API round-trip. `pendingFlag` self-guards on `chatEpoch` + `lockEpoch` + `swipe_id` (chat switch / a new generation / swipe-to-another-alternate all cancel the stale write — `generationLockEpoch` bumps only on lock ACQUIRE; swipe nav bumps neither epoch but swaps `message.extra`). The in-flight flag API call itself is best-effort and not cancellable once the dispatch returns. See `docs/gotchas.md` #81. Inline flags (write+flag in one response) still process synchronously — they cost no extra round-trip. `pendingFlag` is `null` when flagging is disabled, the flag cap is already spent by inline flags, or on the CRIT-LIB-3 onProse-error degraded path.
 
-Constants: `MAX_ITERATIONS = 15`, `MAX_FLAG_CALLS = 5`.
+Constants: `MAX_ITERATIONS = 15`, `MAX_FLAG_CALLS = 5`, `MAX_FLAG_ITERATIONS = 2` (backgrounded FLAG-turn API round-trips — >1 so a malformed flag call can be corrected and retried once; see `docs/gotchas.md` #105).
 
 ### Tool Definitions (agentic-loop.js)
 
@@ -91,7 +92,7 @@ Four provider response formats are handled:
 | OpenAI-compatible | default | `data.choices[0].message.tool_calls` | `data.choices[0].message.content` |
 | Cohere | (via OpenAI path) | `data.message.tool_calls` | `data.message.content[0].text` |
 
-`isToolCallingSupported(model?)` returns false for `main_api !== 'openai'`, sources in `NO_TOOLS_SOURCES` (ai21, perplexity, nanogpt, pollinations, moonshot — `agentic-api.js:21-23`), OR resolved model in `NO_TOOLS_MODELS` (reasoning-only models that silently fail tool calls — `agentic-api.js:35-42`: `/^deepseek-reasoner/`, `/^deepseek\/.*r1/`, `/-r1(-|$|:)/`, `/^o1(-|$)/`, `/^openai\/o1/`, `/^anthropic\/.*-thinking/`). **BUG-AUDIT Fix 29: the o-series pattern was narrowed from `^o[1-9]` to `^o1` only** — o3, o3-mini, o4-mini all support function calling, so the broad pattern was over-blocking; `o1` alone is genuinely reasoning-only. When `model` is omitted it is resolved via `getResolvedModel()` (CMRS profile model first, then `oai_settings.{source}_model`). Reasoning-only model rejection emits a distinct `dedupWarning` keyed `librarian_no_tools_reasoner` so the user sees model-specific guidance rather than generic provider-doesn't-support guidance.
+`isToolCallingSupported(model?)` returns false for `main_api !== 'openai'`, sources in `NO_TOOLS_SOURCES` (now only `perplexity` — `agentic-api.js`; nanogpt/ai21/pollinations/moonshot removed 2026-06-27 after audit against ST's own tool-calling supportedSources, which lists all four), OR resolved model in `NO_TOOLS_MODELS` (reasoning-only models that silently fail tool calls — `agentic-api.js:35-42`: `/^deepseek-reasoner/`, `/^deepseek\/.*r1/`, `/-r1(-|$|:)/`, `/^o1(-|$)/`, `/^openai\/o1/`, `/^anthropic\/.*-thinking/`). **BUG-AUDIT Fix 29: the o-series pattern was narrowed from `^o[1-9]` to `^o1` only** — o3, o3-mini, o4-mini all support function calling, so the broad pattern was over-blocking; `o1` alone is genuinely reasoning-only. When `model` is omitted it is resolved via `getResolvedModel()` (CMRS profile model first, then `oai_settings.{source}_model`). Reasoning-only model rejection emits a distinct `dedupWarning` keyed `librarian_no_tools_reasoner` so the user sees model-specific guidance rather than generic provider-doesn't-support guidance.
 
 Google Gemini `tool_choice` normalization (G6): string values mapped to `{ mode: 'AUTO'|'ANY'|'NONE' }`.
 
@@ -183,24 +184,26 @@ Uses accumulated `totalTokens` from real `entry.tokenEstimate` values. Falls bac
 
 **File:** `src/librarian/librarian-tools.js: flagLoreAction()`
 
-### `flagLoreAction(args, callerEpoch?) -> Promise<string>`
+### `flagLoreAction(args, callerEpoch?) -> Promise<{ ok: boolean, message: string }>`
 
 `callerEpoch` (optional) is the agentic loop's start-of-loop `chatEpoch`. When passed, `flagLoreAction` self-guards its `persistGaps` AND its activity/analytics side-effects behind `epoch === chatEpoch` (symmetric with `searchLoreAction`) so a chat switch during the multi-second agentic await can't pollute the now-current chat. Direct/test callers omit it and fall back to a fresh `chatEpoch` capture. The body is synchronous (`async` by signature only — no internal `await`).
 
+**Return contract (GHOST-FLAG fix, gotcha #104):** `message` is the tool-result string fed back to the model. `ok` means the gap is REALLY in `loreGaps` (validation passed + `persistGaps` succeeded on a matching epoch). Callers MUST gate any render/activity push (per-message dropdown, drawer rows) on `ok` — rendering an `ok:false` flag recreates the "N gaps noted in chat, Flags panel empty" desync.
+
 **Input shape:**
 ```js
-{ title: string, reason: string, urgency?: 'low'|'medium'|'high',
+{ title: string, reason?: string, urgency?: 'low'|'medium'|'high',
   flag_type?: 'gap'|'update', entry_title?: string }
 ```
 
 **Flow:**
 
-1. Validate `title` and `reason` are non-empty.
+1. Validate `title` is non-empty (`ok:false` otherwise). `reason` is OPTIONAL — models omit it despite `required[]` in the tool schema (backends don't all enforce it); a missing/empty reason records as `''` instead of rejecting the flag.
 2. Default `urgency` to `'medium'`, `flag_type` to `'gap'`.
 3. Call `findSimilarGap(loreGaps, title, 'flag', flagType)` for overlap detection.
 4. If overlapping gap found: merge (increment frequency, escalate urgency if higher, append reason). Also `clearHiddenSilently()` to resurface hidden gaps.
 5. If new: create gap record with `gapId()`, `type: 'flag'`, `subtype: flagType`.
-6. Persist via `persistGaps(updatedGaps)` (guarded by `epoch === chatEpoch`).
+6. Persist via `persistGaps(updatedGaps)` (guarded by `epoch === chatEpoch`); the persist outcome IS the returned `ok`.
 
 **Gap record shape (flag):**
 ```js
@@ -374,6 +377,22 @@ Regardless of this setting, `CHAT_CHANGED` always hydrates `loreGaps` from `chat
 
 **Dropdown re-render on chat load (in `index.js` CHAT_CHANGED handler, inside `injectAllChatLoadUI()` — Librarian dropdown injection pass):**
 After migration, if `librarianEnabled && librarianShowToolCalls`, iterates all messages and calls `injectLibrarianDropdown(i, chat[i].extra.deeplore_tool_calls)` for any message that has stored tool call data.
+
+---
+
+## 8. Drawer Librarian-tab UI (Flags list, v2.6)
+
+**File:** `src/drawer/drawer-render-librarian.js`, `src/drawer/drawer-events.js`, `drawer.html`.
+
+### Contextual bulk-action bar
+
+The Flags-list selection model now lives in ONE contextual bulk-action bar: `.dle-librarian-select-all-bar`, which gains `dle-has-selection` while any row is selected (toggled by the renderer: `$selectAllBar.toggleClass('dle-has-selection', hasSelection)`). The bulk actions — Open / Done / Remove plus Invert / Clear — are static markup inside it (`.dle-librarian-bulk-actions`). The standalone `.dle-librarian-action-row` is **retired** (force-`hidden` by render) but kept in the DOM for back-compat; its handlers still delegate so old call sites don't break.
+
+**Keyboard shortcuts are scoped to the visible bulk bar (f041).** The `d` (mark done) and `Delete`/`Backspace` (remove) shortcuts in `drawer-events.js` target `.dle-librarian-bulk-actions .dle-librarian-action[data-librarian-action="…"]` specifically — NOT the hidden legacy `.dle-librarian-action-row` buttons. Without this scoping both the bulk button and the hidden legacy button fire, which double-triggers the two-click remove confirm (the second click lands on the already-confirming legacy button and silently cancels or skips the guard). Both shortcuts also gate on `_isSafeShortcutTarget(document.activeElement)` so they don't fire while typing in an input.
+
+### Gap rows: chevron + Reason teaser
+
+Gap rows gained a chevron column (`.dle-gap-chevron`) and a one-line "Reason" teaser (`.dle-gap-reason-teaser`) shown collapsed. The FULL reason (plus meta) still renders in `.dle-gap-detail` on expand — the teaser is a preview that doesn't force an expand.
 
 ---
 

@@ -239,13 +239,13 @@ export function registerGatingCommands() {
             html += `<p class="dle-mb-2">Current: <strong>${escapeHtml(currentDisplay)}</strong></p>`;
         }
         html += '<div class="dle-flex-col dle-gap-1">';
-        html += `<button class="menu_button dle-field-select dle-flex-between dle-w-full" data-value="">Clear filter</button>`;
+        html += `<button type="button" class="menu_button dle-field-select dle-flex-between dle-w-full" data-value="">Clear filter</button>`;
         for (const [, { display, count }] of sorted) {
             const isActive = Array.isArray(rawCurrentValue)
                 ? currentLower.includes(display.toLowerCase())
                 : String(rawCurrentValue).toLowerCase() === display.toLowerCase();
             const activeClass = isActive ? ' dle-field-select--active' : '';
-            html += `<button class="menu_button dle-field-select dle-flex-between dle-w-full${activeClass}" data-value="${escapeHtml(display)}">${escapeHtml(display)}<span class="dle-text-xs" style="opacity:0.5;margin-left:auto;padding-left:8px;">${count} ${count === 1 ? 'entry' : 'entries'}</span></button>`;
+            html += `<button type="button" class="menu_button dle-field-select dle-flex-between dle-w-full${activeClass}" data-value="${escapeHtml(display)}">${escapeHtml(display)}<span class="dle-text-xs" style="opacity:0.5;margin-left:auto;padding-left:8px;">${count} ${count === 1 ? 'entry' : 'entries'}</span></button>`;
         }
         html += '</div></div>';
 
@@ -390,11 +390,11 @@ export function registerGatingCommands() {
                 }
                 html += '<p class="dle-text-xs dle-muted dle-mb-2">Click to toggle. Changes apply when you close this popup.</p>';
                 html += '<div class="dle-flex-col dle-gap-1">';
-                html += '<button class="menu_button dle-char-select dle-flex-between dle-w-full" data-value="">Clear all</button>';
+                html += '<button type="button" class="menu_button dle-char-select dle-flex-between dle-w-full" data-value="">Clear all</button>';
                 for (const [, { display, count }] of sorted) {
                     const isActive = currentLower.has(display.toLowerCase());
                     const activeClass = isActive ? ' dle-field-select--active' : '';
-                    html += `<button class="menu_button dle-char-select dle-flex-between dle-w-full${activeClass}" data-value="${escapeHtml(display)}">${escapeHtml(display)}<span class="dle-text-xs" style="opacity:0.5;margin-left:auto;padding-left:8px;">${count} ${count === 1 ? 'entry' : 'entries'}</span></button>`;
+                    html += `<button type="button" class="menu_button dle-char-select dle-flex-between dle-w-full${activeClass}" data-value="${escapeHtml(display)}">${escapeHtml(display)}<span class="dle-text-xs" style="opacity:0.5;margin-left:auto;padding-left:8px;">${count} ${count === 1 ? 'entry' : 'entries'}</span></button>`;
                 }
                 html += '</div></div>';
 
@@ -612,11 +612,11 @@ export function registerGatingCommands() {
                 let html = '<div class="dle-popup"><h4>Select Folders</h4>';
                 if (current.length) html += `<p class="dle-mb-2">Active: <strong>${escapeHtml(current.join(', '))}</strong></p>`;
                 html += '<div class="dle-flex-col dle-gap-1">';
-                html += '<button class="menu_button dle-field-select dle-folder-cmd-select dle-flex-between dle-w-full" data-value="">Clear all folders</button>';
+                html += '<button type="button" class="menu_button dle-field-select dle-folder-cmd-select dle-flex-between dle-w-full" data-value="">Clear all folders</button>';
                 for (const { path, entryCount } of folderList) {
                     const isActive = currentSet.has(path);
                     const activeClass = isActive ? ' dle-field-select--active' : '';
-                    html += `<button class="menu_button dle-field-select dle-folder-cmd-select dle-flex-between dle-w-full${activeClass}" data-value="${escapeHtml(path)}">${escapeHtml(path)}<span class="dle-text-xs" style="opacity:0.5;margin-left:auto;padding-left:8px;">${entryCount} ${entryCount === 1 ? 'entry' : 'entries'}</span></button>`;
+                    html += `<button type="button" class="menu_button dle-field-select dle-folder-cmd-select dle-flex-between dle-w-full${activeClass}" data-value="${escapeHtml(path)}">${escapeHtml(path)}<span class="dle-text-xs" style="opacity:0.5;margin-left:auto;padding-left:8px;">${entryCount} ${entryCount === 1 ? 'entry' : 'entries'}</span></button>`;
                 }
                 html += '</div></div>';
 

@@ -26,6 +26,7 @@ import {
     pseudonymizeTrace as pseudonymizeTracePure,
     pseudonymizeTitle as pseudonymizeTitlePure,
     pseudonymizeVaultSource as pseudonymizeVaultSourcePure,
+    pseudonymizeHealth as pseudonymizeHealthPure,
 } from './pseudonymize-trace.js';
 
 // DLE version — fetched once from manifest.json and cached.
@@ -359,7 +360,23 @@ export function captureStateSnapshot() {
 
     // Captured early so setupState/uiCascadeState reference the same object
     // (avoids double getSettings() TOCTOU). Scrubber redacts API keys by name.
-    try { snap.settings = getSettings(); } catch (e) { snap.settings = { __error: String(e) }; }
+    // #13c: `vaults[].name` IS the vaultSource (vault.js assigns
+    // `entry.vaultSource = vault.name`), so it gets the same <vault-N> alias
+    // entries carry in the trace/health sections. `host`/`url` are bare
+    // hostnames/IPs the scrubber's `https?://` hostname pattern never sees, so
+    // they're masked here. Shallow copies — live settings are never mutated.
+    try {
+        const rawSettings = getSettings();
+        snap.settings = { ...rawSettings };
+        if (Array.isArray(rawSettings.vaults)) {
+            snap.settings.vaults = rawSettings.vaults.map(v => (v && typeof v === 'object') ? {
+                ...v,
+                name: pseudonymizeVaultSource(v.name),
+                host: maskString(v.host),
+                url: maskString(v.url),
+            } : v);
+        }
+    } catch (e) { snap.settings = { __error: String(e) }; }
 
     try {
         const s = snap.settings && !snap.settings.__error ? snap.settings : getSettings();
@@ -375,7 +392,11 @@ export function captureStateSnapshot() {
                 enabled: !!v.enabled,
                 hasHost: !!(v.host || v.url),
                 hasApiKey: !!(v.apiKey),
-                name: maskString(v.name) || null,
+                // s.vaults is normally snap.settings.vaults, whose names are
+                // already <vault-N> (#13c) — keep the alias so the summary
+                // matches trace/health. The raw getSettings() fallback path
+                // (settings capture __error'd) still masks defensively.
+                name: (s === snap.settings ? v.name : maskString(v.name)) || null,
             })) : [],
             indexEverLoaded: state.indexEverLoaded,
             // Wizard done + no vaults enabled = likely skipped/partial setup.
@@ -622,7 +643,10 @@ export function captureStateSnapshot() {
         }
     } catch (e) { snap.gatingContext = { __error: String(e) }; }
 
-    try { snap.health = runHealthCheck(); } catch (e) { snap.health = { __error: String(e) }; }
+    // #13a: health issues carry raw entry titles/keywords/vault names in
+    // `entry` and `detail` — pseudonymize through the SAME per-snapshot context
+    // as the trace, so "<title-N>" is stable across pipeline + health sections.
+    try { snap.health = pseudonymizeHealthPure(runHealthCheck(), _pseudoCtx); } catch (e) { snap.health = { __error: String(e) }; }
 
     try { snap.chatMetadata = chatMetadataSnapshot(); } catch (e) { snap.chatMetadata = { __error: String(e) }; }
 

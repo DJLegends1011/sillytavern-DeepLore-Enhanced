@@ -189,49 +189,56 @@ export function computeHealthFindings(gs) {
     const flagged = new Map();
     const flag = (id, sev) => { if (id != null) flagged.set(id, Math.max(flagged.get(id) || 0, sev)); };
     const names = (arr, n = 3) => arr.slice(0, n).map(x => x.title || x).join(', ') + (arr.length > n ? ` +${arr.length - n}` : '');
+    // Localizer with English fallback. gs._t is injected by graph.js (runtime); absent in headless
+    // tests → returns the English literal so the pure detectors stay ST-free and Node-testable.
+    const T = (key, fallback) => (gs._t ? gs._t(key, fallback) : fallback);
+    const TF = (key, fallback, ...args) => {
+        if (gs._tf) return gs._tf(key, ...args);
+        return args.reduce((s, a, i) => s.replaceAll(`\${${i}}`, String(a)), fallback);
+    };
 
     // 🔴 breaks silently
     if (broken.length) {
         broken.forEach(b => flag(b.idx, SEV.CRIT));
-        findings.push({ sev: SEV.CRIT, key: 'broken-refs', title: 'Broken references', count: broken.length,
+        findings.push({ sev: SEV.CRIT, key: 'broken-refs', title: T('dle_graph_health_broken_refs', 'Broken references'), count: broken.length,
             detail: broken.slice(0, 3).map(b => `${b.title} → ${b.kind}:${b.target}`).join('; ') + (broken.length > 3 ? ` +${broken.length - 3}` : ''),
             nodeIds: broken.map(b => b.idx) });
     }
     if (contra.length) {
         contra.forEach(c => flag(c.idx, SEV.CRIT));
-        findings.push({ sev: SEV.CRIT, key: 'contradictory', title: 'Contradictory gating', count: contra.length,
-            detail: contra.slice(0, 3).map(c => `${c.title} requires∧excludes ${c.target}`).join('; '), nodeIds: contra.map(c => c.idx) });
+        findings.push({ sev: SEV.CRIT, key: 'contradictory', title: T('dle_graph_health_contradictory', 'Contradictory gating'), count: contra.length,
+            detail: contra.slice(0, 3).map(c => TF('dle_graph_health_contradictory_detail', '${0} requires∧excludes ${1}', c.title, c.target)).join('; '), nodeIds: contra.map(c => c.idx) });
     }
     if (selfRefs.length) {
         selfRefs.forEach(s => flag(s.idx, SEV.CRIT));
-        findings.push({ sev: SEV.CRIT, key: 'self-ref', title: 'Self-reference', count: selfRefs.length,
+        findings.push({ sev: SEV.CRIT, key: 'self-ref', title: T('dle_graph_health_self_ref', 'Self-reference'), count: selfRefs.length,
             detail: names(selfRefs), nodeIds: selfRefs.map(s => s.idx) });
     }
     if (circular.length) {
         circular.forEach(c => { flag(c.from, SEV.CRIT); flag(c.to, SEV.CRIT); });
-        findings.push({ sev: SEV.CRIT, key: 'circular', title: 'Circular requires', count: circular.length,
+        findings.push({ sev: SEV.CRIT, key: 'circular', title: T('dle_graph_health_circular', 'Circular requires'), count: circular.length,
             detail: circular.slice(0, 3).map(c => `${c.fromTitle} ↔ ${c.toTitle}`).join('; '), nodeIds: circular.flatMap(c => [c.from, c.to]) });
     }
     // 🟠 won't / doesn't fire
     if (orphans.length) {
         orphans.forEach(id => flag(id, SEV.WARN));
-        findings.push({ sev: SEV.WARN, key: 'orphans', title: 'Orphan entries', count: orphans.length,
+        findings.push({ sev: SEV.WARN, key: 'orphans', title: T('dle_graph_health_orphans', 'Orphan entries'), count: orphans.length,
             detail: names(orphans.map(id => ({ title: entries[id]?.title }))), nodeIds: orphans });
     }
     // 🟡 quality / budget
     if (overConst.count) {
-        findings.push({ sev: SEV.INFO, key: 'over-constant', title: 'Always-injected (constant)', count: overConst.count,
-            detail: `${(overConst.tokens / 1000).toFixed(1)}k tokens every turn: ${names(overConst.items)}`, nodeIds: overConst.items.map(i => i.idx) });
+        findings.push({ sev: SEV.INFO, key: 'over-constant', title: T('dle_graph_health_over_constant', 'Always-injected (constant)'), count: overConst.count,
+            detail: TF('dle_graph_health_over_constant_detail', '${0}k tokens every turn: ${1}', (overConst.tokens / 1000).toFixed(1), names(overConst.items)), nodeIds: overConst.items.map(i => i.idx) });
     }
     if (thin.length) {
         thin.forEach(t => flag(t.idx, SEV.INFO));
-        findings.push({ sev: SEV.INFO, key: 'thin-hubs', title: 'Thin hubs', count: thin.length,
-            detail: `heavily linked but small: ${names(thin)}`, nodeIds: thin.map(t => t.idx) });
+        findings.push({ sev: SEV.INFO, key: 'thin-hubs', title: T('dle_graph_health_thin_hubs', 'Thin hubs'), count: thin.length,
+            detail: TF('dle_graph_health_thin_hubs_detail', 'heavily linked but small: ${0}', names(thin)), nodeIds: thin.map(t => t.idx) });
     }
     if (bloat.length) {
         bloat.forEach(b => flag(b.idx, SEV.INFO));
-        findings.push({ sev: SEV.INFO, key: 'token-bloat', title: 'Token-bloat entries', count: bloat.length,
-            detail: `${names(bloat)} (${bloat[0]?.tokens} tok max)`, nodeIds: bloat.map(b => b.idx) });
+        findings.push({ sev: SEV.INFO, key: 'token-bloat', title: T('dle_graph_health_token_bloat', 'Token-bloat entries'), count: bloat.length,
+            detail: TF('dle_graph_health_token_bloat_detail', '${0} (${1} tok max)', names(bloat), bloat[0]?.tokens), nodeIds: bloat.map(b => b.idx) });
     }
 
     findings.sort((a, b) => b.sev - a.sev);
@@ -266,21 +273,25 @@ export function initHealth(gs, dbg) {
         panelEl = document.createElement('div');
         panelEl.className = 'dle-graph-health-panel';
         // Inline-styled floating side view — self-contained, no container-HTML / CSS-file dependency.
-        panelEl.style.cssText = 'position:absolute;top:8px;right:8px;width:286px;max-height:calc(100% - 16px);overflow:auto;'
-            + 'background:var(--SmartThemeBlurTintColor,#15151a);border:1px solid rgba(255,255,255,0.12);border-radius:8px;'
-            + 'box-shadow:0 10px 30px rgba(0,0,0,0.5);z-index:35;font-size:12px;color:var(--SmartThemeBodyColor,#ddd);';
+        // Self-contained floating side view: uses --dle-* tokens when style.css is loaded,
+        // falls back to the raw values so the panel still styles if the token defs are absent.
+        panelEl.style.cssText = 'position:absolute;top:var(--dle-space-2,8px);right:var(--dle-space-2,8px);width:286px;max-height:calc(100% - var(--dle-space-4,16px));overflow:auto;'
+            + 'background:var(--dle-bg-surface,#15151a);border:1px solid var(--dle-border,rgba(255,255,255,0.12));border-radius:var(--dle-radius-lg,8px);'
+            + 'box-shadow:var(--dle-shadow-lg,0 10px 30px rgba(0,0,0,0.5));z-index:35;font-size:var(--dle-text-code,12px);color:var(--SmartThemeBodyColor,#ddd);';
 
+        const T = (key, fallback) => (gs._t ? gs._t(key, fallback) : fallback);
+        // Severity is carried by the colored ● dot per row (SEV_COLOR); labels stay text-only — no emoji-as-icon.
         const groups = [
-            { sev: SEV.CRIT, label: '🔴 Breaks silently' },
-            { sev: SEV.WARN, label: "🟠 Won't / doesn't fire" },
-            { sev: SEV.INFO, label: '🟡 Quality / budget' },
+            { sev: SEV.CRIT, label: T('dle_graph_health_group_breaks', 'Breaks silently') },
+            { sev: SEV.WARN, label: T('dle_graph_health_group_wont_fire', "Won't / doesn't fire") },
+            { sev: SEV.INFO, label: T('dle_graph_health_group_quality', 'Quality / budget') },
         ];
-        let html = '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-bottom:1px solid rgba(255,255,255,0.1);position:sticky;top:0;background:inherit;">'
-            + '<b><i class="fa-solid fa-stethoscope"></i> Vault Health</b>'
-            + '<span class="dle-health-close" role="button" tabindex="0" title="Close" style="cursor:pointer;padding:0 4px;">&times;</span></div>';
+        let html = '<div style="display:flex;justify-content:space-between;align-items:center;padding:var(--dle-space-2,8px) 10px;border-bottom:1px solid var(--dle-border,rgba(255,255,255,0.1));position:sticky;top:0;background:inherit;">'
+            + `<b><i class="fa-solid fa-stethoscope"></i> ${escapeHtml(T('dle_graph_health_heading', 'Vault Health'))}</b>`
+            + `<span class="dle-health-close" role="button" tabindex="0" title="${escapeHtml(T('dle_graph_health_close_title', 'Close'))}" style="cursor:pointer;padding:0 4px;">&times;</span></div>`;
 
         if (findings.length === 0) {
-            html += '<div style="padding:14px;color:#7bbf7b;">No structural problems detected.</div>';
+            html += `<div style="padding:14px;color:var(--dle-success,#7bbf7b);">${escapeHtml(T('dle_graph_health_none', 'No structural problems detected.'))}</div>`;
         } else {
             for (const g of groups) {
                 const rows = findings.filter(f => f.sev === g.sev);
@@ -288,10 +299,10 @@ export function initHealth(gs, dbg) {
                 html += `<div style="padding:6px 10px 2px;color:${SEV_COLOR[g.sev]};font-weight:700;font-size:11px;">${g.label}</div>`;
                 for (const f of rows) {
                     html += `<div class="dle-health-row" data-key="${escapeHtml(f.key)}" role="button" tabindex="0" `
-                        + `style="display:flex;gap:8px;padding:7px 10px;border-bottom:1px solid rgba(255,255,255,0.06);cursor:pointer;">`
+                        + `style="display:flex;gap:var(--dle-space-2,8px);padding:7px 10px;border-bottom:1px solid var(--dle-border,rgba(255,255,255,0.06));cursor:pointer;">`
                         + `<span style="color:${SEV_COLOR[f.sev]};">●</span>`
-                        + `<div style="flex:1;min-width:0;"><div><b>${escapeHtml(f.title)}</b> <span style="color:#888;">${f.count}</span></div>`
-                        + `<div style="color:#9a9aa5;font-size:11px;margin-top:1px;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(f.detail)}</div></div></div>`;
+                        + `<div style="flex:1;min-width:0;"><div><b>${escapeHtml(f.title)}</b> <span style="color:var(--dle-text-muted,#888);">${f.count}</span></div>`
+                        + `<div style="color:var(--dle-text-muted,#9a9aa5);font-size:11px;margin-top:1px;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(f.detail)}</div></div></div>`;
                 }
             }
         }

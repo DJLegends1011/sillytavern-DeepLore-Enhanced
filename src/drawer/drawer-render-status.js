@@ -22,6 +22,7 @@ import { getCircuitState } from '../vault/obsidian-api.js';
 import { ds, MODE_LABELS, MODE_DESCRIPTIONS, announceToScreenReader, formatTokensCompact } from './drawer-state.js';
 
 let _lastAnnouncedStatus = null;
+let _lastAnnouncedPhase = null;
 let _lastSkipToolsState = null;
 
 // Wave I: the status glyph is a single persistent <goo-spinner> (created once in
@@ -57,9 +58,24 @@ export function renderStatusZone() {
         $dot.html('<goo-spinner size="40" color="currentColor" aria-hidden="true"></goo-spinner>');
         dotSpinner = $dot.find('goo-spinner')[0];
     }
-    // Idle = a slow, barely-moving gel; active = brisk.
-    if (dotSpinner) dotSpinner.setAttribute('speed', isActive ? '1.4' : '0.25');
+    // f027: idle must read as a genuine resting state, not "still working slowly".
+    // Active = brisk gel; idle = STOPPED (speed 0) so the goo holds still, paired with
+    // CSS that desaturates/dims the idle dot and mutes the label. The binary working/idle
+    // is now carried by motion + color + label weight, not a 0.25-vs-1.4 wobble nobody reads.
+    //
+    // f045/f108 (reduced-motion coherence): under prefers-reduced-motion the goo freezes
+    // (goo-spinner.js stops its rAF loop and reflects data-motion-state="reduced"), so this
+    // speed value is inert there. Activity then reads from THREE non-motion channels that the
+    // reduced-motion CSS block leaves intact: the dot's accent/opacity/saturation shift, the
+    // label weight/color, and a deliberate SLOW STEPPED opacity pulse the CSS applies only to
+    // an active dot whose goo is frozen (`.dle-status-active goo-spinner[data-motion-state="reduced"]`).
+    // Idle (paused) never pulses — the stepped-pulse rule requires .dle-status-active. So idle
+    // vs active vs reduced-motion stay coherent without per-render JS branching here. The dot
+    // stays PURE ACTIVITY (gotcha #74); system health remains in the footer health icons only.
+    if (dotSpinner) dotSpinner.setAttribute('speed', isActive ? '1.4' : '0');
     $dot.toggleClass('dle-status-active', isActive);
+    // Mirror the active state onto the label so its color/weight can shift in CSS.
+    $drawer.find('.dle-pipeline-label').toggleClass('dle-status-active', isActive);
 
     // C3: canonical phase labels (state.PIPELINE_PHASE_LABELS) — single source of truth shared
     // with the chat toast (_updatePipelineStatus in index.js). Sub-second stages keep the prior
@@ -72,7 +88,9 @@ export function renderStatusZone() {
     // The dot is the activity glyph AND a click target for full status (handler bound elsewhere).
     $dot.attr('title', `DeepLore activity: ${pipelineText} — click for full status`)
         .attr('aria-label', `DeepLore activity: ${pipelineText} — click for full status`);
-    $drawer.find('.dle-pipeline-label').text(pipelineText).attr('aria-label', `Status: ${pipelineText}`).attr('aria-live', 'polite');
+    // No aria-live here — the visible label is plain content; status transitions are announced
+    // once at polite urgency via #dle-drawer-live above (announceToScreenReader). f106.
+    $drawer.find('.dle-pipeline-label').text(pipelineText).attr('aria-label', `Status: ${pipelineText}`);
 
     const $skipBtn = $drawer.find('.dle-action-btn[data-action="skip-tools"]');
     $skipBtn.toggleClass('dle-toggle-active', suppressNextAgenticLoop);
@@ -97,11 +115,11 @@ export function renderStatusZone() {
     const hasEnabledVaults = (settings.vaults || []).some(v => v.enabled);
     if (!hasEnabledVaults && !settings._wizardCompleted && !indexEverLoaded) {
         if (!$setupBanner.length) {
-            const banner = `<div class="dle-setup-banner" role="status" style="padding: var(--dle-space-2) var(--dle-space-3); background: color-mix(in srgb, var(--dle-info) 15%, transparent); border-radius: 4px; margin: var(--dle-space-2) 0; display: flex; align-items: center; gap: var(--dle-space-2); font-size: var(--dle-text-sm);">
+            const banner = `<div class="dle-setup-banner" role="status" style="padding: var(--dle-space-2) var(--dle-space-3); background: color-mix(in srgb, var(--dle-info) 15%, transparent); border-radius: var(--dle-radius-sm); margin: var(--dle-space-2) 0; display: flex; align-items: center; gap: var(--dle-space-2); font-size: var(--dle-text-sm);">
                 <i class="fa-solid fa-wand-magic-sparkles" style="color: var(--dle-info);"></i>
                 <span>New to DeepLore?</span>
-                <button class="dle-setup-banner-btn menu_button" style="padding: 4px 12px; min-height: 28px; font-size: var(--dle-text-xs);" title="Run the setup wizard">Run Setup</button>
-                <button class="dle-setup-banner-dismiss" style="margin-left: auto; background: none; border: none; cursor: pointer; opacity: 0.5; padding: 2px;" title="Dismiss" aria-label="Dismiss setup banner"><i class="fa-solid fa-xmark"></i></button>
+                <button type="button" class="dle-setup-banner-btn menu_button" style="padding: var(--dle-space-1) var(--dle-space-3); min-height: 28px; font-size: var(--dle-text-xs);" title="Run the setup wizard">Run Setup</button>
+                <button type="button" class="dle-setup-banner-dismiss" style="margin-left: auto; background: none; border: none; cursor: pointer; opacity: 0.5; padding: 2px;" title="Dismiss" aria-label="Dismiss setup banner"><i class="fa-solid fa-xmark"></i></button>
             </div>`;
             $drawer.find('.dle-zone-status').after(banner);
         }
@@ -109,21 +127,50 @@ export function renderStatusZone() {
         $setupBanner.remove();
     }
 
-    // Cold start: show loading shimmer instead of "0" stats before the first index build.
-    if (!indexEverLoaded && vaultIndex.length === 0 && !indexing) {
-        $drawer.find('[data-stat="entries"]').html('<span class="dle-shimmer">…</span>');
-        $drawer.find('[data-stat="tokens"]').html('<span class="dle-shimmer">…</span>');
-        $drawer.find('.dle-pipeline-label').text(tr('dle_status_connecting', 'Connecting to Obsidian…'));
+    // Cold start: show a content-shaped skeleton block instead of "0" stats before the
+    // first index build. The skeleton reserves the eventual number's footprint (so the
+    // real value doesn't reflow the tile on first paint) and reads as "loading" rather
+    // than the old dim "…" that looked like an error/unknown state. f091.
+    const isColdWaiting = !indexEverLoaded && vaultIndex.length === 0 && !indexing;
+    if (isColdWaiting) {
+        $drawer.find('[data-stat="entries"]').html('<span class="dle-skeleton" aria-hidden="true"></span>');
+        const _connectingText = tr('dle_status_connecting', 'Connecting to Obsidian…');
+        // Re-set aria-label alongside the text so SR announces "Connecting…", not the
+        // idle phase label set above (DS-2).
+        $drawer.find('.dle-pipeline-label').text(_connectingText).attr('aria-label', `Status: ${_connectingText}`);
     }
+
+    // html-1: the .dle-pipeline-label is not a live region (f106 — nesting live regions
+    // double-announced), so phase progression (Choosing lore → Consulting vault →
+    // Generating) is otherwise silent to screen readers despite the comment promising it.
+    // Announce the displayed phase text once, at polite urgency, through #dle-drawer-live
+    // when it changes. Skip the idle baseline so SR isn't told "Idle" on every render.
+    const _displayedPhaseText = isColdWaiting
+        ? tr('dle_status_connecting', 'Connecting to Obsidian…')
+        : pipelineText;
+    if (_lastAnnouncedPhase !== null && _lastAnnouncedPhase !== _displayedPhaseText) {
+        announceToScreenReader(_displayedPhaseText);
+    }
+    _lastAnnouncedPhase = _displayedPhaseText;
 
     // Stat values get a flash animation on change. Verdict store holds the authoritative
     // trace + injected sources together — no fallback needed.
     const _statusVerdict = _currentVerdictForChat();
-    const entryCount = indexing ? '…' : vaultIndex.length;
+    // Optimistic refresh (f093): a background reuse-sync flips `indexing` true while a
+    // perfectly valid prior index is still in memory and still driving the current
+    // generation. Don't blank the live count to '…' — that implies data loss where none
+    // occurred. Keep the last-known number and add a quiet 'refreshing' adornment instead.
+    // Only a TRUE cold start (no index ever loaded) shows the '…' placeholder.
+    const isColdIndexing = indexing && !indexEverLoaded && vaultIndex.length === 0;
+    const isRefreshing = indexing && !isColdIndexing;
+    const entryCount = isColdIndexing ? '…' : vaultIndex.length;
     const $entries = $drawer.find('[data-stat="entries"]');
-    if ($entries.text() !== String(entryCount)) {
+    const $eStat = $entries.closest('.dle-stat');
+    $eStat.toggleClass('dle-stat-refreshing', isRefreshing);
+    // f091: while the cold-start skeleton is showing (no index ever loaded, not yet
+    // building) keep the reserved skeleton block — don't overwrite it with a literal "0".
+    if (!isColdWaiting && $entries.text() !== String(entryCount)) {
         $entries.text(entryCount);
-        const $eStat = $entries.closest('.dle-stat');
         $eStat.removeClass('dle-stat-changed');
         $eStat[0]?.offsetWidth; // force reflow → restart animation
         const _eStatEl = $eStat[0];
@@ -131,10 +178,12 @@ export function renderStatusZone() {
         setTimeout(() => { if (_eStatEl) $(_eStatEl).removeClass('dle-stat-changed'); }, 600);
     }
     const vaultCount = settings.vaults?.filter(v => v.enabled !== false).length || 1;
-    const entryTitle = indexing
+    const entryTitle = (isColdIndexing || isColdWaiting)
         ? 'Loading lore entries...'
-        : `${entryCount} lore entr${entryCount === 1 ? 'y' : 'ies'} loaded from ${vaultCount === 1 ? 'your Obsidian vault' : `${vaultCount} Obsidian vaults`}`;
-    $entries.closest('.dle-stat').attr('title', entryTitle).attr('aria-label', entryTitle);
+        : isRefreshing
+            ? `${entryCount} lore entr${entryCount === 1 ? 'y' : 'ies'} loaded — refreshing in the background…`
+            : `${entryCount} lore entr${entryCount === 1 ? 'y' : 'ies'} loaded from ${vaultCount === 1 ? 'your Obsidian vault' : `${vaultCount} Obsidian vaults`}`;
+    $eStat.attr('title', entryTitle).attr('aria-label', entryTitle);
 
     const mode = settings.aiSearchEnabled !== false
         ? (MODE_LABELS[settings.aiSearchMode] || settings.aiSearchMode || '—')

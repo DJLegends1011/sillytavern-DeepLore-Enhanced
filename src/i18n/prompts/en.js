@@ -148,10 +148,11 @@ export const AGENTIC_TOOL_WRITE_FLAG_HINT =
 
 /** Flag tool description. `${0}` = max flags. */
 export const AGENTIC_TOOL_FLAG = [
-    "**flag** (available after write only) — Flag lore gaps or entries needing",
-    "updates. Only flag genuine gaps where you had to invent or guess details",
-    "that should exist in the vault. After you call write, search becomes",
-    "unavailable — only flag remains. Maximum ${0} flags per turn.",
+    "**flag** (available after write only) — Flag a lore gap or entry needing updates:",
+    "flag(title, reason, flag_type: gap|update, urgency: low|medium|high). Only flag",
+    "genuine gaps where you had to invent or guess details that should exist in the",
+    "vault. Make one flag call per gap — do not batch. After you call write, search",
+    "becomes unavailable — only flag remains. Maximum ${0} flags per turn.",
 ].join('\n');
 
 /** Workflow line. `${0}` = arrow-separated workflow steps. */

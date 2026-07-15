@@ -24,6 +24,7 @@ Format: `#N — title`. Listed under the subsystem you'd most likely be editing 
 - #60 — Bootstrap exemption is gen-scoped to `bootstrapActive` (Stages H-3)
 - #63 — Cascade-pulled `excludeRecursion:true` entries don't seed recursion text (M-5)
 - #65 — Stages MEDIUMs bundle (M-3/M-4/M-6/M-7/M-8 — strip-dedup, warmup, gating, truncation hash)
+- #94 — runPipeline settings snapshot must be threaded into match/AI stages
 
 **State & lifecycle** (`src/state.js`, `init()`, observers)
 - #3 — State mutation scoping (session vs chat vs generation reset)
@@ -93,6 +94,7 @@ Format: `#N — title`. Listed under the subsystem you'd most likely be editing 
 - #58 — Every `<button>` MUST specify `type="button"` (a11y / form-safety)
 - #64 — Settings UI MEDIUMs bundle (V-M1/V-M2/V-M4/V-M5)
 - #70 — Editable prompts — delete cage + `getPrompt()` invariants (v2.5)
+- #93 — Drawer overlay is a dual trigger — narrow viewport OR wide chat_width (Issue #39)
 
 ---
 
@@ -740,7 +742,7 @@ Branch-specific risks: the `proseMsg` branch (b) is partially-safe because `pros
 
 **Where (regression guards):** `test/regression.test.mjs` `MV-1..MV-11` cover every site listed above. `test/vault.test.mjs` covers the broader multi-vault dedup contract. Any new code touching pipeline trace, drawer state, librarian dedup, or ai-search match resolution MUST add a corresponding `MV-N` guard before landing.
 
-**#50 addendum (L13, 2026-05-29 — destructive-delete asymmetry fixed):** `applyRequiresExcludesGating` (`src/stages.js`) and the legacy `applyGating` (`core/matching.js`) now track active titles as a **refcount `Map<titleLower, count>`**, not a plain `Set`. Before, gating out one of two same-titled cross-vault entries called `activeTitles.delete(title)` and purged the title entirely — so a third entry's bare `requires:[Title]` wrongly failed even though the twin survived. The refcount decrements on drop and only deletes the title at count 0; the membership check stays a bare-title lookup, so item 7's permissive cross-vault semantics (any vault's "Castle" satisfies a bare `requires:[Castle]`) are unchanged. Titles are intentionally NOT vault-scoped — that would break item 7 and the MV-7 test. Both functions must stay in sync; regression test J1 in `test/stages.test.mjs` pins the fix.
+**#50 addendum (L13, 2026-05-29 — destructive-delete asymmetry fixed):** `applyRequiresExcludesGating` (`src/stages.js`) tracks active titles as a **refcount `Map<titleLower, count>`**, not a plain `Set`. Before, gating out one of two same-titled cross-vault entries called `activeTitles.delete(title)` and purged the title entirely — so a third entry's bare `requires:[Title]` wrongly failed even though the twin survived. The refcount decrements on drop and only deletes the title at count 0; the membership check stays a bare-title lookup, so item 7's permissive cross-vault semantics (any vault's "Castle" satisfies a bare `requires:[Castle]`) are unchanged. Titles are intentionally NOT vault-scoped — that would break item 7 and the MV-7 test. Regression test J1 in `test/stages.test.mjs` pins the fix. **(#24, 2026-07-01):** the legacy `applyGating` copy in `core/matching.js` — which had ZERO production callers and required this same fix to be hand-applied twice — was DELETED. `applyRequiresExcludesGating` is now the single source of truth for the requires/excludes fixpoint; tests call it with an empty exemption policy.
 
 **#50 addendum (DTK, 2026-05-29 — drawer token-breakdown `srcMap`):** `src/drawer/drawer-render-status.js` token-breakdown `srcMap` built the map keyed by bare `s.title` and looked up by bare `e.title`, so two cross-vault same-title entries collided — the second source's reason overwrote the first, misattributing one entry's tokens to the wrong bucket. Fixed to key/lookup by `${vaultSource||''}:${title.toLowerCase()}` like every sibling drawer site. Guard: `MV-DTK` in `test/regression.test.mjs`.
 
@@ -1242,7 +1244,9 @@ Cross-module data added this wave: `trace.injected[].outlet` (bool) and `trace.p
 
 The drawer status dot (`.dle-status-dot`) and the phase-text surfaces were two-axis overloaded — the glyph encoded BOTH activity (which mascot) AND health (what color), and the phase was inferred by string-matching the toast label. Wave 2 (C1–C3) split these.
 
-**C1 — glyph = activity only.** `drawer-render-status.js` renders the busy glyph whenever `indexing || pipelinePhase !== 'idle' || ds.stGenerating`, and the static DLE brand icon (`STATUS_SVG_IDLE`) at idle. The old `STATUS_SVG_CHOOSING` / `STATUS_SVG_WRITING` mascot variants were **deleted** — 3 shapes could never honestly map to 6+ phases. Do NOT reintroduce phase-specific glyph shapes; phase granularity is the *text label's* job. **Mechanism update (Wave I / gotcha #87):** the busy glyph is no longer a Font Awesome `fa-spinner fa-spin` — both the drawer status dot and the chat toast now render the vendored `<goo-spinner>` Web Component, and ACTIVITY is encoded by its animation SPEED (idle 0.25 / active 1.4), not by glyph shape (still accent via `currentColor`, no health tint). Reduced-motion is handled by the existing `#deeplore-drawer *` universal animation-kill rule.
+**C1 — glyph = activity only.** `drawer-render-status.js` renders the busy glyph whenever `indexing || pipelinePhase !== 'idle' || ds.stGenerating`, and the static DLE brand icon (`STATUS_SVG_IDLE`) at idle. The old `STATUS_SVG_CHOOSING` / `STATUS_SVG_WRITING` mascot variants were **deleted** — 3 shapes could never honestly map to 6+ phases. Do NOT reintroduce phase-specific glyph shapes; phase granularity is the *text label's* job. **Mechanism update (Wave I / gotcha #87):** the busy glyph is no longer a Font Awesome `fa-spinner fa-spin` — both the drawer status dot and the chat toast now render the vendored `<goo-spinner>` Web Component, and ACTIVITY is encoded by its animation SPEED (idle `speed 0` = parked/still gel / active `1.4`; the old `0.25`-vs-`1.4` wobble was replaced in f027 because nobody read it — idle now reads from STOPPED motion + a desaturated/dimmed dot + muted label, not a slow spin), not by glyph shape (still accent via `currentColor`, no health tint). `drawer-render-status.js` sets `setAttribute('speed', isActive ? '1.4' : '0')`.
+
+**Reduced-motion addendum (v2.6 LP1):** `<goo-spinner>` (`src/vendor/goo-spinner.js`) now reflects its live state onto a non-observed `data-motion-state` host attribute with three values — `running` (physics loop active), `reduced` (frozen by `prefers-reduced-motion`, gel can't carry activity), `paused` (deliberately parked via `speed<=0` = idle, NOT a reduced-motion freeze). Under `prefers-reduced-motion` the gel can't move, so the still-working signal would vanish. Light-DOM CSS supplies it instead: `.dle-status-dot.dle-status-active goo-spinner[data-motion-state="reduced"]` gets a slow stepped opacity pulse (`@keyframes dle-rm-working-pulse`, `2s steps(2, jump-none) infinite`, placed AFTER the #20 wildcard animation-kill so the clamp doesn't neuter it). This survives reduced-motion WITHOUT violating the glyph-is-pure-activity rule — opacity ≠ health color, and `paused`/idle never pulses (the rule requires `.dle-status-active`). The distinction between `reduced` and `paused` is load-bearing: an idle dot parked at `speed 0` must NOT get mistaken for the reduced-motion "still working" case.
 
 **C2 — health off the glyph.** The dot no longer adds `STATUS_CLASSES[status]` colors or the `dle-status-changed` transition pulse. `computeOverallStatus` is kept ONLY to drive the SR-only `announceToScreenReader('Status: …')` live-region signal (a11y, not a visible color). All *visible* system health lives in the footer health icons (vault/connection/pipeline/cache/ai). The dot's tooltip is now activity-oriented ("DeepLore activity: <label> — click for full status"), not "System status: …". Don't put health color back on the glyph.
 
@@ -1430,7 +1434,11 @@ Extends gotcha #79 (per-tick footer/gating perf) to the whole drawer.
 
 **Accent color via `currentColor`.** Every instance passes `color="currentColor"`; the component fills with it; one global rule `goo-spinner { color: var(--dle-accent, …) }` (style.css) makes them all take the DLE accent and adapt dark/light. Don't pass a literal `color=` (defaults to a hardcoded blue if you omit it AND skip the global rule).
 
-**Size ONLY via the `size` attribute, never CSS width/height.** The internal blob-orbit physics read `this._size` from the attribute; a CSS width/height override resizes the box but not the orbit → desync. `size` (px) and `speed` are read live each tick (NOT in `observedAttributes`), so changing them does NOT rebuild the element — used by the status dot to vary speed without restarting physics. `count`/`core`/`blob`/`color` ARE observed (changing them rebuilds).
+**Size ONLY via the `size` attribute, never CSS width/height.** The internal blob-orbit physics read `this._size` from the attribute; a CSS width/height override resizes the box but not the orbit → desync. `size` (px) is read live each tick (NOT in `observedAttributes`), so changing it does NOT rebuild the element. `count`/`core`/`blob`/`color` ARE observed (changing them rebuilds).
+
+**`speed` IS observed since v2.6 — but its `attributeChangedCallback` case is `_applyMotion()`-ONLY (no `_build()`).** The v2.6 P1-2 fix added `'speed'` to `observedAttributes` so a gel parked by `speed<=0` can wake when speed goes positive (previously the park was one-way — the drawer status dot froze forever after its first idle render). Never route the speed case through `_build()`: rebuilding the shadow DOM restarts the spin animation and physics, breaking the "vary speed without restarting physics" contract the status dot depends on.
+
+**The `speed<=0` park also pauses the CSS `.ring` rotation (v2.6 thermo #18b).** `_setRingPlayState('paused')` writes `animationPlayState` on the shadow `.ring`; the running tick path resumes it (idempotent, memo-guarded — no per-frame style churn). Play-state ONLY — the ring resumes from its paused angle, no rebuild. Before this, a parked spinner kept the ring animating invisibly forever (idle GPU burn). Reduced-motion stays owned by the stylesheet — don't fight it from JS. Guards: `SPN-1`/`SPN-2` in `test/unit.mjs`.
 
 **User-corrected scope (don't re-break):**
 - **The drawer toggle / open-drawer icon STAYS the DeepLore book (`icon.svg`, FA `fa-book-open` fallback) — do NOT replace it with a goo-spinner.** "All the old head icon svgs" meant the *status-zone* brand glyph (`STATUS_SVG_IDLE`, now removed), not the top toggle button. I swapped the toggle first; reverted on feedback.
@@ -1507,5 +1515,182 @@ ST clones a git extension into a folder named after the **repo slug** — verifi
 **Rule:** never hardcode the install-folder path. Use `EXTENSION_REF` from `src/ext-path.js` for the `renderExtensionTemplateAsync(ref, name)` first arg, and `new URL('../../<asset>', import.meta.url)` for `fetch()` of bundled assets (locales, `icon.svg`). `ext-path.js` derives the ref from its own `import.meta.url` (pure `parseExtensionRef(pathname)` + a historical-name `FALLBACK_REF` so an unexpected URL shape still resolves for existing installs). The import.meta.url-relative fetches are additionally install-LOCATION agnostic (work for global `third-party/` AND per-user `data/<user>/extensions/`).
 
 **Where:** `src/ext-path.js` (`EXTENSION_REF` + `parseExtensionRef` + `FALLBACK_REF`); consumers `index.js`, `src/drawer/drawer.js` (template + icon fetch), `src/ui/settings-ui.js`, `src/ui/setup-wizard.js` (template + demo-vault display path), `src/i18n/i18n.js` (locale fetch). **Guarded by:** `RENAME-1/2/3` in `test/regression.test.mjs` (no hardcoded path in consumers; `parseExtensionRef` resolves old/renamed/junk; fetches use `import.meta.url`). Auto-update itself survives the rename (ST uses the clone's stored remote + GitHub redirect; never re-derives the URL from the repo name).
+
+---
+
+## 92. `notify` toast facade — single severity-routed surface with dedup + click-to-copy + action buttons (v2.6 E1)
+
+`src/toast-dedup.js` exports a `notify` facade alongside the legacy `dedupError`/`dedupWarning`. It is the **preferred entry point for new toast sites** — raw `toastr.*` is still fine for transient info/success, but error/warning surfaces that benefit from dedup or copyable bodies should route through `notify`.
+
+**API:**
+- `notify({ severity, message, title?, category?/dedupKey?, hint?, copyable?, copyText?, actions?, ...toastrOptions })` → `boolean` (true iff a toast actually rendered).
+- Thin helpers `notify.info/success/warning/error(message, opts?)` with the same `opts` keys.
+- `severity` routes to the matching `toastr` method with a default timeout (info/success 5s, warning 8s, error 10s); any explicit `timeOut` in `opts` overrides.
+- `category` (alias `dedupKey`) applies the **same 10s dedup window** as the legacy helpers — and shares its `recentToasts` Map, so a `notify.warning(..., {category:'ai_circuit'})` and a `dedupWarning(..., 'ai_circuit')` mutually suppress. Omit `category` to bypass dedup entirely (e.g. per-`classifyError` bodies where each error text is distinct).
+- `copyable: true` makes the toast body click-to-copy (`copyText` overrides what gets copied; defaults to `message`). It also forces `timeOut:0 / extendedTimeOut:0 / tapToDismiss:false` so the toast persists long enough to click — unless the caller pins its own values.
+- `actions: [{label, onClick}]` appends buttons; `onClick` errors are swallowed.
+
+**Invariants (don't regress):**
+- **L-34 preserved:** the dedup window is stamped only AFTER a successful render. A thrown `toastr` call shows nothing and must not suppress the next 10s of retries.
+- **Legacy contract intact:** `dedupError`/`dedupWarning` keep their `(message, category, options)` signature and boolean return; they are now thin shims over the shared `_emit` core. Callers that gate side effects on the return (e.g. `markAiCircuitTripSurfaced`) still work. The `'ai_circuit'` shared category (R1) is unchanged.
+- **Dependency-light + re-import-safe:** no top-level side effects; `toastr`, `document`, `navigator` are all probed defensively so importing before the DOM/toastr are ready (or twice) is safe. Copy/action affordances are best-effort — if the DOM is unavailable they no-op and the toast still shows.
+
+**Migration is partial by design** (no big-bang): the first tranche converted error/warning bodies that benefit from copy/dedup (`classifyError(err)` sites + vault/import/ai failures). Most info/success and many transient warnings remain raw `toastr.*` — that's intentional, tracked as a follow-up. New error sites SHOULD use `notify.error(msg, { copyable: true })`.
+
+**Where:** facade + dedup in `src/toast-dedup.js`. First adopters: `src/ui/commands-ai.js`, `commands-vault.js`, `commands-pipeline.js`, `commands-admin.js`, `popups.js`, `src/librarian/librarian-review.js`, `src/ai/auto-suggest.js`, `src/drawer/drawer-events.js`. CSS affordances: `.dle-toast-copyable` / `.dle-toast-copied` / `.dle-toast-actions` / `.dle-toast-action`.
+
+---
+
+## 93. Drawer overlay/full-width mode is a DUAL trigger — narrow viewport OR wide chat_width (Issue #39, v2.6 R2)
+
+`updateOverlayMode()` (`src/drawer/drawer.js`) engages fixed-overlay/full-width mode when EITHER condition holds:
+- `window.innerWidth <= OVERLAY_VIEWPORT_WIDTH_PX` (768, real viewport pixels), OR
+- `chat_width >= OVERLAY_CHAT_WIDTH_THRESHOLD` (60%, the unchanged desktop trigger).
+
+Both constants live in `src/drawer/drawer-state.js`. **Why the viewport source was added:** `chat_width` is a *percentage* preference and never reflects actual pixels — on a phone `chat_width` may be small while the real viewport is narrow, so the percentage threshold alone never engaged and phones never got overlay. The pixel breakpoint keys off `window.innerWidth` so narrow real viewports (phones, narrow desktop windows) now get overlay regardless of the percentage. The two triggers are additive: `chat_width >= 60` keeps its desktop role (wide chat squeezes the side panel) and the new viewport check covers everything the percentage missed. This is a surgical viewport-source fix, NOT the bottom-sheet rebuild.
+
+**Merge-checklist flag for the DJLegends v3 mobile PR:** the v3 mobile UI is a full bottom-sheet rebuild and should SUBSUME/replace `updateOverlayMode` rather than stack a third overlay path on top of it. Reviewers merging the mobile PR must reconcile this dual-trigger with the new mobile layout, not leave both running.
+
+---
+
+## 94. runPipeline's settings snapshot MUST be threaded into match/AI stages (v2.6 thermo hot-path fix)
+
+**Rule:** `runPipeline` shallow-snapshots settings once per run (`const settings = { ...getSettings() }`) and passes that snapshot as an explicit parameter to every stage it invokes: `matchEntries(chat, snapshot, { settings })`, `hierarchicalPreFilter(candidates, chat, signal, settings)`, `buildCandidateManifest(candidates, bootstrap, settings)`, `aiSearch(..., signal, settings)`. When adding a NEW stage call inside `runPipeline`, thread the snapshot the same way — do not let the callee default to its own `getSettings()`.
+
+**Why:** Before this fix the snapshot's "async stages see a consistent view" comment was a lie — every one of those callees re-read live `getSettings()` internally, so a user editing settings during the (up to tens of seconds) AI await made the keyword fallback, cache keys, and thresholds read DIFFERENT values than `trace.mode` recorded. The callees keep a `settingsIn || getSettings()` fallback ONLY for out-of-pipeline callers (settings-ui test button, librarian-session, external API) where live settings are correct.
+
+**Also in this fix:** the per-generation `analyticsData: { ...rawSettings.analyticsData }` copy was deleted — it had zero readers inside `runPipeline` (index.js's Stage 8 `recordAnalytics` uses its own live `settings.analyticsData`, which is the same object `getSettings()` returns and mutations must persist through).
+
+**Where:** `src/pipeline/pipeline.js: runPipeline()` (snapshot + all four threaded call sites), `src/ai/ai.js: aiSearch()/hierarchicalPreFilter()/buildCandidateManifest()` (the `settingsIn` params).
+
+---
+
+## 95. Clearing (`/dle-clear` / Clear Cache button) is the intentional override for the BUG-367 empty-preserve guard — do NOT add a force flag to refresh (Issue #39, v2.6)
+
+The BUG-367 guard (zero-files branch in `buildIndex()`, mirrored on the reuse path) carries a vault's prior entries forward when Obsidian returns 0 files but the in-memory index still has entries for that vault. That protects against transient fetch blips — but it also means a user who *intentionally emptied* their vault could never flush the old entries: every rebuild re-preserved them and re-saved the cache, and the old Clear Cache button only called `clearIndexCache()` (IDB-only), so the live `vaultIndex` survived and re-seeded the next save. The button looked broken.
+
+**The fix is wipe-and-stop, NOT a guard bypass.** `clearVaultIndexAndCache()` (`src/vault/vault.js`) empties IDB **and** the live index + all derived state via `resetVaultIndexState()` (`src/state.js`), with no re-fetch. After a clear, `priorIndexSnapshot = [...vaultIndex]` is empty, the guard has nothing to preserve, and the next `/dle-refresh` against an emptied vault commits `[]`. Both the `/dle-cache-info` popup button and `/dle-clear` route through this one function.
+
+**Invariants:**
+- **Do NOT weaken the BUG-367 guard or add a `--force` / skip-guard flag to `/dle-refresh`.** The guard's default MUST stay preserve-on-empty (transient blips vastly outnumber intentional vault emptying); clearing is the documented escape hatch. A force flag would reintroduce the silent-wipe-on-blip failure mode the guard exists to prevent.
+- **The in-memory wipe is synchronous under the `indexing` guard.** `clearVaultIndexAndCache` refuses (`{ok:false, reason:'indexing'}`) while a build is in flight, and there is no `await` between that check and the state writes — so a build can't interleave and commit over the wipe. Keep it that way: any await inserted before `resetVaultIndexState()` reopens the race.
+- **Epoch fence: `resetVaultIndexState()` bumps `buildEpoch`; any async producer of index/cache state MUST capture `buildEpoch` before its first await and bail on change.** The `indexing` guard alone does NOT cover producers that outlive the flag: `finalizeIndex`'s **un-awaited** `saveIndexToCache` (fired before the build's finally clears `indexing`; its IDB txn may not exist yet when the clear passes the guard) and **boot hydration**'s `loadIndexFromCache` await both do this. Without the fence, a clear landing in those windows is silently undone (the save commits pre-clear entries after the wipe; hydration `setVaultIndex`s them back). The save fence is checked inside `saveIndexToCache` AFTER `openDB()` resolves, synchronously with txn creation — a bump landing after that check is still safe because the clear's own txn is then created later, and IDB commits same-store readwrite txns in creation order. Bumping is safe by construction: in-flight builds already treat an epoch change as "discard" (BUG-015 zombie guard, exactly the semantic a clear wants), and a build started after the clear captures the new epoch, so its legitimately fresh save passes the fence. `index.js`'s auto-connect also re-checks the epoch before its fallback `buildIndex` so a bailed hydration doesn't turn into a full re-fetch (wipe-and-stop means stop). Guarded by CLEAR-7..CLEAR-10.
+- **`resetVaultIndexState()` must go through `setEntityShortNameRegexes()`** (bumps `entityRegexVersion` → BUG-394 AI-cache staleness stamps invalidate) and must fire `notifyIndexUpdated()` (drawer Browse / settings stats visibly empty). It intentionally leaves `indexEverLoaded`, vault failure counters, per-chat trackers, and analytics alone — and also **`lastHealthResult` and `fieldDefinitions` (intentionally NOT reset, safe-stale):** health re-evaluates on the next check, field definitions reload on the next build.
+- **`clearIndexCache()` (cache.js) is IDB-only — never wire UI to it directly.** Route through `clearVaultIndexAndCache`. It returns a boolean; `false` (DB open/txn failure, error swallowed+logged) means IDB still holds every cached entry. `clearVaultIndexAndCache` surfaces that as `{ok:false, reason:'idb'}` — the in-memory wipe already happened and stays done (that part is real and correct) — and callers MUST show the error toast (`dle_cmd_clear_idb_failed_toast`, "retry /dle-clear"), never a success toast: a false success hides the exact Issue-#39 entries-return-after-reload symptom.
+- **Sync polling WILL re-index after a clear.** The next poll tick sees `vaultIndex.length === 0`, `buildIndexWithReuse` declines, and the full `buildIndex` runs. That is a *fresh Obsidian fetch*, not a cache resurrect — against an intentionally emptied vault it commits `[]` (the guard has nothing to preserve). The "run /dle-refresh" copy in the cleared toast is simply the manual path for users without polling.
+- Phantom commands `/dle-force-refresh` and `/dle-rebuild` were never registered; all user-facing copy now says `/dle-refresh` (or `/dle-clear`). Don't reintroduce them — guarded by CLEAR-* tests in `test/regression.test.mjs`.
+
+**Where:** `src/vault/vault.js: clearVaultIndexAndCache()`, `src/state.js: resetVaultIndexState()`, callers in `src/ui/commands-admin.js` (popup button) + `src/ui/commands-vault.js` (`/dle-clear`). Fences: `src/vault/cache.js: saveIndexToCache(entries, isStale)`, `src/vault/vault.js: finalizeIndex()` (threads `buildEpochAtStart`) + `hydrateFromCache()`, `index.js` auto-connect. Docs: `docs/vault-and-indexing.md` §6.
+
+---
+
+## 96. Diagnostics export privacy — the shareable report's pseudonymization invariants (thermo #13, 2026-07-03)
+
+Users paste the diagnostics export into GitHub issues. Anything raw that survives the scrubber leaks their private lore vault. Four invariants keep it sealed:
+
+1. **`TRACE_ENTRY_ARRAY_KEYS` (`src/diagnostics/pseudonymize-trace.js`) is the ONLY enumeration of trace entry-array keys in the diagnostics subsystem.** `flight-recorder.js` stage counts and `export.js`'s AI_INSTRUCTIONS schema bullets are generated from it. A new pipeline trace stage array MUST be added there or its raw titles/vaultSources bypass pseudonymization (`probabilitySkipped` leaked exactly this way). Drift guard: `test/diagnostics.test.mjs` section H source-scans the `pipeline.js` trace factory.
+2. **`snap.health` is pseudonymized via `pseudonymizeHealth()` with the same per-snapshot ctx as the trace** — the same title maps to the same `<title-N>` across sections. `detail` parsing is **format-anchored first**: every `runHealthCheck()` detail format that quotes a user value has an anchored rule in `HEALTH_QUOTED_DETAIL_RULES` (`pseudonymize-trace.js`) whose greedy `(.*)` capture spans embedded quotes — the old generic `"([^"]*)"` pair regex split `Keyword "dra"gon"` at the embedded quote and leaked the trailing fragment raw. Unknown formats fall back to `replaceKnownAliases` → balanced-quote pair minting, and on an ODD quote count the WHOLE remainder from the first quote is minted as one alias (over-scrub beats leak). A new detail format that quotes a user value MUST get an anchored rule (drift guard: `test/diagnostics.test.mjs` I14 source-scans `runHealthCheck()` for `"${...}"` details and requires a 1:1 rule match); a format embedding user values **unquoted** still needs its own rule (cf. `Unresolved wiki-links:`). `'Add Vault'` stays whitelisted. **Short-mint rule:** reals shorter than 3 chars (short keywords minted from quoted lints, or genuinely short titles) are substring-replaced by `replaceKnownAliases` only at word boundaries — blind replacement of a minted keyword `"a"` rewrote every later detail (`v<title-2>ault`). Standalone short titles still alias in free text; occurrences embedded inside longer words stay raw by design (a 1–2 char fragment inside another word isn't identifying); exact/quoted contexts always alias via map lookup.
+3. **Never assign raw `getSettings()` output into the snapshot.** `vaults[].name` is sanitized via `pseudonymizeVaultSource` (the name IS `entry.vaultSource`, so aliases match trace/health), `host`/`url` via `maskString` — bare hostnames never hit the scrubber's `https?://` pattern.
+4. **The scrubber's `session` key match is anchored** (`\bsession\b` + `session`+id/token/key/secret/cookie compounds). Bare-substring matching wholesale-redacted `sessionStats` / `librarianSessionStats` and the report summary fabricated "0 searches, 0 flags" from the `<redacted>` placeholder. Survive-tests in `test/diagnostics.test.mjs` section K pin both directions.
+
+---
+
+## 97. `passesRuntimeGates` is THE runtime-gate predicate for all 4 match paths (thermo #12, 2026-07-03)
+
+`passesRuntimeGates(entry, collectors, settings, getWarmupText)` in `src/pipeline/match.js` centralizes the cooldown/warmup/probability gate block that was copy-pasted (and had drifted) across the primary-keyword, cascade, recursion, and BM25 match paths. Any future match path MUST call it — never re-inline the gate block (the drift made BM25 probability drops invisible to `/dle-why` for a full release).
+
+- **Gate order: cooldown → warmup → probability.** Deterministic gates first, random roll last — a cooldown-blocked entry never burns/records a probability roll.
+- **Cooldown pre-check is the guarded variant** (`entry.cooldown !== null`): a stale `cooldownTracker` row for an entry whose frontmatter `cooldown` was removed does NOT block it ("null = none" contract). This was an intentional unification — the primary path used to honor stale tracker rows.
+- **Warmup pins `hasWarmup` from `src/helpers.js`** (see #65); `getWarmupText === null` skips warmup entirely (cascade path, BUG-035).
+- **All collector records carry `vaultSource`** (see #50).
+- Match-time cooldown drops remain unrecorded on all 4 paths (pre-existing; recording them needs a new trace field — deliberate non-goal here).
+
+Guards: `RG-1`–`RG-10` in `test/unit.mjs`; `M-6-4`/`M-6-4b` in `test/regression.test.mjs`.
+
+---
+
+## 98. Cache-validate hardening: `DEFAULT_PRIORITY` is shared, array elements are sanitized (thermo #15/#16, 2026-07-03)
+
+- **`DEFAULT_PRIORITY` (100) is exported from `core/pipeline.js` and shared by the parser and `src/vault/cache-validate.js`.** Never hardcode a priority default at either site: the old 50/100 split made a corrupt-cache entry outrank a freshly parsed one (lower = higher priority). Known adjacent wart for a future pass: `comparePriority` in `src/helpers.js` still carries its own `?? 50` fallback (unreachable for parsed/validated entries, but it's a third default in the wild).
+- **`validateCachedEntry` sanitizes string-array elements** (`keys`/`links`/`resolvedLinks`/`tags`/`requires`/`excludes`): strings kept as-is, finite numbers `String()`-coerced (bare YAML numbers like `keys: [42]` round-trip as numbers), everything else dropped. Rationale: one non-string element used to throw later inside `computeEntityDerivedState` under the blanket hydration try/catch → whole-vault cache hydration silently disabled. Clean all-string arrays are not rewritten (same reference). Guards: `A39`–`A44` in `test/contracts.test.mjs`.
+
+---
+
+## 99. Drawer render-hash guards MUST fold live container identity into the skip check (thermo #17, 2026-07-03)
+
+Module-level render-hash memos in `src/drawer/drawer-render-tabs.js` (injection + browse) and `drawer-render-footer.js` (activity feed) survive `destroyDrawerPanel()`. An identity-blind hash guard early-returns into the freshly re-created (empty) DOM after a destroy+reinit → permanently blank tabs. Every such guard must compare the live container element (`$drawer[0]` / `$activityFeed[0]`) against a module-level root memo — the `_footerCache` pattern — so the first render against a new element always paints. Self-healing, no destroy-ordering dependency. When adding a new render-hash cache to any drawer renderer, copy this pattern. Guards: `DRH-1`/`DRH-2` in `test/unit.mjs`.
+
+---
+
+## 100. `neutralizeClosingTag` is the ONE fence sanitizer for `<entry>` bodies in AI manifests (thermo #20, 2026-07-03)
+
+`neutralizeClosingTag(text, tagName)` in `src/helpers.js` (ZWSP inserted after `</`, case-insensitive, whitespace-tolerant — mirror of ai.js's `sanitizeWrapped`) neutralizes fence breakouts in AI-facing manifests. Both `buildCandidateManifest` (`src/ai/manifest.js`) and `formatLinkedManifest` (`src/librarian/librarian-tools.js`) sanitize the **entire inner body** (title line + summary — the title inside the body line was the same hole; only the `name=""` attribute was escaped before). A literal `</entry>` in a summary used to break the XML fence and inject text into the lore-selection prompt / Emma's context. Any new XML-fenced surface that interpolates untrusted vault content MUST import this helper — don't duplicate it, don't hand-roll a regex. This sanitizer applies to AI-SELECTION manifests only — injected prose for the writing prompt is NOT altered. Guards: `FEN-1`–`FEN-4` in `test/unit.mjs`.
+
+---
+
+## 101. `deduplicateMultiVault` resolves conflicts across DIFFERENT vaults only (thermo #22, 2026-07-03)
+
+`multiVaultConflictResolution` (`first`/`last`/`merge`) in `src/vault/vault-pure.js` applies across **different `vaultSource`s only** — same-vault same-title duplicates pass through untouched (same object references) in every mode. It used to key on bare `title.toLowerCase()`, silently dropping same-vault duplicates (a supported configuration) under `first`/`last`/`merge` with no warning. Semantics now: the unit of conflict is the *vault-level copy* — `first` keeps ALL of the first-seen vault's copies, `last` keeps all copies from the vault owning the group's last entry, `merge` merges one representative per vault (each vault's first same-titled entry, vault first-appearance order; merge body preserved from the old implementation — BUG-378/H18/P2-8/H-05 semantics intact). Single-vault groups are always untouched. **Output ordering:** both the merged entry AND the `last` winner (all its copies, original relative order) emit at the position of the group's FIRST entry — pre-#22 (`titleMap` insertion-order) parity; emitting the `last` winner at its own slot reorders `vaultIndex` vs older builds and shifts stable-sort priority tie-breaks / Browse default order (adversarial-review catch). Never key this dedup on bare title again (see #50). Guards: `B-SV1`–`B-SV12` in `test/vault.test.mjs`.
+
+---
+
+## 102. WI import failures are categorized at the source — never re-sniffed from strings (thermo #14, 2026-07-03)
+
+`importEntries` (`src/vault/import.js`) pushes structured `{filename, title, reason, category, retryable, entry}` records into `result.failures[]` via `makeImportFailure` (`src/vault/import-pure.js`; site→category map: `dedup-transient`/`exist-check` → `transient`, `dedup-cap` → `collision`, `write` → `write`, `convert` → `convert`, `unexpected` → `unknown`). The legacy flat `errors[]` strings are still pushed 1:1 for back-compat — a test pins the pair count.
+
+`buildImportReport` (`src/ui/wi-import-report-pure.js`) prefers `failures[]` and preserves the `entry` ref for the retry hook; `classifyFailure` is the LEGACY FALLBACK ONLY (for old result shapes without `failures[]`). Routing new producer code through the keyword-sniffer regresses the exact bug this fixed: a network error whose message contained "attempts exceeded" classified as a name clash and shipped wrong retry advice in the v2.6 recovery table.
+
+The `/dle-import` retry hook (`src/ui/commands-vault.js`) re-imports `row.entry` by identity (no `byFilename`/`convertWiEntry` reconstruction) and re-keys still-failed rows by row name so convert failures (`Entry: …` strings) can't false-positive as success; dedup-renamed retries still count as success. Category vocabulary must stay aligned across `IMPORT_FAILURE_SITE_CATEGORY` / `FAILURE_RETRYABLE` / `CATEGORY_LABEL_KEY` (guarded in `test/wi-import.test.mjs` #14 section).
+
+---
+
+## 103. Settings popup is a FLAT nav — old two-tier tokens resolve through TAB_ALIAS forever (settings overhaul, 2026-07-03)
+
+The v2.6 settings overhaul deleted the Connection/Features header rows and both subtab tiers. `settings-popup.html` now ships: header strip (brand + `#dle-sp-enabled` master switch + version chip) → sidebar nav (search box → pinned About → 4 accordion groups: Setup / Lore pipeline / Assistants / Tools) → flat panels. Old subtab tokens became tab tokens 1:1 (`obsidian`, `ai-connections`, `author-notebook`, `ai-notebook`, `session-scribe`, `auto-lorebook`, `graph`, `librarian`).
+
+- **`TAB_ALIAS` (`openSettingsPopup`, `src/ui/settings-ui.js`) is permanent, not migration debris.** `matching`→`search`, `ai`→`search`, `connection`→`obsidian`, `features`→`author-notebook`. Persisted `dle-last-settings-tab` values, `openSettingsPopup({tab, subtab})` callers, and `data-goto-tab`/`data-goto-subtab` attrs may carry pre-overhaul tokens indefinitely. `resolveTabToken(tab, subtab)` prefers the subtab (it IS a tab now), then aliases. Do not remove.
+- **The merged Search tab spans TWO DOM panel blocks** that both carry `data-settings-panel="search"` (`#dle-sp-search` = old Matching, `#dle-sp-ai` = old AI Search — kept in place to avoid relocating 170 lines across the Injection panel). `switchSettingsTab`'s attribute selector activates BOTH; any code that assumes one panel per token (e.g. `querySelector('.dle-settings-panel.active')` — singular) is wrong. The settings-search jump-highlight already walks ALL `.active` blocks. Never give the second block its own nav entry.
+- **Nav-API bridge:** handlers wired in `bindPopupEvents` (different function scope from `openSettingsPopup`) reach `switchSettingsTab`/`resolveTabToken` via `$container.data('dleNav')`. The pre-overhaul code referenced these closures as free variables from `bindPopupEvents`/`bindAccordionEvents` — a latent `ReferenceError` at click time on `.dle-goto-tab-link` and the librarian profile-missing deep link. Any NEW cross-panel navigation wired outside `openSettingsPopup` MUST use the bridge.
+- **Storage:** `dle-last-settings-tab` (accountStorage) now stores flat tokens; `dle-last-features-subtab`/`dle-last-connection-subtab` are read ONCE during alias resolution and never written again. Accordion collapse state: `dle-settings-nav-groups` (accountStorage, JSON `{group: collapsed}`); first run (key absent) = all groups collapsed, About pinned as landing panel. `switchSettingsTab` auto-expands the active tab's group.
+- **Type tokens re-anchored (global):** `--dle-text-*` are now `calc(var(--mainFontSize) * ratio)` instead of `em` — one fixed size per token everywhere, tracks ST's font-scale slider, kills nested-em compounding. `rem` would NOT track fontScale (ST sizes body, not html). `.dle-settings-popup` scopes a bolder `lg` 1.25 / `xl` 1.6 override; the drawer/graph/popups keep the global 1.1/1.25.
+- **ARIA:** sidebar is a plain `nav` + `aria-current="page"` — NOT `role=tablist` (accordion group headers are invalid tablist children; same violation class as the old nested subtabs, BUG-225 lineage). Panels have no `role=tabpanel`.
+
+---
+
+## 104. Flag activity is gated on `flagLoreAction().ok` — ghost flags desync chat vs drawer (GHOST-FLAG, 2026-07-03)
+
+Live repro on v2.6.0: the assistant reply header said "3 gaps noted" while the drawer Librarian → Flags panel was truthfully empty (`deeplore_lore_gaps: []`). Root cause chain:
+
+1. Models routinely omit `reason` in the `flag` tool call **despite `required: ['title','reason']` in the schema** — some provider backends (observed: CMRS `cc`-mode profiles) don't enforce JSON-schema `required`.
+2. Old `flagLoreAction` hard-rejected on missing reason (`return 'No reason provided.'`) **before** creating/persisting the gap — silently discarding real gap signal.
+3. Both agentic-loop call paths (inline `case 'flag'` and `_runFlagIteration`) pushed the flag into `toolActivity` **without checking the result** — the per-message "N gaps noted" dropdown rendered flags that were never in `loreGaps`.
+
+Invariants now:
+
+- **`flagLoreAction(args, callerEpoch?)` returns `{ ok, message }`**, not a string. `message` = tool-result text for the model (wording unchanged). `ok` = "this gap is really in `loreGaps` (validated + `persistGaps` succeeded on a matching epoch)". `ok` is `false` on missing title, epoch mismatch, or `persistGaps` failure (no chatMetadata — BUG-304 cold start).
+- **Missing/empty `reason` no longer rejects the flag** — recorded with `reason: ''`. Title stays mandatory. The drawer already renders empty reasons (`'No reason provided'` fallback, `drawer-events.js`). `findSimilarGap` merge is safe with `''` (`.includes('')` keeps the existing reason).
+- **Both loop paths push `toolActivity` ONLY when `flagResult.ok === true`.** A bare-string return is treated as NOT recorded (contract drift guard: reverting the return type makes flags visibly stop rendering instead of silently ghosting). Any future `flagLoreAction` call site MUST gate its render/activity on `.ok`.
+- Attempts still count toward `MAX_FLAG_CALLS` (cap counts calls, not successes).
+
+Guards: `test/regression.test.mjs` GHOST-FLAG-1..3 (loop gate, string-contract drift, backgrounded-turn end-to-end). `flagLoreAction`'s leniency itself is not node-testable (ST imports) — verified live.
+
+---
+
+## 105. Backgrounded FLAG turn RETRIES a malformed flag call — the model drifts to `{flags:[{note,…}]}` when prose beats schema (2026-07-04)
+
+Live repro on v2.6.1 (Opus 4.6 via CMRS `cc`): the gap-finder ran every turn (`backgroundFlag:true`), the model found real gaps and called `flag` — but with **`{ flags: [ { note, type, urgency }, … ] }`**: a batched array with prose-derived field names, NOT the flat `TOOL_FLAG` schema (`{title, reason, flag_type, urgency}`, `required:['title','reason']`). `flagLoreAction` read `args.title` → `undefined` → rejected every flag → drawer Flags panel stayed empty despite the header noting gaps.
+
+**Root cause is prompt-vs-schema, not a parser bug.** The schema on the wire is correct and flat (verified). The model followed the *flagging prose* over the JSON schema: the post-write `buildFlaggingInstructions` said "Flag types:" / "Urgency levels:" and never named `title`/`reason`, and "Maximum N flags per turn" invited batching — so the model generalized the earlier `search({queries:[…]})` array pattern into `flag({flags:[…]})` and invented `note` for the unnamed description field. Fixed on two axes:
+
+1. **Prompt** — `buildFlaggingInstructions` (hardcoded EN) and `AGENTIC_TOOL_FLAG` (i18n, **EN only** so far — 6 locales lag) now name the flat fields with an example: `flag(title, reason, flag_type, urgency)` + "one call per gap, do not batch".
+2. **Retry backstop (feedback-to-agent)** — `_runFlagIteration` is now a bounded loop (`MAX_FLAG_ITERATIONS = 2`). `flagInputProblem(input)` flags a malformed shape (a `flags` array, non-object, or missing `title`) **before** `flagLoreAction`; a malformed call is NOT recorded and NOT counted toward `MAX_FLAG_CALLS` — instead `FLAG_FORMAT_HINT` is fed back as the tool result and the loop re-calls so the model re-emits the flat shape. One retry only: fumble the format twice and the gaps are dropped rather than looping.
+
+Invariants:
+- **Missing `reason` is NOT malformed** — `flagInputProblem` only trips on a `flags` array / non-object / missing `title`. The GHOST-FLAG (#104) leniency for reason-less flags MUST survive; treating missing reason as malformed would re-break titled reason-less flags.
+- **A `flagLoreAction` `ok:false` (persist failure) is NOT malformed** — retrying can't fix missing chatMetadata, so it does not trip the retry loop (only the pre-`flagLoreAction` shape check does).
+- Every retry iteration re-runs the full epoch/lock/abort guards (gotcha #21 + #81). A chat switch or superseding generation between the round-trips bails cleanly (`return flagCount`).
+- The retry lives ONLY in the backgrounded `_runFlagIteration`. The **inline** flag path (main loop `case 'flag'`, write+flag in one response) is single-shot by design (breaks on `writeDone`) — it does not retry; the prompt fix is its only mitigation.
+
+Guards: `test/regression.test.mjs` F5-RETRY (malformed → correction → flat re-emission recorded, exactly one extra API call) + F5-RETRY-2 (fumble twice → 0 recorded, capped at 2 iterations). F5a-e + GHOST-FLAG-1..3 unchanged (well-formed and pre-`flagLoreAction`-bail paths). Prompt wording verified live on the 8002 test instance.
 
 ---

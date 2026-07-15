@@ -19,6 +19,7 @@ import { getWriterVisibleEntries, chatEpoch, tryAcquireHalfOpenProbe, recordAiSu
 import { ensureIndexFresh, buildIndex } from '../vault/vault.js';
 import { pushEvent } from '../diagnostics/interceptors.js';
 import { tr, trf } from '../i18n/i18n.js';
+import { notify } from '../toast-dedup.js';
 import { resolvePromptOrOverride } from '../prompts/prompt-store.js';
 
 // Auto-Suggest default prompt moved to src/i18n/prompts/en.js as
@@ -283,8 +284,8 @@ export async function showSuggestionPopup(suggestions) {
                     <div class="dle-preview dle-preview--short dle-mt-1">${escapeHtml(s.content || '')}</div>
                 </details>
                 <div class="dle-flex dle-mt-1 dle-gap-1">
-                    <button class="menu_button dle-accept-suggest dle-text-sm" data-index="${i}">Accept</button>
-                    <button class="menu_button dle-reject-suggest dle-text-sm dle-muted" data-index="${i}">Reject</button>
+                    <button type="button" class="menu_button dle-accept-suggest dle-text-sm" data-index="${i}">Accept</button>
+                    <button type="button" class="menu_button dle-reject-suggest dle-text-sm dle-muted" data-index="${i}">Reject</button>
                 </div>
             </div>`;
     }
@@ -380,7 +381,7 @@ ${safeContent}`;
                             toastr.error(tr('dle_suggest_toast_write_fail_single'), 'DeepLore');
                         }
                     } catch (err) {
-                        toastr.error(classifyError(err), 'DeepLore');
+                        notify.error(classifyError(err), { copyable: true });
                         this.disabled = false;
                     }
                 });

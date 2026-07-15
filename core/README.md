@@ -14,6 +14,6 @@ Shared utility modules used across DeepLore.
 | File | Contents |
 |------|----------|
 | `utils.js` | parseFrontmatter, extractWikiLinks, cleanContent, extractTitle, truncateToSentence, simpleHash, escapeRegex, escapeXml, yamlEscape, buildScanText, buildAiChatContext, validateSettings, NO_ENTRIES_MSG, classifyError |
-| `matching.js` | testEntryMatch, testPrimaryMatchOnly, countKeywordOccurrences, applyGating, resolveLinks, formatAndGroup, clearScanTextCache |
+| `matching.js` | testEntryMatch, testPrimaryMatchOnly, countKeywordOccurrences, resolveLinks, formatAndGroup, clearScanTextCache |
 | `pipeline.js` | VaultEntry/TagConfig typedefs, parseVaultFile, clearPrompts |
 | `sync.js` | takeIndexSnapshot, detectChanges |

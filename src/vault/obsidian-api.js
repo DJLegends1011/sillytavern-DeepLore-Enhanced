@@ -617,6 +617,41 @@ export async function writeNote(host, port, apiKey, filename, content, useHttps 
 }
 
 /**
+ * Read a single vault note's raw markdown.
+ *
+ * Returns `{ ok, content, status, error? }`. `ok:false` with `status:404` means
+ * the file does not exist (caller can treat as "new entry"). Never throws — a
+ * network/transport error is returned as `{ ok:false, status:0, error }`.
+ *
+ * @param {string} host
+ * @param {number} port
+ * @param {string} apiKey
+ * @param {string} filename - vault-relative path
+ * @param {boolean} [useHttps=false]
+ * @returns {Promise<{ok: boolean, content?: string, status: number, error?: string}>}
+ */
+export async function readNote(host, port, apiKey, filename, useHttps = false) {
+    try {
+        const normalizedPath = validateVaultPath(filename);
+        const result = await obsidianFetch({
+            host,
+            port,
+            apiKey,
+            https: useHttps,
+            path: `/vault/${encodeVaultPath(normalizedPath)}`,
+            method: 'GET',
+            accept: 'text/markdown',
+        });
+        if (result.status === 200) {
+            return { ok: true, content: String(result.data ?? ''), status: 200 };
+        }
+        return { ok: false, status: result.status, error: `HTTP ${result.status}` };
+    } catch (err) {
+        return { ok: false, status: 0, error: err.message };
+    }
+}
+
+/**
  * Update Existing Entries — read a vault file, surgically patch the requested
  * scalar frontmatter fields, write the merged result back. Body and untouched
  * frontmatter fields are preserved byte-for-byte (no YAML re-serialization).

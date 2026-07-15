@@ -59,7 +59,7 @@ async function callSummaryAI(userMessage, signal) {
     // v2.5 dead-head: refuse legacy proxy mode explicitly (mirrors callScribe) so it
     // doesn't fall through to the 'st' path and silently use ST's active connection.
     if (mode === 'proxy') {
-        throw new Error('Custom Proxy mode was removed in v2.5. Pick a Connection Profile in DLE Settings → Connection → AI Connections.');
+        throw new Error('Custom Proxy mode was removed in v2.5. Pick a Connection Profile in DLE Settings → Setup → AI Connections.');
     }
 
     // Wave-B contract: summarize was bypassing the breaker entirely. Match the

@@ -13,6 +13,7 @@ import {
     entityRegexVersion, generationCount,
     notifyAiStatsUpdated,
     tryAcquireHalfOpenProbe, recordAiSuccess, recordAiFailure, releaseHalfOpenProbe,
+    markAiCircuitTripSurfaced, onCircuitStateChanged,
 } from '../state.js';
 import { dedupWarning, dedupError } from '../toast-dedup.js';
 import { tr } from '../i18n/i18n.js';
@@ -27,6 +28,32 @@ const AI_PREFILTER_MAX_TOKENS = 512;
 
 /** Reset on chat change to avoid cross-chat throttle penalty. */
 export function resetAiThrottle() { _lastAiCallTimestamp = 0; }
+
+/**
+ * Show the "AI search is back online" toast on the half-open→closed transition,
+ * but only when the matching "resting" trip toast was actually surfaced to the
+ * user this session (recordAiSuccess consumes that gate). Closes the asymmetric
+ * feedback loop where the breaker downgraded loudly but upgraded silently.
+ *
+ * STATE-R1-01 / SYNC-AI-1: this is wired as a circuit-state observer rather than
+ * a per-caller hook so ANY of the 7 paths that close the breaker (scribe,
+ * summarize, auto-suggest, librarian-session, commands-ai, aiSearch, …) announce
+ * recovery exactly once. recordAiSuccess() forwards the consumed `announce` flag
+ * through the observer detail; the manual-reset path deliberately omits it (it
+ * shows its own toast), so this only fires on organic recovery.
+ * @param {{ announce?: boolean }} [detail] - circuit-state observer detail
+ */
+function announceAiCircuitRecovery(detail) {
+    if (!detail || !detail.announce) return;
+    try {
+        toastr.success(tr('dle_ai_toast_circuit_recovered'), 'DeepLore', { timeOut: 5000 });
+    } catch (e) {
+        console.warn('[DLE] toastr unavailable: ai_circuit_recovered', e?.message);
+    }
+}
+// Register once at module load — callbacks persist for page lifetime by design
+// (ST extensions init once, never tear down; see state.js observer note).
+onCircuitStateChanged(announceAiCircuitRecovery);
 
 // Shared circuit-breaker exclusion classifier lives in a pure module so it can be
 // regression-tested without ST globals. Re-export here so existing call sites
@@ -357,7 +384,7 @@ export async function callAI(systemPrompt, userMessage, connectionConfig) {
             // rollback safety, but every dispatch site refuses with a clear error.
             // `callProxyViaCorsBridge` import is preserved so tests can still exercise
             // the pure scrubber / validator helpers in that module.
-            throw new Error('Custom Proxy mode was removed in v2.5. Pick a Connection Profile in DLE Settings → Connection → AI Connections.');
+            throw new Error('Custom Proxy mode was removed in v2.5. Pick a Connection Profile in DLE Settings → Setup → AI Connections.');
         } else {
             throw new Error(`callAI: unknown connection mode "${mode}" (expected 'profile' or 'proxy' — 'inherit' must be resolved by resolveConnectionConfig upstream)`);
         }
@@ -410,9 +437,10 @@ export async function callAI(systemPrompt, userMessage, connectionConfig) {
     return result;
 }
 
-/** Inject settings into the extracted pure manifest builder. */
-export function buildCandidateManifest(candidates, excludeBootstrap = false) {
-    return _buildCandidateManifest(candidates, excludeBootstrap, getSettings());
+/** Inject settings into the extracted pure manifest builder. Pipeline callers pass
+ * runPipeline's settings snapshot (gotcha #94); others default to live getSettings(). */
+export function buildCandidateManifest(candidates, excludeBootstrap = false, settings = null) {
+    return _buildCandidateManifest(candidates, excludeBootstrap, settings || getSettings());
 }
 
 const HIERARCHICAL_THRESHOLD = 40;
@@ -422,8 +450,11 @@ const HIERARCHICAL_THRESHOLD = 40;
  * narrowing candidates before the main aiSearch call. Returns null to skip (caller uses all).
  * @returns {Promise<VaultEntry[]|null>}
  */
-export async function hierarchicalPreFilter(candidates, chat, signal) {
-    const settings = getSettings();
+export async function hierarchicalPreFilter(candidates, chat, signal, settingsIn = null) {
+    // gotcha #94: runPipeline threads its per-run settings snapshot so this stage
+    // sees the same values the rest of the run does; fall back to live settings
+    // only for out-of-pipeline callers.
+    const settings = settingsIn || getSettings();
     if (!settings.hierarchicalPreFilter) return null;
     const bootstrapActive = chat.length <= settings.newChatThreshold;
     let selectable = candidates.filter(e => !isForceInjected(e, { bootstrapActive }));
@@ -457,7 +488,12 @@ Example: ["Characters - Inner Circle", "Locations - Districts", "Lore - Magic Sy
 
     // BUG-AUDIT-1: Mutation gate — tryAcquireHalfOpenProbe, not isAiCircuitOpen.
     if (!tryAcquireHalfOpenProbe()) {
-        dedupWarning(tr('dle_ai_toast_circuit_open'), 'circuit-prefilter', { hint: 'Circuit breaker open during hierarchical pre-filter.' });
+        // SYNC-AI-2: only mark the trip surfaced if the toast actually showed
+        // (dedupWarning returns false when suppressed or toastr throws), and
+        // share the 'ai_circuit' dedup category with aiSearch so the same trip
+        // doesn't double-toast across the two probe sites.
+        const shown = dedupWarning(tr('dle_ai_toast_circuit_open'), 'ai_circuit', { hint: 'Circuit breaker open during hierarchical pre-filter.' });
+        if (shown) markAiCircuitTripSurfaced();
         return null;
     }
 
@@ -631,8 +667,10 @@ Example: ["Characters - Inner Circle", "Locations - Districts", "Lore - Magic Sy
  * @param {VaultEntry[]} [snapshot] - Vault index snapshot (avoids stale globals across await).
  * @returns {Promise<{ results: AiSearchMatch[], error: boolean }>}
  */
-export async function aiSearch(chat, candidateManifest, candidateHeader, snapshot, candidateEntries, signal) {
-    const settings = getSettings();
+export async function aiSearch(chat, candidateManifest, candidateHeader, snapshot, candidateEntries, signal, settingsIn = null) {
+    // gotcha #94: runPipeline threads its per-run settings snapshot — cache keys,
+    // thresholds, and fallback decisions must match what the rest of the run read.
+    const settings = settingsIn || getSettings();
 
     if (!settings.aiSearchEnabled || !candidateManifest) {
         return { results: [], error: false };
@@ -849,7 +887,9 @@ export async function aiSearch(chat, candidateManifest, candidateHeader, snapsho
     // circuit doesn't get pinned by cached returns (probe-leak fix).
     if (!tryAcquireHalfOpenProbe()) {
         if (settings.debugMode) console.debug('[DLE] AI circuit breaker open — skipping AI search');
-        dedupWarning(tr('dle_ai_toast_circuit_open_search'), 'ai_circuit', { timeOut: 8000, hint: 'Circuit breaker tripped after 2 consecutive failures; retrying in ~30s.' });
+        // SYNC-AI-2: only surface the trip if the toast actually rendered.
+        const shown = dedupWarning(tr('dle_ai_toast_circuit_open_search'), 'ai_circuit', { timeOut: 8000, hint: 'Circuit breaker tripped after 2 consecutive failures; retrying in ~30s.' });
+        if (shown) markAiCircuitTripSurfaced();
         return { results: [], error: true, cached: false, errorMessage: 'AI search temporarily paused' };
     }
 
@@ -1113,6 +1153,9 @@ export async function aiSearch(chat, candidateManifest, candidateHeader, snapsho
             })));
         }
 
+        // Recovery announcement now fires from the circuit-state observer
+        // (announceAiCircuitRecovery, registered above) so every path that closes
+        // the breaker announces. Don't double-fire here. STATE-R1-01 / SYNC-AI-1.
         recordAiSuccess();
         return { results: filteredResults, error: false, cached: false };
     } catch (err) {

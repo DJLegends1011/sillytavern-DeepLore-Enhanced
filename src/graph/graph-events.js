@@ -1,6 +1,6 @@
 import { getVaultByName } from '../../settings.js';
 import { buildObsidianURI, openObsidianUri } from '../helpers.js';
-import { tr, trf } from '../i18n/i18n.js';
+import { tr, trf, trPlural } from '../i18n/i18n.js';
 import { computeGapAnalysis } from './graph-analysis.js';
 import { escapeHtml } from './graph-util.js';
 
@@ -22,25 +22,25 @@ export function initEvents(gs, dbg) {
         const entry = gs._vaultIndex[node.id];
         const connections = edgeCountByNode.get(node.id) || 0;
         const isPermanentlyPinned = node.pinned && gs.tempPinnedNode !== node;
-        const pinLabel = isPermanentlyPinned ? 'Unpin Node' : 'Pin Node';
+        const pinLabel = isPermanentlyPinned ? tr('dle_graph_ctx_unpin') : tr('dle_graph_ctx_pin');
 
         const vault = getVaultByName(settings, entry.vaultSource || '');
         const obsidianUri = vault ? buildObsidianURI(vault.name, entry.filename) : null;
         // BUG-190: role + tabindex make menu items keyboard-navigable.
         const obsidianItem = obsidianUri
-            ? `<div class="dle-graph-ctx-item" role="menuitem" tabindex="-1" data-action="obsidian">Open in Obsidian</div>`
+            ? `<div class="dle-graph-ctx-item" role="menuitem" tabindex="-1" data-action="obsidian">${escapeHtml(tr('dle_graph_ctx_obsidian'))}</div>`
             : '';
 
         contextMenuEl.setAttribute('role', 'menu');
         contextMenuEl.innerHTML = `
             <div class="dle-graph-ctx-header">${escapeHtml(node.title)}</div>
-            <div class="dle-graph-ctx-item" role="menuitem" tabindex="-1" data-action="pin">${pinLabel}</div>
+            <div class="dle-graph-ctx-item" role="menuitem" tabindex="-1" data-action="pin">${escapeHtml(pinLabel)}</div>
             ${obsidianItem}
-            <div class="dle-graph-ctx-item" role="menuitem" tabindex="-1" data-action="focus-tree">Focus Tree</div>
-            <div class="dle-graph-ctx-item" role="menuitem" tabindex="-1" data-action="details">Show Details</div>
-            <div class="dle-graph-ctx-item" role="menuitem" tabindex="-1" data-action="copy-title">Copy Title</div>
+            <div class="dle-graph-ctx-item" role="menuitem" tabindex="-1" data-action="focus-tree">${escapeHtml(tr('dle_graph_ctx_focus_tree'))}</div>
+            <div class="dle-graph-ctx-item" role="menuitem" tabindex="-1" data-action="details">${escapeHtml(tr('dle_graph_ctx_details'))}</div>
+            <div class="dle-graph-ctx-item" role="menuitem" tabindex="-1" data-action="copy-title">${escapeHtml(tr('dle_graph_ctx_copy_title'))}</div>
             <div class="dle-graph-ctx-sep"></div>
-            <div class="dle-graph-ctx-item dle-dimmed">${connections} connection(s) · ~${node.tokens} tokens</div>
+            <div class="dle-graph-ctx-item dle-dimmed">${escapeHtml(trf('dle_graph_ctx_stats', connections, node.tokens))}</div>
         `;
 
         let tx = screenX;
@@ -145,16 +145,16 @@ export function initEvents(gs, dbg) {
             case 'details': {
                 const connections = edgeCountByNode.get(node.id) || 0;
                 const inj = injectionCounts.get(node.id) || 0;
-                const tags = (entry.tags || []).join(', ') || 'none';
+                const tags = (entry.tags || []).join(', ') || tr('dle_graph_details_tags_none');
                 const links = entry.resolvedLinks.length;
                 const reqs = entry.requires.length;
                 const excl = entry.excludes.length;
                 const details = [
-                    `Type: ${escapeHtml(node.type)} · Priority: ${entry.priority}`,
-                    `Tokens: ~${node.tokens} · Connections: ${connections}`,
-                    `Injections (this chat): ${inj}`,
-                    `Links: ${links} · Requires: ${reqs} · Excludes: ${excl}`,
-                    `Tags: ${escapeHtml(tags)}`,
+                    escapeHtml(trf('dle_graph_details_type_priority', node.type, entry.priority)),
+                    escapeHtml(trf('dle_graph_details_tokens_connections', node.tokens, connections)),
+                    escapeHtml(trf('dle_graph_details_injections', inj)),
+                    escapeHtml(trf('dle_graph_details_links_requires_excludes', links, reqs, excl)),
+                    escapeHtml(trf('dle_graph_details_tags', tags)),
                 ];
                 if (entry.customFields) {
                     for (const [key, val] of Object.entries(entry.customFields)) {
@@ -168,10 +168,10 @@ export function initEvents(gs, dbg) {
                 // BUG-AUDIT-H25: ARIA + focus management on the detail panel (role="dialog").
                 if (panel) {
                     panel.setAttribute('role', 'dialog');
-                    panel.setAttribute('aria-label', `Entry details: ${entry.title}`);
+                    panel.setAttribute('aria-label', trf('dle_graph_details_aria_label', entry.title));
                     panel.innerHTML = `<div class="dle-graph-detail-header">
                         <strong>${escapeHtml(entry.title)}</strong>
-                        <button class="dle-graph-detail-close" title="Close" aria-label="Close entry details"><i class="fa-solid fa-xmark"></i></button>
+                        <button type="button" class="dle-graph-detail-close" title="${escapeHtml(tr('dle_graph_details_close_title'))}" aria-label="${escapeHtml(tr('dle_graph_details_close_aria'))}"><i class="fa-solid fa-xmark"></i></button>
                     </div><div class="dle-graph-detail-body">${details.join('<br>')}</div>`;
                     panel.style.display = '';
                     const closeBtn = panel.querySelector('.dle-graph-detail-close');
@@ -438,6 +438,28 @@ export function initEvents(gs, dbg) {
         }
     }, lOpt);
 
+    // Escape → exit Focus Tree (industry-standard exit key). BUG-357: Escape normally bubbles to
+    // ST's document-level popup-close listener and nukes the whole graph. Both ST's handler and the
+    // bubble keydown above live on `document`, so bubble-phase stopPropagation can't reliably beat
+    // ST (registration-order dependent). Register in the CAPTURE phase so we run first, and use
+    // stopImmediatePropagation to halt every later listener (including ST's). Scoped to focus mode
+    // only — outside focus mode Escape still bubbles and closes the popup as users expect.
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+        if (!gs.focusTreeRoot) return;
+        if (!document.getElementById('dle-graph-canvas')) return;
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT' || e.target.isContentEditable) return;
+        // Context menu open + focused: let its own bubble-phase Escape handler dismiss just the menu.
+        // Without this bail, stopImmediatePropagation would kill the focus tree instead (graph-esc-1).
+        if (contextMenuEl && contextMenuEl.style.display !== 'none' && contextMenuEl.contains(e.target)) return;
+        dbg('Keyboard: Escape — exiting focus tree (capture-phase intercept before popup-close)');
+        gs.exitFocusTree();
+        hideContextMenu();
+        gs.needsDraw = true;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+    }, { signal: gs.listenerAC.signal, capture: true });
+
     // ResizeObserver on the canvas itself (not window resize) so popup resizes are tracked too.
     function handleResize() {
         gs.cachedRect = canvas.getBoundingClientRect();
@@ -499,6 +521,7 @@ export function initEvents(gs, dbg) {
             dbg(`Color mode changed to: ${gs.colorMode}`);
             gs.needsDraw = true;
             gs.updateTooltip();
+            if (gs.updateColorLegend) gs.updateColorLegend();
         }, lOpt);
     }
     const layoutModeEl = document.getElementById('dle-graph-layout-mode');
@@ -666,13 +689,13 @@ export function initEvents(gs, dbg) {
                 const ga = gs.gapAnalysis;
                 dbg(`Gap Analysis: ${ga.orphans.length} orphans, ${ga.bridges.length} bridges, ${ga.missingConnections.length} missing connections`);
                 const parts = [];
-                if (ga.orphans.length > 0) parts.push(`${ga.orphans.length} orphan${ga.orphans.length > 1 ? 's' : ''}`);
-                if (ga.bridges.length > 0) parts.push(`${ga.bridges.length} weak bridge${ga.bridges.length > 1 ? 's' : ''}`);
-                if (ga.missingConnections.length > 0) parts.push(`${ga.missingConnections.length} potential missing link${ga.missingConnections.length > 1 ? 's' : ''}`);
+                if (ga.orphans.length > 0) parts.push(trPlural('dle_graph_gap_orphans', ga.orphans.length));
+                if (ga.bridges.length > 0) parts.push(trPlural('dle_graph_gap_bridges', ga.bridges.length));
+                if (ga.missingConnections.length > 0) parts.push(trPlural('dle_graph_gap_missing', ga.missingConnections.length));
                 if (parts.length > 0) {
-                    toastr.info(`Found: ${parts.join(', ')}`, 'Gap Analysis', { timeOut: 5000 });
+                    toastr.info(trf('dle_graph_gap_found', parts.join(', ')), tr('dle_graph_gap_title'), { timeOut: 5000 });
                 } else {
-                    toastr.success('No gaps detected — your vault is well-connected!', 'Gap Analysis', { timeOut: 3000 });
+                    toastr.success(tr('dle_graph_gap_none'), tr('dle_graph_gap_title'), { timeOut: 3000 });
                 }
             } else {
                 gs.gapAnalysis = null;

@@ -255,12 +255,12 @@ export function renderPromptsGrid($container) {
 
     const html = [];
     html.push(`<div class="dle-prompts-grid-section">`);
-    html.push(`<h5>Substantive prompts (${substantive.length})</h5>`);
+    html.push(`<h5 class="dle-settings-subsection-label">Substantive prompts (${substantive.length})</h5>`);
     html.push(renderPromptRows(substantive));
     html.push(`</div>`);
 
-    html.push(`<details class="dle-prompts-grid-section" style="margin-top: 8px;">`);
-    html.push(`<summary>Agentic-loop fragments (${fragments.length})</summary>`);
+    html.push(`<details class="dle-prompts-grid-section">`);
+    html.push(`<summary class="dle-settings-subsection-label">Agentic-loop fragments (${fragments.length})</summary>`);
     html.push(renderPromptRows(fragments));
     html.push(`</details>`);
 
@@ -277,20 +277,20 @@ export function renderPromptsGrid($container) {
 function renderPromptRows(rows) {
     if (rows.length === 0) return '<p class="dle-section-desc"><em>None.</em></p>';
     const out = [];
-    out.push('<table class="dle-prompts-grid-table" style="width: 100%; border-collapse: collapse;">');
-    out.push('<thead><tr><th style="text-align:left;">Key</th><th style="text-align:left;">Source</th><th style="text-align:left;">Status</th><th style="text-align:right;">Actions</th></tr></thead>');
+    out.push('<table class="dle-prompts-grid-table">');
+    out.push('<thead><tr><th>Key</th><th>Source</th><th>Status</th><th class="dle-col-actions">Actions</th></tr></thead>');
     out.push('<tbody>');
     for (const row of rows) {
         const { badge, actions } = ruleFor(row);
         const errorIcon = row.error
-            ? `<span class="dle-prompt-row-error" title="${escapeHtml(row.error)}" style="margin-left: 4px; color: var(--SmartThemeQuoteColor, #c33);">⚠</span>`
+            ? `<span class="dle-prompt-row-error" title="${escapeHtml(row.error)}">⚠</span>`
             : '';
         const actionsHtml = actions.map(a => renderActionButton(a, row.key)).join(' ');
         out.push(`<tr>
             <td><code>${escapeHtml(row.key)}</code>${errorIcon}</td>
             <td>${escapeHtml(row.source)}</td>
             <td><span class="dle-status" data-tone="${badge.tone}">${escapeHtml(badge.label)}</span></td>
-            <td style="text-align: right;">${actionsHtml}</td>
+            <td class="dle-col-actions">${actionsHtml}</td>
         </tr>`);
     }
     out.push('</tbody></table>');

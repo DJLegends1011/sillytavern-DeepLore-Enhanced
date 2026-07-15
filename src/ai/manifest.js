@@ -5,7 +5,7 @@
 
 import { truncateToSentence, escapeXml } from '../../core/utils.js';
 import { fieldDefinitions, decayTracker, consecutiveInjections, trackerKey } from '../state.js';
-import { isForceInjected } from '../helpers.js';
+import { isForceInjected, neutralizeClosingTag } from '../helpers.js';
 import { WI_PARITY_FIELD_SET } from '../../core/pipeline.js';
 
 /**
@@ -34,7 +34,6 @@ export function buildCandidateManifest(candidates, excludeBootstrap = false, set
             const summaryText = summaryMode === 'content_only'
                 ? truncateToSentence(entry.content.substring(0, summaryLen * 3).replace(/\n+/g, ' ').trim(), summaryLen)
                 : (entry.summary || truncateToSentence(entry.content.substring(0, summaryLen * 3).replace(/\n+/g, ' ').trim(), summaryLen));
-            const safeSummary = summaryText;
             const links = entry.resolvedLinks && entry.resolvedLinks.length > 0
                 ? ` → ${entry.resolvedLinks.join(', ')}`
                 : '';
@@ -78,8 +77,13 @@ export function buildCandidateManifest(candidates, excludeBootstrap = false, set
             const attrSafeTitle = escapeXml(entry.title);
             const header = `${entry.title} (${entry.tokenEstimate}tok)${links}${decayHint}${fieldsHint}`;
 
-            // Structural delimiters so summary content can't be read as manifest-level instructions.
-            return `<entry name="${attrSafeTitle}">\n${header}\n${safeSummary}\n</entry>`;
+            // Structural delimiters so summary content can't be read as manifest-level
+            // instructions. #20: the ENTIRE inner body (title line + summary — both
+            // author-controlled) is fence-neutralized so a literal </entry> inside a
+            // summary can't close the fence early and inject into the selection prompt.
+            // The old `safeSummary` name lied — it was raw, unsanitized text.
+            const fenceSafeBody = neutralizeClosingTag(`${header}\n${summaryText}`, 'entry');
+            return `<entry name="${attrSafeTitle}">\n${fenceSafeBody}\n</entry>`;
         })
         .join('\n');
 

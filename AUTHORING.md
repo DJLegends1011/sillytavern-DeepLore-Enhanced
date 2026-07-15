@@ -22,7 +22,7 @@ enabled: true         # set to false to skip this entry entirely
 ---
 ```
 
-Optional lorebook fields: `requires`, `excludes`, `position`, `depth`, `role`, `scanDepth`, `excludeRecursion`, `outlet`, `graph`. Entries tagged `lorebook-always` = constants (always injected); `constant: true` in frontmatter is the equivalent — it's the *only* one of the special behaviors with a frontmatter boolean. `lorebook-never` = excluded. `lorebook-seed` content force-injected into writing AI prompt AND prepended as story context in AI search prompt on new chats. `lorebook-bootstrap` force-injects when chat at or below `newChatThreshold` (default 3, uses `<=`). `lorebook-guide` = Librarian-only writing guides — never reach writing AI via any path. `enabled: false` skips entry entirely. `outlet` (string) enables macro-based injection via `{{outlet::name}}` instead of positional. `graph: false` excludes from relationship graph.
+Optional lorebook fields: `requires`, `excludes`, `position`, `depth`, `role`, `scanDepth`, `excludeRecursion`, `outlet`, `graph`. Entries tagged `lorebook-always` = constants (always injected); `constant: true` in frontmatter is the equivalent — it's the *only* one of the special behaviors with a frontmatter boolean. `lorebook-never` = excluded. `lorebook-seed` content is prepended as story context in the AI search prompt on new chats (NOT injected into the writing AI); seed entries are also exempt from contextual gating so they stay available across the whole chat. `lorebook-bootstrap` force-injects when chat at or below `newChatThreshold` (default 3, uses `<=`). `lorebook-guide` = Librarian-only writing guides — never reach writing AI via any path. `enabled: false` skips entry entirely. `outlet` (string) enables macro-based injection via `{{outlet::name}}` instead of positional. `graph: false` excludes from relationship graph.
 
 > **`seed`, `bootstrap`, and `guide` are tag-only.** There is *no* `seed: true` / `bootstrap: true` / `guide: true` frontmatter field — writing one does nothing. Apply the behavior by adding the matching tag (`lorebook-seed`, `lorebook-bootstrap`, `lorebook-guide`) to your `tags` list. Only `constant` has both a tag (`lorebook-always`) and a frontmatter boolean.
 
@@ -186,7 +186,7 @@ If you imported a SillyTavern World Info book via `/dle-import`, your entries ma
 
 **Fields preserved for round-trip readability only** (DLE ignores; `/dle-lint` flags with `W_WI_ROUND_TRIP` so you can find them):
 
-`vectorized`, `selective`, `use_probability`, `prevent_recursion`, `delay_until_recursion`, `group_override`, `use_group_scoring`, `case_sensitive`, `match_whole_words`, `automation_id`, `add_memo`, `display_index`, plus 6 ST-specific scan-source toggles (`match_persona_description`, `match_character_description`, `match_character_personality`, `match_character_depth_prompt`, `match_scenario`, `match_creator_notes`).
+`vectorized`, `selective`, `use_probability`, `prevent_recursion`, `delay_until_recursion`, `group_override`, `use_group_scoring`, `case_sensitive`, `match_whole_words`, `automation_id`, `add_memo`, `display_index`, plus 6 ST-specific scan-source toggles (`match_persona_description`, `match_character_description`, `match_character_personality`, `match_character_depth_prompt`, `match_scenario`, `match_creator_notes`), plus 4 newer ST fields (`triggers`, `ignore_budget`, `character_filter`, `decorators`).
 
 **Fields preserved with implementation planned** (`W_NOT_IMPLEMENTED` lint code, has a BUG number for tracking):
 

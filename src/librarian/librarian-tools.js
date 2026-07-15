@@ -5,6 +5,7 @@
 import { getCurrentChatId } from '../../../../../../script.js';
 import { getContext, saveMetadataDebounced } from '../../../../../extensions.js';
 import { truncateToSentence, escapeXml } from '../../core/utils.js';
+import { neutralizeClosingTag } from '../helpers.js';
 import { queryBM25, tokenize } from '../vault/bm25.js';
 import { getSettings } from '../../settings.js';
 import {
@@ -284,11 +285,16 @@ function incrementStats(field, extraTokens = 0) {
  * Defined here (not inline) so every return path in `searchLoreAction` uses
  * the same shape — no chance of a no-result branch returning a bare string.
  */
-function _searchResult(text, titles = []) {
+function _searchResult(text, titles = [], opts = {}) {
     const t = typeof text === 'string' ? text : '';
     return {
         text: t,
         titles: Array.isArray(titles) ? titles : [],
+        // #23: true when searchLoreAction refunded loreGapSearchCount (search
+        // delivered no value). The agentic loop mirrors the refund on its OWN
+        // searchCount so the two budgets can't diverge — otherwise the loop
+        // withdraws TOOL_SEARCH early while the model was told the search was free.
+        refunded: !!opts.refunded,
         toString() { return t; },
         [Symbol.toPrimitive]() { return t; },
     };
@@ -306,7 +312,10 @@ function formatLinkedManifest(entries, summaryLen = 400) {
         const links = entry.resolvedLinks?.length > 0
             ? ` → ${entry.resolvedLinks.join(', ')}` : '';
         const safeName = escapeXml(entry.title);
-        return `<entry name="${safeName}">\n${entry.title} (${entry.tokenEstimate}tok)${links}\n${summary}\n</entry>`;
+        // #20: same fence hole as buildCandidateManifest — a literal </entry> in an
+        // author summary broke out of the fence. Shared sanitizer from helpers.js.
+        const fenceSafeBody = neutralizeClosingTag(`${entry.title} (${entry.tokenEstimate}tok)${links}\n${summary}`, 'entry');
+        return `<entry name="${safeName}">\n${fenceSafeBody}\n</entry>`;
     }).join('\n');
 }
 
@@ -432,7 +441,7 @@ export async function searchLoreAction(args) {
         // is still the race guard for concurrent search_lore calls; decrement-on-fail
         // keeps the counter aligned with searches that actually returned value.
         setLoreGapSearchCount(Math.max(0, loreGapSearchCount - 1));
-        return _searchResult('Lore vault index is still loading. This search did not count against your limit; vault should be ready on next message.');
+        return _searchResult('Lore vault index is still loading. This search did not count against your limit; vault should be ready on next message.', [], { refunded: true });
     }
 
     // BUG-AUDIT v2.5: dedup keyed by trackerKey (vaultSource:title.toLowerCase()) so
@@ -569,7 +578,7 @@ export async function searchLoreAction(args) {
         // refund the counter so the AI can keep working without the no-result hit
         // eating its budget. Race guard preserved by the increment-first pattern above.
         setLoreGapSearchCount(Math.max(0, loreGapSearchCount - 1));
-        return _searchResult(`No entries found for ${queries.map(q => `"${q}"`).join(', ')}. This search did not count against your limit. If this information is important to the scene, use flag_lore to record the gap.`);
+        return _searchResult(`No entries found for ${queries.map(q => `"${q}"`).join(', ')}. This search did not count against your limit. If this information is important to the scene, use flag_lore to record the gap.`, [], { refunded: true });
     }
     // CRIT-LIB-2: caller (agentic-loop) consumes `titles` directly. NEVER regex
     // `text` for `### ...` headings — vault content has its own subheadings.
@@ -590,9 +599,15 @@ export async function flagLoreAction(args, callerEpoch) {
     const epoch = callerEpoch !== undefined ? callerEpoch : chatEpoch;
     const debug = getSettings().debugMode;
     const title = args?.title?.trim();
-    const reason = args?.reason?.trim();
-    if (!title) return 'No title provided.';
-    if (!reason) return 'No reason provided.';
+    // GHOST-FLAG fix (2026-07-03): models routinely omit `reason` despite
+    // required[] in the tool schema (some provider backends don't enforce
+    // JSON-schema required). A titled flag is still real gap signal — record
+    // it with an empty reason instead of silently discarding it. The drawer
+    // already renders empty reasons ('No reason provided' fallback in
+    // drawer-events.js). Title stays mandatory: a flag without a topic is
+    // unrenderable and unmergeable.
+    const reason = args?.reason?.trim() || '';
+    if (!title) return { ok: false, message: 'No title provided.' };
 
     const urgency = ['low', 'medium', 'high'].includes(args?.urgency) ? args.urgency : 'medium';
     const flagType = ['gap', 'update'].includes(args?.flag_type) ? args.flag_type : 'gap';
@@ -641,9 +656,15 @@ export async function flagLoreAction(args, callerEpoch) {
         };
         updatedGaps = [...loreGaps, newGap];
     }
+    // GHOST-FLAG fix: track whether the gap actually landed in loreGaps so the
+    // caller can gate the per-message dropdown push on it. `recorded` is false
+    // on epoch mismatch (stale chat — caller's own guard bails anyway) and on
+    // persistGaps failure (no chatMetadata — BUG-304 cold start: the gap is in
+    // NEITHER memory nor metadata, so rendering it would be a ghost).
+    let recorded = false;
     if (epoch === chatEpoch) {
-        const ok = persistGaps(updatedGaps);
-        if (!ok) console.warn('[DLE] flagLore: persist failed (no chat metadata) for "%s"', title);
+        recorded = persistGaps(updatedGaps);
+        if (!recorded) console.warn('[DLE] flagLore: persist failed (no chat metadata) for "%s"', title);
         else if (debug) console.debug('[DLE] flagLore: persisted — %s', existingGap ? 'merged' : 'new');
     } else {
         if (debug) console.debug('[DLE] flagLore: epoch guard — skipped persist for "%s"', title);
@@ -675,8 +696,13 @@ export async function flagLoreAction(args, callerEpoch) {
         console.debug('[DLE] flagLore: epoch guard — skipped activity/analytics for "%s"', title);
     }
 
-    if (flagType === 'update' && entryTitle) {
-        return `Flagged update: "${title}" (entry: ${entryTitle}). Do not acknowledge this flag — continue seamlessly.`;
-    }
-    return `Flagged gap: "${title}". Do not acknowledge this flag — continue seamlessly.`;
+    // GHOST-FLAG fix: structured return. `message` is the tool-result string fed
+    // back to the model (unchanged wording); `ok` tells the caller whether the
+    // gap is really in loreGaps — the agentic loop only pushes toolActivity
+    // (the per-message "N gaps noted" dropdown) for ok flags, keeping the chat
+    // header and the drawer Flags panel in sync. See docs/gotchas.md #104.
+    const message = (flagType === 'update' && entryTitle)
+        ? `Flagged update: "${title}" (entry: ${entryTitle}). Do not acknowledge this flag — continue seamlessly.`
+        : `Flagged gap: "${title}". Do not acknowledge this flag — continue seamlessly.`;
+    return { ok: recorded, message };
 }

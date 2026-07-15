@@ -24,13 +24,14 @@ import {
     fieldDefinitions, setFieldDefinitions,
     setIndexBuildReport,
     entityRegexVersion,
+    resetVaultIndexState,
 } from '../state.js';
 import { DEFAULT_FIELD_DEFINITIONS, parseFieldDefinitionYaml } from '../fields.js';
 import { resolveLinks } from '../../core/matching.js';
 import { parseVaultFile } from '../../core/pipeline.js';
 import { takeIndexSnapshot, detectChanges, snapshotKey } from '../../core/sync.js';
 import { showChangesToast } from './sync.js';
-import { saveIndexToCache, loadIndexFromCache, pruneOrphanedCacheKeys } from './cache.js';
+import { saveIndexToCache, loadIndexFromCache, pruneOrphanedCacheKeys, clearIndexCache } from './cache.js';
 import { dedupError, dedupWarning } from '../toast-dedup.js';
 import { pushEvent } from '../diagnostics/interceptors.js';
 import { buildBM25Index, setDebugMode as setBm25DebugMode } from './bm25.js';
@@ -109,7 +110,7 @@ let _parserLedgerToastShown = false;
  * `incrementalMentionWeights()`. Output is byte-equivalent to the full path —
  * pinned by test/vault.test.mjs section L (L1).
  */
-function computeDerivedIndexFields(entries, settings, previousEntries) {
+function computeDerivedIndexFields(entries, settings, previousEntries, precomputedDiff = null) {
     setBm25DebugMode(settings?.debugMode);
 
     const totalTokens = entries.reduce((sum, e) => sum + (e.tokenEstimate || 0), 0);
@@ -118,7 +119,10 @@ function computeDerivedIndexFields(entries, settings, previousEntries) {
     // mentionWeights — try incremental path when prev entries available.
     let weights = null;
     if (previousEntries && previousEntries.length > 0 && entries.length > 0) {
-        const diff = diffEntries(previousEntries, entries);
+        // #3: reuse the diff finalizeIndex already computed for this tick (same
+        // inputs feed mentionWeights, entity regexes, and BM25). Only recompute
+        // when a caller (hydrateFromCache) invoked us without previousEntries.
+        const diff = precomputedDiff || diffEntries(previousEntries, entries);
         const changed = diff.added.length + diff.removed.length + diff.modified.length;
         if (shouldUseIncremental(changed, entries.length)) {
             weights = incrementalMentionWeights(mentionWeights, previousEntries, entries, diff);
@@ -161,7 +165,7 @@ function computeDerivedIndexFields(entries, settings, previousEntries) {
     }
 }
 
-async function finalizeIndex({ entries, settings, skipCacheSave = false, previousEntries = null }) {
+async function finalizeIndex({ entries, settings, skipCacheSave = false, previousEntries = null, buildEpochAtStart = null }) {
     resolveLinks(vaultIndex);
 
     // Strip dangling requires/excludes/cascade_links so the pipeline doesn't trip on them
@@ -195,7 +199,15 @@ async function finalizeIndex({ entries, settings, skipCacheSave = false, previou
         }
     }
 
-    computeDerivedIndexFields(entries, settings, previousEntries);
+    // #3: the incremental paths for mentionWeights, entity regexes, and BM25 each
+    // used to recompute diffEntries(previousEntries, entries) — 3× the 2-Map +
+    // per-entry-JSON.stringify cost every poll tick. Compute once and thread it
+    // into all three consumers. Non-null exactly when the incremental guard holds.
+    const sharedDiff = (previousEntries && previousEntries.length > 0 && entries.length > 0)
+        ? diffEntries(previousEntries, entries)
+        : null;
+
+    computeDerivedIndexFields(entries, settings, previousEntries, sharedDiff);
 
     // Capture pre-rebuild state for cache-invalidation diagnostic.
     const _preRegexVersion = entityRegexVersion;
@@ -209,8 +221,8 @@ async function finalizeIndex({ entries, settings, skipCacheSave = false, previou
     // which bumps entityRegexVersion. BUG-394 / AI cache invalidation invariant
     // preserved — pinned by test L7.
     let entityIncremental = false;
-    if (previousEntries && previousEntries.length > 0 && entries.length > 0) {
-        const diff = diffEntries(previousEntries, entries);
+    if (sharedDiff) {
+        const diff = sharedDiff;
         const changed = diff.added.length + diff.removed.length + diff.modified.length;
         if (shouldUseIncremental(changed, entries.length)) {
             const { names, regexes } = incrementalEntityRegexes(entries, entityShortNameRegexes);
@@ -231,8 +243,8 @@ async function finalizeIndex({ entries, settings, skipCacheSave = false, previou
     // vault-incremental.js. Equivalence is pinned by test L4.
     if (settings.fuzzySearchEnabled || settings.librarianSearchEnabled) {
         let newBm25 = null;
-        if (previousEntries && previousEntries.length > 0 && entries.length > 0 && fuzzySearchIndex) {
-            const diff = diffEntries(previousEntries, entries);
+        if (sharedDiff && fuzzySearchIndex) {
+            const diff = sharedDiff;
             const changed = diff.added.length + diff.removed.length + diff.modified.length;
             if (shouldUseIncremental(changed, entries.length)) {
                 newBm25 = incrementalBM25Update(fuzzySearchIndex, diff);
@@ -305,7 +317,15 @@ async function finalizeIndex({ entries, settings, skipCacheSave = false, previou
     // Prune sequenced AFTER save success: a failed save racing concurrent prune used to
     // delete the prior good cache key and leave nothing for the next hydration.
     if (!skipCacheSave) {
-        saveIndexToCache(entries)
+        // Epoch fence (gotcha #95): this save is fire-and-forget — the build's finally
+        // clears `indexing` before the save's IDB transaction exists, so /dle-clear can
+        // pass its indexing guard and wipe IDB while this save is still opening the DB;
+        // the save would then commit the pre-clear entries AFTER the wipe. Threading the
+        // build's captured epoch lets saveIndexToCache bail at write time if
+        // resetVaultIndexState (or a force-release) bumped buildEpoch since the build
+        // started. buildEpochAtStart === null (external callers) keeps the old behavior.
+        const isStale = buildEpochAtStart === null ? null : () => buildEpoch !== buildEpochAtStart;
+        saveIndexToCache(entries, isStale)
             .then(() => pruneOrphanedCacheKeys())
             .catch(err => console.warn('[DLE] Cache save/prune failed:', err?.message));
     }
@@ -553,7 +573,7 @@ export async function buildIndex() {
             console.warn('[DLE] Merge mode + vault fetch failure — preserving the whole prior index (merged provenance can\'t be split per-vault).');
             if (isZombie()) return;
             setIndexBuildReport(buildReport);
-            await finalizeIndex({ entries, settings, skipCacheSave: true });
+            await finalizeIndex({ entries, settings, skipCacheSave: true, buildEpochAtStart: capturedEpoch });
             return;
         }
 
@@ -602,7 +622,7 @@ export async function buildIndex() {
         if (isZombie()) return;
         // Publish ledger BEFORE finalizeIndex so observers (stats, health) see it.
         setIndexBuildReport(buildReport);
-        await finalizeIndex({ entries, settings, skipCacheSave: vaultFetchFailed });
+        await finalizeIndex({ entries, settings, skipCacheSave: vaultFetchFailed, buildEpochAtStart: capturedEpoch });
 
         // Once-per-page-load: subsequent rebuilds stay silent.
         if (!_parserLedgerToastShown && (buildReport.warnCount > 0 || buildReport.skipCount > 0)) {
@@ -680,13 +700,70 @@ export function getMaxResponseTokens() {
 }
 
 /**
+ * Issue #39 (v2.6): wipe-and-stop cache clear. Empties the IndexedDB vault cache
+ * AND the live in-memory index (plus all derived state, via
+ * state.js:resetVaultIndexState) WITHOUT re-fetching from Obsidian. Callers:
+ * the /dle-cache-info "Clear Cache" button and the /dle-clear slash command.
+ *
+ * This is the intentional user override for the BUG-367 empty-preserve guard
+ * (see the zero-files branch in buildIndex above): the guard carries prior
+ * entries forward when a vault returns 0 files, so a user who emptied their
+ * Obsidian vault could never get rid of the cached entries — every rebuild
+ * re-preserved and re-saved them. After a clear the prior index is empty, the
+ * guard has nothing to preserve, and a subsequent /dle-refresh against an
+ * emptied vault commits []. Do NOT weaken the guard itself; clearing is the
+ * escape hatch (docs/gotchas.md #95).
+ *
+ * Refuses to run while an index build is in flight — the build would commit
+ * over the wipe (and re-save the cache) moments later, making the clear look
+ * broken. The in-memory wipe happens synchronously under that guard (no await
+ * between the check and the state writes, so a build can't interleave); the
+ * IndexedDB clear follows. resetVaultIndexState also bumps buildEpoch (the
+ * epoch fence, gotcha #95) so any still-in-flight async producer — a prior
+ * build's un-awaited finalizeIndex cache save, boot hydration's IDB read —
+ * bails instead of repopulating what was just wiped. Nothing per-chat is
+ * touched and no state is written after the await.
+ *
+ * @returns {Promise<{ok: boolean, reason?: 'indexing'|'idb'}>}
+ *          reason:'indexing' — a build is in flight; NOTHING was touched
+ *          (caller should toast "wait for the build to finish" and abort).
+ *          reason:'idb' — the in-memory wipe HAPPENED and stays done (Browse,
+ *          stats, and matching all see an empty index — that part is real and
+ *          correct), but the IndexedDB wipe failed, so cached entries may
+ *          hydrate back on the next reload. Callers MUST surface this as an
+ *          error ("retry /dle-clear"), never a success toast.
+ */
+export async function clearVaultIndexAndCache() {
+    if (indexing) {
+        return { ok: false, reason: 'indexing' };
+    }
+    resetVaultIndexState();
+    const idbCleared = await clearIndexCache();
+    if (!idbCleared) {
+        pushEvent('cache_clear', { scope: 'index-only', manual: true, idbFailed: true });
+        return { ok: false, reason: 'idb' };
+    }
+    pushEvent('cache_clear', { scope: 'index+idb', manual: true });
+    return { ok: true };
+}
+
+/**
  * Hydrate the vault index from IndexedDB cache for instant startup.
  * After hydration, triggers a background rebuild to validate against Obsidian.
  * @returns {Promise<boolean>} True if cache was loaded
  */
 export async function hydrateFromCache() {
     try {
+        // Epoch fence (gotcha #95): a /dle-clear completing while the IDB read below
+        // is in flight bumps buildEpoch (resetVaultIndexState); without this check the
+        // setVaultIndex below would overwrite the wipe with the pre-clear entries.
+        // Bailing before setVaultIndex also skips the background buildIndex trigger
+        // further down (wipe-and-stop means STOP — no auto re-fetch). The auto-connect
+        // caller in index.js re-checks the same epoch before its fallback buildIndex
+        // so a bailed hydration doesn't turn into a full rebuild either.
+        const hydrateBuildEpoch = buildEpoch;
         const cached = await loadIndexFromCache();
+        if (buildEpoch !== hydrateBuildEpoch) return false;
         if (!cached || cached.entries.length === 0) return false;
 
         setVaultIndex(cached.entries);
@@ -851,6 +928,12 @@ export async function buildIndexWithReuse() {
         let newCount = 0, modifiedCount = 0, removedCount = 0;
         let _reuseTokenizerFailCount = 0;
         const allEntries = [];
+        // #1: freshly-parsed/changed entries needing a tokenizer round-trip. The
+        // per-file `await getTokenCountAsync` inside the reuse loop serialized into
+        // 50-100 sequential round-trips on a bulk-edit tick (blocking the UI). Defer
+        // it: collect here, then batch with Promise.all after the loop — mirroring
+        // buildIndex's own batch pass.
+        const _needTokenize = [];
         // Reuse-path parser ledger. Only re-parsed files contribute new warnings/skips;
         // unchanged reused entries roll forward their existing `_parserWarnings`.
         const buildReport = {
@@ -1019,12 +1102,8 @@ export async function buildIndexWithReuse() {
                         if (entry) {
                             entry.vaultSource = vault.name;
                             entry._contentHash = fileHash;
-                            try {
-                                entry.tokenEstimate = await getTokenCountAsync(entry.content);
-                            } catch {
-                                entry.tokenEstimate = Math.ceil(entry.content.length / 4.0);
-                                _reuseTokenizerFailCount++;
-                            }
+                            // #1: defer tokenization — batched after the loop.
+                            _needTokenize.push(entry);
                             if (entry._parserWarnings && entry._parserWarnings.length > 0) {
                                 buildReport.warnCount++;
                                 buildReport.entriesWithWarnings.push({
@@ -1067,9 +1146,6 @@ export async function buildIndexWithReuse() {
         }
 
         setLastVaultFailureCount(vaultFailCount);
-        if (_reuseTokenizerFailCount > 0) {
-            console.warn(`[DLE] Tokenizer failed for ${_reuseTokenizerFailCount} re-parsed entries — using character-based estimates (budget accuracy degraded)`);
-        }
 
         // M-12: merge mode + a vault failed → mirror buildIndex's P2-7 fix. The
         // per-vault carry-forward branches above filter indexSnapshot by
@@ -1098,6 +1174,7 @@ export async function buildIndexWithReuse() {
                 settings,
                 skipCacheSave: true,
                 previousEntries: indexSnapshot,
+                buildEpochAtStart: capturedBuildEpoch,
             });
             _reuseResult = true;
             return;
@@ -1119,6 +1196,25 @@ export async function buildIndexWithReuse() {
             }
             _reuseResult = true;
             return;
+        }
+
+        // #1: batch-tokenize all changed/new entries in parallel (was one serial
+        // `await getTokenCountAsync` per file inside the loop). Placed after the
+        // no-change and merge-carry-forward early returns so we never tokenize
+        // entries that get discarded. Mirrors buildIndex's :561 batch pass.
+        if (_needTokenize.length > 0) {
+            await Promise.all(_needTokenize.map(async (entry) => {
+                try {
+                    entry.tokenEstimate = await getTokenCountAsync(entry.content);
+                } catch {
+                    entry.tokenEstimate = Math.ceil(entry.content.length / 4.0);
+                    _reuseTokenizerFailCount++;
+                }
+            }));
+            if (isZombie()) { _reuseResult = false; return; }
+        }
+        if (_reuseTokenizerFailCount > 0) {
+            console.warn(`[DLE] Tokenizer failed for ${_reuseTokenizerFailCount} re-parsed entries — using character-based estimates (budget accuracy degraded)`);
         }
 
         if (settings.debugMode) {
@@ -1178,6 +1274,7 @@ export async function buildIndexWithReuse() {
             settings,
             skipCacheSave: anyVaultFailed,
             previousEntries: indexSnapshot,
+            buildEpochAtStart: capturedBuildEpoch,
         });
 
         if (!_parserLedgerToastShown && (buildReport.warnCount > 0 || buildReport.skipCount > 0)) {

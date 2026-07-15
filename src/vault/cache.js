@@ -96,12 +96,27 @@ function openDB() {
  * Save the parsed vault index to IndexedDB.
  * Stores entry data + content hashes for validation on next load.
  * @param {import('../core/pipeline.js').VaultEntry[]} entries - Parsed vault entries
- * @returns {Promise<boolean>} true if the cache was successfully persisted; false on quota/other failure
+ * @param {(() => boolean)|null} [isStale] - Epoch fence (gotcha #95): predicate built by the
+ *          caller over state.js buildEpoch. Checked AFTER the DB open resolves, synchronously
+ *          with transaction creation — if it reports stale, the write is skipped and false is
+ *          returned. This closes the race where finalizeIndex's fire-and-forget save is still
+ *          opening the DB when a /dle-clear (which bumps buildEpoch via resetVaultIndexState)
+ *          wipes the store: without the fence the save's txn would repopulate IDB with the
+ *          pre-clear entries. A bump that lands after this check is still safe — the clear's
+ *          own transaction is then created after ours, so its clear() commits last.
+ * @returns {Promise<boolean>} true if the cache was successfully persisted; false on
+ *          quota/other failure or stale-epoch skip
  */
-export async function saveIndexToCache(entries) {
+export async function saveIndexToCache(entries, isStale = null) {
     let db;
     try {
         db = await openDB();
+        if (typeof isStale === 'function' && isStale()) {
+            _lastSaveSucceeded = false; // honest: this call did not persist; prune stays guarded
+            pushEvent('cache_save', { entryCount: entries.length, ok: false, skipped: 'stale_epoch' });
+            if (getSettings().debugMode) console.debug('[DLE] Cache save skipped — buildEpoch changed since the build started (clear/force-release intervened)');
+            return false;
+        }
         const tx = db.transaction(STORE_NAME, 'readwrite');
         const store = tx.objectStore(STORE_NAME);
 
@@ -256,7 +271,15 @@ export async function pruneOrphanedCacheKeys(saveSucceeded) {
 
 /**
  * Clear the IndexedDB vault cache.
- * @returns {Promise<void>}
+ *
+ * Errors are swallowed and logged (matches saveIndexToCache / pruneOrphanedCacheKeys
+ * file convention) but the outcome is REPORTED via the return value: a false return
+ * means IDB still holds every cached entry and the next reload will hydrate them
+ * back. The caller (clearVaultIndexAndCache — the only production caller) must
+ * surface that as a failure, not a success toast (gotcha #95).
+ *
+ * @returns {Promise<boolean>} true if the wipe transaction committed; false if the
+ *          DB open or transaction failed (cache NOT cleared).
  */
 export async function clearIndexCache() {
     // BUG-123: clear ALL keys, not just the current fingerprint — old fingerprints
@@ -276,8 +299,10 @@ export async function clearIndexCache() {
             tx.onerror = () => reject(tx.error);
             tx.onabort = () => reject(tx.error || new Error('Transaction aborted'));
         });
+        return true;
     } catch (err) {
         console.warn('[DLE] Failed to clear IndexedDB cache:', err.message);
+        return false;
     } finally {
         if (db) db.close();
     }
