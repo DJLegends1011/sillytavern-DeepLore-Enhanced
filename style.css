@@ -2626,7 +2626,6 @@ button.dle-browse-block.dle-block-active {
    momentum. Rebuild the chain so exactly ONE element scrolls per tab and make
    that scroller touch-correct. Scoped to overlay mode only. */
 #deeplore-panel.dle-overlay-mode {
-    display: flex;
     flex-direction: column;
     /* Vertical pans always scroll — never stall in gesture disambiguation.
        Horizontal gestures stay available to ST and future swipe-nav. */
@@ -2643,8 +2642,11 @@ button.dle-browse-block.dle-block-active {
     flex-direction: column;
 }
 #deeplore-panel.dle-overlay-mode .dle-tab-panel {
-    /* The single content scroller — overflow-y auto and overscroll-behavior
-       contain come from the base rule; add iOS momentum. */
+    /* The single content scroller, including Browse. Chrome and virtual rows
+       move in the same viewport, so Android pans work anywhere in the tab and
+       the virtualizer observes the element that actually scrolls. */
+    touch-action: pan-y;
+    overflow-y: auto;
     -webkit-overflow-scrolling: touch;
 }
 #deeplore-panel.dle-overlay-mode .dle-gating-fields-container {
@@ -2654,25 +2656,21 @@ button.dle-browse-block.dle-block-active {
     max-height: none;
     overflow: visible;
 }
-/* Browse is the one exception: .dle-browse-list is a virtual-scroll container
-   and must own its scroll, so the tab panel yields — exactly one scroller
-   remains on every tab. */
-#deeplore-panel.dle-overlay-mode .dle-tab-panel[data-tab="browse"] {
-    overflow: hidden;
-}
+/* Browse rows are absolutely positioned inside a list whose inline min-height
+   represents the full virtual content. The tab panel scrolls that surface;
+   the list itself must not create a nested gesture target. */
 #deeplore-panel.dle-overlay-mode .dle-browse-list {
-    -webkit-overflow-scrolling: touch;
+    flex: 0 0 auto;
+    overflow: visible;
 }
 /* Touch devices: gesture is the affordance — hide the rails. Scoped by
    pointer type rather than viewport so a desktop overlay triggered by wide
    chat_width keeps its scrollbar. */
 @media (pointer: coarse) {
-    #deeplore-panel.dle-overlay-mode .dle-tab-panel,
-    #deeplore-panel.dle-overlay-mode .dle-browse-list {
+    #deeplore-panel.dle-overlay-mode .dle-tab-panel {
         scrollbar-width: none;
     }
-    #deeplore-panel.dle-overlay-mode .dle-tab-panel::-webkit-scrollbar,
-    #deeplore-panel.dle-overlay-mode .dle-browse-list::-webkit-scrollbar {
+    #deeplore-panel.dle-overlay-mode .dle-tab-panel::-webkit-scrollbar {
         display: none;
     }
 }

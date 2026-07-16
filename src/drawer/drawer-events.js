@@ -30,7 +30,7 @@ import { normalizePinBlock, buildObsidianURI, openObsidianUri } from '../helpers
 import { buildIndex } from '../vault/vault.js';
 import { openRuleBuilder } from '../ui/rule-builder.js';
 import {
-    ds, TAB_LABELS, TOOL_ACTIONS, EXPAND_ACTIONS, BROWSE_ROW_HEIGHT,
+    ds, TAB_LABELS, TOOL_ACTIONS, EXPAND_ACTIONS, BROWSE_ROW_HEIGHT, BROWSE_SCROLL_TARGETS,
     scheduleRender, announceToScreenReader,
 } from './drawer-state.js';
 import { renderInjectionTab, renderBrowseTab, renderBrowseWindow, renderStatusZone } from './drawer-render.js';
@@ -454,12 +454,11 @@ export function wireInjectionTab($drawer) {
 }
 
 export function wireBrowseTab($drawer) {
-    // Virtual scroll RAF-throttled re-render. Scroll container is .dle-drawer-inner, not the tab panel.
-    // Namespace `.dle-browse` so repeated wireBrowseTab calls (drawer rebuild on chat switch / re-init)
-    // can off() the prior binding without stacking.
-    const $scrollInner = $drawer.find('.dle-drawer-inner');
-    $scrollInner.off('scroll.dle-browse');
-    $scrollInner.on('scroll.dle-browse', function () {
+    // Bind both possible owners: overlay uses the tab panel; inline uses drawer-inner.
+    // Namespace .dle-browse so repeated wiring cannot stack handlers.
+    const $browseScroll = $drawer.find(BROWSE_SCROLL_TARGETS);
+    $browseScroll.off('scroll.dle-browse');
+    $browseScroll.on('scroll.dle-browse', function () {
         if (ds.browseScrollRAF) return;
         ds.browseScrollRAF = requestAnimationFrame(() => {
             ds.browseScrollRAF = null;

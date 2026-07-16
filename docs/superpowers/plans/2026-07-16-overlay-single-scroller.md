@@ -1,5 +1,7 @@
 # Overlay Drawer Single-Scroller + Touch Gestures — Implementation Plan
 
+> **Implementation correction (2026-07-16):** In overlay mode Browse uses its tab panel as the sole scroll viewport and the virtual list flows inside it. Inline desktop retains the branch's existing `.dle-drawer-inner` viewport; mode-specific selectors drive viewport math, while events and resets target both owners. The earlier overlay list-owned-scroll task below is historical and must not be re-applied.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** In `dle-overlay-mode`, collapse the 3-deep nested scrollers to exactly one touch-correct scroller per tab, with scrollbars hidden on touch devices.

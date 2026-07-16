@@ -71,6 +71,12 @@ export const STATUS_CLASSES = {
 /** BROWSE_ROW_HEIGHT must match CSS .dle-browse-entry AND .dle-browse-folder-header height. */
 export const BROWSE_ROW_HEIGHT = 38;
 export const BROWSE_OVERSCAN = 8;
+/** Overlay Browse chrome and virtual rows share the tab-panel viewport. */
+export const BROWSE_OVERLAY_SCROLL_SELECTOR = '.dle-tab-panel[data-tab="browse"]';
+/** Inline/desktop Browse keeps the branch's existing drawer-inner viewport. */
+export const BROWSE_INLINE_SCROLL_SELECTOR = '.dle-drawer-inner';
+/** Bind/reset both so viewport-mode changes never leave stale scroll state. */
+export const BROWSE_SCROLL_TARGETS = BROWSE_OVERLAY_SCROLL_SELECTOR + ', ' + BROWSE_INLINE_SCROLL_SELECTOR;
 
 /** chat_width percentage; above this threshold the drawer switches to fixed-overlay mode. */
 export const OVERLAY_CHAT_WIDTH_THRESHOLD = 60;

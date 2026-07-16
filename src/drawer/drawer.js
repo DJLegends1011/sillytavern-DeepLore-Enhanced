@@ -272,10 +272,12 @@ export async function createDrawerPanel() {
     function updateOverlayMode() {
         const chatWidth = power_user?.chat_width || 50;
         const viewportNarrow = (typeof window !== 'undefined' ? window.innerWidth : Infinity) <= OVERLAY_VIEWPORT_WIDTH_PX;
-        if (viewportNarrow || chatWidth >= OVERLAY_CHAT_WIDTH_THRESHOLD) {
-            $panel.addClass('dle-overlay-mode');
-        } else {
-            $panel.removeClass('dle-overlay-mode');
+        const wasOverlay = $panel.hasClass('dle-overlay-mode');
+        const shouldOverlay = viewportNarrow || chatWidth >= OVERLAY_CHAT_WIDTH_THRESHOLD;
+        $panel.toggleClass('dle-overlay-mode', shouldOverlay);
+        if (wasOverlay !== shouldOverlay) {
+            ds._browseLastScrollTop = undefined;
+            requestAnimationFrame(renderBrowseWindow);
         }
     }
 
@@ -337,7 +339,7 @@ export async function createDrawerPanel() {
     $drawer.find('#dle-drawer-close').on('click', function () {
         // Guard the open check so the close button doesn't accidentally toggle the drawer back open.
         if ($panel.hasClass('openDrawer')) {
-            doNavbarIconClick.call($drawer.find('.drawer-toggle')[0]);
+            $drawer.find('.drawer-toggle').trigger('click');
         }
     });
 

@@ -22,9 +22,17 @@ import { DEFAULT_FIELD_DEFINITIONS } from '../fields.js';
 import { buildObsidianURI, categorizeRejections, resolveEntryVault, normalizePinBlock, comparePriority, parseMatchReason } from '../helpers.js';
 import {
     ds, BROWSE_ROW_HEIGHT, BROWSE_OVERSCAN,
+    BROWSE_OVERLAY_SCROLL_SELECTOR, BROWSE_INLINE_SCROLL_SELECTOR, BROWSE_SCROLL_TARGETS,
     getMatchLabel, computeEntryTemperatures, isDrawerVisible,
 } from './drawer-state.js';
 import { buildBrowseRowModel, topFolderOf, resolveNavTarget, listTopFolders } from './drawer-browse-pure.js';
+
+function getBrowseScrollContainer($drawer) {
+    const selector = $drawer.find('#deeplore-panel').hasClass('dle-overlay-mode')
+        ? BROWSE_OVERLAY_SCROLL_SELECTOR
+        : BROWSE_INLINE_SCROLL_SELECTOR;
+    return $drawer.find(selector)[0];
+}
 
 let _cachedRejectionMap = new Map();
 let _cachedRejectionTrace = null;
@@ -816,9 +824,9 @@ export function renderBrowseTab() {
         grp: !!ds.browseFolderGrouping,
         exp: ds.browseExpandedFolders instanceof Set ? [...ds.browseExpandedFolders].sort().join('|') : '',
     });
-    const scrollContainer = $drawer.find('.dle-drawer-inner')[0];
-    if (scrollContainer && ds._browseLastFilterSig !== _filterSignature) {
-        scrollContainer.scrollTop = 0;
+    const $scrollTargets = $drawer.find(BROWSE_SCROLL_TARGETS);
+    if ($scrollTargets.length && ds._browseLastFilterSig !== _filterSignature) {
+        $scrollTargets.each((_, element) => { element.scrollTop = 0; });
         ds._browseLastScrollTop = undefined;
     }
     ds._browseLastFilterSig = _filterSignature;
@@ -880,8 +888,8 @@ export function renderBrowseWindow() {
     const rowModel = ds.browseRowModel;
     if (!rowModel || !rowModel.length) { $list.empty(); return; }
 
-    // Scroll container is .dle-drawer-inner (scrollableInner), not the tab panel.
-    const scrollContainer = $drawer.find('.dle-drawer-inner')[0];
+    // Overlay uses the tab panel; inline desktop keeps the existing drawer-inner viewport.
+    const scrollContainer = getBrowseScrollContainer($drawer);
     if (!scrollContainer) return;
     // Drawer hidden — getBoundingClientRect would return zeros; bail.
     if (!scrollContainer.offsetParent && !scrollContainer.offsetHeight) return;

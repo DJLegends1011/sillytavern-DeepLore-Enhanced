@@ -63,20 +63,25 @@ All rules scoped to `#deeplore-panel.dle-overlay-mode`, appended to the existing
 
 Filters fields now scroll with the tab instead of inside a capped box.
 
-### 3. Browse exception — the virtualized list owns scroll
+### 3. Browse uses the same tab-panel scroller
 
-`.dle-browse-list` (~1974) is a virtual-scroll container and must keep `overflow-y: auto`. To avoid double-scrolling, the tab panel yields on that tab (panels carry `data-tab`, `drawer.html:199`):
+`.dle-browse-list` is a virtualized positioning surface, but it must not be a second scroll viewport. The Browse tab panel owns the gesture and moves the search/filter chrome and virtual rows together:
 
 ```css
-#deeplore-panel.dle-overlay-mode .dle-tab-panel[data-tab="browse"] { overflow: hidden; }
-#deeplore-panel.dle-overlay-mode .dle-browse-list {
+#deeplore-panel.dle-overlay-mode .dle-tab-panel {
+    overflow-y: auto;
+    touch-action: pan-y;
     -webkit-overflow-scrolling: touch;
-    /* overscroll-behavior: contain comes from the base rule (~1982) */
+}
+#deeplore-panel.dle-overlay-mode .dle-browse-list {
+    flex: 0 0 auto;
+    overflow: visible;
 }
 ```
 
-Invariant: for every tab, exactly one of `.dle-tab-panel` / tab-specific list has `overflow-y: auto`.
+The list's inline `min-height` represents the full virtual content. Overlay viewport math selects `.dle-tab-panel[data-tab="browse"]`; inline desktop continues selecting the branch's existing `.dle-drawer-inner` viewport. The scroll listener and filter reset target both owners so crossing the responsive breakpoint cannot leave stale state.
 
+Invariant in overlay mode: every active tab has exactly one vertical scroller: its `.dle-tab-panel`.
 ### 4. Gesture correctness
 
 ```css
