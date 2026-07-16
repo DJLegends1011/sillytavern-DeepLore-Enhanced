@@ -4,6 +4,8 @@
 # This file
 !.gitignore
 !.gitattributes
+!AGENTS.md
+!CLAUDE.md
 
 # User-facing documentation
 !README.md
