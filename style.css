@@ -2619,6 +2619,64 @@ button.dle-browse-block.dle-block-active {
     }
 }
 
+/* Issue #39 (single-scroller pass) — the overlay panel is fixed and height-
+   bounded, but the flex chain below it was never re-established, so ST's
+   .scrollableInner default of overflow-y auto engaged and up to THREE nested
+   scrollers stacked (panel, drawer-inner, per-tab list) with no touch
+   momentum. Rebuild the chain so exactly ONE element scrolls per tab and make
+   that scroller touch-correct. Scoped to overlay mode only. */
+#deeplore-panel.dle-overlay-mode {
+    display: flex;
+    flex-direction: column;
+    /* Vertical pans always scroll — never stall in gesture disambiguation.
+       Horizontal gestures stay available to ST and future swipe-nav. */
+    touch-action: pan-y;
+}
+#deeplore-panel.dle-overlay-mode .dle-drawer-inner {
+    /* Neutralize ST .scrollableInner's own scroll — scroller 1 of 3 — and
+       give .dle-zone-tabs, which is flex 1 with min-height 0, a bounded flex
+       parent so the tab panel becomes the real overflow boundary. */
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+#deeplore-panel.dle-overlay-mode .dle-tab-panel {
+    /* The single content scroller — overflow-y auto and overscroll-behavior
+       contain come from the base rule; add iOS momentum. */
+    -webkit-overflow-scrolling: touch;
+}
+#deeplore-panel.dle-overlay-mode .dle-gating-fields-container {
+    /* BUG-210's viewport cap created scroller 3 of 3 on the Filters tab. In
+       overlay mode the tab panel owns scrolling, so let fields flow at
+       natural height and scroll with the tab. */
+    max-height: none;
+    overflow: visible;
+}
+/* Browse is the one exception: .dle-browse-list is a virtual-scroll container
+   and must own its scroll, so the tab panel yields — exactly one scroller
+   remains on every tab. */
+#deeplore-panel.dle-overlay-mode .dle-tab-panel[data-tab="browse"] {
+    overflow: hidden;
+}
+#deeplore-panel.dle-overlay-mode .dle-browse-list {
+    -webkit-overflow-scrolling: touch;
+}
+/* Touch devices: gesture is the affordance — hide the rails. Scoped by
+   pointer type rather than viewport so a desktop overlay triggered by wide
+   chat_width keeps its scrollbar. */
+@media (pointer: coarse) {
+    #deeplore-panel.dle-overlay-mode .dle-tab-panel,
+    #deeplore-panel.dle-overlay-mode .dle-browse-list {
+        scrollbar-width: none;
+    }
+    #deeplore-panel.dle-overlay-mode .dle-tab-panel::-webkit-scrollbar,
+    #deeplore-panel.dle-overlay-mode .dle-browse-list::-webkit-scrollbar {
+        display: none;
+    }
+}
+
 /* --- Empty states (class-based visibility for animation) --- */
 .dle-empty-state {
     display: none;
