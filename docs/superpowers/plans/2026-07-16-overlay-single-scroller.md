@@ -1,6 +1,7 @@
 # Overlay Drawer Single-Scroller + Touch Gestures — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Amendment (2026-07-16, post-field-test):** Task 2's Browse rule (`[data-tab="browse"] { overflow:hidden }`) was superseded by commit 53796a2 — tall chrome crushed the zero-min-height list on real phones. Shipped design: browse panel keeps scroll; list floored at `min(50dvh, 400px)`. See spec §3 (design of record).
 
 **Goal:** In `dle-overlay-mode`, collapse the 3-deep nested scrollers to exactly one touch-correct scroller per tab, with scrollbars hidden on touch devices.
 
