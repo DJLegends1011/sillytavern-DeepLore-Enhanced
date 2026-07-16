@@ -1,5 +1,5 @@
 /**
- * Overlay-mode single-scroller invariants (Issue #39, mobile-drawer-mode phase 1).
+ * Overlay-mode single-scroller invariants (Issue #39, overlay single-scroller).
  *
  * In dle-overlay-mode the drawer is a fixed overlay; without these rules the
  * flex chain is unbounded and up to THREE nested vertical scrollers stack

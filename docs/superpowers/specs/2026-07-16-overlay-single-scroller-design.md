@@ -71,7 +71,7 @@ Filters fields now scroll with the tab instead of inside a capped box.
 #deeplore-panel.dle-overlay-mode .dle-tab-panel[data-tab="browse"] { overflow: hidden; }
 #deeplore-panel.dle-overlay-mode .dle-browse-list {
     -webkit-overflow-scrolling: touch;
-    overscroll-behavior: contain;
+    /* overscroll-behavior: contain comes from the base rule (~1982) */
 }
 ```
 
