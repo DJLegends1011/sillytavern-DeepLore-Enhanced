@@ -65,18 +65,17 @@ Filters fields now scroll with the tab instead of inside a capped box.
 
 ### 3. Browse exception — the virtualized list owns scroll
 
-`.dle-browse-list` (~1974) is a virtual-scroll container and must keep `overflow-y: auto`. The Browse panel also carries tall chrome above the list (search, syntax help, filter dropdowns, batch toolbar); hiding the panel's overflow proved wrong in field testing — the chrome crushed the zero-min-height list to 0px and clipped itself unreachable. So the panel keeps its own scroll and the list gets a height floor:
+`.dle-browse-list` (~1974) is a virtual-scroll container and must keep `overflow-y: auto`. To avoid double-scrolling, the tab panel yields on that tab (panels carry `data-tab`, `drawer.html:199`):
 
 ```css
+#deeplore-panel.dle-overlay-mode .dle-tab-panel[data-tab="browse"] { overflow: hidden; }
 #deeplore-panel.dle-overlay-mode .dle-browse-list {
-    flex: 1 1 auto;
-    min-height: min(50dvh, 400px);
     -webkit-overflow-scrolling: touch;
     /* overscroll-behavior: contain comes from the base rule (~1982) */
 }
 ```
 
-Invariant: every non-Browse tab has exactly one scroller (`.dle-tab-panel`); Browse has two by design — the panel scrolls the chrome, the floored list scrolls entries internally (bounded sub-scroller, the standard mobile embedded-list pattern) — until the phase-③ compaction pass shrinks the chrome.
+Invariant: for every tab, exactly one of `.dle-tab-panel` / tab-specific list has `overflow-y: auto`.
 
 ### 4. Gesture correctness
 

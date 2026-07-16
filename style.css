@@ -2654,14 +2654,13 @@ button.dle-browse-block.dle-block-active {
     max-height: none;
     overflow: visible;
 }
-/* Browse: the virtualized .dle-browse-list must own its internal scroll, but
-   the tab panel above it carries tall chrome (search, filters, batch toolbar)
-   that must stay reachable — so the panel keeps its own scroll and the list
-   gets a height floor instead. Without the floor, the list's min-height 0
-   lets tall chrome crush it to 0px (field-verified on a 412px phone). */
+/* Browse is the one exception: .dle-browse-list is a virtual-scroll container
+   and must own its scroll, so the tab panel yields — exactly one scroller
+   remains on every tab. */
+#deeplore-panel.dle-overlay-mode .dle-tab-panel[data-tab="browse"] {
+    overflow: hidden;
+}
 #deeplore-panel.dle-overlay-mode .dle-browse-list {
-    flex: 1 1 auto;
-    min-height: min(50dvh, 400px);
     -webkit-overflow-scrolling: touch;
 }
 /* Touch devices: gesture is the affordance — hide the rails. Scoped by

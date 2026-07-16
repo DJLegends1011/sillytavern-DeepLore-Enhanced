@@ -58,11 +58,9 @@ test('Filters inner cap is lifted in overlay mode (scroller #3 retired)', () => 
         'overlay .dle-gating-fields-container must lift the max-height cap');
 });
 
-test('Browse: virtualized list keeps a height floor and touch momentum', () => {
-    assert(!blockHas('#deeplore-panel.dle-overlay-mode .dle-tab-panel[data-tab="browse"]', 'overflow:\\s*hidden'),
-        'browse tab panel must NOT be overflow: hidden — chrome above the list must stay reachable via panel scroll');
-    assert(blockHas('#deeplore-panel.dle-overlay-mode .dle-browse-list', 'min-height:\\s*min\\(50dvh, 400px\\)'),
-        'overlay .dle-browse-list needs a height floor so tall chrome cannot crush it to 0');
+test('Browse: tab panel yields, virtualized list owns scroll', () => {
+    assert(blockHas('#deeplore-panel.dle-overlay-mode .dle-tab-panel[data-tab="browse"]', 'overflow:\\s*hidden'),
+        'overlay browse tab panel must set overflow: hidden');
     assert(blockHas('#deeplore-panel.dle-overlay-mode .dle-browse-list', '-webkit-overflow-scrolling:\\s*touch'),
         'overlay .dle-browse-list must set -webkit-overflow-scrolling: touch');
 });
