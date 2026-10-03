@@ -4716,6 +4716,13 @@ button.dle-chip-x:focus-visible { outline: 2px solid var(--dle-focus); outline-o
     width: 1.1em;
     height: 1.1em;
 }
+/* Issue #5: ST's touchstart/mousedown autoclose (script.js) only exempts targets that
+   themselves have .drawer-icon. Our icon is a .drawer-icon wrapper around an SVG / FA <i>,
+   so a press landed on the child, ST closed the drawer on press, and the click then
+   re-opened it — the icon could never close the drawer. Route hits to the wrapper. */
+.dle-drawer-icon-svg * {
+    pointer-events: none;
+}
 
 /* Rule builder field remove animation */
 .dle-rb-removing { opacity: 0; transform: translateY(-4px); transition: opacity var(--dle-dur-fast, 120ms) var(--dle-ease, ease-in), transform var(--dle-dur-fast, 120ms) var(--dle-ease, ease-in); }

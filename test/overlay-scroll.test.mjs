@@ -114,6 +114,15 @@ test('Tools rows are horizontal swipe surfaces in overlay mode (issue #3)', () =
         'overlay .dle-tools-grid must allow pan-x (panel is pan-y) and keep pan-y so vertical swipes reach the tab panel');
 });
 
+section('drawer icon: presses land on the .drawer-icon wrapper');
+
+test('drawer icon children ignore pointer events so ST autoclose exempts the press (issue #5)', () => {
+    // ST's html touchstart/mousedown autoclose only skips targets that HAVE .drawer-icon.
+    // A press on the inner SVG/<i> closed the drawer on press and the click re-opened it.
+    assert(blockHas('.dle-drawer-icon-svg *', 'pointer-events:\\s*none'),
+        '.dle-drawer-icon-svg * must set pointer-events: none');
+});
+
 section('overlay-mode: coarse-pointer scrollbar hiding');
 
 test('touch devices hide scrollbar rails; gesture is the affordance', () => {
