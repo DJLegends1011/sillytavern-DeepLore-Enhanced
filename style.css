@@ -3278,6 +3278,72 @@ button.dle-browse-block.dle-block-active {
         grid-template-columns: 140px minmax(0, 1fr);
     }
 }
+/* Issue #7: phone layout (body.dle-mobile-mode, #6). Even the 140px rail left the content
+   ~160px wide and the header's version chip collided with the Enabled toggle. One column:
+   header → nav as a horizontal swipe strip (the drawer .dle-tab-bar pattern) → content.
+   Group headers hide and every group's items show, so a collapsed group can't strand tabs. */
+body.dle-mobile-mode .dle-settings-popup {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr);
+}
+body.dle-mobile-mode .dle-settings-header {
+    flex-wrap: wrap;
+    row-gap: var(--dle-space-1);
+    padding: var(--dle-space-2) var(--dle-space-3);
+}
+body.dle-mobile-mode .dle-settings-sidebar {
+    flex-direction: row;
+    align-items: center;
+    gap: var(--dle-space-1);
+    padding: var(--dle-space-1) var(--dle-space-2);
+    border-right: none;
+    border-bottom: 1px solid var(--dle-border);
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+}
+body.dle-mobile-mode .dle-settings-sidebar::-webkit-scrollbar { display: none; }
+body.dle-mobile-mode .dle-nav-search {
+    flex: 0 0 10rem;
+    padding: 0;
+}
+body.dle-mobile-mode .dle-nav-search .fa-magnifying-glass { left: 9px; }
+body.dle-mobile-mode .dle-nav-noresults.dle-visible {
+    flex: 0 0 auto;
+    padding: 0 var(--dle-space-2);
+    white-space: nowrap;
+}
+body.dle-mobile-mode .dle-nav-pinned,
+body.dle-mobile-mode .dle-nav-group,
+body.dle-mobile-mode .dle-nav-group-items,
+body.dle-mobile-mode .dle-nav-group.collapsed .dle-nav-group-items {
+    display: flex;
+    flex-direction: row;
+    flex: 0 0 auto;
+    gap: var(--dle-space-1);
+    padding: 0;
+    margin: 0;
+    border: none;
+}
+body.dle-mobile-mode .dle-nav-group-header {
+    display: none;
+}
+body.dle-mobile-mode .dle-settings-sidebar .dle-settings-tab {
+    flex: 0 0 auto;
+    white-space: nowrap;
+    padding: var(--dle-space-2) var(--dle-space-3);
+    border-left: none;
+    border-bottom: 3px solid transparent;
+    scroll-snap-align: start;
+}
+body.dle-mobile-mode .dle-settings-sidebar .dle-settings-tab.active {
+    border-bottom-color: var(--SmartThemeQuoteColor, #4caf50);
+}
+body.dle-mobile-mode .dle-settings-content {
+    padding: var(--dle-space-3);
+}
 
 .dle-settings-popup input:disabled,
 .dle-settings-popup select:disabled,

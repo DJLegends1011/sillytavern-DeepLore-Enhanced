@@ -48,6 +48,7 @@ import {
 import { DLE_PROMPTS_DEFAULT_DIR } from '../prompts/prompt-api.js';
 import { runHealthCheck } from './diagnostics.js';
 import { DLE_COMMANDS } from './commands-admin.js';
+import { MOBILE_MODE_CLASS } from '../drawer/drawer-state.js';
 
 // BUG-120: module-scoped so re-opening the settings popup cancels any
 // stale debounced rebuild from the prior instance.
@@ -993,6 +994,12 @@ export async function openSettingsPopup(navigateTo = null) {
         // BUG-042: accountStorage for cross-browser sync.
         accountStorage.setItem('dle-last-settings-tab', tab);
         $container.find('.dle-settings-content').scrollTop(0);
+        // Issue #7: on phones the nav is a horizontal strip — keep the active tab in view
+        // (restoring a last-used tab like System would otherwise leave it off-screen).
+        // rAF: on first open the popup isn't laid out yet.
+        if (document.body.classList.contains(MOBILE_MODE_CLASS)) {
+            requestAnimationFrame(() => $tab[0]?.scrollIntoView({ inline: 'center', block: 'nearest' }));
+        }
     }
 
     // Restore saved collapse state. First run (no saved state): all collapsed —

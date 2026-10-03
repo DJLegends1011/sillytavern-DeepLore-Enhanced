@@ -147,6 +147,17 @@ test('Setup wizard footer: no squashed labels; phone hint gets its own line (iss
         'phone "Test connection to continue" hint must take its own full-width line');
 });
 
+test('Settings popup: single column + horizontal nav strip on phones (issue #7)', () => {
+    assert(blockHas('body.dle-mobile-mode .dle-settings-popup', 'grid-template-columns:\\s*minmax\\(0, 1fr\\)'),
+        'phone settings popup must be one column');
+    assert(blockHas('body.dle-mobile-mode .dle-settings-sidebar', 'overflow-x:\\s*auto'),
+        'phone settings nav must be a horizontal swipe strip');
+    assert(blockHas('body.dle-mobile-mode .dle-nav-group.collapsed .dle-nav-group-items', 'display:\\s*flex'),
+        'collapsed groups must not hide tabs in the strip (headers are hidden on phones)');
+    assert(blockHas('body.dle-mobile-mode .dle-settings-header', 'flex-wrap:\\s*wrap'),
+        'phone header must wrap (version chip collided with the Enabled toggle)');
+});
+
 section('overlay-mode: close animates like ST drawers');
 
 test('overlay height is open-only so ST height transition collapses the panel on close (issue #5)', () => {
