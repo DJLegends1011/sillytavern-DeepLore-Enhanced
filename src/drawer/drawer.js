@@ -24,7 +24,7 @@ function _currentVerdictForChat() {
 }
 
 import {
-    ds, DRAWER_ID, OVERLAY_CHAT_WIDTH_THRESHOLD, OVERLAY_VIEWPORT_WIDTH_PX,
+    ds, DRAWER_ID, OVERLAY_CHAT_WIDTH_THRESHOLD, MOBILE_MODE_CLASS, isMobileMode,
     scheduleRender, announceToScreenReader, loadSTInternals, dragElement, isMobile, power_user,
     invalidateTemperatureCache,
 } from './drawer-state.js';
@@ -271,7 +271,8 @@ export async function createDrawerPanel() {
 
     function updateOverlayMode() {
         const chatWidth = power_user?.chat_width || 50;
-        const viewportNarrow = (typeof window !== 'undefined' ? window.innerWidth : Infinity) <= OVERLAY_VIEWPORT_WIDTH_PX;
+        const viewportNarrow = isMobileMode();
+        document.body.classList.toggle(MOBILE_MODE_CLASS, viewportNarrow);
         const wasOverlay = $panel.hasClass('dle-overlay-mode');
         const shouldOverlay = viewportNarrow || chatWidth >= OVERLAY_CHAT_WIDTH_THRESHOLD;
         $panel.toggleClass('dle-overlay-mode', shouldOverlay);
@@ -729,6 +730,7 @@ export function navigateToBrowseEntry(target) {
 export function destroyDrawerPanel() {
     drawerDestroyed = true;
     $(document).off('click.dle-drawer-dismiss');
+    document.body.classList.remove(MOBILE_MODE_CLASS);
     const stCtxCleanup = typeof SillyTavern !== 'undefined' && SillyTavern.getContext ? SillyTavern.getContext() : null;
     const esCleanup = stCtxCleanup?.eventSource;
     for (const { event, handler } of drawerListeners.eventSource) {

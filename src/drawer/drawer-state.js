@@ -92,6 +92,20 @@ export const OVERLAY_CHAT_WIDTH_THRESHOLD = 60;
  */
 export const OVERLAY_VIEWPORT_WIDTH_PX = 768;
 
+/**
+ * Phone-mode signal for surfaces OUTSIDE #deeplore-panel (issue #6). DLE popups are ST
+ * dialogs appended to <body>, so the drawer's `.dle-overlay-mode` never reaches them.
+ * updateOverlayMode toggles this class on <body> from the same viewport decision; popup
+ * phone rules scope under `body.dle-mobile-mode`. Viewport only — the desktop
+ * chat_width overlay case must not compact popups.
+ */
+export const MOBILE_MODE_CLASS = 'dle-mobile-mode';
+
+/** @param {number} [width] viewport width (defaults to window.innerWidth) */
+export function isMobileMode(width = (typeof window !== 'undefined' ? window.innerWidth : Infinity)) {
+    return width <= OVERLAY_VIEWPORT_WIDTH_PX;
+}
+
 // ─── Mutable State (shared object — avoids circular imports) ───
 
 /**

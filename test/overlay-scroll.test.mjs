@@ -114,6 +114,19 @@ test('Tools rows are horizontal swipe surfaces in overlay mode (issue #3)', () =
         'overlay .dle-tools-grid must allow pan-x (panel is pan-y) and keep pan-y so vertical swipes reach the tab panel');
 });
 
+section('phone-mode signal for popups (issue #6)');
+
+test('body.dle-mobile-mode tracks the overlay viewport breakpoint, not chat_width', () => {
+    // Popups are ST dialogs on <body>, outside #deeplore-panel; they scope phone rules to this class.
+    assert(/export const MOBILE_MODE_CLASS = 'dle-mobile-mode'/.test(drawerState), 'drawer-state must export MOBILE_MODE_CLASS');
+    assert(/export function isMobileMode\(.*\)\s*\{\s*return width <= OVERLAY_VIEWPORT_WIDTH_PX;/.test(drawerState),
+        'isMobileMode must use the same OVERLAY_VIEWPORT_WIDTH_PX breakpoint as overlay mode');
+    assert(/const viewportNarrow = isMobileMode\(\);\s*document\.body\.classList\.toggle\(MOBILE_MODE_CLASS, viewportNarrow\);/.test(drawerJs),
+        'updateOverlayMode must toggle the body class from the viewport decision only (chat_width overlay must not compact popups)');
+    assert(/destroyDrawerPanel\(\)\s*\{[^}]*document\.body\.classList\.remove\(MOBILE_MODE_CLASS\)/.test(drawerJs),
+        'teardown must remove the body class so it never outlives the drawer');
+});
+
 section('overlay-mode: close animates like ST drawers');
 
 test('overlay height is open-only so ST height transition collapses the panel on close (issue #5)', () => {
