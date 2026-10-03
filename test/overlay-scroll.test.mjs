@@ -127,6 +127,17 @@ test('body.dle-mobile-mode tracks the overlay viewport breakpoint, not chat_widt
         'teardown must remove the body class so it never outlives the drawer');
 });
 
+test('Entry Browser popup: phone cards + inline row actions (issue #9)', () => {
+    assert(blockHas('body.dle-mobile-mode .dle-browse-table thead', 'display:\\s*none'),
+        'phone mode must hide the column header row');
+    assert(blockHas('body.dle-mobile-mode .dle-browse-table-row', 'display:\\s*grid'),
+        'phone mode must lay rows out as grid cards');
+    assert(blockHas('.dle-browse-row-actions', 'display:\\s*inline-flex'),
+        'row pin/block/copy must sit inline (they stacked 3-high with no rule)');
+    assert(blockHas('.dle-browse-table-row td.dle-browse-table-title', 'white-space:\\s*normal'),
+        'title cell must wrap so inline actions are never clipped on long titles');
+});
+
 section('overlay-mode: close animates like ST drawers');
 
 test('overlay height is open-only so ST height transition collapses the panel on close (issue #5)', () => {

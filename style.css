@@ -904,6 +904,80 @@ dle-notes { display: none !important; }
     border-bottom: 1px solid var(--dle-border);
     background: color-mix(in srgb, var(--dle-bg-hover) 50%, transparent);
 }
+/* Row pin/block/copy: these are <button class="menu_button_icon">, a class ST styles for
+   divs, and they had no rule of their own — so they rendered as UA-grey boxes stacked
+   3-high under each title. Inline ghost icons, matching the drawer's .dle-browse-kebab. */
+/* Title cell may wrap so the (now inline) actions drop to a second line instead of
+   being clipped by the cell's nowrap/ellipsis on long titles. */
+.dle-browse-table-row td.dle-browse-table-title {
+    white-space: normal;
+}
+.dle-browse-row-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    margin-left: var(--dle-space-1);
+    vertical-align: middle;
+}
+.dle-browse-row-actions button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    min-height: 28px;
+    padding: 4px;
+    background: none;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    border-radius: var(--dle-radius-sm);
+}
+.dle-browse-row-actions button:hover { background: var(--dle-bg-hover); }
+.dle-browse-row-actions button:focus-visible { outline: 2px solid var(--dle-focus); outline-offset: 1px; }
+@media (pointer: coarse) {
+    .dle-browse-row-actions button { min-width: 44px; min-height: 44px; }
+}
+/* Issue #9: phone layout — the 5-column table truncated every cell ("P…", "~…") and
+   collided headers. Under the shared phone signal, each row becomes a two-line card:
+   title + actions, then keywords · priority · tokens · usage. */
+body.dle-mobile-mode .dle-browse-table,
+body.dle-mobile-mode .dle-browse-table tbody {
+    display: block;
+}
+body.dle-mobile-mode .dle-browse-table thead {
+    display: none;
+}
+body.dle-mobile-mode .dle-browse-table-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto auto;
+    align-items: center;
+    column-gap: var(--dle-space-2);
+    padding: var(--dle-space-1) 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--dle-border) 40%, transparent);
+}
+body.dle-mobile-mode .dle-browse-table-row td {
+    border-bottom: none;
+    padding: 2px 6px;
+}
+body.dle-mobile-mode .dle-browse-table-row td.dle-browse-table-title {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--dle-space-1);
+    white-space: normal;
+}
+body.dle-mobile-mode .dle-browse-table-title .dle-browse-row-actions {
+    margin-left: auto;
+}
+body.dle-mobile-mode .dle-browse-table-row td:not(.dle-browse-table-title):not(.dle-browse-table-keys) {
+    font-size: var(--dle-text-sm);
+    color: var(--dle-text-muted);
+}
+body.dle-mobile-mode .dle-browse-table tbody > tr:not(.dle-browse-table-row):not(.dle-hidden),
+body.dle-mobile-mode .dle-browse-table-detail {
+    display: block;
+}
 
 /* Focus-visible transition */
 .dle-settings [tabindex="0"] {
