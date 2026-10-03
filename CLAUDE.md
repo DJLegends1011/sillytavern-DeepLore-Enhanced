@@ -54,7 +54,7 @@ No build step — plain ES modules loaded by SillyTavern. Edit, reload ST, live.
 
 ## Merge/sync gotchas
 
-- **`.gitignore` is a whitelist** (`*` then `!` entries). New root files are silently ignored until whitelisted — CLAUDE.md/AGENTS.md are whitelisted on this branch; keep them out of any upstream PR diff.
+- **`.gitignore` is a whitelist** (`*` then `!` entries). New root files are silently ignored until whitelisted — CLAUDE.md/AGENTS.md/CONTEXT.md are whitelisted on this branch; keep them (and `docs/agents/`, `docs/adr/`) out of any upstream PR diff.
 - Recurring conflicts vs staging: `style.css` (both sides append at EOF — union), `test/i18n.test.mjs` key-count assertion + `dle.en.json` `total_keys` (recount).
 - `progress.md` is a local scratch handoff — intentionally untracked, don't commit it.
 
@@ -69,3 +69,13 @@ robocopy $source $target /MIR /XD .git .superpowers node_modules /XF progress.md
 ```
 
 Device targets: Chromium Pixel 5, WebKit iPhone 14 (WebKit-on-Windows can't synthesize TouchEvent — verify swipes on Chromium). Real-device checks happen from GitHub on the user's phone (~412px CSS width) — hence push-after-commit.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues on this fork (`DJLegends1011/sillytavern-DeepLore-Enhanced`) via `gh`, always with an explicit `--repo`; never write to upstream's tracker. See `docs/agents/issue-tracker.md`.
+
+### Domain docs
+
+Single-context: root `CONTEXT.md` + `docs/adr/`, alongside the existing `docs/` internals. See `docs/agents/domain.md`.
