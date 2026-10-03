@@ -3019,7 +3019,12 @@ button.dle-browse-block.dle-block-active {
 .dle-ai-stats {
     display: flex;
     align-items: center;
-    gap: 6px;
+    /* Wrap instead of overflowing: the drawer is ~320px wide even on desktop, and the
+       nowrap figures (worst at phone width or large token counts) otherwise run past
+       the panel edge and "0 tokens" gets clipped. */
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 2px 6px;
     flex-shrink: 1;
     min-width: 0;
 }
