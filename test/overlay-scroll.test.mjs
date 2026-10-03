@@ -106,6 +106,14 @@ test('Browse runtime: tab panel owns scroll and virtual list flows inside it', (
         'Browse scroll listener must bind both responsive owners through the shared selector');
 });
 
+test('Tools rows are horizontal swipe surfaces in overlay mode (issue #3)', () => {
+    // 3 nowrap columns overflow a phone ("Scribe History" clipped, unreachable).
+    assert(blockHas('#deeplore-panel.dle-overlay-mode .dle-tools-grid', 'overflow-x:\\s*auto'),
+        'overlay .dle-tools-grid must scroll horizontally');
+    assert(blockHas('#deeplore-panel.dle-overlay-mode .dle-tools-grid', 'touch-action:\\s*pan-x pan-y'),
+        'overlay .dle-tools-grid must allow pan-x (panel is pan-y) and keep pan-y so vertical swipes reach the tab panel');
+});
+
 section('overlay-mode: coarse-pointer scrollbar hiding');
 
 test('touch devices hide scrollbar rails; gesture is the affordance', () => {
