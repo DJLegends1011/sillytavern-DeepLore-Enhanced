@@ -138,6 +138,15 @@ test('Entry Browser popup: phone cards + inline row actions (issue #9)', () => {
         'title cell must wrap so inline actions are never clipped on long titles');
 });
 
+test('Setup wizard footer: no squashed labels; phone hint gets its own line (issue #8)', () => {
+    assert(blockHas('.dle-wizard-nav .menu_button', 'white-space:\\s*nowrap'),
+        'wizard footer buttons must not wrap their labels');
+    assert(blockHas('body.dle-mobile-mode .dle-wizard-nav', 'flex-wrap:\\s*wrap'),
+        'phone wizard footer must wrap instead of pushing Next off the edge');
+    assert(blockHas('body.dle-mobile-mode .dle-wizard-nav .dle-wiz-next-reason', 'flex:\\s*1 0 100%'),
+        'phone "Test connection to continue" hint must take its own full-width line');
+});
+
 section('overlay-mode: close animates like ST drawers');
 
 test('overlay height is open-only so ST height transition collapses the panel on close (issue #5)', () => {

@@ -5270,6 +5270,26 @@ button.dle-chip-x:focus-visible { outline: 2px solid var(--dle-focus); outline-o
 .dle-wizard-nav-spacer {
     flex: 1;
 }
+/* Footer buttons never shrink into multi-line labels ("Finish later" wrapped to two
+   lines even on desktop). */
+.dle-wizard-nav .menu_button {
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+/* Issue #8: phone footer — the "Test connection to continue" hint squeezed between the
+   buttons (5 lines) and pushed Next off the edge. Give the hint its own full-width line
+   above the buttons; let the row wrap rather than overflow. */
+body.dle-mobile-mode .dle-wizard-nav {
+    flex-wrap: wrap;
+    row-gap: var(--dle-space-1);
+    padding: var(--dle-space-2) var(--dle-space-3);
+}
+body.dle-mobile-mode .dle-wizard-nav .dle-wiz-next-reason {
+    order: -1;
+    flex: 1 0 100%;
+    text-align: right;
+    margin-right: 0 !important; /* overrides the inline margin-right set in setup-wizard.js */
+}
 .dle-wizard-btn-primary {
     background: color-mix(in srgb, var(--dle-info) 20%, transparent);
     border-color: var(--dle-info);
