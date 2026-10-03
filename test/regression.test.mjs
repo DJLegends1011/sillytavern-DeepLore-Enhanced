@@ -4722,6 +4722,21 @@ test('DRAWER-DISMISS-7: click inside #deeplore-panel itself → BAIL (legit pane
     assertEqual(bail, true, 'click on tab button inside #deeplore-panel must bail');
 });
 
+test('DRAWER-DISMISS-8: target detached by a re-render during dispatch → BAIL when event path held the panel', () => {
+    // Browse row expand/collapse rewrites the row's innerHTML inside its delegated
+    // handler, so by the time the click bubbles to document the target is detached:
+    // panel.contains(target) is false and the drawer used to close (issue #2).
+    // composedPath() is fixed at dispatch time and still lists the panel.
+    const keys = _makeEl({ classes: ['dle-browse-keys'] });
+    const row = _makeEl({ classes: ['dle-browse-entry'] });
+    const panel = _makeEl({ id: 'deeplore-panel', children: [row] });
+    const doc = _makeFakeDoc([panel]);
+    const path = [keys, row, panel];   // captured before the re-render detached `keys`
+
+    assertEqual(shouldBailDrawerDismiss(keys, panel, doc, path), true, 'detached target whose dispatch path included the panel must bail');
+    assertEqual(shouldBailDrawerDismiss(keys, panel, doc, [keys]), false, 'path without the panel (genuinely outside) still dismisses');
+});
+
 // ============================================================================
 // AI-M3..M6: AI subsystem dispatch + scrub + cancel (2026-05-22)
 // M3: callAI rejects unknown connection mode

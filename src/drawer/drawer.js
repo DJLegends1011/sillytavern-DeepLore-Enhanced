@@ -353,7 +353,9 @@ export async function createDrawerPanel() {
         if (!$panel.hasClass('openDrawer')) return;
         if ($panel.hasClass('pinnedOpen')) return;
         if (!$panel.hasClass('dle-overlay-mode')) return;
-        if (shouldBailDrawerDismiss(e.target, $panel[0], document)) return;
+        // composedPath() is fixed at dispatch, so a target an in-panel handler detached
+        // mid-click (Browse row expand/collapse re-render) still reads as inside (issue #2).
+        if (shouldBailDrawerDismiss(e.target, $panel[0], document, e.originalEvent?.composedPath?.())) return;
         doNavbarIconClick.call($drawer.find('.drawer-toggle')[0]);
     });
 

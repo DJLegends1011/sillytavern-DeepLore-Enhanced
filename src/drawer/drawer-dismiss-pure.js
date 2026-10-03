@@ -15,12 +15,16 @@
  * @param {Element|null} target - Click event target (or null).
  * @param {Element|null} panel - The drawer panel element (`#deeplore-panel`).
  * @param {Document} [doc] - DOM document for `dialog[open]` lookup. Defaults to globalThis.document.
+ * @param {Array<EventTarget>} [path] - `event.composedPath()`, captured at dispatch. Lets a
+ *   target that an in-panel handler detached mid-dispatch (e.g. Browse row expand rewriting
+ *   the row's HTML) still count as inside the panel — `panel.contains()` can't see it anymore.
  * @returns {boolean} true → drawer should NOT dismiss (bail), false → safe to dismiss.
  */
-export function shouldBailDrawerDismiss(target, panel, doc = (typeof document !== 'undefined' ? document : null)) {
+export function shouldBailDrawerDismiss(target, panel, doc = (typeof document !== 'undefined' ? document : null), path = null) {
     if (!target) return true;                           // defensive: no target → don't dismiss
     if (!target.closest) return true;                   // not a real element (text node, etc.)
     if (panel && panel.contains && panel.contains(target)) return true;    // inside the panel itself
+    if (panel && Array.isArray(path) && path.includes(panel)) return true; // was inside at dispatch (detached since)
     // Drawer toggle / icon — those have their own handlers; outside-click must not interfere.
     if (target.closest('.drawer-toggle, #deeploreDrawerIcon')) return true;
     // ST popup chrome:
