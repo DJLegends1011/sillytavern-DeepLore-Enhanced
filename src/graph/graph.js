@@ -867,6 +867,9 @@ export async function showGraphPopup() {
     const focus = initFocus(gs, dbg);
     const physics = initPhysics(gs);
     initEvents(gs, dbg);
+    // Debug-mode only: expose live graph state for inspection / browser-driven tests
+    // (zoom, pan, drag, focus). Never set outside debugMode.
+    if (getSettings()?.debugMode) window.__dleGraphState = gs;
     initGraphSettings(gs, dbg);
     initDagLayout(gs, dbg);
     initHealth(gs, dbg);

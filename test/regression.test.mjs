@@ -54,6 +54,7 @@ import { planSessionLoad, SESSION_METADATA_KEY, LEGACY_STORAGE_KEY } from '../sr
 import { buildVerdict, buildPerEntry, diffVerdicts, evictRing, selectPruneVictims } from '../src/verdict/verdict-pure.js';
 import { isExcludedFromBreaker } from '../src/ai/breaker-pure.js';
 import { shouldBailDrawerDismiss } from '../src/drawer/drawer-dismiss-pure.js';
+import { pinchView, isDoubleTap, GRAPH_MIN_ZOOM, GRAPH_MAX_ZOOM, DOUBLE_TAP_MS } from '../src/graph/graph-touch-pure.js';
 
 // ── Real _runFlagIteration under test (T-L2) ──
 // `src/librarian/agentic-loop.js` statically imports two ST-only modules
@@ -4735,6 +4736,41 @@ test('DRAWER-DISMISS-8: target detached by a re-render during dispatch → BAIL 
 
     assertEqual(shouldBailDrawerDismiss(keys, panel, doc, path), true, 'detached target whose dispatch path included the panel must bail');
     assertEqual(shouldBailDrawerDismiss(keys, panel, doc, [keys]), false, 'path without the panel (genuinely outside) still dismisses');
+});
+
+// ============================================================================
+// GRAPH-TOUCH — issue #4: pure gesture math behind the graph canvas touch layer
+// (src/graph/graph-touch-pure.js, consumed by graph-events.js).
+// ============================================================================
+
+section('GRAPH-TOUCH — pinch / double-tap (issue #4)');
+
+test('GRAPH-TOUCH-1: pinch keeps the world point under the finger midpoint fixed', () => {
+    const view = { panX: 10, panY: -20, zoom: 1.5 };
+    const mid = { x: 150, y: 120 };
+    const worldBefore = { x: (mid.x - view.panX) / view.zoom, y: (mid.y - view.panY) / view.zoom };
+    const v = pinchView(view, mid, 100, mid, 200); // fingers spread 2x, midpoint still
+    assertEqual(v.zoom, 3, 'zoom scales by the finger-distance ratio');
+    const worldAfter = { x: (mid.x - v.panX) / v.zoom, y: (mid.y - v.panY) / v.zoom };
+    assert(Math.abs(worldAfter.x - worldBefore.x) < 1e-9 && Math.abs(worldAfter.y - worldBefore.y) < 1e-9,
+        'world point under the midpoint must not drift');
+});
+
+test('GRAPH-TOUCH-2: pinch midpoint motion pans; zoom clamps to the wheel limits', () => {
+    const v = pinchView({ panX: 0, panY: 0, zoom: 1 }, { x: 100, y: 100 }, 80, { x: 130, y: 90 }, 80);
+    assertEqual(v.zoom, 1, 'equal distance → no zoom');
+    assertEqual(v.panX, 30, 'midpoint moved +30x → pan +30x');
+    assertEqual(v.panY, -10, 'midpoint moved -10y → pan -10y');
+    assertEqual(pinchView({ panX: 0, panY: 0, zoom: 4 }, { x: 0, y: 0 }, 10, { x: 0, y: 0 }, 100).zoom, GRAPH_MAX_ZOOM, 'clamped to max');
+    assertEqual(pinchView({ panX: 0, panY: 0, zoom: 0.5 }, { x: 0, y: 0 }, 100, { x: 0, y: 0 }, 10).zoom, GRAPH_MIN_ZOOM, 'clamped to min');
+});
+
+test('GRAPH-TOUCH-3: double-tap needs two taps close in time and space', () => {
+    const a = { x: 50, y: 50, t: 1000 };
+    assertEqual(isDoubleTap(null, a), false, 'first tap is never a double-tap');
+    assertEqual(isDoubleTap(a, { x: 55, y: 52, t: 1000 + DOUBLE_TAP_MS - 1 }), true, 'close + quick → double-tap');
+    assertEqual(isDoubleTap(a, { x: 55, y: 52, t: 1000 + DOUBLE_TAP_MS + 50 }), false, 'too slow');
+    assertEqual(isDoubleTap(a, { x: 120, y: 50, t: 1100 }), false, 'too far apart');
 });
 
 // ============================================================================

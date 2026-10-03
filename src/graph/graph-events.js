@@ -3,6 +3,7 @@ import { buildObsidianURI, openObsidianUri } from '../helpers.js';
 import { tr, trf, trPlural } from '../i18n/i18n.js';
 import { computeGapAnalysis } from './graph-analysis.js';
 import { escapeHtml } from './graph-util.js';
+import { GRAPH_MIN_ZOOM, GRAPH_MAX_ZOOM, LONG_PRESS_MS, TAP_SLOP_PX, distance, midpoint, pinchView, isDoubleTap } from './graph-touch-pure.js';
 
 /**
  * @param {object} gs
@@ -242,19 +243,19 @@ export function initEvents(gs, dbg) {
     // ─── Canvas mouse ───
     function freshRect() { gs.cachedRect = canvas.getBoundingClientRect(); return gs.cachedRect; }
 
-    canvas.addEventListener('mousedown', (e) => {
-        if (e.button !== 0) return;
-        // G8: settlingUntil window blocks all canvas interaction during initial physics settle.
-        if (gs.settlingUntil && Date.now() < gs.settlingUntil) return;
+    // Shared pointer actions — mouse and touch (issue #4) drive the same state changes.
+    // G8: settlingUntil window blocks all canvas interaction during initial physics settle.
+    const isSettling = () => gs.settlingUntil && Date.now() < gs.settlingUntil;
+
+    /** Grab the node under (mx,my), or start panning on empty canvas. */
+    function pressAt(mx, my, via) {
         hideContextMenu();
-        const rect = freshRect();
-        const mx = e.clientX - rect.left, my = e.clientY - rect.top;
         const w = gs.toWorld(mx, my);
-        const closest = gs.findNearest(w.x, w.y, gs.hitRadius(), 'mousedown');
+        const closest = gs.findNearest(w.x, w.y, gs.hitRadius(), via);
         if (closest) {
             gs.dragNode = closest;
             canvas.style.cursor = 'grabbing';
-            dbg(`mousedown: grabbed "${closest.title}"`);
+            dbg(`${via}: grabbed "${closest.title}"`);
         } else {
             gs.isPanning = true;
             gs.panStartX = mx; gs.panStartY = my;
@@ -263,16 +264,27 @@ export function initEvents(gs, dbg) {
             // BUG-358: mark _userPanned so pending startup _fitTimers don't snap the view back.
             gs._userPanned = true;
         }
-    }, lOpt);
+    }
 
-    canvas.addEventListener('mouseenter', () => { gs.cachedRect = canvas.getBoundingClientRect(); }, lOpt);
+    /** Update hover target + tooltip for (mx,my). */
+    function hoverAt(mx, my) {
+        const w = gs.toWorld(mx, my);
+        const closest = gs.findNearest(w.x, w.y, gs.hitRadius(), undefined);
+        if (closest !== gs.hoverNode) {
+            gs.hoverNode = closest;
+            // Orphans have no connections — skip BFS so the entire graph doesn't get pulled into the hover set.
+            gs.hoverDistances = (closest && !closest.orphan) ? gs.computeHoverDistances(closest.id) : null;
+            gs.needsDraw = true;
+            gs.updateTooltip();
+        }
+        canvas.style.cursor = closest ? 'pointer' : 'grab';
+    }
 
-    canvas.addEventListener('mousemove', (e) => {
-        const rect = freshRect();
-        const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    /** Drag the grabbed node / pan the view to (mx,my); otherwise hover. */
+    function moveTo(mx, my) {
         gs.debugMouseX = mx; gs.debugMouseY = my; if (gs.focusTreeRoot) gs.needsDraw = true;
         // G8: during initial settling, only debug coords are tracked — interaction is suppressed.
-        if (gs.settlingUntil && Date.now() < gs.settlingUntil) return;
+        if (isSettling()) return;
         if (gs.dragNode) {
             const w = gs.toWorld(mx, my);
             gs.dragNode.x = w.x; gs.dragNode.y = w.y; gs.dragNode.vx = 0; gs.dragNode.vy = 0;
@@ -282,38 +294,52 @@ export function initEvents(gs, dbg) {
             gs.panY = gs.panOriginY + (my - gs.panStartY);
             gs.needsDraw = true;
         } else {
-            const w = gs.toWorld(mx, my);
-            const closest = gs.findNearest(w.x, w.y, gs.hitRadius(), undefined);
-            if (closest !== gs.hoverNode) {
-                gs.hoverNode = closest;
-                // Orphans have no connections — skip BFS so the entire graph doesn't get pulled into the hover set.
-                gs.hoverDistances = (closest && !closest.orphan) ? gs.computeHoverDistances(closest.id) : null;
-                gs.needsDraw = true;
-                gs.updateTooltip();
-            }
-            canvas.style.cursor = closest ? 'pointer' : 'grab';
+            hoverAt(mx, my);
         }
-    }, lOpt);
+    }
 
-    canvas.addEventListener('mouseup', (e) => {
-        if (e.button !== 0) return;
+    /** End a drag or pan. */
+    function release(via) {
         if (gs.dragNode) {
             // G6: zero velocity + 15-frame extra-damping window prevents the released node from snapping back.
             gs.dragNode.vx = 0;
             gs.dragNode.vy = 0;
             gs.releaseStabilizeFrames = 15;
-            dbg(`mouseup: released "${gs.dragNode.title}"`);
+            dbg(`${via}: released "${gs.dragNode.title}"`);
             gs.dragNode = null;
         }
         gs.isPanning = false;
         canvas.style.cursor = 'grab';
+    }
+
+    canvas.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        if (isSettling()) return;
+        const rect = freshRect();
+        pressAt(e.clientX - rect.left, e.clientY - rect.top, 'mousedown');
+    }, lOpt);
+
+    canvas.addEventListener('mouseenter', () => { gs.cachedRect = canvas.getBoundingClientRect(); }, lOpt);
+
+    canvas.addEventListener('mousemove', (e) => {
+        const rect = freshRect();
+        moveTo(e.clientX - rect.left, e.clientY - rect.top);
+    }, lOpt);
+
+    canvas.addEventListener('mouseup', (e) => {
+        if (e.button !== 0) return;
+        release('mouseup');
     }, lOpt);
 
     canvas.addEventListener('dblclick', (e) => {
-        if (gs.layoutMode === 'dag') return; // double-click focus disabled in DAG layout
-        if (gs.settlingUntil && Date.now() < gs.settlingUntil) return;
         const rect = freshRect();
-        const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+        focusAt(e.clientX - rect.left, e.clientY - rect.top);
+    }, lOpt);
+
+    /** Enter (or re-root) Focus Tree on the node under (mx,my). */
+    function focusAt(mx, my) {
+        if (gs.layoutMode === 'dag') return; // double-click focus disabled in DAG layout
+        if (isSettling()) return;
         const w = gs.toWorld(mx, my);
         const closest = gs.findNearest(w.x, w.y, gs.hitRadius(), 'dblclick');
         if (closest) {
@@ -332,7 +358,7 @@ export function initEvents(gs, dbg) {
             }
             gs.enterFocusTree(closest);
         }
-    }, lOpt);
+    }
 
     canvas.addEventListener('mouseleave', () => {
         if (!gs.dragNode && !gs.isPanning) {
@@ -388,11 +414,88 @@ export function initEvents(gs, dbg) {
         gs.panX = mx - (mx - gs.panX) * zoomFactor;
         gs.panY = my - (my - gs.panY) * zoomFactor;
         gs.zoom *= zoomFactor;
-        gs.zoom = Math.max(0.2, Math.min(5, gs.zoom));
+        gs.zoom = Math.max(GRAPH_MIN_ZOOM, Math.min(GRAPH_MAX_ZOOM, gs.zoom));
         gs._userPanned = true; // BUG-358
 
         gs.needsDraw = true;
     }, { passive: false, signal: gs.listenerAC.signal });
+
+    // ─── Canvas touch (issue #4) ───
+    // Mouse-only handlers left phones with tap only: no drag, pan, pinch or right-click.
+    // One finger = drag node / pan (same pressAt/moveTo/release as mouse); two fingers =
+    // pinch-zoom around the midpoint; long-press = context menu; double-tap = Focus Tree;
+    // tap = tooltip. preventDefault on touchstart suppresses the compat mouse events (and
+    // canvas CSS touch-action:none stops the page scrolling/zooming underneath).
+    const touchPt = (t, rect) => ({ x: t.clientX - rect.left, y: t.clientY - rect.top });
+    const tch = { start: null, moved: false, longPressTimer: null, longPressed: false, pinch: null, lastTap: null, locked: false };
+    const clearLongPress = () => { if (tch.longPressTimer) { clearTimeout(tch.longPressTimer); tch.longPressTimer = null; } };
+    const touchOpt = { passive: false, signal: gs.listenerAC.signal };
+
+    canvas.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        if (isSettling()) return;
+        const rect = freshRect();
+        if (e.touches.length === 1 && !tch.locked) {
+            const p = touchPt(e.touches[0], rect);
+            tch.start = p; tch.moved = false; tch.longPressed = false;
+            pressAt(p.x, p.y, 'touchstart');
+            clearLongPress();
+            tch.longPressTimer = setTimeout(() => {
+                tch.longPressTimer = null;
+                if (tch.moved || tch.pinch) return;
+                tch.longPressed = true;
+                release('longpress');
+                const w = gs.toWorld(p.x, p.y);
+                const closest = gs.findNearest(w.x, w.y, gs.hitRadius(), 'contextmenu');
+                if (closest) showContextMenu(closest, p.x, p.y);
+            }, LONG_PRESS_MS);
+        } else if (e.touches.length === 2) {
+            // Second finger: abandon any drag/pan and switch to pinch until all fingers lift.
+            clearLongPress();
+            release('pinchstart');
+            const a = touchPt(e.touches[0], rect), b = touchPt(e.touches[1], rect);
+            tch.pinch = { mid: midpoint(a, b), dist: distance(a, b) };
+            tch.locked = true;
+            gs._userPanned = true; // BUG-358
+        }
+    }, touchOpt);
+
+    canvas.addEventListener('touchmove', (e) => {
+        e.preventDefault();
+        if (isSettling()) return;
+        const rect = freshRect();
+        if (tch.pinch && e.touches.length >= 2) {
+            const a = touchPt(e.touches[0], rect), b = touchPt(e.touches[1], rect);
+            const mid = midpoint(a, b), dist = distance(a, b);
+            const v = pinchView(gs, tch.pinch.mid, tch.pinch.dist, mid, dist);
+            gs.panX = v.panX; gs.panY = v.panY; gs.zoom = v.zoom;
+            tch.pinch = { mid, dist };
+            gs.needsDraw = true;
+        } else if (e.touches.length === 1 && !tch.locked && tch.start) {
+            const p = touchPt(e.touches[0], rect);
+            if (!tch.moved && distance(p, tch.start) > TAP_SLOP_PX) { tch.moved = true; clearLongPress(); }
+            if (tch.moved) moveTo(p.x, p.y);
+        }
+    }, touchOpt);
+
+    const onTouchEnd = (e) => {
+        e.preventDefault();
+        if (e.touches.length > 0) return; // wait for every finger to lift
+        clearLongPress();
+        const wasTap = !tch.locked && tch.start && !tch.moved && !tch.longPressed;
+        release('touchend');
+        if (wasTap && !isSettling()) {
+            const p = tch.start;
+            hoverAt(p.x, p.y);
+            const now = { x: p.x, y: p.y, t: Date.now() };
+            if (isDoubleTap(tch.lastTap, now)) { tch.lastTap = null; focusAt(p.x, p.y); } else { tch.lastTap = now; }
+        } else {
+            tch.lastTap = null;
+        }
+        tch.start = null; tch.pinch = null; tch.locked = false; tch.moved = false;
+    };
+    canvas.addEventListener('touchend', onTouchEnd, touchOpt);
+    canvas.addEventListener('touchcancel', onTouchEnd, touchOpt);
 
     document.addEventListener('keydown', (e) => {
         if (!document.getElementById('dle-graph-canvas')) return;
