@@ -219,6 +219,10 @@ Full feature docs: [**Wiki →**](https://github.com/pixelnull/sillytavern-DeepL
 - **Librarian needs a tool-calling provider.** Emma uses native tool calls; route her to Claude, Gemini, an OpenAI-compatible endpoint, or Cohere. Reasoner-only models can't drive the loop.
 - **Obsidian API keys stored plaintext** in ST's extension settings JSON (platform limitation). Use a dedicated lorebook vault, not your personal one.
 
+### Mobile limitations
+
+- **Bottom toast positions are invisible on phones (SillyTavern core bug).** With ST's toast position set to any `Bottom` option, toasts at viewport widths ≤1000px render just above the top of the screen, so DeepLore's (and ST's own) notifications seem to never fire. They still show while a popup is open. **Workaround:** set ST's **Notifications** dropdown (User Settings) to a `Top` option. Cause: ST's `html { transform: translateZ(0); perspective: 1000 }` rule makes `<html>` the containing block for fixed elements, and ST's mobile `body { position: fixed }` collapses `<html>` to 0px tall, so toastr's `bottom: 0` lands at y=0.
+
 See [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) for the complete list.
 
 ## Upgrading
