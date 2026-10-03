@@ -114,6 +114,19 @@ test('Tools rows are horizontal swipe surfaces in overlay mode (issue #3)', () =
         'overlay .dle-tools-grid must allow pan-x (panel is pan-y) and keep pan-y so vertical swipes reach the tab panel');
 });
 
+section('overlay-mode: close animates like ST drawers');
+
+test('overlay height is open-only so ST height transition collapses the panel on close (issue #5)', () => {
+    // An unconditional overlay height kept the closed panel full height: frozen for the
+    // display-transition delay, then gone (read as close lag).
+    assert(!blockHas('#deeplore-panel.dle-overlay-mode', 'height:\\s*calc'),
+        'base overlay rule must not set height (would pin the closed panel at full height)');
+    assert(blockHas('#deeplore-panel.dle-overlay-mode.openDrawer', 'height:\\s*calc\\(100dvh'),
+        'open overlay panel must be full viewport height');
+    assert(blockHas('#deeplore-panel.dle-overlay-mode:not(.openDrawer)', 'height:\\s*0'),
+        'closed overlay panel must target height 0 so the close transition has something to animate');
+});
+
 section('drawer icon: presses land on the .drawer-icon wrapper');
 
 test('drawer icon children ignore pointer events so ST autoclose exempts the press (issue #5)', () => {

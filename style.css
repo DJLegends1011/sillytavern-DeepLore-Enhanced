@@ -2582,9 +2582,9 @@ button.dle-browse-block.dle-block-active {
     position: fixed !important;
     right: 0 !important;
     left: auto !important;
-    /* BUG-177: explicit top/height so overlay can't drift into ST's top bar. */
+    /* BUG-177: explicit top/height so overlay can't drift into ST's top bar.
+       Height lives on the open/closed rules below (issue #5). */
     top: var(--topBarBlockSize, 42px) !important;
-    height: calc(100dvh - var(--topBarBlockSize, 42px)) !important;
     /* BUG-203: ST layer cake reference (as of ST 1.12).
          #top-bar / drawers          ~1000–2000
          shadow_popup / dialogue     3000  (ST popups)
@@ -2597,6 +2597,17 @@ button.dle-browse-block.dle-block-active {
     z-index: 3001;
     border-left: 1px solid var(--SmartThemeBorderColor);
     backdrop-filter: blur(calc(var(--SmartThemeBlurStrength, 10px) * 2));
+}
+/* Issue #5: an unconditional overlay height kept the CLOSED panel full height, so ST's
+   `transition: height, display` had nothing to animate — the panel sat frozen for the
+   display delay, then vanished (read as close lag). Mirror ST mobile-styles.css
+   (#left-nav-panel:not(.openDrawer) { height: 0 }): full height only while open,
+   0 otherwise, so close visibly collapses like ST's own drawers. */
+#deeplore-panel.dle-overlay-mode.openDrawer {
+    height: calc(100dvh - var(--topBarBlockSize, 42px)) !important;
+}
+#deeplore-panel.dle-overlay-mode:not(.openDrawer) {
+    height: 0 !important;
 }
 
 /* BUG-224: visual scrim for the overlay-mode panel. Click-outside dismiss is
