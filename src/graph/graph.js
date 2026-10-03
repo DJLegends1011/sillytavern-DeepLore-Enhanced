@@ -19,7 +19,7 @@ import { initGraphSettings } from './graph-settings.js';
 import { initDagLayout } from './graph-dag.js';
 import { initHealth } from './graph-health.js';
 import { computeDisparityFilter, computeLouvainCommunities } from './graph-analysis.js';
-import { escapeHtml } from './graph-util.js';
+import { escapeHtml, graphHintsKey } from './graph-util.js';
 
 const TAG = '[DLE Graph]';
 function dbg(...args) {
@@ -416,7 +416,7 @@ export async function showGraphPopup() {
             </div>
         </div>
         <div class="dle-graph-footer">
-            <small id="dle-graph-hints" class="dle-dimmed" data-i18n="dle_graph_hints_normal">Drag to move · Right-click for menu · Scroll to zoom · Click+drag to pan · Double-click to focus · 0 to fit</small>
+            <small id="dle-graph-hints" class="dle-dimmed" data-i18n="${graphHintsKey(false)}">${escapeHtml(tr(graphHintsKey(false)))}</small>
             <details class="dle-text-sm dle-graph-sr-details">
                 <summary class="dle-graph-sr-summary" data-i18n="dle_graph_sr_summary">Screen reader summary</summary>
                 <div class="dle-graph-sr-content">${summaryHtml}</div>

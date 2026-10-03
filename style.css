@@ -4657,6 +4657,73 @@ body.dle-mobile-mode .dle-settings-content {
 .dle-graph-back-btn--accent { border: 1px solid var(--dle-accent); font-weight: bold; }
 .dle-graph-back-caption { font-size: var(--dle-text-sm); font-weight: normal; opacity: 0.75; margin-left: 4px; }
 
+/* Issue #4: phone layout (body.dle-mobile-mode, #6). The wrapped toolbars took ~250px and
+   left the canvas ~40% of the popup; the ≤600px static legend spilled over the footer.
+   Each toolbar becomes one horizontal swipe strip (settings-nav / drawer tab-bar pattern)
+   and the legend gets its own slot under the canvas. */
+body.dle-mobile-mode .dle-graph-title {
+    font-size: var(--dle-text-lg);
+}
+body.dle-mobile-mode .dle-graph-toolbar,
+body.dle-mobile-mode .dle-graph-toolbar.dle-graph-toolbar--secondary {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    touch-action: pan-x;
+    scrollbar-width: none;
+    margin-bottom: 0;
+    padding: 2px 0;
+}
+body.dle-mobile-mode .dle-graph-toolbar::-webkit-scrollbar { display: none; }
+body.dle-mobile-mode .dle-graph-toolbar > * {
+    flex-shrink: 0;
+}
+body.dle-mobile-mode .dle-graph-toolbar .menu_button {
+    white-space: nowrap;
+}
+body.dle-mobile-mode .dle-graph-toolbar-sep {
+    display: none;
+}
+body.dle-mobile-mode .dle-graph-canvas-wrap {
+    display: flex;
+    flex-direction: column;
+}
+body.dle-mobile-mode .dle-graph-canvas {
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 160px;
+}
+/* Fixed slot, not max-height: the graph sizes its canvas buffer ONCE at init (no resize
+   handling), and legend items render after init — a content-sized legend shrank the canvas
+   afterwards, squashing the drawing so taps hit the wrong nodes. */
+body.dle-mobile-mode .dle-graph-legend-panel {
+    position: static;
+    flex: 0 0 25%;
+    max-width: none;
+    max-height: none;
+    margin: 4px 0 0;
+    padding: 4px 8px;
+}
+body.dle-mobile-mode .dle-graph-legend-panel-heading {
+    display: none;
+}
+body.dle-mobile-mode .dle-graph-legend-section {
+    margin-bottom: 2px;
+}
+/* The hover/tap info bar is pinned to the wrap's bottom, which is now the legend — pin it to
+   the top of the canvas instead, and let it wrap rather than clip at phone width. */
+body.dle-mobile-mode .dle-graph-tooltip {
+    top: 0;
+    bottom: auto;
+    border-top: none;
+    border-bottom: 1px solid var(--dle-border, #555);
+    flex-wrap: wrap;
+    row-gap: 2px;
+    padding: 6px 10px;
+    font-size: var(--dle-text-base);
+}
+
 /* Graph detail panel (entry details side panel) */
 .dle-graph-detail-panel {
     position: absolute; top: 8px; right: 8px;

@@ -4,7 +4,7 @@
     "canonical": true,
     "machine_translated": false,
     "generated": "2026-05-22",
-    "total_keys": 2672,
+    "total_keys": 2674,
     "source": "DLE i18n Wave 2 final merge",
     "notes": "Ternary plural patterns split into _one/_other pairs (9 base keys → 18 keys; net +9)."
   },
@@ -1081,7 +1081,9 @@
   "dle_graph_health_token_bloat_detail": "${0} (${1} tok max)",
   "dle_graph_hints": "Drag to move · Right-click for menu · Scroll to zoom · Click+drag to pan · Double-click to focus · 0 to fit · E to exit focus · Backspace to close",
   "dle_graph_hints_focus": "Double-click node to re-root · +/- to change depth · e to exit focus · Scroll to zoom · 0 to fit",
+  "dle_graph_hints_focus_touch": "Double-tap node to re-root · −/+ to change depth · ← Back to exit focus · Pinch to zoom",
   "dle_graph_hints_normal": "Drag to move · Right-click for menu · Scroll to zoom · Click+drag to pan · Double-click to focus · 0 to fit",
+  "dle_graph_hints_touch": "Drag to move · Long-press for menu · Pinch to zoom · Drag empty space to pan · Double-tap to focus",
   "dle_graph_hover_dim_distance_label": "Hover Dim Distance (hops)",
   "dle_graph_hover_dim_distance_tooltip": "How many hops from the hovered node stay vivid. Everything beyond dims. Default: 2.",
   "dle_graph_hover_falloff_label": "Hover Falloff (per hop)",

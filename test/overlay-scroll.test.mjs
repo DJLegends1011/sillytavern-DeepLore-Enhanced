@@ -158,6 +158,17 @@ test('Settings popup: single column + horizontal nav strip on phones (issue #7)'
         'phone header must wrap (version chip collided with the Enabled toggle)');
 });
 
+test('Graph popup: phone toolbars swipe, legend has a fixed slot, canvas owns touch (issue #4)', () => {
+    assert(blockHas('.dle-graph-canvas', 'touch-action:\\s*none'),
+        'graph canvas must own every touch gesture (no page scroll/zoom underneath)');
+    assert(/body\.dle-mobile-mode \.dle-graph-toolbar\.dle-graph-toolbar--secondary\s*\{[^}]*flex-wrap:\s*nowrap/.test(css),
+        'phone graph toolbars (incl. the BUG-223 wrapping secondary row) must be single swipe strips');
+    // A content-sized legend shrank the canvas AFTER the graph sized its buffer once at
+    // init, squashing the drawing so taps hit the wrong nodes.
+    assert(blockHas('body.dle-mobile-mode .dle-graph-legend-panel', 'flex:\\s*0 0 25%'),
+        'phone legend must be a fixed slot so the canvas size is final before init');
+});
+
 section('overlay-mode: close animates like ST drawers');
 
 test('overlay height is open-only so ST height transition collapses the panel on close (issue #5)', () => {

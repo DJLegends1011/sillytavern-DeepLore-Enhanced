@@ -3,7 +3,7 @@ import { buildObsidianURI, openObsidianUri } from '../helpers.js';
 import { tr, trf, trPlural } from '../i18n/i18n.js';
 import { computeGapAnalysis } from './graph-analysis.js';
 import { escapeHtml } from './graph-util.js';
-import { GRAPH_MIN_ZOOM, GRAPH_MAX_ZOOM, LONG_PRESS_MS, TAP_SLOP_PX, distance, midpoint, pinchView, isDoubleTap } from './graph-touch-pure.js';
+import { GRAPH_MIN_ZOOM, GRAPH_MAX_ZOOM, LONG_PRESS_MS, TAP_SLOP_PX, TOUCH_GRAB_SLOP_PX, distance, midpoint, pinchView, isDoubleTap } from './graph-touch-pure.js';
 
 /**
  * @param {object} gs
@@ -248,10 +248,10 @@ export function initEvents(gs, dbg) {
     const isSettling = () => gs.settlingUntil && Date.now() < gs.settlingUntil;
 
     /** Grab the node under (mx,my), or start panning on empty canvas. */
-    function pressAt(mx, my, via) {
+    function pressAt(mx, my, via, maxDist = gs.hitRadius()) {
         hideContextMenu();
         const w = gs.toWorld(mx, my);
-        const closest = gs.findNearest(w.x, w.y, gs.hitRadius(), via);
+        const closest = gs.findNearest(w.x, w.y, maxDist, via);
         if (closest) {
             gs.dragNode = closest;
             canvas.style.cursor = 'grabbing';
@@ -438,7 +438,7 @@ export function initEvents(gs, dbg) {
         if (e.touches.length === 1 && !tch.locked) {
             const p = touchPt(e.touches[0], rect);
             tch.start = p; tch.moved = false; tch.longPressed = false;
-            pressAt(p.x, p.y, 'touchstart');
+            pressAt(p.x, p.y, 'touchstart', TOUCH_GRAB_SLOP_PX / gs.zoom);
             clearLongPress();
             tch.longPressTimer = setTimeout(() => {
                 tch.longPressTimer = null;

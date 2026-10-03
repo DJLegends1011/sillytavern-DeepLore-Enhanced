@@ -9,6 +9,12 @@
 export const GRAPH_MIN_ZOOM = 0.2;
 export const GRAPH_MAX_ZOOM = 5;
 
+/**
+ * One-finger drag grabs a node only within its drawn radius + this many screen px. The
+ * mouse hit zone (radius + up to 40 world units) is so generous that on a small, zoomed
+ * phone canvas it covered every point — leaving no empty space to start a pan.
+ */
+export const TOUCH_GRAB_SLOP_PX = 12;
 /** A touch that moves less than this (px) still counts as a tap / long-press. */
 export const TAP_SLOP_PX = 10;
 /** Hold this long without moving to open the context menu (right-click equivalent). */

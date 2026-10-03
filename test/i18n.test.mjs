@@ -444,10 +444,10 @@ for (const loc of TRANSLATION_LOCALES) {
         assert(data.__meta.canonical === false, 'meta canonical=false (translated)');
         assert(data.__meta.machine_translated === true, 'meta machine_translated=true');
         const keys = Object.keys(data).filter(k => k !== '__meta');
-        // 2672 = 2592 (2574 v2.6 + 18 settings-overhaul shell keys) + 80 unslop-ui i18n
+        // 2674 = 2592 (2574 v2.6 + 18 settings-overhaul shell keys) + 80 unslop-ui i18n
         // keys (rule-builder labels/tooltips, browse quick-filter pill, full setup-wizard
-        // runtime strings routed through tr/trf).
-        assertEqual(keys.length, 2672, `${loc} key count matches canonical (2672)`);
+        // runtime strings routed through tr/trf) + 2 graph touch-hint keys (issue #4).
+        assertEqual(keys.length, 2674, `${loc} key count matches canonical (2674)`);
     });
 }
 

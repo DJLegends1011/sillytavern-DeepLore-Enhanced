@@ -13,6 +13,17 @@ export const escapeHtml = s => String(s)
  * through this so the two non-force layouts can't drift apart. Pure (takes revealedBatch) so it's
  * unit-testable and ST-free.
  */
+/**
+ * i18n key for the graph footer hints. Touch devices (pointer: coarse) get gesture wording
+ * (long-press / pinch / double-tap) instead of mouse wording (issue #4).
+ * @param {boolean} focusMode
+ */
+export function graphHintsKey(focusMode) {
+    const touch = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+    if (focusMode) return touch ? 'dle_graph_hints_focus_touch' : 'dle_graph_hints_focus';
+    return touch ? 'dle_graph_hints_touch' : 'dle_graph_hints_normal';
+}
+
 export function isRehidden(n, revealedBatch) {
     return n.orphan
         || (n.revealBatchIdx != null && n.revealBatchIdx >= revealedBatch && n.revealBatchIdx !== -1);

@@ -6,7 +6,7 @@
  * @returns {{ bfsDepth, computeRadialLayout, enterFocusTree, exitFocusTree,
  *             computeHoverDistances, applyFilters, fitToView, findNearest, hitRadius }}
  */
-import { isRehidden } from './graph-util.js';
+import { isRehidden, graphHintsKey } from './graph-util.js';
 import { tr, trf } from '../i18n/i18n.js';
 
 export function initFocus(gs, dbg) {
@@ -197,9 +197,9 @@ export function initFocus(gs, dbg) {
         if (!el) return;
         if (focusMode) {
             // Focus exit: Esc (intercepted before it reaches ST's popup-close) or `e`. See graph-events.js keydown handler.
-            el.textContent = tr('dle_graph_hints_focus');
+            el.textContent = tr(graphHintsKey(true));
         } else {
-            el.textContent = tr('dle_graph_hints_normal');
+            el.textContent = tr(graphHintsKey(false));
         }
     }
 
